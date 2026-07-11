@@ -27,7 +27,7 @@ jobs:
         run: ./scripts/check-release-version.sh "$GITHUB_REF_NAME"
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@1.90.0
+        uses: dtolnay/rust-toolchain@1.100.0
         with:
           components: clippy
 
@@ -112,7 +112,7 @@ jobs:
           echo "Building version $VERSION for ${{ matrix.arch }}"
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@1.90.0
+        uses: dtolnay/rust-toolchain@1.100.0
         with:
           targets: ${{ matrix.target }}
 
@@ -240,7 +240,7 @@ jobs:
           submodules: true
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@1.90.0
+        uses: dtolnay/rust-toolchain@1.100.0
         with:
           targets: ${{ matrix.target }}
 
