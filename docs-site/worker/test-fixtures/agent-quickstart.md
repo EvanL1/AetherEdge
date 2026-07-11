@@ -1,6 +1,3 @@
----
-title: Agent Quickstart
-description: Fixture page for Worker content-negotiation tests.
----
-
 # Agent Quickstart
+
+Install and configure Aether with an AI coding agent.

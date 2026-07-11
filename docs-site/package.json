@@ -1,5 +1,5 @@
 {
-  "name": "docs-site",
+  "name": "aether-plain-docs",
   "type": "module",
   "version": "0.0.1",
   "engines": {
@@ -7,26 +7,19 @@
   },
   "scripts": {
     "sync": "node scripts/sync-content.mjs",
-    "dev": "npm run sync && astro dev",
-    "check": "npm run sync && astro check",
-    "build": "npm run sync && astro build && node scripts/emit-markdown-pages.mjs",
-    "preview": "wrangler dev",
+    "build": "npm run sync && node scripts/build-docs.mjs",
+    "check": "npm run build",
+    "dev": "npm run build && wrangler dev",
+    "preview": "npm run build && wrangler dev",
     "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
     "test:worker": "vitest run --config vitest.workers.config.js"
   },
-  "dependencies": {
-    "@astrojs/starlight": "^0.41.3",
-    "astro": "^7.0.2",
-    "sharp": "^0.34.5",
-    "starlight-links-validator": "^0.25.2",
-    "starlight-llms-txt": "^0.11.0"
-  },
   "devDependencies": {
-    "@astrojs/check": "^0.9.9",
     "@cloudflare/vitest-pool-workers": "^0.18.4",
+    "@vitest/coverage-v8": "^4.1.10",
     "fast-glob": "^3.3.3",
     "github-slugger": "^2.0.0",
-    "typescript": "^6.0.3",
     "vitest": "^4.1.10",
     "wrangler": "^4.110.0"
   }

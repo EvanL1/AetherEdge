@@ -6,7 +6,7 @@
 [![Version](https://img.shields.io/badge/version-0.5.0-yellow.svg)](CHANGELOG.md)
 [![Status](https://img.shields.io/badge/status-beta-orange.svg)](CHANGELOG.md)
 
-[中文](README-CN.md) | [Documentation](https://aether-docs.liuyifanz-1996.workers.dev/) | [Changelog](CHANGELOG.md) | [llms.txt](https://aether-docs.liuyifanz-1996.workers.dev/llms.txt)
+[中文](README-CN.md) | [Documentation](https://docs.aether-edge.workers.dev/) | [Changelog](CHANGELOG.md) | [llms.txt](https://docs.aether-edge.workers.dev/llms.txt)
 
 **An AI-native edge runtime, kernel, and SDK—built because IoT work is a
 natural fit for agents.**

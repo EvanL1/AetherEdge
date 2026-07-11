@@ -1,4 +1,4 @@
-name = "aether-docs"
+name = "docs"
 main = "worker/entry.js"
 compatibility_date = "2026-07-11"
 

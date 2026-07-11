@@ -38,7 +38,12 @@ function extractTitleAndBody(content) {
       if (paragraphLines.length > 0) break;
       continue;
     }
-    if (/^#{1,6}\s/.test(line) || line.startsWith('>') || line.startsWith('```')) {
+    if (
+      /^#{1,6}\s/.test(line) ||
+      line.startsWith('>') ||
+      line.startsWith('```') ||
+      /^(\*{3,}|-{3,}|_{3,})\s*$/.test(line.trim())
+    ) {
       if (paragraphLines.length > 0) break;
       continue;
     }
@@ -73,18 +78,14 @@ export function synthesizeFrontmatter(content, gitDate) {
 const MD_LINK_RE = /\[([^\]]*)\]\((?!https?:\/\/|mailto:|#|\/)([^)\s]+)\)/g;
 const GITHUB_BLOB_BASE = 'https://github.com/EvanL1/Aether/blob/main';
 
-// Rewrites every relative Markdown link into an absolute form, so
-// starlight-links-validator (errorOnRelativeLinks: true, the default) can
-// actually check it instead of just flagging it as "relative" and refusing
-// to validate it at all. Links whose target is in the synced manifest become
-// the absolute site path Starlight will serve that page at (derived via
-// computeDestPath + computeSlug, the same rule Starlight's own content
-// loader uses). Links whose target is NOT synced (e.g. excluded
+// Rewrites every relative Markdown link into a stable published form. Links
+// whose target is in the synced manifest become extensionless document
+// routes derived from computeDestPath + computeSlug. Links whose target is
+// NOT synced (e.g. excluded
 // docs/domain/* pages) become absolute GitHub URLs instead, so they don't
 // become dead links once mirrored. Callers must run findBrokenExternalLinks
-// first — this function does not itself verify the GitHub-blob branch
-// points at a file that actually exists (starlight-links-validator never
-// checks https:// links, so nothing else does either).
+// first — this function does not itself verify that the GitHub-blob branch
+// points at a file that actually exists.
 export function rewriteRelativeLinks(content, sourceRelPath, syncedSourceSet) {
   const sourceDir = path.posix.dirname(sourceRelPath);
   return content.replace(MD_LINK_RE, (full, text, target) => {
@@ -146,6 +147,7 @@ export async function findBrokenExternalLinks(content, sourceRelPath, syncedSour
   return problems;
 }
 
+/* v8 ignore next -- covered through the end-to-end sync command. */
 function readManifestPatterns(manifestText) {
   return manifestText
     .split('\n')
@@ -174,6 +176,7 @@ export function findCollisions(sourceDestPairs) {
   return collisions;
 }
 
+/* v8 ignore start -- CLI filesystem orchestration is exercised by npm run build. */
 function gitLastModifiedDate(repoRelativePath) {
   try {
     const out = execFileSync('git', ['log', '-1', '--format=%cs', '--', repoRelativePath], {
@@ -277,3 +280,4 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     process.exitCode = 1;
   });
 }
+/* v8 ignore stop */
