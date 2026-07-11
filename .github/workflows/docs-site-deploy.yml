@@ -39,21 +39,28 @@ jobs:
         working-directory: docs-site
         run: npm ci
 
-      - name: Type and content check
-        working-directory: docs-site
-        run: npm run check
-
       - name: Unit tests
         working-directory: docs-site
-        run: npm test
+        run: npm run test:coverage
 
       - name: Worker unit tests
         working-directory: docs-site
         run: npm run test:worker
 
-      - name: Build (sync content, astro build, emit per-page markdown)
+      - name: Build plain-text documentation
         working-directory: docs-site
         run: npm run build
+
+      - name: Reject browser assets
+        working-directory: docs-site
+        shell: bash
+        run: |
+          unexpected="$(find dist -type f ! -name '*.md' ! -name '*.txt' -print)"
+          if [[ -n "$unexpected" ]]; then
+            echo "Unexpected non-text documentation assets:"
+            echo "$unexpected"
+            exit 1
+          fi
 
       - name: Detect Cloudflare deployment credentials
         id: cloudflare

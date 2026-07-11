@@ -6,7 +6,7 @@
 [![版本](https://img.shields.io/badge/version-0.5.0-yellow.svg)](CHANGELOG.md)
 [![状态](https://img.shields.io/badge/status-beta-orange.svg)](CHANGELOG.md)
 
-[English](README.md) | [文档](https://aether-docs.liuyifanz-1996.workers.dev/) | [变更记录](CHANGELOG.md) | [llms.txt](https://aether-docs.liuyifanz-1996.workers.dev/llms.txt)
+[English](README.md) | [文档](https://docs.aether-edge.workers.dev/) | [变更记录](CHANGELOG.md) | [llms.txt](https://docs.aether-edge.workers.dev/llms.txt)
 
 **一套 AI-native Edge Runtime、Kernel 与 SDK——它源于一个判断：IoT 工作天然适合
 Agent。**

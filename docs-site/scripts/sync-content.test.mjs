@@ -72,6 +72,13 @@ describe('synthesizeFrontmatter', () => {
     expect(descLine).not.toContain('[ADR-0003]');
     expect(descLine).not.toContain('](');
   });
+
+  it('skips a horizontal rule when deriving the first prose description', () => {
+    const content = '# Benchmarking\n\n---\n\nThe first useful paragraph.\n';
+    const out = synthesizeFrontmatter(content, null);
+
+    expect(out).toContain('description: "The first useful paragraph."');
+  });
 });
 
 describe('findCollisions', () => {
@@ -164,18 +171,18 @@ describe('rewriteRelativeLinks', () => {
     );
   });
 
-  it('rewrites a link whose resolved target IS in the synced set to the absolute site path Starlight will serve it at', () => {
+  it('rewrites a link whose resolved target is in the synced set to its document route', () => {
     const content = 'See [Rule Engine](../concepts/rule-engine.md) for details.';
     const syncedSourceSet = new Set(['docs/guides/writing-rules.md', 'docs/concepts/rule-engine.md']);
     const out = rewriteRelativeLinks(content, 'docs/guides/writing-rules.md', syncedSourceSet);
-    expect(out).toBe('See [Rule Engine](/concepts/rule-engine/) for details.');
+    expect(out).toBe('See [Rule Engine](/concepts/rule-engine) for details.');
   });
 
   it('preserves an anchor fragment when rewriting a synced target to a site path', () => {
     const content = '[Rule Engine](../concepts/rule-engine.md#some-heading)';
     const syncedSourceSet = new Set(['docs/guides/writing-rules.md', 'docs/concepts/rule-engine.md']);
     const out = rewriteRelativeLinks(content, 'docs/guides/writing-rules.md', syncedSourceSet);
-    expect(out).toBe('[Rule Engine](/concepts/rule-engine/#some-heading)');
+    expect(out).toBe('[Rule Engine](/concepts/rule-engine#some-heading)');
   });
 
   it('rewrites a link to a synced README.md-shaped target to its collapsed <dir>/ site path', () => {
@@ -185,15 +192,14 @@ describe('rewriteRelativeLinks', () => {
       'crates/aether-ports/README.md',
     ]);
     const out = rewriteRelativeLinks(content, 'crates/aether-testkit/README.md', syncedSourceSet);
-    expect(out).toBe('See [aether-ports](/crates/aether-ports/) for details.');
+    expect(out).toBe('See [aether-ports](/crates/aether-ports) for details.');
   });
 });
 
 describe('findBrokenExternalLinks', () => {
-  // starlight-links-validator never checks https:// links (sameSitePolicy:
-  // 'ignore'), so a typo'd excluded-content link would otherwise ship as a
-  // silently-dead GitHub URL. These use real repo paths (not a live-repo
-  // mutation) so the existence check runs against real files/real absence.
+  // A typo'd excluded-content link would otherwise ship as a silently-dead
+  // GitHub URL. These use real repo paths (not a live-repo mutation) so the
+  // existence check runs against real files/real absence.
 
   it('flags a relative link whose resolved target does not exist on disk', async () => {
     const content = '[Bad Link](../domain/typo-nonexistent-file.md)';
@@ -251,7 +257,7 @@ describe('slugToSitePath', () => {
     expect(slugToSitePath('')).toBe('/');
   });
 
-  it('wraps a non-empty slug in leading and trailing slashes', () => {
-    expect(slugToSitePath('concepts/architecture')).toBe('/concepts/architecture/');
+  it('prefixes a non-empty slug with a slash', () => {
+    expect(slugToSitePath('concepts/architecture')).toBe('/concepts/architecture');
   });
 });

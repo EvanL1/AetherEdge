@@ -6,6 +6,21 @@ import { configDefaults, defineConfig } from 'vitest/config';
 
 export default defineConfig({
   test: {
-    exclude: [...configDefaults.exclude, 'worker/**'],
+    exclude: [
+      ...configDefaults.exclude,
+      'worker/entry.test.js',
+      'worker/test-fixtures/**',
+    ],
+    coverage: {
+      provider: 'v8',
+      include: ['scripts/*.mjs', 'worker/entry.js'],
+      exclude: ['scripts/*.test.mjs'],
+      thresholds: {
+        statements: 80,
+        branches: 80,
+        functions: 80,
+        lines: 80,
+      },
+    },
   },
 });
