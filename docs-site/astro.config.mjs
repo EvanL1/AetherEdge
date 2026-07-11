@@ -5,9 +5,7 @@ import starlightLlmsTxt from 'starlight-llms-txt';
 import starlightLinksValidator from 'starlight-links-validator';
 
 export default defineConfig({
-  // TODO: update to the real aether-docs.<account-subdomain>.workers.dev URL
-  // after the first Cloudflare deploy (see docs-site/AGENTS.md).
-  site: 'https://aether-docs.workers.dev',
+  site: 'https://aether-docs.liuyifanz-1996.workers.dev',
   integrations: [
     starlight({
       title: 'Aether',

@@ -79,10 +79,9 @@ npm run test:worker  # Cloudflare Worker test suite (needs workerd)
 
 Requires Node >= 22.13.0 (see `engines` in `package.json`).
 
-## Known placeholder
+## Production URL
 
-`site:` in `astro.config.mjs` is a placeholder
-(`https://aether-docs.workers.dev`) until the first real Cloudflare deploy
-reveals the actual `aether-docs.<account-subdomain>.workers.dev` URL. It
-feeds canonical tags, `sitemap.xml`, and every `llms*.txt` link — update it
-in one place after the first deploy.
+The site is deployed at
+`https://aether-docs.liuyifanz-1996.workers.dev`. The matching `site:` value
+in `astro.config.mjs` feeds canonical tags, `sitemap.xml`, and every
+`llms*.txt` link.
