@@ -1,0 +1,135 @@
+# Communication Channels Configuration
+# Only channels - service params are hardcoded in the program
+
+channels:
+  - id: 1
+    name: "PCS#1"
+    description: "变流器 #1"
+    protocol: "modbus_tcp"
+    enabled: false  # Example only; enable explicitly after commissioning
+    parameters:
+      host: "192.168.1.10"
+      port: 502
+      connect_timeout_ms: 3000
+      read_timeout_ms: 3000
+    logging:
+      enabled: true
+      level: "info"
+
+  - id: 2
+    name: "BAMS#1"
+    description: "电池管理系统 #1 (Ampace)"
+    protocol: "modbus_tcp"
+    enabled: false  # Example only; enable explicitly after commissioning
+    parameters:
+      host: "192.168.1.100"
+      port: 502
+      connect_timeout_ms: 3000
+      read_timeout_ms: 3000
+    logging:
+      enabled: true
+      level: "info"
+
+  - id: 3
+    name: "GENSET#1"
+    description: "柴油发电机组 #1"
+    protocol: "modbus_rtu"
+    enabled: false  # Example only; enable explicitly after commissioning
+    parameters:
+      device: "/dev/ttyS4"
+      baud_rate: 9600
+      data_bits: 8
+      stop_bits: 1
+      parity: "N"
+      connect_timeout_ms: 3000
+      read_timeout_ms: 3000
+      retry_interval_ms: 2000
+    logging:
+      enabled: true
+      level: "info"
+
+  - id: 4
+    name: "ECU1170_GPIO"
+    description: "ECU-1170 本机 DI/DO"
+    protocol: "di_do"
+    enabled: false  # 默认禁用，待硬件就绪后启用
+    parameters:
+      driver: "sysfs"
+      gpio_base_path: "/sys/class/gpio"
+      di_poll_interval_ms: 200
+    logging:
+      enabled: true
+      level: "info"
+      
+  - id: 5
+    name: "lynk_serial_can"
+    description: "CAN 总线协议 - Discover LYNK Serial 接口"
+    protocol: "can"                         # 通用 CAN 协议
+    enabled: false                         # Example only; enable explicitly after commissioning
+    parameters:
+      device: "can0"                   # CAN 设备路径 (如 can0, can1)
+      bitrate: 250000                       # 波特率 250kbps (Discover LYNK 规范)
+      connect_timeout_ms: 3000              # 连接超时
+      read_timeout_ms: 3000                 # 读取超时
+      retry_interval_ms: 2000               # 重连间隔
+      rx_poll_interval_ms: 50               # 接收轮询周期 (50ms)
+    logging:
+      enabled: true
+      level: "info"
+
+  # ============ MQTT 通道示例 ============
+  - id: 10
+    name: "MQTT_Broker"
+    description: "MQTT 消息订阅 - 设备遥测数据"
+    protocol: "mqtt"
+    enabled: false                          # 默认禁用，按需启用
+    parameters:
+      broker: "tcp://192.168.1.50:1883"     # Broker 地址
+      client_id: "io_10"                # 客户端标识（建议使用通道 ID）
+      username: "mqtt_user"                 # 认证用户名（可选）
+      password: "mqtt_password"             # 认证密码（可选）
+      subscriptions:                        # 订阅主题列表
+        - topic: "device/+/telemetry"       # 单层通配符：匹配所有设备遥测
+          qos: 1
+        - topic: "alert/#"                  # 多层通配符：匹配所有告警
+          qos: 2
+      keep_alive_secs: 30                   # 心跳间隔
+      connect_timeout_ms: 5000              # 连接超时
+      reconnect_delay_ms: 5000              # 重连延迟
+    logging:
+      enabled: true
+      level: "info"
+
+  # ============ HTTP 轮询通道示例 ============
+  - id: 11
+    name: "HTTP_Polling"
+    description: "HTTP 轮询 - 外部 API 数据采集"
+    protocol: "http"
+    enabled: false                          # 默认禁用，按需启用
+    parameters:
+      mode: "polling"                       # 轮询模式
+      url: "http://192.168.1.100/api/data"  # 目标 URL
+      method: "GET"                         # HTTP 方法
+      headers:                              # 请求头
+        Authorization: "Bearer your_token_here"
+        Accept: "application/json"
+      interval_ms: 5000                     # 轮询间隔 5 秒
+      timeout_ms: 3000                      # 请求超时 3 秒
+      max_retries: 3                        # 失败重试次数
+    logging:
+      enabled: true
+      level: "info"
+
+  # ============ HTTP Webhook 通道示例 ============
+  - id: 12
+    name: "HTTP_Webhook"
+    description: "HTTP Webhook - 被动接收数据推送"
+    protocol: "http"
+    enabled: false                          # 默认禁用，按需启用
+    parameters:
+      mode: "webhook"                       # Webhook 模式
+      listen_path: "/api/webhook/channel/12"  # 监听路径
+      auth_token: "secret_token_12345"      # 认证 token（推送方需在请求头携带）
+    logging:
+      enabled: true
+      level: "info"

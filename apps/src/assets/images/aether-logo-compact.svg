@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64" role="img" aria-label="AetherEMS">
+  <defs>
+    <linearGradient id="aether-compact-accent" x1="10" y1="52" x2="54" y2="12" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#41d7b6"/>
+      <stop offset="1" stop-color="#6ea8ff"/>
+    </linearGradient>
+  </defs>
+  <rect x="8" y="8" width="48" height="48" rx="10" fill="rgba(2, 8, 26, 0.22)" stroke="rgba(255, 255, 255, 0.32)" stroke-width="2"/>
+  <path d="M17 47 L28 18 L39 47" fill="none" stroke="url(#aether-compact-accent)" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M28 18 L47 18" fill="none" stroke="#ffffff" stroke-width="6" stroke-linecap="round"/>
+  <path d="M38 18 L38 47" fill="none" stroke="#ffffff" stroke-width="6" stroke-linecap="round"/>
+</svg>

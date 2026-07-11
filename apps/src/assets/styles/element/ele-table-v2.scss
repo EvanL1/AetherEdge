@@ -1,0 +1,101 @@
+.aether-class {
+  .el-table-v2 {
+    background-color: transparent;
+
+    &::-webkit-scrollbar {
+      width: 0.06rem;
+      height: 0.06rem;
+    }
+
+    &::-webkit-scrollbar-thumb {
+      background: rgba(255, 255, 255, 0.18);
+      border-radius: 0.03rem;
+    }
+
+    &::-webkit-scrollbar-track {
+      background: transparent;
+    }
+
+    .el-table-v2__header {
+      background: rgba(84, 98, 140, 0.2);
+
+      .el-table-v2__header-row {
+        background: transparent;
+      }
+
+      .el-table-v2__header-cell {
+        padding: 0.09rem 0.2rem;
+        color: rgba(255, 255, 255, 0.6);
+        font-size: 0.14rem;
+        font-weight: 400;
+        line-height: 0.22rem;
+        background: transparent;
+        border: none;
+        border-bottom: 0.01rem solid rgba(255, 255, 255, 0.1);
+
+        &.is-fixed-right {
+          background-color: #243b65;
+          box-shadow: 0.03rem 0 0.06rem rgba(0, 0, 0, 0.06);
+        }
+
+        &.is-fixed-left {
+          background-color: #243b65;
+          box-shadow: -0.03rem 0 0.06rem rgba(0, 0, 0, 0.06);
+        }
+      }
+    }
+
+    .el-table-v2__body {
+      background: transparent;
+
+      .el-table-v2__row {
+        transition:
+          background 0.2s,
+          box-shadow 0.2s,
+          color 0.2s;
+
+        &:hover {
+          background: #283f69;
+        }
+      }
+
+      .el-table-v2__cell {
+        padding: 0.09rem 0.2rem;
+        color: #fff;
+        font-size: 0.14rem;
+        line-height: 0.4rem;
+        background: transparent;
+        border-bottom: 0.01rem solid rgba(255, 255, 255, 0.1);
+
+        &.is-fixed-right {
+          background-color: #243b65;
+          box-shadow: 0.03rem 0 0.06rem rgba(0, 0, 0, 0.06);
+        }
+
+        &.is-fixed-left {
+          background-color: #243b65;
+          box-shadow: -0.03rem 0 0.06rem rgba(0, 0, 0, 0.06);
+        }
+      }
+
+      .el-table-v2__empty {
+        background: transparent;
+
+        .el-table-v2__empty-text {
+          color: #9ca3af;
+          font-size: 0.14rem;
+        }
+      }
+    }
+
+    .el-table-v2__main,
+    .el-table-v2__header,
+    .el-table-v2__body,
+    .el-table-v2__row,
+    .el-table-v2__header-row,
+    .el-table-v2__cell,
+    .el-table-v2__header-cell {
+      background-color: transparent;
+    }
+  }
+}

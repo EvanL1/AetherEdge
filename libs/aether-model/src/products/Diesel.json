@@ -1,0 +1,43 @@
+{
+  "name": "Diesel",
+  "pName": "Generator",
+  "P": [
+    {"id":1,"name":"Max Power","unit":"kw","type":"number"},
+    {"id":2,"name":"Max Voltage","unit":"V","type":"number"},
+    {"id":3,"name":"Max Current","unit":"A","type":"number"},
+    {"id":4,"name":"Max Fuel","unit":"L","type":"number"},
+    {"id":5,"name":"Rated Frequency","unit":"Hz","type":"number"},
+    {"id":6,"name":"Min Power","unit":"kw","type":"number"},
+    {"id":7,"name":"Fuel Consumption Rate","unit":"L/kWh","type":"number"},
+    {"id":8,"name":"Startup Time","unit":"min","type":"number"},
+    {"id":9,"name":"Min Runtime","unit":"min","type":"number"},
+    {"id":10,"name":"Response Time","unit":"min","type":"number"}
+  ],
+  "M": [
+    {"id":1,"name":"Diesel Power","unit":"kw","type":"number"},
+    {"id":2,"name":"Diesel Energy","unit":"kwh","type":"number"},
+    {"id":3,"name":"Diesel Voltage","unit":"V","type":"number"},
+    {"id":4,"name":"Diesel Current A","unit":"A","type":"number"},
+    {"id":5,"name":"Diesel Current B","unit":"A","type":"number"},
+    {"id":6,"name":"Diesel Current C","unit":"A","type":"number"},
+    {"id":7,"name":"Diesel Voltage A","unit":"V","type":"number"},
+    {"id":8,"name":"Diesel Voltage B","unit":"V","type":"number"},
+    {"id":9,"name":"Diesel Voltage C","unit":"V","type":"number"},
+    {"id":10,"name":"Diesel Power A","unit":"kw","type":"number"},
+    {"id":11,"name":"Diesel Power B","unit":"kw","type":"number"},
+    {"id":12,"name":"Diesel Power C","unit":"kw","type":"number"},
+    {"id":13,"name":"Diesel Oil","unit":"%","type":"number"},
+    {"id":14,"name":"Diesel Temperature","unit":"℃","type":"number"},
+    {"id":15,"name":"Start Stop Status","unit":"","type":"number"},
+    {"id":16,"name":"Frequency","unit":"Hz","type":"number"},
+    {"id":17,"name":"Diesel Generator","unit":"%","type":"number"},
+    {"id":18,"name":"Diesel Energy Today","unit":"kwh","type":"number"}
+  ],
+  "A": [
+    {"id":1,"name":"Start","unit":"","type":"string"},
+    {"id":2,"name":"Stop","unit":"","type":"string"},
+    {"id":3,"name":"Power Set","unit":"kw","type":"number"},
+    {"id":4,"name":"Off On Grid","unit":"","type":"string"},
+    {"id":5,"name":"Clear Error","unit":"","type":"string"}
+  ]
+}

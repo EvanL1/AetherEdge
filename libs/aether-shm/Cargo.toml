@@ -1,0 +1,21 @@
+[package]
+name = "aether-shm"
+publish = false
+version.workspace = true
+edition = "2024"
+description = "Shared memory abstraction for AetherEMS - platform-agnostic reader/writer"
+license.workspace = true
+
+[features]
+default = ["std"]
+std = ["aether-core/std", "memmap2"]
+
+[dependencies]
+aether-core = { path = "../aether-core", default-features = false }
+
+# std-only dependencies
+memmap2 = { version = "0.9.11", optional = true }
+workspace-hack = { version = "0.1", path = "../../workspace-hack" }
+
+[dev-dependencies]
+tempfile = "3.8"

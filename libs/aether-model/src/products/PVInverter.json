@@ -1,0 +1,41 @@
+{
+  "name": "PVInverter",
+  "pName": "Generator",
+  "P": [
+    {"id":1,"name":"Max Power","unit":"kw","type":"number"},
+    {"id":2,"name":"Max DC Voltage","unit":"V","type":"number"},
+    {"id":3,"name":"Max DC Current","unit":"A","type":"number"},
+    {"id":4,"name":"Rated AC Voltage","unit":"V","type":"number"},
+    {"id":5,"name":"Rated Frequency","unit":"Hz","type":"number"},
+    {"id":6,"name":"String Count","unit":"","type":"number"},
+    {"id":7,"name":"MPPT Count","unit":"","type":"number"},
+    {"id":8,"name":"Phase Count","unit":"","type":"number"}
+  ],
+  "M": [
+    {"id":1,"name":"Total Power","unit":"kw","type":"number"},
+    {"id":2,"name":"DC Power","unit":"kw","type":"number"},
+    {"id":3,"name":"DC Voltage","unit":"V","type":"number"},
+    {"id":4,"name":"DC Current","unit":"A","type":"number"},
+    {"id":5,"name":"Power A","unit":"kw","type":"number"},
+    {"id":6,"name":"Power B","unit":"kw","type":"number"},
+    {"id":7,"name":"Power C","unit":"kw","type":"number"},
+    {"id":8,"name":"Voltage A","unit":"V","type":"number"},
+    {"id":9,"name":"Voltage B","unit":"V","type":"number"},
+    {"id":10,"name":"Voltage C","unit":"V","type":"number"},
+    {"id":11,"name":"Current A","unit":"A","type":"number"},
+    {"id":12,"name":"Current B","unit":"A","type":"number"},
+    {"id":13,"name":"Current C","unit":"A","type":"number"},
+    {"id":14,"name":"AC Frequency","unit":"Hz","type":"number"},
+    {"id":15,"name":"Temperature","unit":"\u2103","type":"number"},
+    {"id":16,"name":"Efficiency","unit":"%","type":"number"},
+    {"id":17,"name":"Energy Today","unit":"kwh","type":"number"},
+    {"id":18,"name":"Start Stop Status","unit":"","type":"number"},
+    {"id":19,"name":"Grid Status","unit":"","type":"number"}
+  ],
+  "A": [
+    {"id":1,"name":"Start","unit":"","type":"string"},
+    {"id":2,"name":"Stop","unit":"","type":"string"},
+    {"id":3,"name":"Power Set","unit":"kw","type":"number"},
+    {"id":4,"name":"Clear Error","unit":"","type":"string"}
+  ]
+}

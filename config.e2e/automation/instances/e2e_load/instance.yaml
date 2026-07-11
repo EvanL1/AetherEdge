@@ -1,0 +1,11 @@
+instance:
+  id: 4
+  name: "E2E_Load"
+  product_name: "Load"
+  description: "E2E Test - Load / Meter"
+  enabled: true
+  channel_id: 1004
+
+  properties:
+    rated_power: 200.0
+    rated_voltage: 400.0

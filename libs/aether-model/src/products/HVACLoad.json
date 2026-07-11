@@ -1,0 +1,40 @@
+{
+  "name": "HVACLoad",
+  "pName": "Station",
+  "P": [
+    {"id":1,"name":"Max Voltage","unit":"V","type":"number"},
+    {"id":2,"name":"Max Current","unit":"A","type":"number"},
+    {"id":3,"name":"Rated Frequency","unit":"Hz","type":"number"},
+    {"id":4,"name":"Max Power","unit":"kw","type":"number"},
+    {"id":5,"name":"Load Flexibility","unit":"","type":"string","options":["rigid","flexible"]},
+    {"id":6,"name":"Adjustable Power Range","unit":"kw","type":"number"},
+    {"id":7,"name":"Response Time","unit":"min","type":"number"},
+    {"id":8,"name":"Min Runtime","unit":"min","type":"number"},
+    {"id":9,"name":"Max Interrupt Time","unit":"min","type":"number"},
+    {"id":10,"name":"Shiftable Time Window","unit":"min","type":"number"},
+    {"id":11,"name":"HVAC Type","unit":"","type":"string","options":["air_conditioner","heat_pump","furnace"]},
+    {"id":12,"name":"Rated Cooling Capacity","unit":"kW","type":"number"},
+    {"id":13,"name":"Rated Heating Capacity","unit":"kW","type":"number"},
+    {"id":14,"name":"Thermal Mass","unit":"kJ/°C","type":"number"},
+    {"id":15,"name":"Heat Transfer Coefficient","unit":"W/°C","type":"number"},
+    {"id":16,"name":"Controlled Area","unit":"m²","type":"number"}
+  ],
+  "M": [
+    {"id":1,"name":"Load Power","unit":"kw","type":"number"},
+    {"id":2,"name":"Energy Used","unit":"kwh","type":"number"},
+    {"id":3,"name":"Voltage","unit":"V","type":"number"},
+    {"id":4,"name":"Current","unit":"A","type":"number"},
+    {"id":5,"name":"Frequency","unit":"Hz","type":"number"},
+    {"id":6,"name":"Power Factor","unit":"","type":"number"},
+    {"id":7,"name":"Reactive Power","unit":"kVar","type":"number"},
+    {"id":8,"name":"Apparent Power","unit":"kVa","type":"number"},
+    {"id":9,"name":"Indoor Temperature","unit":"°C","type":"number"},
+    {"id":10,"name":"Outdoor Temperature","unit":"°C","type":"number"},
+    {"id":11,"name":"Setpoint Temperature","unit":"°C","type":"number"},
+    {"id":12,"name":"Operating Mode","unit":"","type":"string","options":["cooling","heating","off"]}
+  ],
+  "A": [
+    {"id":1,"name":"Setpoint Temperature","unit":"°C","type":"number","min":16,"max":30},
+    {"id":2,"name":"Temperature Tolerance","unit":"°C","type":"number","min":0.5,"max":5}
+  ]
+}

@@ -1,0 +1,21 @@
+[package]
+name = "aether-postgres-history"
+version.workspace = true
+edition = "2024"
+rust-version = "1.90"
+description = "Optional PostgreSQL history sink for Aether"
+license.workspace = true
+repository.workspace = true
+documentation = "https://docs.rs/aether-postgres-history"
+readme = "README.md"
+keywords = ["iot", "edge", "postgresql", "history"]
+categories = ["embedded", "database"]
+
+[dependencies]
+aether-domain = { version = "0.5.0", path = "../../crates/aether-domain" }
+aether-ports = { version = "0.5.0", path = "../../crates/aether-ports" }
+async-trait = { workspace = true }
+sqlx = { workspace = true, features = ["postgres"] }
+
+[lints]
+workspace = true

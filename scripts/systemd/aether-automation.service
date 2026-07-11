@@ -1,0 +1,18 @@
+[Unit]
+Description=Aether Edge automation runtime (aether-automation)
+PartOf=aether.target
+After=aether-io.service
+Requires=aether-io.service
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/aether/aether.env
+Environment=API_HOST=127.0.0.1
+ExecStart=/opt/aether/bin/aether-automation
+Restart=on-failure
+RestartSec=2
+User=root
+WorkingDirectory=/opt/aether
+
+[Install]
+WantedBy=aether.target

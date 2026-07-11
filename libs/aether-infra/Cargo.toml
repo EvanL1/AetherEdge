@@ -1,0 +1,37 @@
+[package]
+name = "aether-infra"
+publish = false
+version.workspace = true
+edition = "2024"
+description = "Infrastructure layer for AetherEMS (Redis, SQLite)"
+
+[features]
+default = ["redis", "sqlite"]
+redis = ["dep:redis", "dep:bb8", "dep:bb8-redis"]
+sqlite = ["dep:sqlx", "dep:serde_yml"]
+
+[dependencies]
+# Redis (optional)
+redis = { workspace = true, optional = true }
+bb8 = { workspace = true, optional = true }
+bb8-redis = { workspace = true, optional = true }
+
+# SQLite (optional)
+sqlx = { workspace = true, optional = true }
+serde_yml = { workspace = true, optional = true }
+
+# Local dependencies
+aether-model = { path = "../aether-model" }
+
+# Common dependencies
+anyhow = { workspace = true }
+bytes = { workspace = true }
+tracing = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }
+
+[lints]
+workspace = true

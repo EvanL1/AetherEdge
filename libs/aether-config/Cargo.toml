@@ -1,0 +1,27 @@
+[package]
+name = "aether-config"
+publish = false
+version.workspace = true
+edition = "2024"
+license.workspace = true
+description = "Cross-platform configuration schema for AetherEMS services"
+
+[lib]
+name = "aether_config"
+path = "src/lib.rs"
+
+[dependencies]
+common = { path = "../common", default-features = false, features = ["sqlite", "axum"] }
+aether-schema-macro = { path = "../aether-schema-macro" }
+
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yml = { workspace = true }
+anyhow = { workspace = true }
+chrono = { workspace = true }
+sqlx = { workspace = true }
+utoipa = { workspace = true }
+
+[features]
+default = []
+openapi = ["common/openapi"]

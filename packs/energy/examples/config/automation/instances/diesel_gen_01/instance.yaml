@@ -1,0 +1,18 @@
+instance:
+  id: 1
+  name: "diesel_gen_01"
+  product_name: diesel_generator
+  description: "柴油发电机组 #1"
+  enabled: false
+
+  properties:
+    rated_power: 500.0  # kW
+    rated_voltage: 400.0  # V
+    rated_current: 720.0  # A
+    rated_frequency: 50.0  # Hz
+    rated_speed: 1500  # RPM
+    number_of_cylinders: 6
+    displacement: 12.0  # L
+    fuel_type: "diesel"
+    cooling_type: "water"
+    starting_type: "electric"

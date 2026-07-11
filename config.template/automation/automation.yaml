@@ -1,0 +1,2 @@
+# Fail-safe distribution default: instances and rules require commissioning.
+auto_load_instances: false

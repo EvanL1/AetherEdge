@@ -1,0 +1,37 @@
+[package]
+name = "aether-calc"
+publish = false
+version.workspace = true
+edition = "2024"
+license.workspace = true
+description = "Unified calculation library for AetherEMS - expression evaluation and built-in functions"
+
+[dependencies]
+# Expression evaluation
+evalexpr = { workspace = true }
+
+# Async sync primitives (RwLock for state)
+tokio = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# Error handling
+thiserror = { workspace = true }
+
+# Pattern matching for function parsing
+regex = { workspace = true }
+
+# Time
+chrono = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+
+
+[dev-dependencies]
+# No dev dependencies needed
+
+[lints]
+workspace = true

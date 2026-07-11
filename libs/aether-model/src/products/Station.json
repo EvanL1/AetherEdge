@@ -1,0 +1,16 @@
+{
+  "name": "Station",
+  "P": [
+    {"id":1,"name":"Rated Capacity","unit":"","type":"string"},
+    {"id":2,"name":"Longitude","unit":"","type":"string"},
+    {"id":3,"name":"Latitude","unit":"","type":"string"},
+    {"id":4,"name":"Altitude","unit":"m","type":"number"},
+    {"id":5,"name":"Station Type","unit":"","type":"string","options":["residential","commercial","industrial","datacenter"]},
+    {"id":6,"name":"Scenario Parameters","unit":"","type":"string"}
+  ],
+  "M": [
+    {"id":1,"name":"Status","unit":"","type":"number"},
+    {"id":2,"name":"Saving Billing","unit":"$","type":"string"}
+  ],
+  "A": []
+}

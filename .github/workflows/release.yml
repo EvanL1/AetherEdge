@@ -1,0 +1,442 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+      - 'v[0-9]+.[0-9]+.[0-9]+-*'
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  # ============================================================================
+  # Job 1: Pre-Release Quality Check
+  # ============================================================================
+  pre-check:
+    name: Pre-Release Check
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Verify release metadata
+        run: ./scripts/check-release-version.sh "$GITHUB_REF_NAME"
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@1.90.0
+        with:
+          components: clippy
+
+      - name: Install Protoc
+        uses: arduino/setup-protoc@v3
+        with:
+          version: "23.x"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Cache Dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@nextest
+
+      - name: Quick Quality Check
+        run: |
+          ./scripts/test-release-integrity.sh
+          cargo fmt --all -- --check
+          ./scripts/check-architecture.sh
+          ./scripts/check-open-source-readiness.sh
+          cargo clippy --workspace -- -D warnings
+          cargo clippy --workspace --lib --bins -- -D clippy::unwrap_used -D clippy::expect_used
+          cargo nextest run
+          cargo nextest run -p aether-shm-bridge -p aether-redis-bridge -p aether-postgres-history -p aether-example-minimal-gateway -p aether-example-energy-gateway
+          cargo nextest run --workspace --lib --bins
+
+  # ============================================================================
+  # Job 2: Build Multi-Arch Installers (Parallel Matrix)
+  # ============================================================================
+  build:
+    name: Build ${{ matrix.arch }} Installer
+    runs-on: ${{ matrix.runner }}
+    needs: pre-check
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            target: aarch64-unknown-linux-musl
+            docker_platform: linux/arm64
+            runner: ubuntu-24.04-arm
+            zig_arch: aarch64
+          - arch: amd64
+            target: x86_64-unknown-linux-musl
+            docker_platform: linux/amd64
+            runner: ubuntu-latest
+            zig_arch: x86_64
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+          fetch-depth: 0
+
+      - name: Free Disk Space
+        run: |
+          echo "=== Before cleanup ==="
+          df -h /
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/share/boost
+          sudo rm -rf /usr/local/lib/android /usr/share/swift /opt/hostedtoolcache/CodeQL
+          sudo apt-get clean
+          docker system prune -af --volumes || true
+          echo "=== After cleanup ==="
+          df -h /
+
+      - name: Extract Version
+        id: version
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "artifact_name=AetherEdge-${{ matrix.arch }}-${VERSION}.run" >> "$GITHUB_OUTPUT"
+          echo "Building version $VERSION for ${{ matrix.arch }}"
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@1.90.0
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache Cargo Dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+          key: ${{ runner.os }}-${{ matrix.arch }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ matrix.arch }}-cargo-
+
+      - name: Install Cross-Compilation Tools
+        run: |
+          ZIG_VERSION="0.13.0"
+          ZIG_ARCH="${{ matrix.zig_arch }}"
+          echo "Installing Zig ${ZIG_VERSION} for ${ZIG_ARCH}..."
+          wget -q "https://ziglang.org/download/${ZIG_VERSION}/zig-linux-${ZIG_ARCH}-${ZIG_VERSION}.tar.xz"
+          tar -xf "zig-linux-${ZIG_ARCH}-${ZIG_VERSION}.tar.xz"
+          sudo mv "zig-linux-${ZIG_ARCH}-${ZIG_VERSION}" /opt/zig
+          echo "/opt/zig" >> $GITHUB_PATH
+
+          echo "Installing cargo-zigbuild..."
+          cargo install cargo-zigbuild --locked || true
+
+      - name: Install Packaging Tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y makeself
+
+      - name: Set up QEMU
+        if: matrix.arch == 'amd64'
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: ${{ matrix.docker_platform }}
+
+      - name: Set up Docker Buildx
+        if: matrix.arch == 'amd64'
+        uses: docker/setup-buildx-action@v3
+        with:
+          platforms: ${{ matrix.docker_platform }}
+
+      - name: Build Installer
+        run: |
+          chmod +x scripts/build-installer.sh
+          ./scripts/build-installer.sh "${{ steps.version.outputs.version }}" "${{ matrix.arch }}" "${{ matrix.target }}"
+
+      - name: Package Standalone Aether CLI
+        run: |
+          AETHER_BIN="target/${{ matrix.target }}/release/aether"
+          AETHER_TAR_NAME="aether-linux-${{ matrix.zig_arch }}.tar.gz"
+          AETHER_TAR="release/$AETHER_TAR_NAME"
+          CLI_PACKAGE_DIR="$(mktemp -d)"
+          trap 'rm -rf "$CLI_PACKAGE_DIR"' EXIT
+          cp "$AETHER_BIN" "$CLI_PACKAGE_DIR/aether"
+          cp LICENSE "$CLI_PACKAGE_DIR/LICENSE"
+          cp NOTICE "$CLI_PACKAGE_DIR/NOTICE"
+          tar czf "$AETHER_TAR" -C "$CLI_PACKAGE_DIR" aether LICENSE NOTICE
+          tar tzf "$AETHER_TAR" | grep -Fxq LICENSE
+          tar tzf "$AETHER_TAR" | grep -Fxq NOTICE
+          (cd release && sha256sum "$AETHER_TAR_NAME" > "${AETHER_TAR_NAME}.sha256")
+          echo "Aether CLI:"
+          ls -lh "$AETHER_TAR"
+
+      - name: Verify Build Artifacts
+        run: |
+          ARTIFACT_NAME="${{ steps.version.outputs.artifact_name }}"
+          ARTIFACT="release/$ARTIFACT_NAME"
+          if [[ ! -f "$ARTIFACT" ]]; then
+            echo "ERROR: Build artifact not found: $ARTIFACT"
+            ls -la release/ || echo "release directory not found"
+            exit 1
+          fi
+          "$ARTIFACT" --list | grep -Eq '(^|/)LICENSE$'
+          "$ARTIFACT" --list | grep -Eq '(^|/)NOTICE$'
+          (cd release && sha256sum "$ARTIFACT_NAME" > "${ARTIFACT_NAME}.sha256")
+          (cd release && sha256sum -c "${ARTIFACT_NAME}.sha256")
+          echo "Build artifacts:"
+          ls -lh release/
+
+      - name: Upload Installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.arch }}-installer
+          path: |
+            release/${{ steps.version.outputs.artifact_name }}
+            release/${{ steps.version.outputs.artifact_name }}.sha256
+          retention-days: 7
+          if-no-files-found: error
+
+      - name: Upload Aether CLI
+        uses: actions/upload-artifact@v4
+        with:
+          name: aether-linux-${{ matrix.zig_arch }}
+          path: |
+            release/aether-linux-${{ matrix.zig_arch }}.tar.gz
+            release/aether-linux-${{ matrix.zig_arch }}.tar.gz.sha256
+          retention-days: 7
+
+  # ============================================================================
+  # Job 3: Build Aether CLI for macOS / Windows
+  # ============================================================================
+  aether-extra:
+    name: Build Aether (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    needs: pre-check
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            os: macos-14
+            name: darwin-aarch64
+            archive: tar.gz
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            name: windows-x86_64
+            archive: zip
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@1.90.0
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache Cargo Dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+          key: ${{ matrix.name }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ matrix.name }}-cargo-
+
+      - name: Build Aether CLI
+        run: cargo build --release --target ${{ matrix.target }} -p aether
+
+      - name: Package (unix)
+        if: matrix.archive == 'tar.gz'
+        run: |
+          CLI_PACKAGE_DIR="$(mktemp -d)"
+          trap 'rm -rf "$CLI_PACKAGE_DIR"' EXIT
+          cp "target/${{ matrix.target }}/release/aether" "$CLI_PACKAGE_DIR/aether"
+          cp LICENSE "$CLI_PACKAGE_DIR/LICENSE"
+          cp NOTICE "$CLI_PACKAGE_DIR/NOTICE"
+          tar czf "aether-${{ matrix.name }}.tar.gz" -C "$CLI_PACKAGE_DIR" aether LICENSE NOTICE
+          tar tzf "aether-${{ matrix.name }}.tar.gz" | grep -Fxq LICENSE
+          tar tzf "aether-${{ matrix.name }}.tar.gz" | grep -Fxq NOTICE
+          shasum -a 256 aether-${{ matrix.name }}.tar.gz > aether-${{ matrix.name }}.tar.gz.sha256
+
+      - name: Package (windows)
+        if: matrix.archive == 'zip'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path "cli-package" | Out-Null
+          Copy-Item "target/${{ matrix.target }}/release/aether.exe" "cli-package/aether.exe"
+          Copy-Item "LICENSE" "cli-package/LICENSE"
+          Copy-Item "NOTICE" "cli-package/NOTICE"
+          Compress-Archive -Path "cli-package/*" -DestinationPath "aether-${{ matrix.name }}.zip"
+          Expand-Archive -Path "aether-${{ matrix.name }}.zip" -DestinationPath "cli-package-verify"
+          if (-not (Test-Path "cli-package-verify/LICENSE")) { throw "LICENSE missing from CLI archive" }
+          if (-not (Test-Path "cli-package-verify/NOTICE")) { throw "NOTICE missing from CLI archive" }
+          $checksum = (Get-FileHash "aether-${{ matrix.name }}.zip" -Algorithm SHA256).Hash.ToLower() + "  aether-${{ matrix.name }}.zip`n"
+          [System.IO.File]::WriteAllText("$PWD/aether-${{ matrix.name }}.zip.sha256", $checksum, [System.Text.Encoding]::ASCII)
+
+      - name: Upload Aether CLI
+        uses: actions/upload-artifact@v4
+        with:
+          name: aether-${{ matrix.name }}
+          path: |
+            aether-${{ matrix.name }}.*
+          retention-days: 7
+
+  # ============================================================================
+  # Job 4: Create GitHub Release
+  # ============================================================================
+  release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    needs: [build, aether-extra]
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Extract Version
+        id: version
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Download All Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release/
+          merge-multiple: true
+
+      - name: List Downloaded Artifacts
+        run: ls -lh release/
+
+      - name: Verify release payloads
+        shell: bash
+        run: |
+          set -euo pipefail
+          for archive in release/aether-linux-*.tar.gz release/aether-darwin-*.tar.gz; do
+            tar tzf "$archive" | grep -Fxq LICENSE
+            tar tzf "$archive" | grep -Fxq NOTICE
+          done
+          unzip -Z1 release/aether-windows-x86_64.zip | grep -Fxq LICENSE
+          unzip -Z1 release/aether-windows-x86_64.zip | grep -Fxq NOTICE
+          for installer in release/AetherEdge-*.run; do
+            bash "$installer" --list | grep -Eq '(^|/)LICENSE$'
+            bash "$installer" --list | grep -Eq '(^|/)NOTICE$'
+          done
+          (cd release && sha256sum -c ./*.sha256)
+
+      - name: Generate Release Notes
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          TAG_NAME="${GITHUB_REF_NAME}"
+
+          cat > release_notes.md << EOF
+          ## AetherEdge ${VERSION}
+
+          ### Installer (six-process edge runtime)
+
+          | Architecture | File |
+          |--------------|------|
+          | ARM64 | \`AetherEdge-arm64-${VERSION}.run\` |
+          | AMD64 | \`AetherEdge-amd64-${VERSION}.run\` |
+
+          The edge installer is for a clean host only. It exits before stopping
+          services or writing files if it detects an existing Aether runtime,
+          site, database, container, or systemd unit. In-place upgrades and
+          legacy database imports are not supported by this release.
+
+          ### Aether CLI (standalone)
+
+          | Platform | File |
+          |----------|------|
+          | Linux x86_64 | \`aether-linux-x86_64.tar.gz\` |
+          | Linux aarch64 | \`aether-linux-aarch64.tar.gz\` |
+          | macOS ARM64 | \`aether-darwin-aarch64.tar.gz\` |
+          | Windows x64 | \`aether-windows-x86_64.zip\` |
+
+          ### Quick Start
+
+          \`\`\`bash
+          # Full deployment
+          scp AetherEdge-<arch>-${VERSION}.run user@device:/tmp/
+          chmod +x /tmp/AetherEdge-<arch>-${VERSION}.run
+          sudo /tmp/AetherEdge-<arch>-${VERSION}.run
+          aether doctor
+
+          # Aether CLI only
+          # Linux/macOS archives use tar; Windows publishes a .zip archive.
+          tar xzf aether-<platform>.tar.gz
+          sudo mv aether /usr/local/bin/
+          # Windows PowerShell: Expand-Archive aether-windows-x86_64.zip
+          \`\`\`
+
+          ### Package Contents
+
+          - **Rust Services**: aether-io (6001), aether-automation (6002), aether-history (6004), aether-api (6005), aether-uplink (6006), aether-alarm (6007)
+          - **Default dependency boundary**: no Redis, PostgreSQL, TimescaleDB, or frontend
+          - **CLI Tool**: aether
+
+          Frontend, Redis mirror, and PostgreSQL/TimescaleDB history artifacts
+          are separate explicit installer builds; they are not included in the
+          default release package.
+
+          EOF
+
+          # Add tag message if exists
+          TAG_MESSAGE=$(git tag -l --format='%(contents)' "$TAG_NAME" 2>/dev/null || echo "")
+          if [[ -n "$TAG_MESSAGE" ]]; then
+            echo "" >> release_notes.md
+            echo "### Release Notes" >> release_notes.md
+            echo "" >> release_notes.md
+            echo "$TAG_MESSAGE" >> release_notes.md
+          fi
+
+          # Add commits since previous tag
+          PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+          if [[ -n "$PREV_TAG" ]]; then
+            echo "" >> release_notes.md
+            echo "### Changes since $PREV_TAG" >> release_notes.md
+            echo "" >> release_notes.md
+            git log --pretty=format:"- %s" "$PREV_TAG".."$TAG_NAME" >> release_notes.md || true
+          fi
+
+          cat release_notes.md
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: AetherEdge ${{ steps.version.outputs.version }}
+          body_path: release_notes.md
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          files: |
+            release/AetherEdge-arm64-${{ steps.version.outputs.version }}.run
+            release/AetherEdge-arm64-${{ steps.version.outputs.version }}.run.sha256
+            release/AetherEdge-amd64-${{ steps.version.outputs.version }}.run
+            release/AetherEdge-amd64-${{ steps.version.outputs.version }}.run.sha256
+            release/aether-linux-x86_64.tar.gz
+            release/aether-linux-x86_64.tar.gz.sha256
+            release/aether-linux-aarch64.tar.gz
+            release/aether-linux-aarch64.tar.gz.sha256
+            release/aether-darwin-aarch64.tar.gz
+            release/aether-darwin-aarch64.tar.gz.sha256
+            release/aether-windows-x86_64.zip
+            release/aether-windows-x86_64.zip.sha256
+          fail_on_unmatched_files: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

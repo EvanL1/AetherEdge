@@ -1,0 +1,16 @@
+[Unit]
+Description=Aether Edge alarm service (aether-alarm)
+PartOf=aether.target
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/aether/aether.env
+Environment=API_HOST=127.0.0.1
+ExecStart=/opt/aether/bin/aether-alarm
+Restart=on-failure
+RestartSec=2
+User=root
+WorkingDirectory=/opt/aether
+
+[Install]
+WantedBy=aether.target

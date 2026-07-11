@@ -1,0 +1,116 @@
+# PCS (Power Conversion System) Normal Operation Scenario
+# Simulates a typical PCS with realistic power output patterns
+
+name: "PCS Normal Operation"
+
+devices:
+  - type: pcs
+    unit_id: 1
+    registers:
+      # Total Active Power (kW) - Daily pattern peaking at noon
+      - address: 0
+        name: "Total Power"
+        generator:
+          type: daily_pattern
+          peak_hour: 12
+          peak_value: 450.0
+          base_value: 50.0
+          spread_hours: 5.0
+
+      # Reactive Power (kVar) - Small sine wave
+      - address: 1
+        name: "Reactive Power"
+        generator:
+          type: sine
+          frequency: 0.001
+          amplitude: 20.0
+          offset: 0.0
+
+      # Power Factor - Constant near 1.0
+      - address: 2
+        name: "Power Factor"
+        generator:
+          type: random_drift
+          center: 980.0    # 0.98 * 1000 for integer representation
+          max_delta: 10.0
+          smoothness: 0.95
+
+      # Grid Frequency (Hz * 100) - 50Hz with small drift
+      - address: 3
+        name: "Grid Frequency"
+        generator:
+          type: random_drift
+          center: 5000.0   # 50.00 Hz
+          max_delta: 5.0   # ±0.05 Hz
+          smoothness: 0.98
+
+      # DC Voltage (V) - Sine wave simulating MPPT tracking
+      - address: 10
+        name: "DC Voltage"
+        generator:
+          type: sine
+          frequency: 0.01
+          amplitude: 20.0
+          offset: 700.0
+
+      # DC Current (A) - Follows daily pattern
+      - address: 11
+        name: "DC Current"
+        generator:
+          type: daily_pattern
+          peak_hour: 12
+          peak_value: 650.0
+          base_value: 70.0
+
+      # AC Voltage L1 (V) - Small drift around 230V
+      - address: 20
+        name: "AC Voltage L1"
+        generator:
+          type: random_drift
+          center: 230.0
+          max_delta: 5.0
+          smoothness: 0.9
+
+      # AC Voltage L2 (V)
+      - address: 21
+        name: "AC Voltage L2"
+        generator:
+          type: random_drift
+          center: 230.0
+          max_delta: 5.0
+          smoothness: 0.9
+
+      # AC Voltage L3 (V)
+      - address: 22
+        name: "AC Voltage L3"
+        generator:
+          type: random_drift
+          center: 230.0
+          max_delta: 5.0
+          smoothness: 0.9
+
+      # Temperature (°C * 10) - Random drift with daily influence
+      - address: 30
+        name: "Temperature"
+        generator:
+          type: random_drift
+          center: 350.0    # 35.0°C
+          max_delta: 50.0  # ±5.0°C
+          smoothness: 0.92
+
+      # Status Register - Constant running status
+      - address: 40
+        name: "Status"
+        generator:
+          type: constant
+          value: 1.0       # 1 = Running
+
+      # Fault Code - No faults
+      - address: 41
+        name: "Fault Code"
+        generator:
+          type: constant
+          value: 0.0
+
+faults:
+  enabled: false

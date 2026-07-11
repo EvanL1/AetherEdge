@@ -1,0 +1,81 @@
+:root:root {
+  --el-color-primary: var(--vt-color-primary);
+  --el-color-primary-light-3: var(--vt-color-primary-hover);
+  --el-color-primary-dark-2: var(--vt-color-primary-active);
+
+  --el-color-success: var(--vt-color-success);
+  --el-color-warning: var(--vt-color-warning);
+  --el-color-danger: var(--vt-color-danger);
+  --el-color-info: var(--vt-color-info);
+
+  --el-text-color-primary: var(--vt-text-primary);
+  --el-text-color-regular: var(--vt-text-regular);
+  --el-text-color-secondary: var(--vt-text-secondary);
+  --el-text-color-placeholder: var(--vt-text-placeholder);
+  --el-text-color-disabled: var(--vt-text-disabled);
+
+  --el-bg-color: var(--vt-bg-page);
+  --el-bg-color-page: var(--vt-bg-body);
+  --el-bg-color-overlay: var(--vt-bg-overlay);
+  --el-fill-color-blank: transparent;
+  --el-fill-color-light: var(--vt-bg-muted);
+  --el-fill-color-dark: var(--vt-bg-elevated);
+
+  --el-border-color: var(--vt-border-color);
+  --el-border-color-light: var(--vt-border-color);
+  --el-border-color-lighter: rgba(148, 166, 197, 0.18);
+  --el-border-color-dark: var(--vt-border-color-strong);
+
+  --el-mask-color: var(--vt-bg-overlay);
+  --el-overlay-color-light: rgba(10, 18, 33, 0.56);
+  --el-overlay-color: var(--vt-bg-overlay);
+
+  --el-box-shadow: var(--vt-shadow-base);
+  --el-box-shadow-light: var(--vt-shadow-base);
+  --el-box-shadow-dark: var(--vt-shadow-dialog);
+
+  --el-font-family: var(--vt-font-family-base);
+  --el-font-size-extra-small: var(--vt-font-size-xs);
+  --el-font-size-small: var(--vt-font-size-sm);
+  --el-font-size-base: var(--vt-font-size-base);
+  --el-font-size-medium: var(--vt-font-size-md);
+  --el-font-size-large: var(--vt-font-size-lg);
+  --el-font-size-extra-large: var(--vt-font-size-xl);
+
+  --el-border-radius-base: var(--vt-radius-none);
+  --el-border-radius-small: var(--vt-radius-sm);
+  --el-border-radius-round: var(--vt-radius-round);
+
+  --el-component-size-small: var(--vt-control-height-sm);
+  --el-component-size: var(--vt-control-height);
+  --el-component-size-large: var(--vt-control-height-lg);
+
+  --el-input-bg-color: var(--vt-bg-input);
+  --el-input-border-color: var(--vt-border-color);
+  --el-input-hover-border-color: var(--vt-border-color);
+  --el-input-focus-border-color: var(--vt-border-color);
+  --el-input-text-color: var(--vt-text-primary);
+  --el-input-placeholder-color: var(--vt-text-placeholder);
+  --el-fill-color-disabled: var(--vt-bg-input);
+  --el-fill-color-light: var(--vt-bg-input);
+
+  --el-select-input-color: var(--vt-text-placeholder);
+  --el-fill-color-blank: transparent;
+  --el-dialog-bg-color: var(--vt-bg-panel);
+  --el-dialog-box-shadow: var(--vt-shadow-dialog);
+  --el-messagebox-bg-color: var(--vt-bg-panel);
+  --el-popup-modal-bg-color: var(--vt-bg-overlay);
+  --el-message-bg-color: rgba(33, 44, 73, 0.96);
+  --el-message-border-color: var(--vt-border-color);
+
+  --el-menu-bg-color: transparent;
+  --el-menu-text-color: var(--vt-text-primary);
+  --el-menu-hover-bg-color: rgba(84, 98, 140, 0.2);
+  --el-menu-active-color: var(--vt-color-primary);
+
+  --el-table-bg-color: transparent;
+  --el-table-tr-bg-color: transparent;
+  --el-table-header-bg-color: rgba(58, 82, 121, 0.8);
+  --el-table-border-color: rgba(255, 255, 255, 0.1);
+  --el-table-row-hover-bg-color: rgba(64, 158, 255, 0.1);
+}

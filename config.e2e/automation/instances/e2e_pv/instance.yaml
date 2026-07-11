@@ -1,0 +1,12 @@
+instance:
+  id: 1
+  name: "E2E_PV"
+  product_name: "PV DCDC"
+  description: "E2E Test - Solar PV Inverter"
+  enabled: true
+  channel_id: 1001
+
+  properties:
+    rated_power: 100.0
+    rated_voltage: 800.0
+    rated_current: 125.0

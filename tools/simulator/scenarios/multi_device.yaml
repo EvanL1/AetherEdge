@@ -1,0 +1,219 @@
+# Multi-Device ESS (Energy Storage System) Scenario
+# Simulates PCS + BMS + PV working together as a complete energy storage system
+#
+# System topology:
+#   PV (unit 3) --DC--> PCS (unit 1) --AC--> Grid
+#                           |
+#                       DC Bus
+#                           |
+#                       BMS (unit 2)
+
+name: "Multi-Device ESS Operation"
+
+devices:
+  # PCS - Power Conversion System (unit_id: 1)
+  # Handles bidirectional power flow between grid and DC bus
+  - type: pcs
+    unit_id: 1
+    registers:
+      # Total AC Power (kW * 10) - Positive = export to grid
+      - address: 0
+        name: "AC Power"
+        generator:
+          type: daily_pattern
+          peak_hour: 12
+          peak_value: 4500.0   # 450 kW peak export
+          base_value: -500.0   # 50 kW import at night (charging)
+          spread_hours: 6.0
+
+      # Reactive Power (kVar * 10)
+      - address: 1
+        name: "Reactive Power"
+        generator:
+          type: sine
+          frequency: 0.0005
+          amplitude: 150.0     # +/- 15 kVar
+          offset: 0.0
+
+      # Power Factor (* 1000)
+      - address: 2
+        name: "Power Factor"
+        generator:
+          type: random_drift
+          center: 980.0        # 0.98
+          max_delta: 15.0
+          smoothness: 0.95
+
+      # Grid Frequency (Hz * 100)
+      - address: 3
+        name: "Grid Frequency"
+        generator:
+          type: random_drift
+          center: 5000.0       # 50.00 Hz
+          max_delta: 5.0       # +/- 0.05 Hz
+          smoothness: 0.98
+
+      # DC Bus Voltage (V * 10)
+      - address: 10
+        name: "DC Bus Voltage"
+        generator:
+          type: random_drift
+          center: 7000.0       # 700V nominal
+          max_delta: 100.0
+          smoothness: 0.92
+
+      # PCS Temperature (C * 10)
+      - address: 20
+        name: "PCS Temp"
+        generator:
+          type: daily_pattern
+          peak_hour: 14
+          peak_value: 450.0    # 45C peak
+          base_value: 300.0    # 30C base
+          spread_hours: 8.0
+
+      # Status: 1 = Running
+      - address: 40
+        name: "Status"
+        generator:
+          type: constant
+          value: 1.0
+
+  # BMS - Battery Management System (unit_id: 2)
+  # Manages battery pack charging/discharging
+  - type: bms
+    unit_id: 2
+    registers:
+      # SOC (% * 10)
+      - address: 0
+        name: "SOC"
+        generator:
+          type: sine
+          frequency: 0.00001   # Very slow cycle
+          amplitude: 300.0     # 30% swing
+          offset: 600.0        # 60% center
+
+      # SOH (% * 10)
+      - address: 1
+        name: "SOH"
+        generator:
+          type: constant
+          value: 965.0         # 96.5%
+
+      # Battery Voltage (V * 10)
+      - address: 2
+        name: "Battery Voltage"
+        generator:
+          type: random_drift
+          center: 6900.0       # 690V
+          max_delta: 200.0
+          smoothness: 0.9
+
+      # Battery Current (A * 10) - Positive = discharge
+      - address: 3
+        name: "Battery Current"
+        generator:
+          type: daily_pattern
+          peak_hour: 12
+          peak_value: 600.0    # 60A discharge
+          base_value: -200.0   # 20A charge at night
+          spread_hours: 6.0
+
+      # Max Cell Voltage (mV)
+      - address: 10
+        name: "Max Cell Voltage"
+        generator:
+          type: random_drift
+          center: 3450.0       # 3.45V
+          max_delta: 50.0
+          smoothness: 0.9
+
+      # Min Cell Voltage (mV)
+      - address: 11
+        name: "Min Cell Voltage"
+        generator:
+          type: random_drift
+          center: 3420.0       # 3.42V
+          max_delta: 50.0
+          smoothness: 0.9
+
+      # Max Cell Temp (C * 10)
+      - address: 20
+        name: "Max Cell Temp"
+        generator:
+          type: daily_pattern
+          peak_hour: 13
+          peak_value: 380.0    # 38C
+          base_value: 280.0    # 28C
+          spread_hours: 8.0
+
+      # Status: 1 = Normal
+      - address: 40
+        name: "Status"
+        generator:
+          type: constant
+          value: 1.0
+
+  # PV - Photovoltaic System (unit_id: 3)
+  # Solar power generation feeding into DC bus
+  - type: pv
+    unit_id: 3
+    registers:
+      # PV Power (kW * 10)
+      - address: 0
+        name: "PV Power"
+        generator:
+          type: daily_pattern
+          peak_hour: 12
+          peak_value: 3000.0   # 300 kW peak
+          base_value: 0.0
+          spread_hours: 6.0
+
+      # PV Voltage (V * 10)
+      - address: 1
+        name: "PV Voltage"
+        generator:
+          type: random_drift
+          center: 6800.0       # 680V
+          max_delta: 150.0
+          smoothness: 0.9
+
+      # PV Current (A * 10)
+      - address: 2
+        name: "PV Current"
+        generator:
+          type: daily_pattern
+          peak_hour: 12
+          peak_value: 450.0    # 45A peak
+          base_value: 0.0
+          spread_hours: 6.0
+
+      # Irradiance (W/m2)
+      - address: 10
+        name: "Irradiance"
+        generator:
+          type: daily_pattern
+          peak_hour: 12
+          peak_value: 1000.0
+          base_value: 0.0
+          spread_hours: 6.0
+
+      # Panel Temp (C * 10)
+      - address: 20
+        name: "Panel Temp"
+        generator:
+          type: daily_pattern
+          peak_hour: 14
+          peak_value: 600.0    # 60C
+          base_value: 200.0    # 20C
+          spread_hours: 8.0
+
+      # Status: 1 = Generating
+      - address: 40
+        name: "Status"
+        generator:
+          type: constant
+          value: 1.0
+
+faults:
+  enabled: false

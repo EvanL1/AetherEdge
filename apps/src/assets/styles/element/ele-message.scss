@@ -1,0 +1,222 @@
+.el-overlay {
+  &.is-message-box {
+    .el-message-box {
+      max-width: 4.5rem;
+      padding: 0.12rem;
+      background-color: #1f2e4a;
+      border-radius: 0.04rem;
+      font-size: 0.16rem;
+      box-shadow: none;
+
+      .el-message-box__header {
+        max-width: 4.2rem;
+        padding: 0.12rem;
+        color: #fff;
+        font-size: 0.18rem;
+        font-weight: 700;
+
+        .el-message-box__title {
+          color: #fff;
+          font-size: 0.18rem;
+          line-height: 0.24rem;
+        }
+
+        .el-message-box__headerbtn {
+          width: 0.14rem;
+          height: 0.14rem;
+          font-size: 0.16rem;
+
+          .el-icon.el-message-box__close {
+            top: 0.12rem;
+            right: 0.12rem;
+            color: #fff;
+          }
+        }
+      }
+
+      .el-message-box__content {
+        .el-message-box__container {
+          gap: 0.12rem;
+
+          .el-message-box__message {
+            color: #fff;
+            font-size: 0.16rem;
+            line-height: 0.24rem;
+            font-weight: 400;
+          }
+        }
+      }
+
+      .el-message-box__btns {
+        padding-top: 0.12rem;
+      }
+    }
+  }
+}
+
+.el-message {
+  top: 1rem;
+  gap: 0.08rem;
+  padding: 0.11rem 0.15rem;
+  border-width: 0.01rem;
+  border-radius: 0.04rem;
+  background-color: var(--el-message-bg-color);
+  border-color: var(--el-message-border-color);
+  box-shadow: var(--vt-shadow-base);
+  z-index: var(--vt-z-toast);
+
+  &.el-message--error {
+    .el-message__content {
+      color: #f56c6c;
+    }
+  }
+
+  .el-icon.el-message__icon {
+    font-size: 0.24rem;
+  }
+
+  .el-message__content {
+    font-size: 0.14rem;
+    font-weight: 400;
+  }
+
+  .el-icon.el-message__closeBtn {
+    font-size: 0.16rem;
+  }
+}
+
+// ——— Alarm Notification (ElNotification) ———
+
+// 公共基础：布局/尺寸/字体
+.alarm-notification.el-notification {
+  width: 3.6rem;
+  padding: 0.14rem 0.16rem 0.12rem;
+  border-width: 0.01rem;
+  border-style: solid;
+  border-radius: 0.04rem;
+  box-shadow: var(--vt-shadow-dialog);
+
+  .el-notification__title {
+    font-size: 0.15rem;
+    font-weight: 700;
+    line-height: 1.4;
+    letter-spacing: 0.01em;
+  }
+
+  .el-notification__content {
+    font-size: 0.13rem;
+    color: var(--vt-text-primary);
+    margin-top: 0.08rem;
+    line-height: 1.5;
+  }
+
+  .el-notification__icon {
+    font-size: 0.24rem;
+    margin-right: 0.1rem;
+  }
+
+  .el-notification__closeBtn {
+    font-size: 0.15rem;
+    color: var(--vt-text-secondary);
+
+    &:hover {
+      color: var(--vt-text-primary);
+    }
+  }
+}
+
+// 告警触发 —— 深红底 + 亮红边框
+.alarm-notification--error.el-notification {
+  background-color: #3c1212 !important;
+  border-color: #e53935 !important;
+
+  .el-notification__title {
+    color: #ff8a80;
+  }
+
+  .el-notification__icon {
+    color: #ff8a80;
+  }
+
+  .el-notification__content {
+    color: #ffcdd2;
+  }
+
+  .alarm-notification-msg {
+    color: #ffcdd2;
+  }
+
+  .alarm-detail-btn {
+    background-color: #e53935;
+    color: #fff;
+
+    &:hover {
+      background-color: #f44336;
+    }
+
+    &:active {
+      background-color: #c62828;
+    }
+  }
+}
+
+// 告警恢复 —— 深绿底 + 亮绿边框
+.alarm-notification--success.el-notification {
+  background-color: #0d2e14 !important;
+  border-color: #43a047 !important;
+
+  .el-notification__title {
+    color: #a5d6a7;
+  }
+
+  .el-notification__icon {
+    color: #a5d6a7;
+  }
+
+  .el-notification__content {
+    color: #c8e6c9;
+  }
+}
+
+// 告警通知正文区域：竖向布局，按钮独占最后一行
+.alarm-notification-content {
+  display: flex;
+  flex-direction: column;
+  gap: 0.08rem;
+}
+
+.alarm-notification-msg {
+  display: block;
+  font-size: 0.13rem;
+  color: var(--vt-text-primary);
+  line-height: 1.5;
+  word-break: break-word;
+}
+
+// 按钮行：靠右对齐
+.alarm-notification-footer {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 0.04rem;
+}
+
+.alarm-detail-btn {
+  padding: 0.04rem 0.12rem;
+  border: none;
+  border-radius: 0.02rem;
+  background-color: var(--vt-color-primary);
+  color: var(--vt-text-primary);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--vt-font-size-base);
+  line-height: 1.4;
+  transition: background-color var(--vt-transition-fast);
+
+  &:hover {
+    background-color: var(--vt-color-primary-hover);
+  }
+
+  &:active {
+    background-color: var(--vt-color-primary-active);
+  }
+}

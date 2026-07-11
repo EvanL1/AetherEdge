@@ -1,0 +1,13 @@
+[Unit]
+Description=AetherEMS - Redis
+PartOf=aether.target
+
+[Service]
+Type=simple
+ExecStart=/opt/aether/bin/redis-server --port 6379 --bind 127.0.0.1 --appendonly yes --save 60 1 --dir /var/lib/aether/redis
+Restart=on-failure
+RestartSec=2
+User=root
+
+[Install]
+WantedBy=aether.target

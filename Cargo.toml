@@ -1,0 +1,184 @@
+[workspace]
+resolver = "3"
+# Firmware is excluded because it targets ARM embedded (thumbv7em-none-eabihf)
+# and cannot share the same workspace with x86_64 Linux targets
+exclude = ["firmware"]
+default-members = [
+    "crates/aether-domain",
+    "crates/aether-dataplane",
+    "crates/aether-ports",
+    "crates/aether-application",
+    "crates/aether-sdk",
+    "crates/aether-testkit",
+    "extensions/store-local",
+    "extensions/shm-bridge",
+]
+members = [
+    "workspace-hack",
+    "crates/aether-domain",
+    "crates/aether-dataplane",
+    "crates/aether-ports",
+    "crates/aether-application",
+    "crates/aether-sdk",
+    "crates/aether-testkit",
+    "extensions/store-local",
+    "extensions/shm-bridge",
+    "extensions/redis-bridge",
+    "extensions/postgres-history",
+    "examples/minimal-gateway",
+    "examples/energy-gateway",
+    "libs/common",
+    "libs/errors",
+    "libs/aether-calc",
+    "libs/aether-config",
+    "libs/aether-core",
+    "libs/aether-shm",
+    # libs/aether-comlink removed - types moved to io
+    "libs/aether-infra",
+    "libs/aether-model",
+    # libs/aether-protocols removed - protocols are now in io
+    "libs/aether-rtdb",
+    "libs/aether-rtdb-shm",
+    "libs/aether-routing",
+    "libs/aether-rules",
+    "libs/aether-schema-macro",
+    "libs/aether-sim",
+    "services/alarm",
+    "services/api",
+    "services/history",
+    "services/uplink",
+    "services/io",
+    "services/automation",
+    # CLI tools
+    "tools/aether",
+    "tools/simulator",
+]
+
+[workspace.package]
+version = "0.5.0"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/EvanL1/Aether"
+
+# Clippy lints configuration
+# Run with: cargo clippy --workspace -- -W clippy::unwrap_used -W clippy::expect_used
+
+[workspace.lints.clippy]
+# Type casting relaxed rules (for numeric/timestamp conversions)
+cast-possible-truncation = "allow"
+cast-possible-wrap = "allow"
+cast-sign-loss = "allow"
+
+[workspace.dependencies]
+# no_std compatible
+heapless = "0.8"
+
+# Async runtime
+tokio = { version = "1.35", default-features = true, features = ["full"] }
+tokio-util = { version = "0.7", features = ["codec"] }
+
+# Web frameworks
+axum = { version = "0.8.4", features = ["macros", "http2"] }
+utoipa = { version = "5.4.0", features = ["macros", "axum_extras"] }
+utoipa-swagger-ui = { version = "9.0.2", features = ["axum"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+serde_yml = { package = "serde_yaml_ng", version = "0.10.0" }
+csv = "1.3"
+
+# Database
+sqlx = { version = "0.8", default-features = false, features = [
+    "runtime-tokio-rustls",
+    "sqlite",
+    "chrono",
+    "json",
+    "uuid",
+    "macros",
+] }
+redis = { version = "0.32", features = ["tokio-comp", "connection-manager"] }
+bb8 = "0.9"
+bb8-redis = "0.24"
+
+# Error handling
+anyhow = "1.0.103"
+thiserror = "2"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3.20", features = [
+    "env-filter",
+    "json",
+    "time",
+] }
+tracing-appender = "0.2"
+flate2 = "1.0"
+
+# Time
+chrono = { version = "0.4", features = ["serde"] }
+
+# UUID
+uuid = { version = "1.6", features = ["v4", "serde"] }
+
+# HTTP clients
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "multipart"] }
+
+# Configuration
+figment = { version = "0.10", features = ["yaml", "toml", "json", "env"] }
+
+# Utilities
+futures = "0.3"
+bytes = "1.12.1"
+async-trait = "0.1"
+evalexpr = "11"  # Expression evaluation with proper operator precedence
+
+# Testing
+tempfile = "3.8"
+
+# Common utilities
+clap = { version = "4.0", features = ["derive", "env"] }
+rand = "0.8.6"
+regex = "1.10"
+
+# JSONPath for MQTT/HTTP protocol mapping
+serde_json_path = "0.7"
+
+# Data structures and algorithms
+dashmap = { version = "6", features = ["serde"] }
+ahash = "0.8"
+rustc-hash = "2.1"
+parking_lot = "0.12"
+bytemuck = { version = "1", features = ["derive"] }
+
+# High-performance number formatting (Round 129: zero-allocation u32/f64 to string)
+itoa = "1.0"
+ryu = "1.0"
+
+# Tower middleware
+tower = { version = "0.5", features = ["util"] }
+tower-http = { version = "0.6", features = ["trace", "limit"] }
+
+# Dev dependencies
+criterion = { version = "0.5", features = ["html_reports"] }
+tracing-test = "0.2"
+
+# UI dependencies for CLI tools
+colored = "2.0"
+# indicatif = "0.17"  # removed - not currently used
+
+# Performance optimization profiles
+[profile.release]
+opt-level = 3              # Maximum runtime performance
+lto = "fat"               # Full link-time optimization
+codegen-units = 1          # Better global optimization
+strip = true              # Strip symbols for smaller binary
+panic = "abort"           # Smaller binary, no unwinding
+split-debuginfo = "packed" # Rust 1.90.0: Faster linking, smaller debug info
+
+# Fast development-release profile (Rust 1.90.0 optimized)
+[profile.dev-release]
+inherits = "release"
+opt-level = 2      # Slightly lower optimization for faster compilation
+lto = "thin"       # Lightweight LTO for balance between speed and size
+codegen-units = 16 # Faster parallel compilation
+strip = false      # Keep symbols for easier debugging

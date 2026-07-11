@@ -1,0 +1,21 @@
+# Clippy configuration for AetherEMS
+# Enforces code quality standards across the workspace
+#
+# Note: unwrap()/expect() restrictions are enforced by strict runtime clippy
+# CI steps, not here, to avoid breaking test code which legitimately uses them.
+
+# Additional quality checks
+cognitive-complexity-threshold = 25  # Warn on overly complex functions
+
+# Allow mixed inlined and uninlined format args
+# Enables new syntax while retaining old syntax
+allow-mixed-uninlined-format-args = true
+
+# Set max function arguments threshold
+too-many-arguments-threshold = 8
+
+# Set maximum lines threshold
+too-many-lines-threshold = 200
+
+# Avoid breaking exported API
+avoid-breaking-exported-api = true

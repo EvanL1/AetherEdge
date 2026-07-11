@@ -1,0 +1,289 @@
+# Modbus Protocol Verification Scenario - 协议验证场景
+# 用于验证 io 的位解析逻辑正确性
+#
+# 测试矩阵:
+#   1. bit_position 边界值 (0, 5, 10, 15)
+#   2. Float32 字节序 (ABCD, DCBA, BADC, CDAB)
+#   3. UInt32 跨寄存器解析
+#   4. 线圈位打包/解包
+
+name: "Modbus Protocol Verification Scenario"
+
+devices:
+  - type: "PROTOCOL_TEST"
+    unit_id: 1
+    registers:
+      #======================================
+      # 位域测试 - 寄存器位提取
+      #======================================
+      # 寄存器 100 = 0x8421 (二进制: 1000_0100_0010_0001)
+      # bit0=1, bit5=1, bit10=1, bit15=1
+      # 其他位 (1,2,3,4,6,7,8,9,11,12,13,14) = 0
+      - address: 100
+        name: "Bit_Position_Test"
+        generator:
+          type: constant
+          value: 0x8421  # 33825 十进制
+
+      # 寄存器 101 = 0xAAAA (二进制: 1010_1010_1010_1010)
+      # 偶数位全为 0，奇数位全为 1
+      - address: 101
+        name: "Alternating_Bits"
+        generator:
+          type: constant
+          value: 0xAAAA  # 43690 十进制
+
+      # 寄存器 102 = 0x5555 (二进制: 0101_0101_0101_0101)
+      # 偶数位全为 1，奇数位全为 0
+      - address: 102
+        name: "Alternating_Bits_Inverse"
+        generator:
+          type: constant
+          value: 0x5555  # 21845 十进制
+
+      # 寄存器 103 = 0xFFFF (全 1)
+      - address: 103
+        name: "All_Ones"
+        generator:
+          type: constant
+          value: 0xFFFF
+
+      # 寄存器 104 = 0x0001 (仅 bit0=1)
+      - address: 104
+        name: "Only_Bit0"
+        generator:
+          type: constant
+          value: 0x0001
+
+      # 寄存器 105 = 0x8000 (仅 bit15=1)
+      - address: 105
+        name: "Only_Bit15"
+        generator:
+          type: constant
+          value: 0x8000
+
+      #======================================
+      # Float32 字节序测试
+      #======================================
+      # 测试值: 42.0f = 0x42280000 (IEEE 754)
+      #
+      # ABCD (Big-Endian): reg[0]=0x4228, reg[1]=0x0000
+      - address: 200
+        name: "Float32_ABCD_High"
+        generator:
+          type: constant
+          value: 0x4228
+      - address: 201
+        name: "Float32_ABCD_Low"
+        generator:
+          type: constant
+          value: 0x0000
+
+      # DCBA (Little-Endian): reg[0]=0x0000, reg[1]=0x2842
+      - address: 210
+        name: "Float32_DCBA_High"
+        generator:
+          type: constant
+          value: 0x0000
+      - address: 211
+        name: "Float32_DCBA_Low"
+        generator:
+          type: constant
+          value: 0x2842
+
+      # BADC (Word-Swap Big): reg[0]=0x2842, reg[1]=0x0000
+      # 字节: [28][42] [00][00] -> swap each word -> [42][28] [00][00]
+      - address: 220
+        name: "Float32_BADC_High"
+        generator:
+          type: constant
+          value: 0x2842
+      - address: 221
+        name: "Float32_BADC_Low"
+        generator:
+          type: constant
+          value: 0x0000
+
+      # CDAB (Word-Swap Little): reg[0]=0x0000, reg[1]=0x4228
+      - address: 230
+        name: "Float32_CDAB_High"
+        generator:
+          type: constant
+          value: 0x0000
+      - address: 231
+        name: "Float32_CDAB_Low"
+        generator:
+          type: constant
+          value: 0x4228
+
+      #======================================
+      # UInt32 跨寄存器测试
+      #======================================
+      # 测试值: 0x12345678
+      # ABCD: reg[0]=0x1234, reg[1]=0x5678
+      - address: 300
+        name: "UInt32_ABCD_High"
+        generator:
+          type: constant
+          value: 0x1234
+      - address: 301
+        name: "UInt32_ABCD_Low"
+        generator:
+          type: constant
+          value: 0x5678
+
+      # 测试值: 0xDEADBEEF
+      - address: 310
+        name: "UInt32_DEADBEEF_High"
+        generator:
+          type: constant
+          value: 0xDEAD
+      - address: 311
+        name: "UInt32_DEADBEEF_Low"
+        generator:
+          type: constant
+          value: 0xBEEF
+
+      #======================================
+      # 有符号数测试
+      #======================================
+      # Int16: -1 = 0xFFFF
+      - address: 400
+        name: "Int16_Minus_One"
+        generator:
+          type: constant
+          value: 0xFFFF
+
+      # Int16: -32768 = 0x8000 (最小值)
+      - address: 401
+        name: "Int16_Min"
+        generator:
+          type: constant
+          value: 0x8000
+
+      # Int16: 32767 = 0x7FFF (最大值)
+      - address: 402
+        name: "Int16_Max"
+        generator:
+          type: constant
+          value: 0x7FFF
+
+      #======================================
+      # 缩放因子测试
+      #======================================
+      # 值 = 12345, scale=0.1 => 实际值 = 1234.5
+      - address: 500
+        name: "Scaled_Value_01"
+        generator:
+          type: constant
+          value: 12345
+
+      # 值 = 54321, scale=0.001 => 实际值 = 54.321
+      - address: 501
+        name: "Scaled_Value_001"
+        generator:
+          type: constant
+          value: 54321
+
+    #======================================
+    # 线圈测试 (FC01/FC02/FC05/FC0F)
+    #======================================
+    coils:
+      # 地址 0-7: 交替 true/false (0x55 = 01010101)
+      - address: 0
+        value: true
+      - address: 1
+        value: false
+      - address: 2
+        value: true
+      - address: 3
+        value: false
+      - address: 4
+        value: true
+      - address: 5
+        value: false
+      - address: 6
+        value: true
+      - address: 7
+        value: false
+
+      # 地址 8-15: 交替 false/true (0xAA = 10101010)
+      - address: 8
+        value: false
+      - address: 9
+        value: true
+      - address: 10
+        value: false
+      - address: 11
+        value: true
+      - address: 12
+        value: false
+      - address: 13
+        value: true
+      - address: 14
+        value: false
+      - address: 15
+        value: true
+
+      # 地址 100-107: 全 true (0xFF)
+      - address: 100
+        value: true
+      - address: 101
+        value: true
+      - address: 102
+        value: true
+      - address: 103
+        value: true
+      - address: 104
+        value: true
+      - address: 105
+        value: true
+      - address: 106
+        value: true
+      - address: 107
+        value: true
+
+      # 地址 200-207: 全 false (0x00)
+      - address: 200
+        value: false
+      - address: 201
+        value: false
+      - address: 202
+        value: false
+      - address: 203
+        value: false
+      - address: 204
+        value: false
+      - address: 205
+        value: false
+      - address: 206
+        value: false
+      - address: 207
+        value: false
+
+    #======================================
+    # 离散输入测试 (FC02 只读)
+    #======================================
+    discrete_inputs:
+      # 地址 0-7: 只有 bit0 和 bit7 为 true (0x81)
+      - address: 0
+        value: true
+      - address: 1
+        value: false
+      - address: 2
+        value: false
+      - address: 3
+        value: false
+      - address: 4
+        value: false
+      - address: 5
+        value: false
+      - address: 6
+        value: false
+      - address: 7
+        value: true
+
+# 无故障注入
+faults:
+  enabled: false
+  scenarios: []

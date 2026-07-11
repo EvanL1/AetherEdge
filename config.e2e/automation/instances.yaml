@@ -1,0 +1,27 @@
+# E2E Test Instances Configuration
+# These instances map to products defined in libs/aether-model/src/products/
+
+instances:
+  - instance_id: 1
+    instance_name: "e2e_pv"
+    product_name: "PV DCDC"
+    channel_id: 1001
+    enabled: true
+
+  - instance_id: 2
+    instance_name: "e2e_battery"
+    product_name: "Battery"
+    channel_id: 1002
+    enabled: true
+
+  - instance_id: 3
+    instance_name: "e2e_diesel"
+    product_name: "Diesel"
+    channel_id: 1003
+    enabled: true
+
+  - instance_id: 4
+    instance_name: "e2e_load"
+    product_name: "Load"
+    channel_id: 1004
+    enabled: true

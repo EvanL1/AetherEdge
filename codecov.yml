@@ -1,0 +1,92 @@
+# Codecov 配置
+# https://docs.codecov.io/docs/codecov-yaml
+
+coverage:
+  precision: 2
+  round: down
+  range: "60...90"
+
+  status:
+    project:
+      default:
+        # 整体项目覆盖率目标
+        target: 70%
+        threshold: 2%
+        # 不阻塞 PR，仅报告
+        informational: true
+
+    patch:
+      default:
+        # 新增代码的覆盖率要求
+        target: 80%
+        threshold: 5%
+        informational: true
+
+# 忽略的文件/目录
+ignore:
+  - "tools/aether/**"      # CLI 工具难以测试
+  - "libs/firmware/**"      # 嵌入式代码无法在 CI 测试
+  - "**/tests/**"           # 测试文件本身
+  - "**/*_test.rs"          # 测试模块
+  - "**/benches/**"         # 性能测试
+
+# 按组件分组报告
+component_management:
+  default_rules:
+    statuses:
+      - type: project
+        target: auto
+
+# 组件定义（按服务/库分组）
+flags:
+  aether-io:
+    paths:
+      - services/io/
+    carryforward: true
+
+  aether-automation:
+    paths:
+      - services/automation/
+    carryforward: true
+
+  aether-core:
+    paths:
+      - libs/aether-core/
+    carryforward: true
+
+  aether-rtdb:
+    paths:
+      - libs/aether-rtdb/
+    carryforward: true
+
+  aether-routing:
+    paths:
+      - libs/aether-routing/
+    carryforward: true
+
+  aether-rules:
+    paths:
+      - libs/aether-rules/
+    carryforward: true
+
+  common:
+    paths:
+      - libs/common/
+    carryforward: true
+
+# 注释配置
+comment:
+  layout: "header, diff, flags, components"
+  behavior: default
+  require_changes: true
+  require_base: false
+  require_head: true
+
+# PR 注释中的文件覆盖率变化
+parsers:
+  gcov:
+    branch_detection:
+      conditional: true
+      loop: true
+      method: false
+      macro: false

@@ -1,0 +1,116 @@
+name: Bug report
+description: Report a reproducible defect in Aether
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a defect. Search existing issues first. Do not include secrets, customer data, production memory images, or vulnerability details. Security reports belong in the private channel described by SECURITY.md.
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Affected area
+      options:
+        - Core SDK or domain/application ports
+        - SHM data plane or event plane
+        - aether-io
+        - aether-automation
+        - aether-alarm
+        - aether-history
+        - aether-api
+        - aether-uplink
+        - CLI or MCP interface
+        - Optional extension or industry pack
+        - Documentation or examples
+        - Other
+    validations:
+      required: true
+
+  - type: dropdown
+    id: runtime
+    attributes:
+      label: Runtime composition
+      description: Select the composition in which the problem occurs.
+      options:
+        - Default SHM-only runtime (no external database)
+        - SHM runtime with optional Redis mirror
+        - SHM runtime with optional PostgreSQL history
+        - SDK/library integration
+        - Unknown or not applicable
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      description: Provide the release version or Git commit.
+      placeholder: v0.5.0 or commit SHA
+    validations:
+      required: true
+
+  - type: input
+    id: platform
+    attributes:
+      label: Platform and deployment
+      description: Include OS, architecture, and Compose/systemd/Cargo deployment as applicable.
+      placeholder: Linux arm64, systemd
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Problem
+      description: Describe the defect, its impact, and whether physical device control is involved.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal reproduction
+      description: List exact steps and provide a sanitized minimal configuration or test when possible.
+      placeholder: |
+        1. Configure ...
+        2. Run ...
+        3. Observe ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior and sanitized logs
+      description: Paste only the smallest relevant log excerpt and remove credentials and identifying data.
+    validations:
+      required: true
+
+  - type: textarea
+    id: checks
+    attributes:
+      label: Verification attempted
+      description: List focused tests or repository checks you ran and their results. It is acceptable to say not run.
+      placeholder: cargo test -p affected-crate
+
+  - type: checkboxes
+    id: confirmation
+    attributes:
+      label: Submission checks
+      options:
+        - label: I searched existing issues and discussions for this defect.
+          required: true
+        - label: I removed secrets, customer data, production identifiers, and vulnerability details.
+          required: true
+        - label: This is not a security report; I will use SECURITY.md for suspected vulnerabilities.
+          required: true

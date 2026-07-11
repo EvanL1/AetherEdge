@@ -1,0 +1,10 @@
+# Default review owner. Repository permissions remain authoritative.
+* @EvanL1
+
+# High-risk architecture and supply-chain surfaces.
+/crates/ @EvanL1
+/extensions/ @EvanL1
+/services/ @EvanL1
+/docs/adr/ @EvanL1
+/.github/workflows/ @EvanL1
+/SECURITY.md @EvanL1

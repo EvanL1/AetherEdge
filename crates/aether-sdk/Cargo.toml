@@ -1,0 +1,29 @@
+[package]
+name = "aether-edge-sdk"
+version.workspace = true
+edition = "2024"
+rust-version = "1.90"
+description = "Stable public facade for embedding the Aether edge kernel"
+license.workspace = true
+repository.workspace = true
+documentation = "https://docs.rs/aether-edge-sdk"
+readme = "README.md"
+keywords = ["iot", "edge", "gateway", "sdk", "shm"]
+categories = ["embedded", "asynchronous"]
+
+[lib]
+name = "aether_sdk"
+
+[dependencies]
+aether-application = { version = "0.5.0", path = "../aether-application" }
+aether-domain = { version = "0.5.0", path = "../aether-domain" }
+aether-ports = { version = "0.5.0", path = "../aether-ports" }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+aether-store-local = { version = "0.5.0", path = "../../extensions/store-local" }
+async-trait = { workspace = true }
+tokio = { workspace = true }
+
+[lints]
+workspace = true

@@ -1,0 +1,4 @@
+# Fail-safe distribution default: no device channel is commissioned.
+# Add channels through an explicit commissioning step, then validate the plan
+# before enabling any connection to physical hardware.
+channels: []

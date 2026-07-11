@@ -1,0 +1,30 @@
+schema_version: 1
+id: energy
+name: Aether Energy
+status: migrating
+description: Energy storage, generation, load, and grid-management knowledge
+distribution:
+  id: aether-ems
+  composition: examples/energy-gateway
+compatibility:
+  aether: ">=0.5.0,<0.6.0"
+legacy_assets:
+  models: libs/aether-model/src/products
+  knowledge: docs/domain
+examples:
+  config: examples/config
+capabilities:
+  models:
+    - Station
+    - ESS
+    - Battery
+    - PCS
+    - PVInverter
+    - Generator
+    - Load
+  rule_topics:
+    - soc-management
+    - peak-shaving
+    - demand-control
+safety:
+  control_policy: ai/safety-policy.yaml

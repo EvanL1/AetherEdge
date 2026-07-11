@@ -1,0 +1,70 @@
+[package]
+name = "aether-automation"
+publish = false
+version.workspace = true
+edition = "2024"
+license.workspace = true
+description = "Real-time model execution service"
+
+[lib]
+name = "aether_automation"
+path = "src/lib.rs"
+
+[[bin]]
+name = "aether-automation"
+path = "src/main.rs"
+test = false
+
+[dependencies]
+# Local dependencies
+common = { path = "../../libs/common", default-features = false, features = ["sqlite", "axum", "dependency"] }
+errors = { path = "../../libs/errors", default-features = false, features = ["axum-support"] }
+aether-config = { path = "../../libs/aether-config" }
+aether-application = { path = "../../crates/aether-application" }
+aether-domain = { path = "../../crates/aether-domain" }
+aether-ports = { path = "../../crates/aether-ports" }
+aether-store-local = { path = "../../extensions/store-local", features = ["sqlite-audit"] }
+aether-model = { path = "../../libs/aether-model" }
+aether-rtdb-shm = { path = "../../libs/aether-rtdb-shm" }
+aether-shm-bridge = { path = "../../extensions/shm-bridge" }
+aether-routing = { path = "../../libs/aether-routing" }
+aether-rules = { path = "../../libs/aether-rules" }
+aether-calc = { path = "../../libs/aether-calc" }
+
+# Core dependencies (use aether-common where possible)
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+chrono = { workspace = true }
+bytes = { workspace = true }
+async-trait = { workspace = true }
+uuid = { workspace = true }
+axum = { workspace = true }
+utoipa = { workspace = true }
+utoipa-swagger-ui = { workspace = true, optional = true }
+tokio-util = { workspace = true }
+sqlx = { workspace = true }
+# cron removed - not currently used
+arc-swap = "1.7"  # ArcSwapOption for runtime-swappable SHM writer
+dashmap = { workspace = true }  # For high-performance concurrent name→id cache
+parking_lot = { workspace = true }  # Non-poisoning RwLock for SlotBitmap
+itoa = { workspace = true }  # Stack-allocated u32→str formatting
+tower = { workspace = true }
+jsonwebtoken = "9"
+subtle = "2.6"
+
+[dev-dependencies]
+# criterion removed - no benchmarks
+tempfile = { workspace = true }
+http-body-util = "0.1"
+
+[features]
+default = ["sqlite"]
+sqlite = []
+swagger-ui = ["utoipa-swagger-ui", "common/openapi"]  # Swagger UI documentation (enabled by default for development)
+
+[lints]
+workspace = true

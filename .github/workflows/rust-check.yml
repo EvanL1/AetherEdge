@@ -1,0 +1,403 @@
+name: Code Check
+
+on:
+  push:
+    branches: [main, develop, feature/*]
+  pull_request:
+    branches: [main, develop]
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+  # Test-only value. Production Compose requires an operator-generated secret.
+  JWT_SECRET_KEY: 0123456789abcdef0123456789abcdef
+
+jobs:
+  # Job 0: Ensure submodules track the latest remote commit
+  submodule-check:
+    name: Submodule Freshness
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Check submodule is up-to-date with remote
+        run: |
+          git submodule foreach --quiet '
+            git fetch --quiet origin 2>/dev/null
+            LOCAL=$(git rev-parse HEAD)
+            REMOTE=$(git rev-parse origin/HEAD 2>/dev/null || git rev-parse origin/main 2>/dev/null || echo "")
+            if [ -z "$REMOTE" ]; then
+              echo "::warning::Submodule $name: cannot determine remote HEAD"
+            elif [ "$LOCAL" != "$REMOTE" ]; then
+              BEHIND=$(git rev-list --count HEAD..${REMOTE} 2>/dev/null || echo "?")
+              echo "::warning::Submodule $name is ${BEHIND} commit(s) behind remote. Run: git submodule update --remote"
+            else
+              echo "✓ Submodule $name is up-to-date"
+            fi
+          '
+
+  # Job 0.5: Scan for ignored tests and surface them as warnings
+  ignored-tests:
+    name: Ignored Tests Scan
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Find ignored tests
+        run: |
+          IGNORED=$(grep -rn '#\[ignore\]' --include='*.rs' . | grep -v 'target/')
+          COUNT=$(echo "$IGNORED" | grep -c '#\[ignore\]' || true)
+          if [ "$COUNT" -gt 0 ]; then
+            echo "::warning::Found $COUNT ignored test(s)"
+            echo "$IGNORED"
+          else
+            echo "No ignored tests found."
+          fi
+
+  # Job 1: Code Quality Checks (fastest, no Redis needed)
+  quality-check:
+    name: Quality Check
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Setup Environment
+        uses: ./.github/actions/setup-rust-env
+        with:
+          rust-components: rustfmt, clippy
+          install-protoc: 'true'
+
+      # Rust quality checks
+      - name: Check Rust Format
+        run: cargo fmt --all -- --check
+
+      - name: Check Architecture Boundaries
+        run: ./scripts/check-architecture.sh
+
+      - name: Check Open-source Readiness
+        run: ./scripts/check-open-source-readiness.sh
+
+      - name: Run Clippy
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+      - name: Check Runtime Panic Boundaries
+        run: cargo clippy --workspace --lib --bins -- -D clippy::unwrap_used -D clippy::expect_used
+
+      - name: Check Compilation
+        run: cargo check --workspace
+
+      - name: Verify workspace-hack is up-to-date
+        run: |
+          command -v cargo-hakari || cargo install cargo-hakari --locked
+          cargo hakari verify
+
+  # Job 2: Unit Tests (no Redis instance needed)
+  unit-tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    needs: quality-check
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Setup Environment
+        uses: ./.github/actions/setup-rust-env
+        with:
+          install-protoc: 'true'
+
+      # Use cargo-nextest for ~2-3x speedup over stock cargo test.
+      # Installed from prebuilt binary (no compilation).
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@nextest
+
+      # Run all unit tests (nextest runs each test in its own process,
+      # so thread-unsafe globals and tempfile contention are naturally isolated)
+      - name: Run Edge Kernel Contract Tests
+        run: |
+          cargo nextest run
+          cargo nextest run \
+            -p aether-shm-bridge \
+            -p aether-redis-bridge \
+            -p aether-postgres-history \
+            -p aether-example-minimal-gateway \
+            -p aether-example-energy-gateway
+
+      - name: Run Unit Tests
+        run: cargo nextest run --workspace --lib --bins
+        env:
+          RUST_LOG: warn # Reduce noise in unit tests
+
+  # Job 2.5: Coverage Report (runs in parallel with config-validation)
+  coverage-report:
+    name: Coverage Report
+    runs-on: ubuntu-latest
+    needs: quality-check
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Setup Environment
+        uses: ./.github/actions/setup-rust-env
+        with:
+          install-protoc: 'true'
+
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@cargo-llvm-cov
+
+      - name: Generate Coverage Report
+        run: |
+          cargo llvm-cov --workspace --lib --bins --lcov --output-path lcov.info
+        env:
+          RUST_LOG: warn
+
+      - name: Upload Coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          files: lcov.info
+          fail_ci_if_error: false
+          verbose: true
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+
+      - name: Upload Coverage Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: lcov.info
+          retention-days: 30
+
+  # Job 3: Configuration Validation with Aether
+  config-validation:
+    name: Configuration Validation
+    runs-on: ubuntu-latest
+    needs: unit-tests
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Setup Environment
+        uses: ./.github/actions/setup-rust-env
+
+      # Build and install Aether
+      - name: Install Aether
+        run: |
+          echo "Building and installing Aether..."
+          cargo install --path tools/aether --locked --force
+          echo "Aether installed successfully"
+
+      # Create temporary directories for validation
+      - name: Setup Test Environment
+        run: |
+          export TEST_CONFIG_DIR="/tmp/aether_ci_config"
+          export TEST_DB_DIR="/tmp/aether_ci_db"
+          mkdir -p $TEST_CONFIG_DIR $TEST_DB_DIR
+          echo "TEST_CONFIG_DIR=$TEST_CONFIG_DIR" >> $GITHUB_ENV
+          echo "TEST_DB_DIR=$TEST_DB_DIR" >> $GITHUB_ENV
+
+      # Copy configuration files to test directory
+      - name: Prepare Configuration
+        run: |
+          cp -r config/* $TEST_CONFIG_DIR/ || echo "No config directory found"
+          # If config doesn't exist, try config.template
+          if [ ! -d "$TEST_CONFIG_DIR/io" ]; then
+            echo "Using config.template as fallback"
+            cp -r config.template/* $TEST_CONFIG_DIR/ || true
+          fi
+          ls -la $TEST_CONFIG_DIR/
+
+      # Initialize database schemas in test directory
+      - name: Initialize Database Schemas
+        run: |
+          echo "Initializing database schemas..."
+          aether init --config-path $TEST_CONFIG_DIR --db-path $TEST_DB_DIR
+
+          # Verify databases were created
+          echo "Checking created databases:"
+          ls -la $TEST_DB_DIR/
+
+      # Validate configuration syntax and structure (dry-run sync)
+      - name: Validate Configuration
+        run: |
+          echo "Validating configuration files..."
+          aether sync --dry-run --detailed --config-path $TEST_CONFIG_DIR --db-path $TEST_DB_DIR
+
+      # Sync configuration to test database
+      - name: Test Configuration Sync
+        run: |
+          echo "Testing configuration sync process..."
+          aether sync --detailed --config-path $TEST_CONFIG_DIR --db-path $TEST_DB_DIR
+
+      # Check configuration status
+      - name: Check Configuration Status
+        run: |
+          echo "Checking configuration status..."
+          aether status --detailed --config-path $TEST_CONFIG_DIR --db-path $TEST_DB_DIR
+
+      # Test export functionality (round-trip from SQLite -> YAML/CSV)
+      - name: Test Configuration Export
+        run: |
+          echo "Testing export functionality..."
+          export EXPORT_DIR="/tmp/aether_export_test"
+          mkdir -p $EXPORT_DIR
+
+          # Export from the synced DB into a fresh output directory.
+          # `aether export` only needs --output and --db-path; there is no
+          # `all` subcommand. This step now fails CI on real export errors
+          # rather than hiding them behind a soft warning.
+          aether export --output $EXPORT_DIR --db-path $TEST_DB_DIR
+
+          # Clean up export test
+          rm -rf $EXPORT_DIR
+
+      # Clean up test directories
+      - name: Cleanup
+        if: always()
+        run: |
+          rm -rf $TEST_CONFIG_DIR $TEST_DB_DIR
+          echo "Test directories cleaned up"
+
+  # Job 4: Optional Redis mirror extension contract
+  integration-tests:
+    name: Redis Extension Contract
+    runs-on: ubuntu-latest
+    needs: [unit-tests, config-validation]
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Setup Environment
+        uses: ./.github/actions/setup-rust-env
+        with:
+          install-protoc: 'true'
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@nextest
+
+      # Clean Aether Binary Cache (prevent schema mismatch)
+      - name: Clean Aether Binary Cache
+        run: |
+          echo "Cleaning cached Aether binaries to prevent schema mismatch..."
+          rm -f target/debug/aether target/release/aether
+
+      # Build & Start Redis
+      - name: Build & Start Redis
+        run: |
+          echo "Starting Redis container..."
+          docker compose --profile redis up -d aether-redis
+
+          echo "Waiting for Redis to be ready..."
+          for i in {1..30}; do
+            if docker compose exec -T aether-redis redis-cli ping >/dev/null 2>&1; then
+              echo "✓ Redis is ready and responding to ping"
+              exit 0
+            fi
+            echo "Waiting for Redis to start... ($i/30)"
+            sleep 2
+          done
+
+          echo "Redis failed to start in time" >&2
+          docker compose logs aether-redis
+          exit 1
+
+      # Redis belongs to the explicit extension suite; core services are not
+      # started and must not acquire a dependency on this container.
+      - name: Run Redis Bridge Contract
+        env:
+          REDIS_URL: redis://localhost:6379
+          RUST_LOG: debug
+        run: |
+          docker compose exec -T aether-redis redis-cli FLUSHDB
+          cargo nextest run -p aether-redis-bridge
+
+      # Cleanup Docker resources
+      - name: Stop Redis
+        if: always()
+        run: |
+          docker compose down -v --rmi local
+          docker system prune -f
+
+  # Job 5: SHM-only E2E integration tests (no external database)
+  # Tests the complete data acquisition flow:
+  #   simulator -> aether-io -> SHM -> aether-automation
+  e2e-tests:
+    name: E2E Integration Tests
+    runs-on: ubuntu-latest
+    needs: [unit-tests, config-validation]
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Setup Environment
+        uses: ./.github/actions/setup-rust-env
+        with:
+          install-protoc: 'true'
+
+      # Build all required binaries
+      - name: Build Binaries
+        run: |
+          echo "Building simulator, aether-io, aether-automation, and aether..."
+          cargo build --release -p simulator -p aether-io -p aether-automation -p aether
+
+      # Run E2E test script
+      - name: Run SHM-only Runtime Test
+        run: |
+          chmod +x scripts/check-shm-only-runtime.sh
+          ./scripts/check-shm-only-runtime.sh
+
+      # Collect debug artifacts on failure
+      - name: Collect E2E Artifacts on Failure
+        if: failure()
+        run: |
+          mkdir -p /tmp/e2e-artifacts
+          curl -s http://127.0.0.1:6001/health > /tmp/e2e-artifacts/io_health.json 2>/dev/null || true
+          curl -s http://127.0.0.1:6002/health > /tmp/e2e-artifacts/automation_health.json 2>/dev/null || true
+
+      - name: Upload E2E Artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-failure-artifacts
+          path: /tmp/e2e-artifacts/
+          retention-days: 7
+
+      # Cleanup
+      - name: Cleanup
+        if: always()
+        run: |
+          docker compose down -v --rmi local
+          docker system prune -f
+
+      - name: Test Summary
+        if: always()
+        run: |
+          echo "=============================================="
+          echo "   E2E Integration Tests Complete"
+          echo "=============================================="
+          echo ""
+          echo "Test flow verified:"
+          echo "  - Modbus simulator (TCP port 5020)"
+          echo "  - aether-io data acquisition"
+          echo "  - authoritative SHM live-state transport"
+          echo "  - Point value transformation (scale/offset)"
+          echo ""
+          echo "Key components tested:"
+          echo "  - simulator -> aether-io Modbus connection"
+          echo "  - aether-io -> SHM -> aether-automation"
+          echo "  - Configuration loading (aether)"

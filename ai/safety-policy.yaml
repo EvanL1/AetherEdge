@@ -1,0 +1,44 @@
+version: 1
+defaults:
+  decision: deny
+  audit: required
+  timeout_ms: 5000
+risk_levels:
+  low:
+    confirmation: never
+  medium:
+    confirmation: policy
+  high:
+    confirmation: always
+capabilities:
+  system.describe:
+    kind: query
+    risk: low
+    permission: system.read
+    idempotent: true
+  device.read_point:
+    kind: query
+    risk: low
+    permission: device.read
+    idempotent: true
+  device.write_point:
+    kind: command
+    risk: high
+    permission: device.control
+    idempotent: false
+    confirmation: always
+    audit: required
+  config.apply:
+    kind: command
+    risk: high
+    permission: config.write
+    idempotent: true
+    confirmation: always
+    audit: required
+  runtime.restart:
+    kind: command
+    risk: high
+    permission: runtime.manage
+    idempotent: true
+    confirmation: always
+    audit: required

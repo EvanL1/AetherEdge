@@ -1,0 +1,22 @@
+[package]
+name = "aether-core"
+publish = false
+version.workspace = true
+edition = "2024"
+description = "Core types and codecs for AetherEMS - no_std compatible for embedded firmware"
+license.workspace = true
+
+[features]
+default = ["std"]
+std = []
+# Enable serde serialization (std only, for configuration files)
+serde = ["dep:serde", "std"]
+# Enable JSON schema generation (std only, for OpenAPI)
+schema = ["dep:schemars", "std"]
+
+[dependencies]
+# Optional std dependencies
+serde = { version = "1.0", features = ["derive"], optional = true }
+schemars = { version = "0.8", optional = true }
+
+[dev-dependencies]

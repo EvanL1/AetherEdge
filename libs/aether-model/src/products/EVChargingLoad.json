@@ -1,0 +1,37 @@
+{
+  "name": "EVChargingLoad",
+  "pName": "Station",
+  "P": [
+    {"id":1,"name":"Max Voltage","unit":"V","type":"number"},
+    {"id":2,"name":"Max Current","unit":"A","type":"number"},
+    {"id":3,"name":"Rated Frequency","unit":"Hz","type":"number"},
+    {"id":4,"name":"Max Power","unit":"kw","type":"number"},
+    {"id":5,"name":"Load Flexibility","unit":"","type":"string","options":["rigid","flexible"]},
+    {"id":6,"name":"Adjustable Power Range","unit":"kw","type":"number"},
+    {"id":7,"name":"Response Time","unit":"min","type":"number"},
+    {"id":8,"name":"Min Runtime","unit":"min","type":"number"},
+    {"id":9,"name":"Max Interrupt Time","unit":"min","type":"number"},
+    {"id":10,"name":"Shiftable Time Window","unit":"min","type":"number"},
+    {"id":11,"name":"Charger Type","unit":"","type":"string","options":["Level1","Level2","DC_Fast"]},
+    {"id":12,"name":"Battery Capacity","unit":"kWh","type":"number"},
+    {"id":13,"name":"Charging Efficiency","unit":"%","type":"number","default":90}
+  ],
+  "M": [
+    {"id":1,"name":"Load Power","unit":"kw","type":"number"},
+    {"id":2,"name":"Energy Used","unit":"kwh","type":"number"},
+    {"id":3,"name":"Voltage","unit":"V","type":"number"},
+    {"id":4,"name":"Current","unit":"A","type":"number"},
+    {"id":5,"name":"Frequency","unit":"Hz","type":"number"},
+    {"id":6,"name":"Power Factor","unit":"","type":"number"},
+    {"id":7,"name":"Reactive Power","unit":"kVar","type":"number"},
+    {"id":8,"name":"Apparent Power","unit":"kVa","type":"number"},
+    {"id":9,"name":"Charging Status","unit":"","type":"string","options":["charging","idle","completed"]}
+  ],
+  "A": [
+    {"id":1,"name":"Start","unit":"","type":"string"},
+    {"id":2,"name":"Stop","unit":"","type":"string"},
+    {"id":3,"name":"Power Set","unit":"kw","type":"number"},
+    {"id":4,"name":"Target SOC","unit":"%","type":"number","min":0,"max":100},
+    {"id":5,"name":"Deadline Time","unit":"HH:mm","type":"string"}
+  ]
+}

@@ -1,0 +1,23 @@
+[package]
+name = "aether-routing"
+publish = false
+version.workspace = true
+edition = "2024"
+license.workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+tracing = { workspace = true }
+sqlx = { workspace = true }
+itoa = { workspace = true }
+rustc-hash = { workspace = true } # Fast FxHashMap for small integer keys
+arc-swap = "1.7"  # Lock-free atomic pointer swap for RoutingCache
+aether-model = { path = "../aether-model" }
+aether-domain = { path = "../../crates/aether-domain" }
+
+[dev-dependencies]
+tokio = { workspace = true }
+serde_json = { workspace = true }  # Only used in tests
+
+[lints]
+workspace = true

@@ -1,0 +1,6 @@
+# E2E Test - automation configuration
+# Products from git submodule, instances for E2E testing
+
+products_path: "libs/aether-model/src/products"
+instances_path: "config.e2e/automation/instances"
+auto_load_instances: true

@@ -1,0 +1,40 @@
+[package]
+name = "aether-rtdb"
+publish = false
+version.workspace = true
+edition = "2024"
+license.workspace = true
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+bytes = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+dashmap = { workspace = true }
+parking_lot = { workspace = true }
+regex = { workspace = true }
+tracing = { workspace = true }
+tokio = { workspace = true }
+itoa = { workspace = true }  # High-performance u32 to string (Round 129)
+ryu = { workspace = true }   # High-performance f64 to string (Round 129)
+
+# Core dependencies for keyspace
+aether-model = { path = "../aether-model" }
+
+# Optional dependencies
+aether-infra = { path = "../aether-infra", optional = true, default-features = false, features = ["redis"] }
+workspace-hack = { version = "0.1", path = "../../workspace-hack" }
+
+[features]
+default = ["redis-backend", "memory-backend"]
+redis-backend = ["aether-infra"]
+memory-backend = []
+
+[dev-dependencies]
+tokio = { workspace = true }
+serial_test = "3.0"
+
+[lints]
+workspace = true

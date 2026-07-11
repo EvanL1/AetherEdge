@@ -1,0 +1,19 @@
+[package]
+name = "aether-testkit"
+version.workspace = true
+edition = "2024"
+rust-version = "1.90"
+description = "Conformance suites for Aether port implementations"
+license.workspace = true
+repository.workspace = true
+documentation = "https://docs.rs/aether-testkit"
+readme = "README.md"
+keywords = ["iot", "edge", "gateway", "testing"]
+categories = ["development-tools::testing"]
+
+[dependencies]
+aether-domain = { version = "0.5.0", path = "../aether-domain" }
+aether-ports = { version = "0.5.0", path = "../aether-ports" }
+
+[lints]
+workspace = true

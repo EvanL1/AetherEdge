@@ -1,0 +1,110 @@
+[package]
+name = "workspace-hack"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+# workspace-hack is managed by cargo-hakari.
+# See https://docs.rs/cargo-hakari/latest/cargo_hakari/about/index.html
+
+### BEGIN HAKARI SECTION
+[dependencies]
+axum = { version = "0.8", features = ["http2", "macros"] }
+base64 = { version = "0.22" }
+chrono = { version = "0.4", features = ["serde"] }
+clap = { version = "4", features = ["cargo", "derive", "env"] }
+clap_builder = { version = "4", default-features = false, features = ["cargo", "color", "env", "help", "std", "suggestions", "usage"] }
+crossbeam-utils = { version = "0.8" }
+crypto-common = { version = "0.1", default-features = false, features = ["std"] }
+digest = { version = "0.10", features = ["mac", "std"] }
+either = { version = "1", features = ["serde", "use_std"] }
+fastrand = { version = "2" }
+form_urlencoded = { version = "1" }
+futures-channel = { version = "0.3", features = ["sink"] }
+futures-executor = { version = "0.3" }
+futures-io = { version = "0.3" }
+futures-sink = { version = "0.3" }
+futures-util = { version = "0.3", default-features = false, features = ["async-await-macro", "channel", "io", "sink"] }
+getrandom = { version = "0.2", default-features = false, features = ["std"] }
+hyper = { version = "1", features = ["full"] }
+hyper-util = { version = "0.1", features = ["http1", "http2", "server", "service", "tokio"] }
+indexmap = { version = "2", features = ["serde"] }
+log = { version = "0.4", default-features = false, features = ["std"] }
+memchr = { version = "2" }
+mio = { version = "1", features = ["net", "os-ext"] }
+num-traits = { version = "0.2", default-features = false, features = ["i128", "std"] }
+once_cell = { version = "1" }
+rand = { version = "0.8" }
+regex-automata = { version = "0.4", default-features = false, features = ["dfa-build", "dfa-onepass", "hybrid", "meta", "nfa-backtrack", "perf-inline", "perf-literal", "std", "unicode"] }
+regex-syntax = { version = "0.8" }
+scopeguard = { version = "1" }
+serde = { version = "1", features = ["alloc", "derive", "rc"] }
+serde_core = { version = "1", features = ["alloc", "rc"] }
+serde_json = { version = "1", features = ["alloc", "raw_value"] }
+sha2 = { version = "0.10" }
+smallvec = { version = "1", default-features = false, features = ["const_new", "serde"] }
+sqlx = { version = "0.8", default-features = false, features = ["chrono", "json", "macros", "postgres", "runtime-tokio-rustls", "sqlite", "uuid"] }
+sqlx-core = { version = "0.8", features = ["_rt-tokio", "_tls-rustls-ring-webpki", "any", "chrono", "json", "migrate", "offline", "uuid"] }
+sqlx-postgres = { version = "0.8", default-features = false, features = ["chrono", "json", "migrate", "offline", "uuid"] }
+sqlx-sqlite = { version = "0.8", default-features = false, features = ["bundled", "chrono", "json", "migrate", "offline", "uuid"] }
+sync_wrapper = { version = "1", default-features = false, features = ["futures"] }
+time = { version = "0.3", features = ["formatting", "parsing"] }
+tokio = { version = "1", features = ["full"] }
+tokio-util = { version = "0.7", features = ["codec", "io"] }
+tracing = { version = "0.1", features = ["log"] }
+tracing-core = { version = "0.1" }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json", "time"] }
+
+[build-dependencies]
+axum = { version = "0.8", features = ["http2", "macros"] }
+base64 = { version = "0.22" }
+chrono = { version = "0.4", features = ["serde"] }
+clap = { version = "4", features = ["cargo", "derive", "env"] }
+clap_builder = { version = "4", default-features = false, features = ["cargo", "color", "env", "help", "std", "suggestions", "usage"] }
+crossbeam-utils = { version = "0.8" }
+crypto-common = { version = "0.1", default-features = false, features = ["std"] }
+digest = { version = "0.10", features = ["mac", "std"] }
+either = { version = "1", features = ["serde", "use_std"] }
+fastrand = { version = "2" }
+form_urlencoded = { version = "1" }
+futures-channel = { version = "0.3", features = ["sink"] }
+futures-executor = { version = "0.3" }
+futures-io = { version = "0.3" }
+futures-sink = { version = "0.3" }
+futures-util = { version = "0.3", default-features = false, features = ["async-await-macro", "channel", "io", "sink"] }
+getrandom = { version = "0.2", default-features = false, features = ["std"] }
+hyper = { version = "1", features = ["full"] }
+hyper-util = { version = "0.1", features = ["http1", "http2", "server", "service", "tokio"] }
+indexmap = { version = "2", features = ["serde"] }
+log = { version = "0.4", default-features = false, features = ["std"] }
+memchr = { version = "2" }
+mio = { version = "1", features = ["net", "os-ext"] }
+num-traits = { version = "0.2", default-features = false, features = ["i128", "std"] }
+once_cell = { version = "1" }
+proc-macro2 = { version = "1" }
+quote = { version = "1" }
+rand = { version = "0.8" }
+regex-automata = { version = "0.4", default-features = false, features = ["dfa-build", "dfa-onepass", "hybrid", "meta", "nfa-backtrack", "perf-inline", "perf-literal", "std", "unicode"] }
+regex-syntax = { version = "0.8" }
+scopeguard = { version = "1" }
+serde = { version = "1", features = ["alloc", "derive", "rc"] }
+serde_core = { version = "1", features = ["alloc", "rc"] }
+serde_json = { version = "1", features = ["alloc", "raw_value"] }
+sha2 = { version = "0.10" }
+smallvec = { version = "1", default-features = false, features = ["const_new", "serde"] }
+sqlx = { version = "0.8", default-features = false, features = ["chrono", "json", "macros", "postgres", "runtime-tokio-rustls", "sqlite", "uuid"] }
+sqlx-core = { version = "0.8", features = ["_rt-tokio", "_tls-rustls-ring-webpki", "any", "chrono", "json", "migrate", "offline", "uuid"] }
+sqlx-macros = { version = "0.8", features = ["_rt-tokio", "_tls-rustls-ring-webpki", "chrono", "derive", "json", "macros", "postgres", "sqlite", "uuid"] }
+sqlx-macros-core = { version = "0.8", features = ["_rt-tokio", "_tls-rustls-ring-webpki", "chrono", "derive", "json", "macros", "postgres", "sqlite", "uuid"] }
+sqlx-postgres = { version = "0.8", default-features = false, features = ["chrono", "json", "migrate", "offline", "uuid"] }
+sqlx-sqlite = { version = "0.8", default-features = false, features = ["bundled", "chrono", "json", "migrate", "offline", "uuid"] }
+syn = { version = "2", features = ["extra-traits", "fold", "full", "visit", "visit-mut"] }
+sync_wrapper = { version = "1", default-features = false, features = ["futures"] }
+time = { version = "0.3", features = ["formatting", "parsing"] }
+tokio = { version = "1", features = ["full"] }
+tokio-util = { version = "0.7", features = ["codec", "io"] }
+tracing = { version = "0.1", features = ["log"] }
+tracing-core = { version = "0.1" }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json", "time"] }
+
+### END HAKARI SECTION

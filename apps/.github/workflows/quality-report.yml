@@ -1,0 +1,61 @@
+name: quality-report
+
+on:
+  workflow_dispatch:
+  pull_request:
+  push:
+    branches: ['main', 'dev']
+
+jobs:
+  quality-report:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run quality report
+        run: pnpm quality:report -- --out quality-report.md
+
+      - name: Append workflow summary
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          if [ -f quality-report.md ]; then
+            cat quality-report.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "quality-report.md was not generated." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload coverage artifacts
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage/
+          if-no-files-found: ignore
+
+      - name: Upload quality report
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: quality-report
+          path: quality-report.md
+          if-no-files-found: ignore

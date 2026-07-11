@@ -1,0 +1,87 @@
+// Warm theme overrides for Vue Flow
+.vue-flow {
+  // Edges
+  .vue-flow__edge-path {
+    stroke: #ff8a00 !important;
+    stroke-width: 2.5px;
+  }
+  //   .vue-flow__edge.selected .vue-flow__edge-path {
+  //     stroke: #ff6f00 !important;
+  //   }
+
+  //   // Handles
+  //   .vue-flow__handle {
+  //     background-color: #ff8a00 !important;
+  //     border-color: #fff !important;
+  //   }
+
+  //   // Selection/viewport helpers
+  //   .vue-flow__selection {
+  //     border-color: rgba(255, 138, 0, 0.6) !important;
+  //     background-color: rgba(255, 138, 0, 0.08) !important;
+  //   }
+
+  //   // Nodes default background (fallback)
+  //   .vue-flow__node {
+  //     background-color: #fff7e6;
+  //     border-color: rgba(255, 138, 0, 0.35);
+  //   }
+  .vue-flow__minimap {
+    width: 2rem;
+    height: 1.5rem;
+    background: rgba(19, 44, 84, 0.7);
+    // border: 0.01rem solid #4fbbff;
+    border: none !important;
+    border-radius: 0;
+    box-shadow: 0 0.08rem 0.24rem rgba(0, 0, 0, 0.28);
+    backdrop-filter: blur(0.3rem);
+  }
+
+  .vue-flow__minimap-mask {
+    stroke: #4fbbff;
+    stroke-width: 0.02rem;
+  }
+
+  .vue-flow__controls {
+    padding: 0.03rem;
+    background: rgba(19, 44, 84, 0.5);
+    border: 0.01rem solid rgba(19, 44, 84, 0.6);
+    border-radius: 0;
+    box-shadow: 0 0.08rem 0.24rem rgba(0, 0, 0, 0.28);
+    gap: 0.06rem;
+    backdrop-filter: blur(0.3rem);
+  }
+
+  .vue-flow__controls button {
+    width: 0.25rem;
+    height: 0.25rem;
+    font-size: 0.18rem;
+    color: #ffffff;
+    background: rgba(79, 187, 255, 0.12);
+    border: 0.01rem solid rgba(19, 44, 84, 0.6);
+    border-radius: 0;
+    transition: all 0.2s ease;
+  }
+
+  .vue-flow__controls button:hover {
+    background: rgba(79, 187, 255, 0.25);
+    border-color: rgba(19, 44, 84, 0.6);
+  }
+
+  .vue-flow__controls svg {
+    color: #ffffff;
+    fill: currentColor;
+    width: 0.18rem;
+    height: 0.18rem;
+  }
+
+  .vue-flow__minimap-node {
+    width: 1.2rem;
+    height: 0.3rem;
+  }
+
+  .rf-minimap-custom svg {
+    width: 2rem;
+    height: 1.5rem;
+  }
+}

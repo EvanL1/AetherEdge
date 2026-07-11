@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+
+# 获取提交信息
+COMMIT_MSG_FILE=$1
+COMMIT_MSG=$(cat "$COMMIT_MSG_FILE")
+
+# 颜色定义
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m'
+
+# 定义有效的提交类型
+VALID_TYPES="feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert"
+
+# 检查提交信息格式
+if ! echo "$COMMIT_MSG" | grep -qE "^($VALID_TYPES)(\(.+\))?: .{1,100}"; then
+    echo -e "${RED}❌ Invalid commit message format!${NC}"
+    echo ""
+    echo "Commit message must follow the format:"
+    echo "  <type>(<scope>): <subject>"
+    echo ""
+    echo "Valid types: feat, fix, docs, style, refactor, perf, test, build, ci, chore, revert"
+    echo ""
+    echo "Examples:"
+    echo "  feat(io): add modbus RTU support"
+    echo "  fix(api): resolve memory leak in websocket handler"
+    echo "  docs: update installation guide"
+    echo ""
+    echo "Your commit message:"
+    echo "$COMMIT_MSG"
+    exit 1
+fi
+
+# 检查提交信息长度
+FIRST_LINE=$(echo "$COMMIT_MSG" | head -n 1)
+if [ ${#FIRST_LINE} -gt 100 ]; then
+    echo -e "${YELLOW}⚠️  Warning: First line of commit message is too long (${#FIRST_LINE} > 100 characters)${NC}"
+fi
+
+# 检查是否包含 issue 引用（可选）
+if ! echo "$COMMIT_MSG" | grep -qE "(#[0-9]+|[A-Z]+-[0-9]+)"; then
+    echo -e "${YELLOW}💡 Tip: Consider referencing an issue (e.g., #123 or JIRA-456)${NC}"
+fi
+
+echo -e "${GREEN}✅ Commit message format is valid${NC}"

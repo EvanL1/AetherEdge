@@ -1,0 +1,157 @@
+# PV (Photovoltaic) Daily Cycle Scenario
+# Simulates a full day of solar power generation with realistic patterns
+
+name: "PV Daily Cycle"
+
+devices:
+  - type: pv
+    unit_id: 3
+    registers:
+      # PV Power Output (kW * 10) - Daily pattern peaking at noon
+      - address: 0
+        name: "PV Power"
+        generator:
+          type: daily_pattern
+          peak_hour: 12       # Noon peak
+          peak_value: 5000.0  # 500.0 kW peak
+          base_value: 0.0     # No output at night
+          spread_hours: 6.0   # Active from ~6:00 to ~18:00
+
+      # DC Voltage (V * 10) - MPPT tracking, relatively stable
+      - address: 1
+        name: "DC Voltage"
+        generator:
+          type: sine
+          frequency: 0.0001   # Very slow oscillation
+          amplitude: 200.0    # +/- 20V variation
+          offset: 6500.0      # 650V nominal
+
+      # DC Current (A * 10) - Follows power output pattern
+      - address: 2
+        name: "DC Current"
+        generator:
+          type: daily_pattern
+          peak_hour: 12
+          peak_value: 800.0   # 80.0A peak
+          base_value: 0.0
+          spread_hours: 6.0
+
+      # Efficiency (% * 10) - Slightly lower at midday due to heat
+      - address: 3
+        name: "Efficiency"
+        generator:
+          type: random_drift
+          center: 185.0       # 18.5% average
+          max_delta: 15.0     # +/- 1.5%
+          smoothness: 0.95
+
+      # Peak Efficiency (% * 10) - Constant design value
+      - address: 4
+        name: "Peak Efficiency"
+        generator:
+          type: constant
+          value: 210.0        # 21.0% rated
+
+      # Irradiance (W/m2) - Solar irradiance sensor
+      - address: 10
+        name: "Irradiance"
+        generator:
+          type: daily_pattern
+          peak_hour: 12
+          peak_value: 1000.0  # 1000 W/m2 peak
+          base_value: 0.0
+          spread_hours: 6.0
+
+      # Panel Temperature (C * 10) - Lags power by ~2 hours
+      - address: 20
+        name: "Panel Temp"
+        generator:
+          type: daily_pattern
+          peak_hour: 14       # Peak at 2PM (thermal lag)
+          peak_value: 650.0   # 65.0C peak
+          base_value: 200.0   # 20.0C at night
+          spread_hours: 8.0
+
+      # Ambient Temperature (C * 10)
+      - address: 21
+        name: "Ambient Temp"
+        generator:
+          type: daily_pattern
+          peak_hour: 15       # Peak at 3PM
+          peak_value: 350.0   # 35.0C
+          base_value: 200.0   # 20.0C
+          spread_hours: 10.0
+
+      # Inverter Temperature (C * 10)
+      - address: 22
+        name: "Inverter Temp"
+        generator:
+          type: daily_pattern
+          peak_hour: 13
+          peak_value: 550.0   # 55.0C
+          base_value: 250.0   # 25.0C
+          spread_hours: 7.0
+
+      # String 1 Voltage (V * 10)
+      - address: 30
+        name: "String1 Voltage"
+        generator:
+          type: random_drift
+          center: 6500.0      # 650V
+          max_delta: 100.0
+          smoothness: 0.9
+
+      # String 1 Current (A * 10)
+      - address: 31
+        name: "String1 Current"
+        generator:
+          type: daily_pattern
+          peak_hour: 12
+          peak_value: 200.0   # 20.0A
+          base_value: 0.0
+          spread_hours: 6.0
+
+      # String 2 Voltage (V * 10)
+      - address: 32
+        name: "String2 Voltage"
+        generator:
+          type: random_drift
+          center: 6480.0      # 648V (slightly different)
+          max_delta: 100.0
+          smoothness: 0.9
+
+      # String 2 Current (A * 10)
+      - address: 33
+        name: "String2 Current"
+        generator:
+          type: daily_pattern
+          peak_hour: 12
+          peak_value: 195.0   # 19.5A (slightly different)
+          base_value: 0.0
+          spread_hours: 6.0
+
+      # Cumulative Energy (kWh)
+      - address: 50
+        name: "Daily Energy"
+        generator:
+          type: linear_ramp
+          start: 0.0
+          end: 3000.0         # 3000 kWh daily production
+          duration_sec: 86400 # 24 hours
+
+      # Status Register - 1 = Running
+      - address: 60
+        name: "Status"
+        generator:
+          type: constant
+          value: 1.0
+
+      # Fault Code - No faults
+      - address: 61
+        name: "Fault Code"
+        generator:
+          type: constant
+          value: 0.0
+
+faults:
+  enabled: false

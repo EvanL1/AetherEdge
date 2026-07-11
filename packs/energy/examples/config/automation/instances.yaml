@@ -1,0 +1,55 @@
+# Energy pack model instances example
+# All instances are based on product definitions in config/automation/products/
+
+instances:
+  # ============================================
+  # 真实设备实例配置
+  # ============================================
+
+  # PCS #1 - 变流器（Channel 1 AC侧）
+  pcs_01:
+    product_name: PCS
+    name: "PCS #1"
+    properties:
+      rated_power: 500.0        # kW
+      rated_voltage: 380.0      # V
+      rated_frequency: 50.0     # Hz
+      manufacturer: "Sungrow"
+      model: "SC500HV"
+      installation_date: "2024-01-01"
+
+  # PV系统 - 光伏/直流侧（Channel 1 DC侧）
+  pv_01:
+    product_name: PVInverter
+    name: "PV System #1"
+    properties:
+      rated_power: 500.0        # kW
+      max_dc_voltage: 1000.0    # V
+      mppt_channels: 4
+      manufacturer: "Sungrow"
+      model: "PV-500"
+      installation_date: "2024-01-01"
+
+  # 电池系统（Channel 2）
+  battery_01:
+    product_name: Battery
+    name: "Battery Pack #1"
+    properties:
+      total_capacity: 860.0     # kWh
+      nominal_voltage: 768.0    # V
+      chemistry: "LiFePO4"
+      manufacturer: "Ampace"
+      model: "BAMS-860"
+      installation_date: "2024-01-01"
+
+  # 柴油发电机（Channel 3）
+  diesel_gen_01:
+    product_name: Diesel
+    name: "Diesel Generator #1"
+    properties:
+      rated_power: 500.0        # kW
+      rated_voltage: 400.0      # V
+      rated_frequency: 50.0     # Hz
+      manufacturer: "Cummins"
+      model: "C500D5"
+      installation_date: "2024-01-01"

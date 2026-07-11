@@ -1,0 +1,168 @@
+Gnuplot not found, using plotters backend
+Benchmarking shm_hot_path/point_slot_set
+Benchmarking shm_hot_path/point_slot_set: Warming up for 1.0000 s
+Benchmarking shm_hot_path/point_slot_set: Collecting 100 samples in estimated 5.0001 s (114M iterations)
+Benchmarking shm_hot_path/point_slot_set: Analyzing
+shm_hot_path/point_slot_set
+                        time:   [43.978 ns 44.072 ns 44.196 ns]
+Found 10 outliers among 100 measurements (10.00%)
+  1 (1.00%) high mild
+  9 (9.00%) high severe
+Benchmarking shm_hot_path/point_slot_load_consistent
+Benchmarking shm_hot_path/point_slot_load_consistent: Warming up for 1.0000 s
+Benchmarking shm_hot_path/point_slot_load_consistent: Collecting 100 samples in estimated 5.0001 s (263M iterations)
+Benchmarking shm_hot_path/point_slot_load_consistent: Analyzing
+shm_hot_path/point_slot_load_consistent
+                        time:   [18.974 ns 18.989 ns 19.011 ns]
+Found 12 outliers among 100 measurements (12.00%)
+  3 (3.00%) high mild
+  9 (9.00%) high severe
+Benchmarking shm_hot_path/point_slot_set_then_load
+Benchmarking shm_hot_path/point_slot_set_then_load: Warming up for 1.0000 s
+Benchmarking shm_hot_path/point_slot_set_then_load: Collecting 100 samples in estimated 5.0003 s (79M iterations)
+Benchmarking shm_hot_path/point_slot_set_then_load: Analyzing
+shm_hot_path/point_slot_set_then_load
+                        time:   [62.810 ns 62.850 ns 62.898 ns]
+Found 5 outliers among 100 measurements (5.00%)
+  3 (3.00%) high mild
+  2 (2.00%) high severe
+Benchmarking shm_hot_path/unified_writer_set_action
+Benchmarking shm_hot_path/unified_writer_set_action: Warming up for 1.0000 s
+Benchmarking shm_hot_path/unified_writer_set_action: Collecting 100 samples in estimated 5.0001 s (40M iterations)
+Benchmarking shm_hot_path/unified_writer_set_action: Analyzing
+shm_hot_path/unified_writer_set_action
+                        time:   [125.54 ns 125.74 ns 126.03 ns]
+Found 18 outliers among 100 measurements (18.00%)
+  10 (10.00%) high mild
+  8 (8.00%) high severe
+
+Benchmarking m2c_uds/shm_notifier_notify_uds_loopback
+Benchmarking m2c_uds/shm_notifier_notify_uds_loopback: Warming up for 1.0000 s
+Benchmarking m2c_uds/shm_notifier_notify_uds_loopback: Collecting 50 samples in estimated 8.0025 s (1.2M iterations)
+Benchmarking m2c_uds/shm_notifier_notify_uds_loopback: Analyzing
+m2c_uds/shm_notifier_notify_uds_loopback
+                        time:   [6.9312 µs 7.0272 µs 7.1407 µs]
+Found 5 outliers among 50 measurements (10.00%)
+  5 (10.00%) high severe
+
+Benchmarking shm_dispatch/shm_dispatch_full_path
+Benchmarking shm_dispatch/shm_dispatch_full_path: Warming up for 1.0000 s
+Benchmarking shm_dispatch/shm_dispatch_full_path: Collecting 100 samples in estimated 5.0053 s (2.8M iterations)
+Benchmarking shm_dispatch/shm_dispatch_full_path: Analyzing
+shm_dispatch/shm_dispatch_full_path
+                        time:   [1.7650 µs 1.7709 µs 1.7791 µs]
+Found 6 outliers among 100 measurements (6.00%)
+  4 (4.00%) high mild
+  2 (2.00%) high severe
+
+Benchmarking onchange_tick_phase0/phase0_hmget_memory/10
+Benchmarking onchange_tick_phase0/phase0_hmget_memory/10: Warming up for 1.0000 s
+Benchmarking onchange_tick_phase0/phase0_hmget_memory/10: Collecting 50 samples in estimated 5.0000 s (209k iterations)
+Benchmarking onchange_tick_phase0/phase0_hmget_memory/10: Analyzing
+onchange_tick_phase0/phase0_hmget_memory/10
+                        time:   [23.856 µs 24.012 µs 24.178 µs]
+Found 4 outliers among 50 measurements (8.00%)
+  2 (4.00%) high mild
+  2 (4.00%) high severe
+Benchmarking onchange_tick_phase0/phase0_hmget_memory/100
+Benchmarking onchange_tick_phase0/phase0_hmget_memory/100: Warming up for 1.0000 s
+Benchmarking onchange_tick_phase0/phase0_hmget_memory/100: Collecting 50 samples in estimated 5.2230 s (22k iterations)
+Benchmarking onchange_tick_phase0/phase0_hmget_memory/100: Analyzing
+onchange_tick_phase0/phase0_hmget_memory/100
+                        time:   [238.68 µs 240.13 µs 242.21 µs]
+Found 5 outliers among 50 measurements (10.00%)
+  4 (8.00%) high mild
+  1 (2.00%) high severe
+Benchmarking onchange_tick_phase0/phase0_hmget_memory/1000
+Benchmarking onchange_tick_phase0/phase0_hmget_memory/1000: Warming up for 1.0000 s
+
+Warning: Unable to complete 50 samples in 5.0s. You may wish to increase target time to 6.6s, enable flat sampling, or reduce sample count to 30.
+Benchmarking onchange_tick_phase0/phase0_hmget_memory/1000: Collecting 50 samples in estimated 6.5721 s (1275 iterations)
+Benchmarking onchange_tick_phase0/phase0_hmget_memory/1000: Analyzing
+onchange_tick_phase0/phase0_hmget_memory/1000
+                        time:   [5.1046 ms 5.2542 ms 5.3854 ms]
+Found 8 outliers among 50 measurements (16.00%)
+  6 (12.00%) low severe
+  2 (4.00%) high mild
+Benchmarking onchange_tick_phase0/phase0_shm_direct/10
+Benchmarking onchange_tick_phase0/phase0_shm_direct/10: Warming up for 1.0000 s
+Benchmarking onchange_tick_phase0/phase0_shm_direct/10: Collecting 50 samples in estimated 5.0108 s (557k iterations)
+Benchmarking onchange_tick_phase0/phase0_shm_direct/10: Analyzing
+onchange_tick_phase0/phase0_shm_direct/10
+                        time:   [8.6790 µs 8.7131 µs 8.7533 µs]
+Found 5 outliers among 50 measurements (10.00%)
+  3 (6.00%) high mild
+  2 (4.00%) high severe
+Benchmarking onchange_tick_phase0/phase0_shm_direct/100
+Benchmarking onchange_tick_phase0/phase0_shm_direct/100: Warming up for 1.0000 s
+Benchmarking onchange_tick_phase0/phase0_shm_direct/100: Collecting 50 samples in estimated 5.0763 s (57k iterations)
+Benchmarking onchange_tick_phase0/phase0_shm_direct/100: Analyzing
+onchange_tick_phase0/phase0_shm_direct/100
+                        time:   [88.027 µs 88.615 µs 89.453 µs]
+Found 7 outliers among 50 measurements (14.00%)
+  3 (6.00%) high mild
+  4 (8.00%) high severe
+Benchmarking onchange_tick_phase0/phase0_shm_direct/1000
+Benchmarking onchange_tick_phase0/phase0_shm_direct/1000: Warming up for 1.0000 s
+Benchmarking onchange_tick_phase0/phase0_shm_direct/1000: Collecting 50 samples in estimated 5.2525 s (3825 iterations)
+Benchmarking onchange_tick_phase0/phase0_shm_direct/1000: Analyzing
+onchange_tick_phase0/phase0_shm_direct/1000
+                        time:   [1.3888 ms 1.4398 ms 1.5027 ms]
+Found 8 outliers among 50 measurements (16.00%)
+  5 (10.00%) high mild
+  3 (6.00%) high severe
+Benchmarking onchange_tick_phase0/should_trigger_value_changed/10
+Benchmarking onchange_tick_phase0/should_trigger_value_changed/10: Warming up for 1.0000 s
+Benchmarking onchange_tick_phase0/should_trigger_value_changed/10: Collecting 50 samples in estimated 5.0008 s (6.1M iterations)
+Benchmarking onchange_tick_phase0/should_trigger_value_changed/10: Analyzing
+onchange_tick_phase0/should_trigger_value_changed/10
+                        time:   [816.97 ns 819.51 ns 822.47 ns]
+Found 7 outliers among 50 measurements (14.00%)
+  3 (6.00%) high mild
+  4 (8.00%) high severe
+Benchmarking onchange_tick_phase0/should_trigger_no_change/10
+Benchmarking onchange_tick_phase0/should_trigger_no_change/10: Warming up for 1.0000 s
+Benchmarking onchange_tick_phase0/should_trigger_no_change/10: Collecting 50 samples in estimated 5.0039 s (634k iterations)
+Benchmarking onchange_tick_phase0/should_trigger_no_change/10: Analyzing
+onchange_tick_phase0/should_trigger_no_change/10
+                        time:   [7.9230 µs 7.9724 µs 8.0513 µs]
+Found 5 outliers among 50 measurements (10.00%)
+  2 (4.00%) high mild
+  3 (6.00%) high severe
+Benchmarking onchange_tick_phase0/should_trigger_value_changed/100
+Benchmarking onchange_tick_phase0/should_trigger_value_changed/100: Warming up for 1.0000 s
+Benchmarking onchange_tick_phase0/should_trigger_value_changed/100: Collecting 50 samples in estimated 5.0004 s (6.1M iterations)
+Benchmarking onchange_tick_phase0/should_trigger_value_changed/100: Analyzing
+onchange_tick_phase0/should_trigger_value_changed/100
+                        time:   [816.92 ns 822.11 ns 830.63 ns]
+Found 6 outliers among 50 measurements (12.00%)
+  4 (8.00%) high mild
+  2 (4.00%) high severe
+Benchmarking onchange_tick_phase0/should_trigger_no_change/100
+Benchmarking onchange_tick_phase0/should_trigger_no_change/100: Warming up for 1.0000 s
+Benchmarking onchange_tick_phase0/should_trigger_no_change/100: Collecting 50 samples in estimated 5.0576 s (62k iterations)
+Benchmarking onchange_tick_phase0/should_trigger_no_change/100: Analyzing
+onchange_tick_phase0/should_trigger_no_change/100
+                        time:   [79.597 µs 79.894 µs 80.273 µs]
+Found 5 outliers among 50 measurements (10.00%)
+  1 (2.00%) high mild
+  4 (8.00%) high severe
+Benchmarking onchange_tick_phase0/should_trigger_value_changed/1000
+Benchmarking onchange_tick_phase0/should_trigger_value_changed/1000: Warming up for 1.0000 s
+Benchmarking onchange_tick_phase0/should_trigger_value_changed/1000: Collecting 50 samples in estimated 5.0004 s (6.0M iterations)
+Benchmarking onchange_tick_phase0/should_trigger_value_changed/1000: Analyzing
+onchange_tick_phase0/should_trigger_value_changed/1000
+                        time:   [823.64 ns 824.89 ns 826.53 ns]
+Found 6 outliers among 50 measurements (12.00%)
+  1 (2.00%) high mild
+  5 (10.00%) high severe
+Benchmarking onchange_tick_phase0/should_trigger_no_change/1000
+Benchmarking onchange_tick_phase0/should_trigger_no_change/1000: Warming up for 1.0000 s
+Benchmarking onchange_tick_phase0/should_trigger_no_change/1000: Collecting 50 samples in estimated 5.2811 s (5100 iterations)
+Benchmarking onchange_tick_phase0/should_trigger_no_change/1000: Analyzing
+onchange_tick_phase0/should_trigger_no_change/1000
+                        time:   [992.77 µs 1.0411 ms 1.0987 ms]
+Found 9 outliers among 50 measurements (18.00%)
+  6 (12.00%) high mild
+  3 (6.00%) high severe
+

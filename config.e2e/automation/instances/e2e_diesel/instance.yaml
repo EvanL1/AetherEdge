@@ -1,0 +1,12 @@
+instance:
+  id: 3
+  name: "E2E_Diesel"
+  product_name: "Diesel"
+  description: "E2E Test - Diesel Generator"
+  enabled: true
+  channel_id: 1003
+
+  properties:
+    rated_power: 500.0
+    rated_voltage: 400.0
+    rated_frequency: 50.0

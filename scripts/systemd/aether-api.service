@@ -1,0 +1,15 @@
+[Unit]
+Description=Aether Edge management API (aether-api)
+PartOf=aether.target
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/aether/aether.env
+ExecStart=/opt/aether/bin/aether-api
+Restart=on-failure
+RestartSec=2
+User=root
+WorkingDirectory=/opt/aether
+
+[Install]
+WantedBy=aether.target

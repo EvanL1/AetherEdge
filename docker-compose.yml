@@ -1,0 +1,274 @@
+services:
+  # Redis - High-performance data store (official Redis 8)
+  aether-redis:
+    profiles: ["redis"]
+    image: redis:8-alpine
+    container_name: aether-redis
+    user: "0:0"  # Root to bypass entrypoint gosu privilege drop
+    entrypoint: ["redis-server"]  # Skip docker-entrypoint.sh (drops to redis user, breaks socket bind)
+    network_mode: host
+    labels:
+      - "aetherems.role=infrastructure"
+      - "aetherems.protected=true"
+      - "aetherems.description=Redis data store - avoid unnecessary restarts"
+    volumes:
+      - redis-data:/data
+      - redis-socket:/run/redis:rw # Unix socket directory for better performance
+    restart: unless-stopped
+    command: [
+      "--bind", "127.0.0.1",
+      "--protected-mode", "yes",
+      "--appendonly", "yes",
+      "--save", "60", "1",
+      "--unixsocket", "/run/redis/redis.sock",
+      "--unixsocketperm", "777"
+    ]
+    environment:
+      - NO_PROXY="*"
+      - no_proxy="*"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # TimescaleDB - Time-series database for history historical data
+  timescaledb:
+    profiles: ["postgres-storage"]
+    image: timescale/timescaledb:2.25.2-pg17
+    container_name: aether-timescaledb
+    network_mode: host
+    labels:
+      - "aetherems.role=infrastructure"
+      - "aetherems.description=TimescaleDB for historical data storage"
+    environment:
+      - POSTGRES_DB=history
+      - POSTGRES_USER=${TIMESCALEDB_USER:-postgres}
+      # Empty is intentionally invalid: opting into this profile requires an
+      # operator-provided secret instead of a public default password.
+      - POSTGRES_PASSWORD=${TIMESCALEDB_PASSWORD:-}
+      - NO_PROXY="*"
+      - no_proxy="*"
+    volumes:
+      - ${AETHER_TIMESCALE_DATA_PATH:-./data/timescaledb/data}:/var/lib/postgresql/data
+    command: ["postgres", "-c", "listen_addresses=127.0.0.1"]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${TIMESCALEDB_USER:-postgres}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Communication service with full hardware access (Linux production)
+  aether-io:
+    image: aetherems:latest
+    container_name: aether-io
+    command: ["aether-io", "--bind-address", "127.0.0.1:6001"]
+    network_mode: host
+    privileged: true # Full privileged mode for device access
+    # Complete /dev access for all industrial devices (serial, CAN, GPIO, I2C, SPI, etc.)
+    volumes:
+      - /dev:/dev:rw # Mount entire /dev directory with read-write access
+      - ${AETHER_BASE_PATH:-./data}/config/io:/app/config/io:ro
+      - ${AETHER_BASE_PATH:-./data}:/app/data:rw
+      - ${AETHER_LOG_PATH:-./logs}:/app/logs
+      - /dev/shm:/shm/rtdb:rw  # Shared memory dir (writer) — mount the dir so Docker never auto-creates a stale file entry
+    environment:
+      - SERVICE_NAME=aether-io
+      - SERVICE_PORT=6001
+      - RUST_LOG=${RUST_LOG:-info}
+      - AETHER_DB_PATH=/app/data/aether.db
+      - CSV_BASE_PATH=/app/config/io
+      - CONFIG_BASE_PATH=/app/config/io
+      - AETHER_LOG_DIR=/app/logs
+      - ENABLE_SHARED_MEMORY=${ENABLE_SHARED_MEMORY:-true}
+      - AETHER_M2C_SOCKET=/shm/rtdb/aether-m2c.sock
+      - AETHER_AUTOMATION_POINT_WATCH_SOCKET=/shm/rtdb/aether-point-watch-automation.sock
+      - NO_PROXY="*"
+      - no_proxy="*"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    restart: unless-stopped
+
+  # Model service (includes rules engine on port 6002)
+  aether-automation:
+    image: aetherems:latest
+    container_name: aether-automation
+    command: ["aether-automation"]
+    network_mode: host
+    environment:
+      - SERVICE_NAME=aether-automation
+      - SERVICE_PORT=6002
+      - API_HOST=127.0.0.1
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:?JWT_SECRET_KEY must be set; generate at least 32 random bytes}
+      - AETHER_UPLINK_CONTROL_TOKEN=${AETHER_UPLINK_CONTROL_TOKEN:?AETHER_UPLINK_CONTROL_TOKEN must be set; generate at least 32 random bytes}
+      - RUST_LOG=${RUST_LOG:-info}
+      - AETHER_DB_PATH=/app/data/aether.db
+      - AETHER_LOG_DIR=/app/logs
+      - ENABLE_SHARED_MEMORY=${ENABLE_SHARED_MEMORY:-true}
+      - AETHER_M2C_SOCKET=/shm/rtdb/aether-m2c.sock
+      - AETHER_AUTOMATION_POINT_WATCH_SOCKET=/shm/rtdb/aether-point-watch-automation.sock
+      - NO_PROXY="*"
+      - no_proxy="*"
+    volumes:
+      - ${AETHER_BASE_PATH:-./data}/config:/app/config:ro
+      - ${AETHER_BASE_PATH:-./data}:/app/data:rw
+      - ${AETHER_LOG_PATH:-./logs}:/app/logs
+      - /dev/shm:/shm/rtdb:rw  # SHM read + independent event bitmap/UDS
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    restart: unless-stopped
+
+  # History Service - SHM sampling + embedded SQLite history (port 6004)
+  # PostgreSQL/TimescaleDB remain optional via the postgres-storage feature.
+  aether-history:
+    image: aetherems:latest
+    container_name: aether-history
+    command: ["aether-history"]
+    network_mode: host
+    environment:
+      - SERVICE_NAME=aether-history
+      - API_PORT=6004
+      - API_HOST=127.0.0.1
+      - AETHER_DB_PATH=/app/data/aether.db
+      - AETHER_HISTORY_DB_PATH=/app/data/aether-history.db
+      - AETHER_LOG_DIR=/app/logs
+      - NO_PROXY="*"
+      - no_proxy="*"
+    volumes:
+      - ${AETHER_BASE_PATH:-./data}:/app/data:rw
+      - ${AETHER_LOG_PATH:-./logs}:/app/logs
+      - /dev/shm:/shm/rtdb:rw
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    restart: unless-stopped
+
+  # API Gateway - API 网关、WebSocket、认证 (端口 6005)
+  aether-api:
+    image: aetherems:latest
+    container_name: aether-api
+    command: ["aether-api"]
+    network_mode: host
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
+    environment:
+      - SERVICE_NAME=aether-api
+      - API_PORT=6005
+      - API_HOST=${AETHER_API_HOST:-0.0.0.0}
+      - AETHER_DB_PATH=/app/data/aether.db
+      - AETHER_CONFIG_PATH=/app/data/config
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:?JWT_SECRET_KEY must be set; generate at least 32 random bytes}
+      - AETHER_BOOTSTRAP_ADMIN_PASSWORD=${AETHER_BOOTSTRAP_ADMIN_PASSWORD:-}
+      - AETHER_ALLOW_PUBLIC_REGISTRATION=${AETHER_ALLOW_PUBLIC_REGISTRATION:-false}
+      - ACCESS_TOKEN_EXPIRE_MINUTES=${ACCESS_TOKEN_EXPIRE_MINUTES:-30}
+      - REFRESH_TOKEN_EXPIRE_DAYS=${REFRESH_TOKEN_EXPIRE_DAYS:-7}
+      - AETHER_LOG_DIR=/app/logs
+      - NETWORK_CONFIG_DIR=/etc/systemd/network
+      - NO_PROXY="*"
+      - no_proxy="*"
+    volumes:
+      - ${AETHER_BASE_PATH:-./data}:/app/data:rw
+      - ${AETHER_LOG_PATH:-./logs}:/app/logs
+      - /dev/shm:/shm/rtdb:rw
+      - /etc/systemd/network:/etc/systemd/network:ro  # Read-only discovery; mutation requires a future privileged helper
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    restart: unless-stopped
+
+  # Network Service - 网络通讯服务 MQTT (端口 6006)
+  aether-uplink:
+    image: aetherems:latest
+    container_name: aether-uplink
+    command: ["aether-uplink"]
+    network_mode: host
+    environment:
+      - SERVICE_NAME=aether-uplink
+      - API_PORT=6006
+      - API_HOST=127.0.0.1
+      - AETHER_DB_PATH=/app/data/aether.db
+      - AETHER_LOG_DIR=/app/logs
+      - AETHER_UPLINK_OUTBOX_PATH=/app/data/uplink.outbox
+      - AETHER_UPLINK_OUTBOX_CAPACITY=${AETHER_UPLINK_OUTBOX_CAPACITY:-10000}
+      - AETHER_UPLINK_CONTROL_TOKEN=${AETHER_UPLINK_CONTROL_TOKEN:?AETHER_UPLINK_CONTROL_TOKEN must be set; generate at least 32 random bytes}
+      - DEVICE_SN=${DEVICE_SN:-}
+      - NO_PROXY="*"
+      - no_proxy="*"
+      # CERT_DIR 默认 /app/config/cert，宿主机通过下方 volume 挂载证书目录
+    volumes:
+      - ${AETHER_BASE_PATH:-./data}:/app/data:rw
+      - ${AETHER_LOG_PATH:-./logs}:/app/logs
+      - /dev/shm:/shm/rtdb:rw
+      - ${AETHER_BASE_PATH:-./data}/cert:/app/config/cert:rw  # TLS 证书目录（固定挂载点）
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    restart: unless-stopped
+
+  # Alarm Service - 告警管理服务 (端口 6007)
+  aether-alarm:
+    image: aetherems:latest
+    container_name: aether-alarm
+    command: ["aether-alarm"]
+    network_mode: host
+    environment:
+      - SERVICE_NAME=aether-alarm
+      - SERVICE_PORT=6007
+      - API_HOST=127.0.0.1
+      - AETHER_DB_PATH=/app/data/aether.db
+      - AETHER_LOG_DIR=/app/logs
+      - AETHER_API_URL=${AETHER_API_URL:-http://127.0.0.1:6005}
+      - AETHER_UPLINK_URL=${AETHER_UPLINK_URL:-http://127.0.0.1:6006}
+      - NO_PROXY="*"
+      - no_proxy="*"
+    volumes:
+      - ${AETHER_BASE_PATH:-./data}:/app/data:rw
+      - ${AETHER_LOG_PATH:-./logs}:/app/logs
+      - /dev/shm:/shm/rtdb:rw
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    restart: unless-stopped
+
+  # ============================================
+  # 前端应用
+  # ============================================
+
+  # Vue.js Frontend - Web 管理界面 (端口 8080)
+  apps:
+    profiles: ["frontend"]
+    # Pre-built image required: load via `docker load < apps.tar.gz` or build manually
+    image: aether-apps:latest
+    container_name: aether-apps
+    network_mode: host
+    labels:
+      - "aetherems.role=frontend"
+      - "aetherems.description=Vue.js web management interface"
+    depends_on:
+      - aether-api
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://127.0.0.1:8080/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  redis-data:
+  redis-socket: # Shared Unix socket volume for better performance
+  # Note: aether-shm now uses host /dev/shm bind mount for external access

@@ -1,0 +1,50 @@
+[package]
+name = "aether-rules"
+publish = false
+version.workspace = true
+edition = "2024"
+license.workspace = true
+description = "Rule engine library for AetherEMS - Vue Flow based rule parsing, execution and scheduling"
+
+[dependencies]
+aether-calc = { path = "../aether-calc" }
+aether-model = { path = "../aether-model" }
+aether-rtdb-shm = { path = "../aether-rtdb-shm" }
+aether-routing = { path = "../aether-routing" }
+
+# Async runtime
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+futures = { workspace = true }
+
+# Database
+sqlx = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# Expression evaluation
+evalexpr = { workspace = true }
+
+# Error handling
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+
+# Time
+chrono = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+criterion = { workspace = true }
+tempfile = { workspace = true }
+
+[[bench]]
+name = "onchange"
+harness = false
+
+[lints]
+workspace = true

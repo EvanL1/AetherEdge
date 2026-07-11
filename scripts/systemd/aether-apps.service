@@ -1,0 +1,19 @@
+[Unit]
+Description=AetherEMS - Web UI (nginx)
+PartOf=aether.target
+After=aether-api.service
+Requires=aether-api.service
+
+[Service]
+Type=forking
+PIDFile=/var/lib/aether/nginx/nginx.pid
+ExecStartPre=/opt/aether/bin/nginx -t -c /etc/aether/nginx.conf -p /var/lib/aether/nginx
+ExecStart=/opt/aether/bin/nginx -c /etc/aether/nginx.conf -p /var/lib/aether/nginx
+ExecReload=/opt/aether/bin/nginx -s reload -c /etc/aether/nginx.conf -p /var/lib/aether/nginx
+ExecStop=/opt/aether/bin/nginx -s stop -c /etc/aether/nginx.conf -p /var/lib/aether/nginx
+Restart=on-failure
+RestartSec=2
+User=root
+
+[Install]
+WantedBy=aether.target

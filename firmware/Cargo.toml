@@ -1,0 +1,48 @@
+[package]
+name = "aether-firmware"
+publish = false
+version = "0.3.0"
+edition = "2021"
+description = "AetherEMS firmware prototype for embedded platforms"
+license = "MIT OR Apache-2.0"
+
+# This is a standalone project, not part of the main workspace
+# It targets embedded ARM platforms, not x86_64
+
+[dependencies]
+# Core libraries (no_std compatible)
+aether-core = { path = "../libs/aether-core", default-features = false }
+aether-shm = { path = "../libs/aether-shm", default-features = false }
+
+# Embedded runtime (STM32F4 as example target)
+cortex-m = "0.7"
+cortex-m-rt = "0.7"
+panic-halt = "0.2"
+
+# Hardware abstraction layer (optional, for real hardware)
+# stm32f4xx-hal = { version = "0.20", features = ["stm32f411"] }
+
+# Embassy for async embedded (optional)
+# embassy-executor = { version = "0.5", features = ["arch-cortex-m", "executor-thread"] }
+# embassy-stm32 = { version = "0.1", features = ["stm32f411ce", "time-driver-any"] }
+
+[features]
+default = []
+# Enable for QEMU testing without real hardware
+qemu = []
+# Enable for real STM32F4 hardware
+stm32f4 = []
+
+[profile.release]
+opt-level = "z"      # Optimize for size
+lto = true           # Link-time optimization
+codegen-units = 1    # Better optimization
+panic = "abort"      # No unwinding
+debug = true         # Keep debug info for debugging
+
+[profile.dev]
+opt-level = 1        # Some optimization for faster execution in debug
+debug = true
+
+# Target-specific configuration
+# To build: cargo build --target thumbv7em-none-eabihf

@@ -1,0 +1,119 @@
+[package]
+name = "aether-io"
+publish = false
+version.workspace = true
+edition = "2024"
+license.workspace = true
+
+[lib]
+name = "aether_io"
+path = "src/lib.rs"
+
+[[bin]]
+name = "aether-io"
+path = "src/main.rs"
+
+[dependencies]
+# Local dependencies
+common = { path = "../../libs/common", default-features = false, features = ["sqlite", "axum", "openapi"] }
+errors = { path = "../../libs/errors", default-features = false, features = ["axum-support"] }
+aether-config = { path = "../../libs/aether-config", features = ["openapi"] }
+aether-domain = { path = "../../crates/aether-domain" }
+aether-model = { path = "../../libs/aether-model" }
+aether-routing = { path = "../../libs/aether-routing" }
+aether-rtdb-shm = { path = "../../libs/aether-rtdb-shm" }
+aether-shm-bridge = { path = "../../extensions/shm-bridge" }
+
+# Protocol libraries
+voltage_modbus = { version = "0.5.0", optional = true, features = ["rtu"] }
+voltage_iec104 = { version = "0.1", optional = true }
+voltage_j1939 = { version = "0.1", optional = true }
+async-opcua = { version = "0.14", default-features = false, features = ["client"], optional = true }
+tokio-serial = { version = "5.4", optional = true }
+
+# Core async runtime
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+async-trait = { workspace = true }
+futures = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_yml = { workspace = true }
+serde_json = { workspace = true }
+# JSONPath for MQTT/HTTP protocol JSON mapping
+serde_json_path = { workspace = true, optional = true }
+
+# MQTT client for event-driven data collection
+rumqttc = { version = "0.25.1", default-features = false, optional = true }
+
+# HTTP client for polling/webhook data collection
+reqwest = { workspace = true, optional = true }
+
+# BLE GATT client for Bluetooth Low Energy devices
+btleplug = { version = "0.11", optional = true }
+
+# Error handling
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+
+# Web framework
+axum = { workspace = true }
+utoipa = { workspace = true }
+utoipa-swagger-ui = { workspace = true, optional = true }
+tower = { workspace = true }
+
+# Data structures
+dashmap = { workspace = true }
+arc-swap = "1.7"
+parking_lot = { workspace = true }  # Non-poisoning RwLock for SlotBitmap
+bytes = { workspace = true }
+
+# Utils
+chrono = { workspace = true }
+clap = { workspace = true }
+rand = { workspace = true }
+uuid = { workspace = true }
+
+# SQLite for configuration
+sqlx = { workspace = true }
+
+# Linux-only dependencies
+[target.'cfg(target_os = "linux")'.dependencies]
+socketcan = { version = "3.5", optional = true }
+tokio-gpiod = { version = "0.3", optional = true }
+
+[dev-dependencies]
+reqwest = { workspace = true }
+tempfile = { workspace = true }
+tower = { workspace = true }
+http-body-util = "0.1"
+hex = "0.4"
+
+[features]
+default = ["modbus", "gpio", "aether_485", "openapi", "iec61850", "can"]
+modbus = ["dep:voltage_modbus"]
+iec104 = ["dep:voltage_iec104"]
+opcua = ["dep:async-opcua"]
+can = ["dep:socketcan"]
+j1939 = ["can", "dep:voltage_j1939"]
+gpio = ["dep:tokio-gpiod"]
+dl645 = ["dep:tokio-serial"]  # DL/T 645-2007 智能电表协议（支持 TCP 和串口 RTU）
+aether_485 = ["dep:tokio-serial"]  # Aether-485 私有 RS-485 通信协议
+json-mapping = ["dep:serde_json_path"]  # JSONPath mapping for MQTT/HTTP protocols
+mqtt = ["json-mapping", "dep:rumqttc"]  # MQTT protocol (event-driven, JSON payload)
+http = ["json-mapping", "dep:reqwest"]  # HTTP protocol (polling + webhook, JSON payload)
+ble = ["dep:btleplug"]  # BLE GATT protocol (hybrid: notify + read/write)
+zigbee = []  # Zigbee protocol via TCP gateway (Raw ZCL, ZNP, EZSP)
+matter = []  # Matter smart home protocol (UDP transport, self-implemented framing)
+iec61850 = []  # IEC 61850 MMS protocol (TCP/ISO transport, pure Rust implementation)
+tracing-support = []
+swagger-ui = ["utoipa-swagger-ui"]
+openapi = []
+integration = []
+
+[lints]
+workspace = true

@@ -1,0 +1,77 @@
+[package]
+name = "aether"
+publish = false
+version.workspace = true
+edition = "2024"
+license.workspace = true
+
+[dependencies]
+aether-rtdb-shm = { path = "../../libs/aether-rtdb-shm" }
+aether-routing = { path = "../../libs/aether-routing" }
+aether-model = { path = "../../libs/aether-model" }
+aether-rules = { path = "../../libs/aether-rules" }
+common = { path = "../../libs/common" }
+
+# Cross-platform config schema. Replaces the previous io/automation service
+# crate dependencies so aether.exe builds on Windows (service crates are
+# Linux-only due to SHM/UDS deps).
+aether-config = { path = "../../libs/aether-config" }
+
+# CLI
+clap = { workspace = true }
+
+# Async runtime
+tokio = { workspace = true }
+
+# Database
+# Use sqlx with SQLite only and rustls runtime to avoid OpenSSL for MUSL builds
+sqlx = { workspace = true, default-features = false, features = [
+    "sqlite", "chrono", "json", "uuid", "macros", "runtime-tokio-rustls"
+] }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yml = { workspace = true }
+csv = { workspace = true }
+sha2 = "0.10"
+
+# Time formatting
+chrono = { workspace = true }
+uuid = { workspace = true }
+
+# Error handling
+anyhow = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+# File system
+tempfile = { workspace = true }
+
+# Output formatting
+colored = { workspace = true }
+# indicatif removed - not currently used
+
+# Interactive REPL
+rustyline = "15"
+
+# TUI dashboard
+ratatui = "0.29"
+crossterm = "0.28"
+
+# HTTP client
+reqwest = { workspace = true }
+
+# MCP Server
+rmcp = { version = "2.2", features = ["server", "macros", "transport-io"] }
+schemars = "1.2"
+
+# Features section removed - lib-mode eliminated in favor of HTTP-only mode
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+wiremock = "0.6.5"

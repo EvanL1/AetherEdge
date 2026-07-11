@@ -1,0 +1,10 @@
+# E2E Test Global Configuration
+api:
+  host: "127.0.0.1"
+logging:
+  level: "info"
+  dir: "logs"
+  rotation:
+    strategy: "daily"
+    max_size_mb: 100
+    max_files: 7

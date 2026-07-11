@@ -1,0 +1,74 @@
+[package]
+name = "aether-uplink"
+publish = false
+version.workspace = true
+edition = "2024"
+license.workspace = true
+
+[[bin]]
+name = "aether-uplink"
+path = "src/main.rs"
+
+[dependencies]
+# Local libraries
+common = { path = "../../libs/common", default-features = false, features = ["sqlite", "axum"] }
+aether-application = { path = "../../crates/aether-application" }
+aether-domain = { path = "../../crates/aether-domain" }
+aether-ports = { path = "../../crates/aether-ports" }
+aether-store-local = { path = "../../extensions/store-local" }
+aether-shm-bridge = { path = "../../extensions/shm-bridge" }
+
+# Async runtime
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+
+# Web framework
+axum = { workspace = true, features = ["multipart"] }
+tower-http = { workspace = true, features = ["cors"] }
+
+# HTTP client (for call-alarm → alarm)
+reqwest = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# Database
+sqlx = { workspace = true }
+
+# Error handling
+anyhow = { workspace = true }
+async-trait = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+
+# Utilities
+chrono = { workspace = true }
+bytes = { workspace = true }
+regex = { workspace = true }
+
+# MQTT TLS uses rumqttc's maintained native-tls backend. The rustls backend in
+# rumqttc 0.25.1 pins a vulnerable rustls-webpki release.
+rumqttc = { version = "0.25.1", default-features = false, features = ["use-native-tls"] }
+
+# System metrics
+sysinfo = "0.32"
+
+# OpenAPI / Swagger UI
+utoipa = { workspace = true }
+utoipa-swagger-ui = { workspace = true, optional = true }
+
+[features]
+swagger-ui = ["utoipa-swagger-ui"]
+
+[dev-dependencies]
+tempfile = { workspace = true }
+
+# Keep Linux/musl release binaries self-contained rather than relying on a
+# target device's OpenSSL installation.
+[target.'cfg(not(any(target_os = "windows", target_vendor = "apple")))'.dependencies]
+native-tls = { version = "0.2.18", features = ["vendored"] }
+
+[lints]
+workspace = true

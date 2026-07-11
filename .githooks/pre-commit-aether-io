@@ -1,0 +1,23 @@
+#!/bin/bash
+
+# Pre-commit hook for aether-io configuration validation
+# Automatically validate when aether-io config files are committed
+
+# Check if aether-io config files were modified
+if git diff --cached --name-only | grep -q "services/io/config/.*\.csv"; then
+    echo "Detected aether-io config changes, running validation..."
+
+    # Run validation script
+    ./scripts/validate-io-config.sh
+
+    if [ $? -ne 0 ]; then
+        echo ""
+        echo "❌ aether-io config validation failed. Please fix errors and commit again."
+        echo "Tip: run ./scripts/validate-io-config.sh for details"
+        exit 1
+    fi
+
+    echo "✅ aether-io config validation passed"
+fi
+
+exit 0

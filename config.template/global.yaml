@@ -1,0 +1,16 @@
+# ============================================================================
+# AetherEMS Global Configuration
+# ============================================================================
+api:
+  # Internal process APIs stay host-local; expose only aether-api publicly.
+  host: "127.0.0.1"
+logging:
+  level: "info"
+  dir: "logs"
+  rotation:
+    strategy: "daily"
+    max_size_mb: 100
+    max_files: 7
+# Rule engine configuration
+rules:
+  tick_ms: 100  # Scheduler scan interval (milliseconds)

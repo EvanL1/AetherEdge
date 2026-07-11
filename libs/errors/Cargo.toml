@@ -1,0 +1,42 @@
+[package]
+name = "errors"
+publish = false
+version.workspace = true
+edition = "2024"
+license.workspace = true
+description = "Unified error handling for AetherEMS services"
+
+[dependencies]
+# Error handling
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+
+# Serialization (for ErrorInfo)
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yml = { workspace = true }
+
+# Database (for From implementations)
+sqlx = { workspace = true }
+redis = { workspace = true, optional = true }
+
+# HTTP client (for From implementations)
+reqwest = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+
+# Web framework (optional, for http_status and into_http_response)
+axum = { workspace = true, optional = true }
+
+# Schema generation (optional)
+schemars = { version = "0.8", optional = true }
+
+[features]
+default = []
+redis = ["dep:redis"]
+schema = ["schemars"]
+axum-support = ["axum"]
+
+[lints]
+workspace = true

@@ -1,0 +1,134 @@
+# BMS (Battery Management System) Charge Cycle Scenario
+# Simulates a complete charging process from 20% to 100% SOC
+
+name: "BMS Charge Cycle"
+
+devices:
+  - type: bms
+    unit_id: 2
+    registers:
+      # SOC (%) * 10 - Linear ramp from 20% to 100% over 1 hour
+      - address: 0
+        name: "SOC"
+        generator:
+          type: linear_ramp
+          start: 200.0       # 20.0%
+          end: 1000.0        # 100.0%
+          duration_sec: 3600 # 1 hour charge cycle
+
+      # SOH (%) * 10 - Battery health, constant
+      - address: 1
+        name: "SOH"
+        generator:
+          type: constant
+          value: 980.0       # 98.0%
+
+      # Total Voltage (V * 10) - 200S cells, 3.2V->3.65V per cell
+      # 200 * 3.2 = 640V (empty) -> 200 * 3.65 = 730V (full)
+      - address: 2
+        name: "Total Voltage"
+        generator:
+          type: linear_ramp
+          start: 6400.0      # 640.0V
+          end: 7300.0        # 730.0V
+          duration_sec: 3600
+
+      # Total Current (A * 10) - CC phase high, CV phase decreasing
+      # Using daily_pattern to simulate CC->CV transition
+      - address: 3
+        name: "Charge Current"
+        generator:
+          type: random_drift
+          center: 800.0      # 80.0A average
+          max_delta: 100.0   # +/- 10A variation
+          smoothness: 0.95
+
+      # Charge Power (kW * 10)
+      - address: 4
+        name: "Charge Power"
+        generator:
+          type: daily_pattern
+          peak_hour: 12
+          peak_value: 550.0  # 55.0 kW peak
+          base_value: 450.0  # 45.0 kW base
+          spread_hours: 8.0
+
+      # Max Cell Voltage (mV)
+      - address: 10
+        name: "Max Cell Voltage"
+        generator:
+          type: linear_ramp
+          start: 3200.0      # 3.200V
+          end: 3650.0        # 3.650V
+          duration_sec: 3600
+
+      # Min Cell Voltage (mV)
+      - address: 11
+        name: "Min Cell Voltage"
+        generator:
+          type: linear_ramp
+          start: 3180.0      # 3.180V (slightly lower)
+          end: 3630.0        # 3.630V
+          duration_sec: 3600
+
+      # Cell Voltage Delta (mV) - Should be small for healthy battery
+      - address: 12
+        name: "Cell Voltage Delta"
+        generator:
+          type: random_drift
+          center: 20.0       # 20mV average delta
+          max_delta: 10.0
+          smoothness: 0.9
+
+      # Max Cell Temperature (C * 10)
+      - address: 20
+        name: "Max Cell Temp"
+        generator:
+          type: random_drift
+          center: 350.0      # 35.0C
+          max_delta: 30.0    # +/- 3.0C
+          smoothness: 0.92
+
+      # Min Cell Temperature (C * 10)
+      - address: 21
+        name: "Min Cell Temp"
+        generator:
+          type: random_drift
+          center: 320.0      # 32.0C
+          max_delta: 20.0
+          smoothness: 0.92
+
+      # Ambient Temperature (C * 10)
+      - address: 22
+        name: "Ambient Temp"
+        generator:
+          type: random_drift
+          center: 250.0      # 25.0C
+          max_delta: 10.0
+          smoothness: 0.95
+
+      # Cumulative Charge Energy (kWh)
+      - address: 30
+        name: "Cumulative Charge"
+        generator:
+          type: linear_ramp
+          start: 10000.0     # Starting value
+          end: 10500.0       # +500 kWh over cycle
+          duration_sec: 3600
+
+      # Status Register - 1 = Charging
+      - address: 40
+        name: "Status"
+        generator:
+          type: constant
+          value: 1.0         # 1 = Charging
+
+      # Fault Code - No faults
+      - address: 41
+        name: "Fault Code"
+        generator:
+          type: constant
+          value: 0.0
+
+faults:
+  enabled: false

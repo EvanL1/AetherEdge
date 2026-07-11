@@ -1,0 +1,18 @@
+[package]
+name = "aether-domain"
+version.workspace = true
+edition = "2024"
+rust-version = "1.90"
+description = "Industry-neutral domain types for the Aether edge kernel"
+license.workspace = true
+repository.workspace = true
+documentation = "https://docs.rs/aether-domain"
+readme = "README.md"
+keywords = ["iot", "edge", "gateway", "no-std"]
+categories = ["embedded", "data-structures"]
+
+[features]
+default = []
+
+[lints]
+workspace = true

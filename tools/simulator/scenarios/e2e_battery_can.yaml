@@ -1,0 +1,63 @@
+# E2E Battery CAN LYNK Test Scenario
+# Combines Modbus TCP + CAN LYNK sender + State Machine
+# Port: 5024 (separate from normal E2E), HTTP: 9100
+# vcan interface: vcan0
+
+name: E2E Battery CAN Scenario
+devices:
+- type: battery
+  unit_id: 1
+  registers:
+  - address: 0
+    name: battery_voltage
+    generator:
+      type: constant
+      value: 520.0
+  - address: 1
+    name: battery_current
+    generator:
+      type: constant
+      value: 150.0
+  - address: 2
+    name: battery_soc
+    generator:
+      type: constant
+      value: 75.0
+  coils:
+  - address: 200
+    value: false
+  - address: 201
+    value: false
+  state_machine:
+    initial_state: standby
+    transitions:
+    - from: standby
+      to: running
+      trigger:
+        type: coil
+        address: 200
+        value: true
+    - from: running
+      to: standby
+      trigger:
+        type: coil
+        address: 200
+        value: false
+    - from: running
+      to: fault
+      trigger:
+        type: coil
+        address: 201
+        value: true
+    - from: fault
+      to: standby
+      trigger:
+        type: register
+        address: 2000
+        value: 1
+  can_lynk:
+    interface: vcan0
+    interval_ms: 500
+
+faults:
+  enabled: false

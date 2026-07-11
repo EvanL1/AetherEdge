@@ -1,0 +1,158 @@
+# Rust
+**/target/
+**/*.rs.bk
+# Workspace Cargo.lock should be committed; ignore subprojects only
+**/Cargo.lock
+!/Cargo.lock
+.luacheckrc
+edgelink
+benchmarks
+
+# apps/ uses pnpm (see package.json's packageManager field); the lockfile
+# must be committed for `pnpm install --frozen-lockfile` (apps/Dockerfile,
+# scripts/build-installer.sh) to work. Un-ignores it against any global
+# gitignore that blanket-excludes pnpm-lock.yaml across every repo.
+!/apps/pnpm-lock.yaml
+
+# IDE
+.idea/
+.vscode/
+.cursor/
+*.swp
+*.swo
+
+# backup
+* bac
+
+# Claude and dot files
+.claude/
+.*
+!.env.example
+!.gitignore
+!.gitmodules
+!.clippy.toml
+!.github/
+!.githooks/
+!.guppy/
+!.dockerignore
+!.prettierrc.json
+
+# Logs
+*.log
+logs/
+**/logs/
+**/*.log
+fixlog*
+**/fixlog/
+**/fixlog.md
+**/fixlog_*.md
+
+# Environment
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+.env.staging
+.venv/
+
+# Docker local overrides (for macOS development)
+docker-compose.override.yml
+
+# Build
+**/build/
+**/dist/
+release/
+bin/
+e2e-artifacts/
+variables.env
+release_notes.md
+
+# Offline deployment packages and installers
+offline-bundle/
+aetherems-installer.sh
+aetherems-installer-*.sh
+*.tar.gz
+*.tar.xz
+docker-images/
+docker-images-*.tar
+aether-redis-*.tar
+aether-redis-latest.tar
+
+# Test
+*.PID
+**/test_*.yml
+**/test_*.yaml
+**/simple_test.*
+**/*_old.rs
+test-logs/
+
+# Dependencies
+**/node_modules/
+
+# Frontend build outputs
+apps/*/dist/
+apps/*/build/
+apps/*/.next/
+apps/*/.nuxt/
+apps/*/.output/
+apps/*/.cache/
+
+# Docker
+.docker/
+
+# Certificates
+**/certs/
+**/*.pem
+**/*.key
+**/*.crt
+
+# Misc
+.DS_Store
+Thumbs.db
+.serena/
+*.csv
+**/*-demo.*
+**/*_demo.*
+**/demo-*
+**/demo_*
+
+# Config - ignore actual config files but keep directory structure
+/config/
+
+# Data - ignore all data files but keep directory structure
+data/*.db
+data/*.db-*
+data/*.sql
+data/*.backup
+!data/.gitkeep
+
+# Models and products (only top-level directories)
+/models/
+/products/
+
+# examples
+examples/
+!examples/
+!examples/minimal-gateway/
+!examples/minimal-gateway/**
+figment_demo/
+
+# Temporary files and documentation
+services/*/docs/
+services/*/*.md
+*.md.backup
+*_old.*
+*_test.*
+# Python files (project is pure Rust)
+# **/*.py
+**/*.pyc
+**/__pycache__/
+.python-version
+.venv/
+venv/
+env/
+data/shm-snapshot.bin
+
+# Redis runtime artifacts (created by `redis-server` in cwd, e.g. during E2E)
+*.rdb
+appendonly.aof

@@ -1,0 +1,65 @@
+[package]
+name = "aether-api"
+publish = false
+version.workspace = true
+edition = "2024"
+license.workspace = true
+
+[[bin]]
+name = "aether-api"
+path = "src/main.rs"
+
+[dependencies]
+# Local libraries
+common = { path = "../../libs/common", default-features = false, features = ["sqlite", "axum"] }
+aether-domain = { path = "../../crates/aether-domain" }
+aether-ports = { path = "../../crates/aether-ports" }
+aether-shm-bridge = { path = "../../extensions/shm-bridge" }
+
+# Async runtime
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+
+# Web framework
+axum = { workspace = true, features = ["ws", "multipart"] }
+tower-http = { workspace = true, features = ["cors"] }
+
+# Logging
+tracing = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# Database
+sqlx = { workspace = true }
+
+# Error handling
+anyhow = { workspace = true }
+
+# Utilities
+chrono = { workspace = true }
+futures = { workspace = true }
+dashmap = { workspace = true }
+uuid = { workspace = true }
+bytes = { workspace = true }
+
+# JWT authentication
+jsonwebtoken = "9"
+
+# Password hashing (bcrypt - frontend sends MD5, backend stores bcrypt(MD5))
+bcrypt = "0.15"
+md-5 = "0.10"
+
+# ZIP for config export/import
+zip = "2"
+
+# OpenAPI / Swagger UI
+utoipa = { workspace = true }
+utoipa-swagger-ui = { workspace = true, optional = true }
+
+[features]
+swagger-ui = ["utoipa-swagger-ui"]
+
+[lints]
+workspace = true

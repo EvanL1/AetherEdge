@@ -1,0 +1,65 @@
+name: 'Setup Rust Environment'
+description: 'Free disk space, install dependencies, and setup Rust toolchain'
+
+inputs:
+  rust-components:
+    description: 'Rust components to install (comma-separated)'
+    required: false
+    default: ''
+  install-protoc:
+    description: 'Whether to install protoc'
+    required: false
+    default: 'false'
+
+runs:
+  using: 'composite'
+  steps:
+    # Free disk space by removing unnecessary pre-installed software
+    - name: Free Disk Space
+      shell: bash
+      run: |
+        echo "=== Before cleanup ==="
+        df -h /
+        sudo rm -rf /usr/share/dotnet
+        sudo rm -rf /opt/ghc
+        sudo rm -rf /usr/local/share/boost
+        sudo rm -rf /usr/local/lib/android
+        sudo rm -rf /usr/share/swift
+        sudo apt-get clean
+        docker system prune -af || true
+        echo "=== After cleanup ==="
+        df -h /
+
+    # Install system libraries needed by optional features (e.g. btleplug → dbus)
+    - name: Install System Dependencies
+      shell: bash
+      run: |
+        sudo apt-get update -qq
+        sudo apt-get install -y -qq libdbus-1-dev pkg-config
+
+    # Install protoc for gRPC compilation (optional)
+    - name: Install Protoc
+      if: inputs.install-protoc == 'true'
+      uses: arduino/setup-protoc@v3
+      with:
+        version: "23.x"
+        repo-token: ${{ github.token }}
+
+    # Setup Rust toolchain
+    - name: Setup Rust 1.90.0
+      uses: dtolnay/rust-toolchain@1.90.0
+      with:
+        components: ${{ inputs.rust-components }}
+
+    # Cache Cargo dependencies
+    - name: Cache Dependencies
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo/bin/
+          ~/.cargo/registry/index/
+          ~/.cargo/registry/cache/
+          ~/.cargo/git/db/
+        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+        restore-keys: |
+          ${{ runner.os }}-cargo-

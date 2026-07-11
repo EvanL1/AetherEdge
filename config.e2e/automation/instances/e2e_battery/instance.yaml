@@ -1,0 +1,12 @@
+instance:
+  id: 2
+  name: "E2E_Battery"
+  product_name: "Battery"
+  description: "E2E Test - Battery Storage System"
+  enabled: true
+  channel_id: 1002
+
+  properties:
+    rated_power: 500.0
+    rated_capacity: 1000.0
+    rated_voltage: 750.0

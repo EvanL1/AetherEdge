@@ -1,0 +1,470 @@
+# GENSET RTU Scenario - 柴油发电机 Modbus RTU 模拟场景
+# 基于真实 Modbus 地址映射 (config/io/3/mapping/)
+# GENSET 地址范围: 1800-1856 (遥测), 1924-1946 (遥控/遥调)
+# 协议: Modbus RTU, slave_id: 2
+
+name: "GENSET RTU System Simulation"
+
+devices:
+  - type: "GENSET"
+    unit_id: 2
+    registers:
+      #======================================
+      # 电网电压区 (1800-1809)
+      #======================================
+      - address: 1800
+        name: "GridVoltageA"  # 电网A相电压, scale 0.1V
+        generator:
+          type: sine
+          frequency: 0.0005
+          amplitude: 20.0
+          offset: 3800.0  # 380.0V
+      - address: 1801
+        name: "GridVoltageB"
+        generator:
+          type: sine
+          frequency: 0.0005
+          amplitude: 20.0
+          offset: 3800.0
+          phase: 2.094  # 120度相移
+      - address: 1802
+        name: "GridVoltageC"
+        generator:
+          type: sine
+          frequency: 0.0005
+          amplitude: 20.0
+          offset: 3800.0
+          phase: 4.189  # 240度相移
+      - address: 1803
+        name: "GridVoltageAB"  # 线电压
+        generator:
+          type: sine
+          frequency: 0.0005
+          amplitude: 30.0
+          offset: 6580.0  # 658.0V
+      - address: 1804
+        name: "GridVoltageBC"
+        generator:
+          type: sine
+          frequency: 0.0005
+          amplitude: 30.0
+          offset: 6580.0
+      - address: 1805
+        name: "GridVoltageCA"
+        generator:
+          type: sine
+          frequency: 0.0005
+          amplitude: 30.0
+          offset: 6580.0
+      - address: 1806
+        name: "GridCurrentA"  # 电网A相电流, scale 0.1A
+        generator:
+          type: sine
+          frequency: 0.002
+          amplitude: 100.0
+          offset: 500.0  # 50.0A
+      - address: 1807
+        name: "GridCurrentB"
+        generator:
+          type: sine
+          frequency: 0.002
+          amplitude: 100.0
+          offset: 500.0
+          phase: 2.094
+      - address: 1808
+        name: "GridCurrentC"
+        generator:
+          type: sine
+          frequency: 0.002
+          amplitude: 100.0
+          offset: 500.0
+          phase: 4.189
+      - address: 1809
+        name: "GridFrequency"  # 电网频率, scale 0.01Hz
+        generator:
+          type: random_drift
+          center: 5000.0  # 50.00Hz
+          max_delta: 10.0
+          smoothness: 0.98
+
+      #======================================
+      # 电网功率区 (1810-1827)
+      #======================================
+      - address: 1810
+        name: "GridActivePowerA"  # A相有功功率, scale 0.1kW
+        generator:
+          type: sine
+          frequency: 0.002
+          amplitude: 50.0
+          offset: 200.0  # 20.0kW
+      - address: 1811
+        name: "GridActivePowerB"
+        generator:
+          type: sine
+          frequency: 0.002
+          amplitude: 50.0
+          offset: 200.0
+      - address: 1812
+        name: "GridActivePowerC"
+        generator:
+          type: sine
+          frequency: 0.002
+          amplitude: 50.0
+          offset: 200.0
+      - address: 1813
+        name: "GridTotalActivePower"  # 三相总有功
+        generator:
+          type: sine
+          frequency: 0.002
+          amplitude: 150.0
+          offset: 600.0  # 60.0kW
+      - address: 1814
+        name: "GridReactivePowerA"  # A相无功功率
+        generator:
+          type: sine
+          frequency: 0.002
+          amplitude: 20.0
+          offset: 50.0
+      - address: 1815
+        name: "GridReactivePowerB"
+        generator:
+          type: sine
+          frequency: 0.002
+          amplitude: 20.0
+          offset: 50.0
+      - address: 1816
+        name: "GridReactivePowerC"
+        generator:
+          type: sine
+          frequency: 0.002
+          amplitude: 20.0
+          offset: 50.0
+      - address: 1817
+        name: "GridTotalReactivePower"  # 三相总无功
+        generator:
+          type: sine
+          frequency: 0.002
+          amplitude: 60.0
+          offset: 150.0
+      - address: 1818
+        name: "GridPowerFactor"  # 功率因数, scale 0.001
+        generator:
+          type: random_drift
+          center: 950.0  # 0.950
+          max_delta: 20.0
+          smoothness: 0.95
+      - address: 1819
+        name: "GridApparentPowerA"  # 视在功率
+        generator:
+          type: sine
+          frequency: 0.002
+          amplitude: 60.0
+          offset: 220.0
+      - address: 1820
+        name: "GridApparentPowerB"
+        generator:
+          type: sine
+          frequency: 0.002
+          amplitude: 60.0
+          offset: 220.0
+      - address: 1821
+        name: "GridApparentPowerC"
+        generator:
+          type: sine
+          frequency: 0.002
+          amplitude: 60.0
+          offset: 220.0
+      - address: 1822
+        name: "GridTotalApparentPower"
+        generator:
+          type: sine
+          frequency: 0.002
+          amplitude: 180.0
+          offset: 660.0
+      - address: 1823
+        name: "GridEnergyImport_Low"  # 进口电能低字
+        generator:
+          type: linear_ramp
+          start: 0.0
+          end: 65535.0
+          duration_sec: 86400
+          loop_mode: true
+      - address: 1824
+        name: "GridEnergyImport_High"  # 进口电能高字
+        generator:
+          type: constant
+          value: 5
+      - address: 1825
+        name: "GridEnergyExport_Low"  # 出口电能低字
+        generator:
+          type: linear_ramp
+          start: 0.0
+          end: 65535.0
+          duration_sec: 86400
+          loop_mode: true
+      - address: 1826
+        name: "GridEnergyExport_High"
+        generator:
+          type: constant
+          value: 3
+      - address: 1827
+        name: "GridStatus"  # 电网状态 0=断开, 1=连接
+        generator:
+          type: constant
+          value: 1
+
+      #======================================
+      # 系统状态区 (1828-1837)
+      #======================================
+      - address: 1828
+        name: "SystemMode"  # 系统模式
+        generator:
+          type: constant
+          value: 1  # 1=并网
+      - address: 1829
+        name: "SystemStatus"  # 系统状态
+        generator:
+          type: constant
+          value: 2  # 2=运行
+      - address: 1830
+        name: "AlarmLevel"  # 告警级别
+        generator:
+          type: constant
+          value: 0  # 0=无告警
+      - address: 1831
+        name: "FaultCode"  # 故障码
+        generator:
+          type: constant
+          value: 0
+      - address: 1832
+        name: "RunTime_Low"  # 运行时间低字 (小时)
+        generator:
+          type: linear_ramp
+          start: 0.0
+          end: 65535.0
+          duration_sec: 3600000
+          loop_mode: true
+      - address: 1833
+        name: "RunTime_High"
+        generator:
+          type: constant
+          value: 0
+      - address: 1834
+        name: "StartCount"  # 启动次数
+        generator:
+          type: constant
+          value: 128
+      - address: 1835
+        name: "EnvironmentTemp"  # 环境温度, scale 0.1°C
+        generator:
+          type: sine
+          frequency: 0.00001
+          amplitude: 50.0
+          offset: 250.0  # 25.0°C
+      - address: 1836
+        name: "CoolantTemp"  # 冷却液温度
+        generator:
+          type: sine
+          frequency: 0.0001
+          amplitude: 30.0
+          offset: 800.0  # 80.0°C
+      - address: 1837
+        name: "OilPressure"  # 油压, scale 0.1bar
+        generator:
+          type: random_drift
+          center: 40.0  # 4.0bar
+          max_delta: 5.0
+          smoothness: 0.95
+
+      #======================================
+      # 发电机电压区 (1840-1849)
+      #======================================
+      - address: 1840
+        name: "GenVoltageA"  # 发电机A相电压
+        generator:
+          type: sine
+          frequency: 0.0005
+          amplitude: 25.0
+          offset: 3800.0  # 380.0V
+      - address: 1841
+        name: "GenVoltageB"
+        generator:
+          type: sine
+          frequency: 0.0005
+          amplitude: 25.0
+          offset: 3800.0
+          phase: 2.094
+      - address: 1842
+        name: "GenVoltageC"
+        generator:
+          type: sine
+          frequency: 0.0005
+          amplitude: 25.0
+          offset: 3800.0
+          phase: 4.189
+      - address: 1843
+        name: "GenVoltageAB"  # 线电压
+        generator:
+          type: sine
+          frequency: 0.0005
+          amplitude: 40.0
+          offset: 6580.0
+      - address: 1844
+        name: "GenVoltageBC"
+        generator:
+          type: sine
+          frequency: 0.0005
+          amplitude: 40.0
+          offset: 6580.0
+      - address: 1845
+        name: "GenVoltageCA"
+        generator:
+          type: sine
+          frequency: 0.0005
+          amplitude: 40.0
+          offset: 6580.0
+      - address: 1846
+        name: "GenCurrentA"  # 发电机电流
+        generator:
+          type: sine
+          frequency: 0.002
+          amplitude: 80.0
+          offset: 400.0  # 40.0A
+      - address: 1847
+        name: "GenCurrentB"
+        generator:
+          type: sine
+          frequency: 0.002
+          amplitude: 80.0
+          offset: 400.0
+          phase: 2.094
+      - address: 1848
+        name: "GenCurrentC"
+        generator:
+          type: sine
+          frequency: 0.002
+          amplitude: 80.0
+          offset: 400.0
+          phase: 4.189
+      - address: 1849
+        name: "GenFrequency"  # 发电机频率
+        generator:
+          type: random_drift
+          center: 5000.0  # 50.00Hz
+          max_delta: 15.0
+          smoothness: 0.97
+
+      #======================================
+      # 发电机功率区 (1850-1856)
+      #======================================
+      - address: 1850
+        name: "GenActivePowerA"  # A相有功
+        generator:
+          type: sine
+          frequency: 0.002
+          amplitude: 40.0
+          offset: 150.0  # 15.0kW
+      - address: 1851
+        name: "GenActivePowerB"
+        generator:
+          type: sine
+          frequency: 0.002
+          amplitude: 40.0
+          offset: 150.0
+      - address: 1852
+        name: "GenActivePowerC"
+        generator:
+          type: sine
+          frequency: 0.002
+          amplitude: 40.0
+          offset: 150.0
+      - address: 1853
+        name: "GenTotalActivePower"  # 总有功
+        generator:
+          type: sine
+          frequency: 0.002
+          amplitude: 120.0
+          offset: 450.0  # 45.0kW
+      - address: 1854
+        name: "GenTotalReactivePower"  # 总无功
+        generator:
+          type: sine
+          frequency: 0.002
+          amplitude: 40.0
+          offset: 100.0
+      - address: 1855
+        name: "GenPowerFactor"  # 功率因数
+        generator:
+          type: random_drift
+          center: 930.0  # 0.930
+          max_delta: 30.0
+          smoothness: 0.95
+      - address: 1856
+        name: "GenTotalApparentPower"  # 总视在功率
+        generator:
+          type: sine
+          frequency: 0.002
+          amplitude: 140.0
+          offset: 500.0
+
+      #======================================
+      # 遥调区 (1924-1945)
+      #======================================
+      - address: 1924
+        name: "SetActivePower_Low"  # 有功功率设定低字
+        generator:
+          type: constant
+          value: 5000  # 50.00kW
+      - address: 1925
+        name: "SetActivePower_High"
+        generator:
+          type: constant
+          value: 0
+      - address: 1926
+        name: "SetReactivePower_Low"  # 无功功率设定
+        generator:
+          type: constant
+          value: 1000
+      - address: 1927
+        name: "SetReactivePower_High"
+        generator:
+          type: constant
+          value: 0
+      - address: 1940
+        name: "SetVoltage"  # 电压设定
+        generator:
+          type: constant
+          value: 3800  # 380.0V
+      - address: 1941
+        name: "SetFrequency"  # 频率设定
+        generator:
+          type: constant
+          value: 5000  # 50.00Hz
+      - address: 1942
+        name: "SetPowerFactor"  # 功率因数设定
+        generator:
+          type: constant
+          value: 950  # 0.950
+      - address: 1944
+        name: "SetActivePowerLimit"  # 有功限值
+        generator:
+          type: constant
+          value: 1000  # 100.0kW
+      - address: 1945
+        name: "SetReactivePowerLimit"  # 无功限值
+        generator:
+          type: constant
+          value: 500  # 50.0kVar
+
+      #======================================
+      # 遥控区 (1946) - 位控制
+      #======================================
+      - address: 1946
+        name: "ControlWord"  # 控制字
+        generator:
+          type: constant
+          value: 0  # bit0=启动, bit1=停止, bit2=复位...
+
+faults:
+  enabled: false
+  scenarios: []

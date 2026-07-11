@@ -1,0 +1,81 @@
+name: Feature request
+description: Propose a capability or behavior change for Aether
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Describe the user problem before the implementation. Aether's default runtime must remain SHM-authoritative and free of mandatory Redis, PostgreSQL, or other external services.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem and user outcome
+      description: Who has this problem, in what environment, and what outcome is needed?
+    validations:
+      required: true
+
+  - type: dropdown
+    id: layer
+    attributes:
+      label: Proposed architectural layer
+      options:
+        - Industry-neutral domain model
+        - Capability port
+        - Application command or query
+        - SHM data plane or event plane
+        - Runtime service or interface
+        - Optional extension
+        - Optional industry pack
+        - Documentation or example
+        - Unsure
+    validations:
+      required: true
+
+  - type: textarea
+    id: use_case
+    attributes:
+      label: Concrete use case
+      description: Include a representative device, data flow, or operator/AI workflow without sensitive data.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed capability
+      description: Explain the smallest public contract or behavior that would solve the problem.
+    validations:
+      required: true
+
+  - type: textarea
+    id: boundaries
+    attributes:
+      label: Architecture and safety impact
+      description: Explain effects on SHM authority, process isolation, external dependencies, device control, AI permissions, confirmation, and audit. Write "none" where applicable.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Include existing ports, extensions, packs, or composition options you evaluated.
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: invariants
+    attributes:
+      label: Project invariants
+      options:
+        - label: The default runtime remains usable without Redis, PostgreSQL, or another external service, or this proposal is explicitly an optional extension.
+          required: true
+        - label: SHM remains the authority for live point state.
+          required: true
+        - label: I considered deterministic operation when no AI client is connected.
+          required: true
+        - label: I searched existing issues, ADRs, and pull requests for this proposal.
+          required: true

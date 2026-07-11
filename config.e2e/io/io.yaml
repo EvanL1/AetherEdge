@@ -1,0 +1,56 @@
+# E2E Test Configuration for io
+# 4 channels: PV(5020), Battery(5021), Diesel(5022), Load(5023)
+
+channels:
+- id: 1001
+  name: E2E_PV
+  description: E2E Test - PV Simulator
+  protocol: modbus_tcp
+  enabled: true
+  parameters:
+    host: 127.0.0.1
+    port: 5020
+    connect_timeout_ms: 5000
+    read_timeout_ms: 3000
+  logging:
+    enabled: true
+    level: debug
+- id: 1002
+  name: E2E_Battery
+  description: E2E Test - Battery Simulator
+  protocol: modbus_tcp
+  enabled: true
+  parameters:
+    host: 127.0.0.1
+    port: 5021
+    connect_timeout_ms: 5000
+    read_timeout_ms: 3000
+  logging:
+    enabled: true
+    level: debug
+- id: 1003
+  name: E2E_Diesel
+  description: E2E Test - Diesel Simulator
+  protocol: modbus_tcp
+  enabled: true
+  parameters:
+    host: 127.0.0.1
+    port: 5022
+    connect_timeout_ms: 5000
+    read_timeout_ms: 3000
+  logging:
+    enabled: true
+    level: debug
+- id: 1004
+  name: E2E_Load
+  description: E2E Test - Load Simulator
+  protocol: modbus_tcp
+  enabled: true
+  parameters:
+    host: 127.0.0.1
+    port: 5023
+    connect_timeout_ms: 5000
+    read_timeout_ms: 3000
+  logging:
+    enabled: true
+    level: debug

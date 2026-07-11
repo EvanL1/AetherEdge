@@ -1,0 +1,17 @@
+[package]
+name = "aether-example-minimal-gateway"
+version.workspace = true
+edition = "2024"
+rust-version = "1.85"
+description = "Minimal Aether gateway composition with no external services"
+license.workspace = true
+publish = false
+
+[dependencies]
+aether-sdk = { package = "aether-edge-sdk", path = "../../crates/aether-sdk" }
+aether-store-local = { path = "../../extensions/store-local" }
+async-trait = { workspace = true }
+tokio = { workspace = true }
+
+[lints]
+workspace = true

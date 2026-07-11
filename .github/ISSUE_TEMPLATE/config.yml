@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/EvanL1/Aether/security/advisories/new
+    about: Report suspected vulnerabilities privately; do not open a public issue.
+  - name: Usage and architecture questions
+    url: https://github.com/EvanL1/Aether/discussions
+    about: Ask non-sensitive usage and architecture questions in GitHub Discussions when enabled.
+  - name: Support policy
+    url: https://github.com/EvanL1/Aether/blob/main/SUPPORT.md
+    about: Read the support channels, boundaries, and information to include.

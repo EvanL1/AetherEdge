@@ -1,0 +1,676 @@
+# PCS Full Scenario - 储能变流器完整模拟场景
+# 覆盖遥测 (FC=0x03) + 遥控 (FC=0x10 bool) + 遥调 (FC=0x10 int16)
+# 基于真实 Modbus 地址映射 (config/io/1/mapping/)
+
+name: "PCS Full System Simulation"
+
+devices:
+  - type: "PCS"
+    unit_id: 1
+    registers:
+      #======================================
+      # 遥测区 - 状态寄存器 (32-43)
+      #======================================
+      - address: 32
+        name: "System_Status"
+        generator:
+          type: constant
+          value: 2  # 0=停机, 1=待机, 2=运行, 3=故障
+      - address: 33
+        name: "Running_Status"
+        generator:
+          type: constant
+          value: 1
+      - address: 36
+        name: "Fault_Code"
+        generator:
+          type: constant
+          value: 0
+      - address: 37
+        name: "Warning_Code"
+        generator:
+          type: constant
+          value: 0
+      - address: 43
+        name: "On_Grid_Status"
+        generator:
+          type: constant
+          value: 1
+
+      #======================================
+      # 遥测区 - 模块状态 (90-121)
+      #======================================
+      - address: 90
+        name: "Module1_Status"
+        generator:
+          type: constant
+          value: 2
+      - address: 91
+        name: "Module2_Status"
+        generator:
+          type: constant
+          value: 2
+      - address: 92
+        name: "Module3_Status"
+        generator:
+          type: constant
+          value: 2
+      - address: 93
+        name: "Module4_Status"
+        generator:
+          type: constant
+          value: 2
+      - address: 106
+        name: "Module1_AC_Power"
+        generator:
+          type: sine
+          frequency: 0.00333  # 5分钟周期 = 1/300 Hz
+          amplitude: 125.0
+          offset: 625.0
+      - address: 107
+        name: "Module2_AC_Power"
+        generator:
+          type: sine
+          frequency: 0.00333
+          amplitude: 125.0
+          offset: 625.0
+          phase: 1.57  # π/2
+      - address: 108
+        name: "Module3_AC_Power"
+        generator:
+          type: sine
+          frequency: 0.00333
+          amplitude: 125.0
+          offset: 625.0
+          phase: 3.14  # π
+      - address: 109
+        name: "Module4_AC_Power"
+        generator:
+          type: sine
+          frequency: 0.00333
+          amplitude: 125.0
+          offset: 625.0
+          phase: 4.71  # 3π/2
+      - address: 110
+        name: "Module1_DC_Voltage"
+        generator:
+          type: sine
+          frequency: 0.001
+          amplitude: 20.0
+          offset: 700.0
+      - address: 111
+        name: "Module2_DC_Voltage"
+        generator:
+          type: sine
+          frequency: 0.001
+          amplitude: 20.0
+          offset: 700.0
+          phase: 1.57
+      - address: 112
+        name: "Module3_DC_Voltage"
+        generator:
+          type: sine
+          frequency: 0.001
+          amplitude: 20.0
+          offset: 700.0
+          phase: 3.14
+      - address: 113
+        name: "Module4_DC_Voltage"
+        generator:
+          type: sine
+          frequency: 0.001
+          amplitude: 20.0
+          offset: 700.0
+          phase: 4.71
+      - address: 114
+        name: "Module1_DC_Current"
+        generator:
+          type: sine
+          frequency: 0.00333
+          amplitude: 50.0
+          offset: 350.0
+      - address: 115
+        name: "Module2_DC_Current"
+        generator:
+          type: sine
+          frequency: 0.00333
+          amplitude: 50.0
+          offset: 350.0
+          phase: 1.57
+      - address: 120
+        name: "Total_Module_Count"
+        generator:
+          type: constant
+          value: 4
+      - address: 121
+        name: "Active_Module_Count"
+        generator:
+          type: constant
+          value: 4
+
+      #======================================
+      # 遥测区 - 温度 (156-159)
+      #======================================
+      - address: 156
+        name: "Ambient_Temp"
+        generator:
+          type: sine
+          frequency: 0.000278  # 1小时周期
+          amplitude: 50.0
+          offset: 350.0  # 35.0°C
+      - address: 157
+        name: "Module1_Temp"
+        generator:
+          type: sine
+          frequency: 0.00167
+          amplitude: 30.0
+          offset: 450.0  # 45.0°C
+      - address: 158
+        name: "Module2_Temp"
+        generator:
+          type: sine
+          frequency: 0.00167
+          amplitude: 30.0
+          offset: 450.0
+          phase: 1.57
+      - address: 159
+        name: "Module3_Temp"
+        generator:
+          type: sine
+          frequency: 0.00167
+          amplitude: 30.0
+          offset: 460.0
+
+      #======================================
+      # 遥测区 - 功率/电压/电流 (164-186)
+      #======================================
+      - address: 164
+        name: "AC_Voltage_A"
+        generator:
+          type: sine
+          frequency: 0.01667  # 1分钟周期
+          amplitude: 5.0
+          offset: 2200.0  # 220.0V
+      - address: 165
+        name: "AC_Voltage_B"
+        generator:
+          type: sine
+          frequency: 0.01667
+          amplitude: 5.0
+          offset: 2200.0
+          phase: 2.094  # 2π/3
+      - address: 166
+        name: "AC_Voltage_C"
+        generator:
+          type: sine
+          frequency: 0.01667
+          amplitude: 5.0
+          offset: 2200.0
+          phase: 4.189  # 4π/3
+      - address: 167
+        name: "AC_Voltage_AB"
+        generator:
+          type: sine
+          frequency: 0.01667
+          amplitude: 10.0
+          offset: 3800.0  # 380V 线电压
+      - address: 168
+        name: "Total_Active_Power"
+        generator:
+          type: sine
+          frequency: 0.00333
+          amplitude: 500.0
+          offset: 2500.0  # 250.0 kW
+      - address: 169
+        name: "Total_Reactive_Power"
+        generator:
+          type: sine
+          frequency: 0.00167
+          amplitude: 50.0
+          offset: 0.0
+      - address: 170
+        name: "Power_Factor"
+        generator:
+          type: constant
+          value: 1000  # 1.000
+      - address: 171
+        name: "Grid_Frequency"
+        generator:
+          type: sine
+          frequency: 0.00833  # 2分钟周期
+          amplitude: 1.0
+          offset: 500.0  # 50.0 Hz
+      - address: 172
+        name: "AC_Current_A"
+        generator:
+          type: sine
+          frequency: 0.00333
+          amplitude: 100.0
+          offset: 1500.0  # 150A
+      - address: 173
+        name: "AC_Current_B"
+        generator:
+          type: sine
+          frequency: 0.00333
+          amplitude: 100.0
+          offset: 1500.0
+          phase: 2.094
+      - address: 174
+        name: "AC_Current_C"
+        generator:
+          type: sine
+          frequency: 0.00333
+          amplitude: 100.0
+          offset: 1500.0
+          phase: 4.189
+      - address: 175
+        name: "Apparent_Power"
+        generator:
+          type: sine
+          frequency: 0.00333
+          amplitude: 510.0
+          offset: 2550.0  # 255.0 kVA
+      - address: 176
+        name: "Module1_Active_Power"
+        generator:
+          type: sine
+          frequency: 0.00333
+          amplitude: 125.0
+          offset: 625.0
+      - address: 177
+        name: "Module2_Active_Power"
+        generator:
+          type: sine
+          frequency: 0.00333
+          amplitude: 125.0
+          offset: 625.0
+          phase: 1.57
+      - address: 178
+        name: "Module3_Active_Power"
+        generator:
+          type: sine
+          frequency: 0.00333
+          amplitude: 125.0
+          offset: 625.0
+          phase: 3.14
+      - address: 179
+        name: "Module4_Active_Power"
+        generator:
+          type: sine
+          frequency: 0.00333
+          amplitude: 125.0
+          offset: 625.0
+          phase: 4.71
+      - address: 180
+        name: "Module1_Reactive_Power"
+        generator:
+          type: constant
+          value: 0
+      - address: 181
+        name: "Module2_Reactive_Power"
+        generator:
+          type: constant
+          value: 0
+      - address: 182
+        name: "Module3_Reactive_Power"
+        generator:
+          type: constant
+          value: 0
+      - address: 183
+        name: "Module4_Reactive_Power"
+        generator:
+          type: constant
+          value: 0
+      - address: 184
+        name: "Active_Power_Limit"
+        generator:
+          type: constant
+          value: 2500  # 250 kW
+      - address: 185
+        name: "Reactive_Power_Limit"
+        generator:
+          type: constant
+          value: 500
+      - address: 186
+        name: "Daily_Energy"
+        generator:
+          type: linear_ramp
+          start: 0.0
+          end: 10000.0
+          duration_sec: 86400
+          loop_mode: true
+
+      #======================================
+      # 遥测区 - 能量 (466-475)
+      #======================================
+      - address: 466
+        name: "Total_Charge_Energy_Low"
+        generator:
+          type: linear_ramp
+          start: 0.0
+          end: 65535.0
+          duration_sec: 86400
+          loop_mode: true
+      - address: 467
+        name: "Total_Charge_Energy_High"
+        generator:
+          type: constant
+          value: 100
+      - address: 468
+        name: "Total_Discharge_Energy_Low"
+        generator:
+          type: linear_ramp
+          start: 0.0
+          end: 65535.0
+          duration_sec: 86400
+          loop_mode: true
+      - address: 469
+        name: "Total_Discharge_Energy_High"
+        generator:
+          type: constant
+          value: 95
+      - address: 474
+        name: "Today_Charge_Energy"
+        generator:
+          type: linear_ramp
+          start: 0.0
+          end: 5000.0
+          duration_sec: 43200
+          loop_mode: true
+      - address: 475
+        name: "Today_Discharge_Energy"
+        generator:
+          type: linear_ramp
+          start: 0.0
+          end: 4800.0
+          duration_sec: 43200
+          loop_mode: true
+
+      #======================================
+      # 遥测区 - DC 侧 (491-493)
+      #======================================
+      - address: 491
+        name: "DC_Voltage"
+        generator:
+          type: sine
+          frequency: 0.00167
+          amplitude: 200.0
+          offset: 7000.0  # 700V
+      - address: 492
+        name: "DC_Current"
+        generator:
+          type: sine
+          frequency: 0.00333
+          amplitude: 500.0
+          offset: 3500.0  # 350A
+      - address: 493
+        name: "DC_Power"
+        generator:
+          type: sine
+          frequency: 0.00333
+          amplitude: 500.0
+          offset: 2450.0
+
+      #======================================
+      # 遥测/遥调回读 - 设定值 (1024-1026)
+      #======================================
+      - address: 1024
+        name: "Active_Power_Setpoint"
+        generator:
+          type: constant
+          value: 2000  # 200.0 kW
+      - address: 1025
+        name: "Reactive_Power_Setpoint"
+        generator:
+          type: constant
+          value: 0
+      - address: 1026
+        name: "PF_Setpoint"
+        generator:
+          type: constant
+          value: 100  # 1.00
+
+      #======================================
+      # 遥测/遥调回读 - 控制模式 (1091, 1106)
+      #======================================
+      - address: 1091
+        name: "DC_Current_Setpoint"
+        generator:
+          type: constant
+          value: 0
+      - address: 1106
+        name: "DC_Power_Setpoint"
+        generator:
+          type: constant
+          value: 0
+
+      #======================================
+      # 遥测/遥调回读 - 工作模式 (1302-1370)
+      #======================================
+      - address: 1302
+        name: "Grid_Mode_Readback"
+        generator:
+          type: constant
+          value: 1
+      - address: 1303
+        name: "Dispatch_Mode_Readback"
+        generator:
+          type: constant
+          value: 1
+      - address: 1304
+        name: "Active_Control_Mode"
+        generator:
+          type: constant
+          value: 1
+      - address: 1309
+        name: "DC_Control_Mode"
+        generator:
+          type: constant
+          value: 0
+      - address: 1312
+        name: "Control_Mode"
+        generator:
+          type: constant
+          value: 1
+      - address: 1314
+        name: "Startup_Mode"
+        generator:
+          type: constant
+          value: 0
+      - address: 1328
+        name: "LVRT_K_Value"
+        generator:
+          type: constant
+          value: 200
+      - address: 1330
+        name: "Off_Grid_Voltage"
+        generator:
+          type: constant
+          value: 1000
+      - address: 1335
+        name: "UV_Region4_Boundary"
+        generator:
+          type: constant
+          value: 500
+      - address: 1336
+        name: "UV_Region4_Trip_Time"
+        generator:
+          type: constant
+          value: 16
+      - address: 1337
+        name: "OV_Region4_Boundary"
+        generator:
+          type: constant
+          value: 1200
+      - address: 1338
+        name: "OV_Region4_Trip_Time"
+        generator:
+          type: constant
+          value: 16
+      - address: 1339
+        name: "OV_Region3_Boundary"
+        generator:
+          type: constant
+          value: 1150
+      - address: 1340
+        name: "OV_Region3_Trip_Time"
+        generator:
+          type: constant
+          value: 100
+      - address: 1341
+        name: "OV_Region1_Boundary"
+        generator:
+          type: constant
+          value: 1100
+      - address: 1342
+        name: "OV_Region1_Trip_Time"
+        generator:
+          type: constant
+          value: 1000
+      - address: 1343
+        name: "OV_Region2_Boundary"
+        generator:
+          type: constant
+          value: 1050
+      - address: 1344
+        name: "OV_Region2_Trip_Time"
+        generator:
+          type: constant
+          value: 12000
+      - address: 1361
+        name: "OF_Region1_Boundary"
+        generator:
+          type: constant
+          value: 524
+      - address: 1362
+        name: "OF_Region1_Trip_Time"
+        generator:
+          type: constant
+          value: 20000
+      - address: 1363
+        name: "OF_Region2_Boundary"
+        generator:
+          type: constant
+          value: 530
+      - address: 1364
+        name: "OF_Region2_Trip_Time"
+        generator:
+          type: constant
+          value: 16
+      - address: 1365
+        name: "Active_Power_Ramp_Rate"
+        generator:
+          type: constant
+          value: 100
+      - address: 1366
+        name: "Reconnect_Delay"
+        generator:
+          type: constant
+          value: 60
+      - address: 1367
+        name: "Anti_Islanding_Enable"
+        generator:
+          type: constant
+          value: 1
+      - address: 1368
+        name: "FVRT_Mode"
+        generator:
+          type: constant
+          value: 1
+      - address: 1369
+        name: "Permit_Service"
+        generator:
+          type: constant
+          value: 1
+      - address: 1370
+        name: "FVRT_Power_Mode"
+        generator:
+          type: constant
+          value: 0
+
+      #======================================
+      # 遥控区 (1001-1602)
+      #======================================
+      - address: 1001
+        name: "Total_Start"
+        generator:
+          type: constant
+          value: 0
+      - address: 1002
+        name: "Total_Stop"
+        generator:
+          type: constant
+          value: 0
+      - address: 1601
+        name: "String_Start"
+        generator:
+          type: constant
+          value: 0
+      - address: 1602
+        name: "String_Stop"
+        generator:
+          type: constant
+          value: 0
+      - address: 1266
+        name: "DC_BlackStart_Enable"
+        generator:
+          type: constant
+          value: 0
+      - address: 1435
+        name: "LFSM_Deact_Threshold"
+        generator:
+          type: constant
+          value: 0
+      - address: 1436
+        name: "LFSM_Deact_Time"
+        generator:
+          type: constant
+          value: 0
+      - address: 2410
+        name: "Buzzer_Enable"
+        generator:
+          type: constant
+          value: 0
+      - address: 2754
+        name: "Factory_Reset"
+        generator:
+          type: constant
+          value: 0
+
+      #======================================
+      # 遥调区 (1003-1076)
+      #======================================
+      - address: 1003
+        name: "Clear_Fault"
+        generator:
+          type: constant
+          value: 0
+      - address: 1006
+        name: "Grid_Mode"
+        generator:
+          type: constant
+          value: 1
+      - address: 1021
+        name: "Energy_Dispatch_Mode"
+        generator:
+          type: constant
+          value: 1
+      - address: 1022
+        name: "Active_Power_Control_Mode"
+        generator:
+          type: constant
+          value: 1
+      - address: 1023
+        name: "Reactive_Power_Control_Mode"
+        generator:
+          type: constant
+          value: 1
+      - address: 1076
+        name: "DC_Control_Mode_Set"
+        generator:
+          type: constant
+          value: 0
+
+faults:
+  enabled: false
+  scenarios: []

@@ -1,0 +1,19 @@
+[package]
+name = "aether-example-energy-gateway"
+version.workspace = true
+edition = "2024"
+rust-version = "1.90"
+description = "Fail-safe AetherEMS composition over the Aether edge SDK"
+license.workspace = true
+publish = false
+
+[dependencies]
+aether-sdk = { package = "aether-edge-sdk", path = "../../crates/aether-sdk" }
+aether-example-minimal-gateway = { path = "../minimal-gateway" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yml = { workspace = true }
+thiserror = { workspace = true }
+
+[lints]
+workspace = true

@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" href="/favicon.ico" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Norton creek solar energy center</title>
+    <script>
+      // 设置rem基准值，确保在不同设备上正确显示
+      ;(function () {
+        function setRem() {
+          const html = document.documentElement
+          const width = html.clientWidth
+          // 以1920px为基准，100px = 1rem
+          const rem = (width / 1920) * 100
+          html.style.fontSize = rem + 'px'
+        }
+
+        // 初始化
+        setRem()
+
+        // 监听窗口变化
+        window.addEventListener('resize', setRem)
+        window.addEventListener('orientationchange', setRem)
+      })()
+    </script>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

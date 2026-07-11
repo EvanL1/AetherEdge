@@ -1,0 +1,58 @@
+[package]
+name = "aether-alarm"
+publish = false
+version.workspace = true
+edition = "2024"
+license.workspace = true
+
+[[bin]]
+name = "aether-alarm"
+path = "src/main.rs"
+
+[dependencies]
+# Local libraries
+common = { path = "../../libs/common", default-features = false, features = ["sqlite", "axum"] }
+aether-domain = { path = "../../crates/aether-domain" }
+aether-ports = { path = "../../crates/aether-ports" }
+aether-shm-bridge = { path = "../../extensions/shm-bridge" }
+
+# Async runtime
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+
+# Web framework
+axum = { workspace = true }
+
+# HTTP client for broadcasting
+reqwest = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+csv = { workspace = true }
+
+# Database
+sqlx = { workspace = true }
+
+# Error handling
+anyhow = { workspace = true }
+
+# Utilities
+chrono = { workspace = true }
+futures = { workspace = true }
+
+# OpenAPI / Swagger UI
+utoipa = { workspace = true }
+utoipa-swagger-ui = { workspace = true, optional = true }
+
+[features]
+swagger-ui = ["utoipa-swagger-ui"]
+
+[dev-dependencies]
+tempfile = { workspace = true }
+
+[lints]
+workspace = true

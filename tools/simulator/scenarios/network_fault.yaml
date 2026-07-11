@@ -1,0 +1,60 @@
+# Network Fault Simulation Scenario
+# Tests io fault recovery with random network issues
+
+name: "Network Fault Simulation"
+
+devices:
+  - type: pcs
+    unit_id: 1
+    registers:
+      # Same registers as normal operation
+      - address: 0
+        name: "Total Power"
+        generator:
+          type: daily_pattern
+          peak_hour: 12
+          peak_value: 450.0
+          base_value: 50.0
+
+      - address: 10
+        name: "DC Voltage"
+        generator:
+          type: random_drift
+          center: 700.0
+          max_delta: 30.0
+          smoothness: 0.9
+
+      - address: 30
+        name: "Temperature"
+        generator:
+          type: random_drift
+          center: 350.0
+          max_delta: 50.0
+          smoothness: 0.92
+
+      - address: 40
+        name: "Status"
+        generator:
+          type: constant
+          value: 1.0
+
+faults:
+  enabled: true
+  scenarios:
+    # 10% chance of connection drop for 5 seconds
+    - type: connection_drop
+      probability: 0.10
+      duration_sec: 5
+
+    # 5% chance of slow response (2 second delay)
+    - type: slow_response
+      probability: 0.05
+      delay_ms: 2000
+
+    # 2% chance of invalid response
+    - type: invalid_response
+      probability: 0.02
+
+    # 1% chance of no response (timeout)
+    - type: no_response
+      probability: 0.01

@@ -1,0 +1,16 @@
+bash: warning: setlocale: LC_ALL: cannot change locale (en_US.UTF-8)
+PointWatch end-to-end latency bench
+Warmup: 500 events, measure: 5000 events
+Inter-event pacing: 100 µs (lets drain task batch reset)
+
+Measurement complete: 5000 samples, 0 drops
+
+─── PointWatch end-to-end (set_direct → event_rx.recv) (n=5000) ─────────────
+  min  = 76 µs
+  P50  = 206 µs
+  P95  = 359 µs
+  P99  = 526 µs
+  P99.9= 2244 µs
+  max  = 10246 µs
+  mean = 222 µs
+

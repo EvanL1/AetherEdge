@@ -1,0 +1,453 @@
+# BMS Full Scenario - 电池管理系统完整模拟场景
+# 基于真实 Modbus 地址映射 (config/io/2/mapping/)
+# BMS 地址范围: 62000-62166
+
+name: "BMS Full System Simulation"
+
+devices:
+  - type: "BMS"
+    unit_id: 2
+    registers:
+      #======================================
+      # 总压总流区 (62000-62007)
+      #======================================
+      - address: 62000
+        name: "BamsVoltage_Low"  # uint32 低字
+        generator:
+          type: sine
+          frequency: 0.001
+          amplitude: 500.0
+          offset: 7200.0  # 720.0V
+      - address: 62001
+        name: "BamsVoltage_High"  # uint32 高字
+        generator:
+          type: constant
+          value: 0
+      - address: 62002
+        name: "BamsCurrent_Low"  # uint32 (带符号，可正可负)
+        generator:
+          type: sine
+          frequency: 0.00333
+          amplitude: 1000.0
+          offset: 1000.0  # 100.0A (充电+，放电-)
+      - address: 62003
+        name: "BamsCurrent_High"
+        generator:
+          type: constant
+          value: 0
+      - address: 62004
+        name: "BamsPower_Low"  # uint32
+        generator:
+          type: sine
+          frequency: 0.00333
+          amplitude: 500.0
+          offset: 700.0  # 70.0kW
+      - address: 62005
+        name: "BamsPower_High"
+        generator:
+          type: constant
+          value: 0
+      - address: 62006
+        name: "BamsSoc"  # uint16, scale 0.001
+        generator:
+          type: sine
+          frequency: 0.00001  # 很慢的SOC变化
+          amplitude: 100.0
+          offset: 800.0  # 80.0%
+      - address: 62007
+        name: "BamsSoh"  # uint16, scale 0.001
+        generator:
+          type: constant
+          value: 980  # 98.0%
+
+      #======================================
+      # 充放电许可区 (62008-62020)
+      #======================================
+      - address: 62008
+        name: "BamsPermitChgPower_Low"
+        generator:
+          type: constant
+          value: 1000  # 100.0kW
+      - address: 62009
+        name: "BamsPermitChgPower_High"
+        generator:
+          type: constant
+          value: 0
+      - address: 62010
+        name: "BamsPermitDsgPower_Low"
+        generator:
+          type: constant
+          value: 1000
+      - address: 62011
+        name: "BamsPermitDsgPower_High"
+        generator:
+          type: constant
+          value: 0
+      - address: 62012
+        name: "BamsPermitChgCurrent_Low"
+        generator:
+          type: constant
+          value: 1500  # 150A
+      - address: 62013
+        name: "BamsPermitChgCurrent_High"
+        generator:
+          type: constant
+          value: 0
+      - address: 62014
+        name: "BamsPermitDsgCurrent_Low"
+        generator:
+          type: constant
+          value: 1500
+      - address: 62015
+        name: "BamsPermitDsgCurrent_High"
+        generator:
+          type: constant
+          value: 0
+      - address: 62016
+        name: "BamsBcuSocDiff"
+        generator:
+          type: random_drift
+          center: 20.0
+          max_delta: 10.0
+          smoothness: 0.95
+      - address: 62017
+        name: "BamsBcuMinSoc"
+        generator:
+          type: sine
+          frequency: 0.00001
+          amplitude: 50.0
+          offset: 750.0
+      - address: 62018
+        name: "BamsBcuMinSocNo"
+        generator:
+          type: constant
+          value: 3
+      - address: 62019
+        name: "BamsBcuMaxSoc"
+        generator:
+          type: sine
+          frequency: 0.00001
+          amplitude: 50.0
+          offset: 850.0
+      - address: 62020
+        name: "BamsBcuMaxSocNo"
+        generator:
+          type: constant
+          value: 1
+
+      #======================================
+      # 单体电压区 (62021-62028)
+      #======================================
+      - address: 62021
+        name: "BamsMaxCellVol"  # scale 0.001V
+        generator:
+          type: sine
+          frequency: 0.001
+          amplitude: 50.0
+          offset: 3400.0  # 3.400V
+      - address: 62022
+        name: "BamsMaxCellVBcuBmuNo"
+        generator:
+          type: constant
+          value: 257  # BCU1 BMU1
+      - address: 62023
+        name: "BamsMaxCellVNo"
+        generator:
+          type: constant
+          value: 12
+      - address: 62024
+        name: "BamsMinCellVol"
+        generator:
+          type: sine
+          frequency: 0.001
+          amplitude: 50.0
+          offset: 3200.0  # 3.200V
+      - address: 62025
+        name: "BamsMinCellVBcuBmuNo"
+        generator:
+          type: constant
+          value: 514  # BCU2 BMU2
+      - address: 62026
+        name: "BamsMinCellVNo"
+        generator:
+          type: constant
+          value: 8
+      - address: 62027
+        name: "BamsAvgCellVol"
+        generator:
+          type: sine
+          frequency: 0.001
+          amplitude: 30.0
+          offset: 3300.0  # 3.300V
+      - address: 62028
+        name: "BamsCellVolDiff"
+        generator:
+          type: random_drift
+          center: 100.0
+          max_delta: 50.0
+          smoothness: 0.95
+
+      #======================================
+      # 温度极值区 (62029-62036)
+      #======================================
+      - address: 62029
+        name: "BamsMaxCellT"  # int16, scale 0.1
+        generator:
+          type: sine
+          frequency: 0.0003
+          amplitude: 30.0
+          offset: 350.0  # 35.0°C
+      - address: 62030
+        name: "BamsMaxCellTBcuBmuNo"
+        generator:
+          type: constant
+          value: 257
+      - address: 62031
+        name: "BamsMaxCellTNo"
+        generator:
+          type: constant
+          value: 5
+      - address: 62032
+        name: "BamsMinCellT"  # int16
+        generator:
+          type: sine
+          frequency: 0.0003
+          amplitude: 20.0
+          offset: 280.0  # 28.0°C
+      - address: 62033
+        name: "BamsMinCellTBcuBmuNo"
+        generator:
+          type: constant
+          value: 770
+      - address: 62034
+        name: "BamsMinCellTNo"
+        generator:
+          type: constant
+          value: 2
+      - address: 62035
+        name: "BamsAvgCellT"  # int16
+        generator:
+          type: sine
+          frequency: 0.0003
+          amplitude: 20.0
+          offset: 320.0  # 32.0°C
+      - address: 62036
+        name: "BamsCellTDiff"
+        generator:
+          type: random_drift
+          center: 50.0
+          max_delta: 20.0
+          smoothness: 0.95
+
+      #======================================
+      # BCU 电压电流区 (62037-62046)
+      #======================================
+      - address: 62037
+        name: "BamsMaxBcuVol"  # scale 0.1V
+        generator:
+          type: sine
+          frequency: 0.001
+          amplitude: 20.0
+          offset: 3650.0  # 365.0V
+      - address: 62038
+        name: "BamsMaxBcuVNo"
+        generator:
+          type: constant
+          value: 1
+      - address: 62039
+        name: "BamsMinBcuVol"
+        generator:
+          type: sine
+          frequency: 0.001
+          amplitude: 20.0
+          offset: 3550.0  # 355.0V
+      - address: 62040
+        name: "BamsMinBcuVNo"
+        generator:
+          type: constant
+          value: 2
+      - address: 62041
+        name: "BamsBcuAvgVol"
+        generator:
+          type: sine
+          frequency: 0.001
+          amplitude: 15.0
+          offset: 3600.0  # 360.0V
+      - address: 62042
+        name: "BamsBcuVolDiff"
+        generator:
+          type: random_drift
+          center: 80.0
+          max_delta: 40.0
+          smoothness: 0.95
+      - address: 62043
+        name: "BamsMaxBcuCurr"  # int16, scale 0.1A
+        generator:
+          type: sine
+          frequency: 0.00333
+          amplitude: 50.0
+          offset: 500.0  # 50.0A
+      - address: 62044
+        name: "BamsMaxBcuCNo"
+        generator:
+          type: constant
+          value: 1
+      - address: 62045
+        name: "BamsMinBcuCurr"  # int16
+        generator:
+          type: sine
+          frequency: 0.00333
+          amplitude: 50.0
+          offset: 480.0  # 48.0A
+      - address: 62046
+        name: "BamsMinBcuCNo"
+        generator:
+          type: constant
+          value: 2
+
+      #======================================
+      # 累计能量区 (62047-62055)
+      #======================================
+      - address: 62047
+        name: "BamsTotalInCap_Low"  # uint32 Ah
+        generator:
+          type: linear_ramp
+          start: 0.0
+          end: 65535.0
+          duration_sec: 86400
+          loop_mode: true
+      - address: 62048
+        name: "BamsTotalInCap_High"
+        generator:
+          type: constant
+          value: 10
+      - address: 62049
+        name: "BamsTotalOutCap_Low"
+        generator:
+          type: linear_ramp
+          start: 0.0
+          end: 65535.0
+          duration_sec: 86400
+          loop_mode: true
+      - address: 62050
+        name: "BamsTotalOutCap_High"
+        generator:
+          type: constant
+          value: 9
+      - address: 62051
+        name: "BamsTotalInEng_Low"  # kWh
+        generator:
+          type: linear_ramp
+          start: 0.0
+          end: 65535.0
+          duration_sec: 86400
+          loop_mode: true
+      - address: 62052
+        name: "BamsTotalInEng_High"
+        generator:
+          type: constant
+          value: 5
+      - address: 62053
+        name: "BamsTotalOutEng_Low"
+        generator:
+          type: linear_ramp
+          start: 0.0
+          end: 65535.0
+          duration_sec: 86400
+          loop_mode: true
+      - address: 62054
+        name: "BamsTotalOutEng_High"
+        generator:
+          type: constant
+          value: 4
+      - address: 62055
+        name: "BamsResistance"
+        generator:
+          type: constant
+          value: 500  # 500 kΩ
+
+      #======================================
+      # 状态标志区 (62076-62093)
+      #======================================
+      - address: 62076
+        name: "BamsSystemStatus"
+        generator:
+          type: constant
+          value: 2  # 运行
+      - address: 62077
+        name: "BamsChargeStatus"
+        generator:
+          type: constant
+          value: 1  # 充电中
+      - address: 62078
+        name: "BamsAlarmLevel"
+        generator:
+          type: constant
+          value: 0  # 无告警
+      - address: 62083
+        name: "BamsRunState"
+        generator:
+          type: constant
+          value: 3  # 正常运行
+      - address: 62092
+        name: "BcuOnlineCount"
+        generator:
+          type: constant
+          value: 2
+      - address: 62093
+        name: "BcuTotalCount"
+        generator:
+          type: constant
+          value: 2
+
+      #======================================
+      # 遥控区 (写入地址，初始值为 0)
+      #======================================
+      - address: 63000
+        name: "BMS_Total_Start"
+        generator:
+          type: constant
+          value: 0
+      - address: 63001
+        name: "BMS_Total_Stop"
+        generator:
+          type: constant
+          value: 0
+      - address: 63002
+        name: "BMS_Charge_Enable"
+        generator:
+          type: constant
+          value: 1
+      - address: 63003
+        name: "BMS_Discharge_Enable"
+        generator:
+          type: constant
+          value: 1
+
+      #======================================
+      # 遥调区 (写入地址)
+      #======================================
+      - address: 63010
+        name: "BMS_SOC_Limit_High"
+        generator:
+          type: constant
+          value: 950  # 95.0%
+      - address: 63011
+        name: "BMS_SOC_Limit_Low"
+        generator:
+          type: constant
+          value: 100  # 10.0%
+      - address: 63012
+        name: "BMS_Charge_Current_Limit"
+        generator:
+          type: constant
+          value: 1500  # 150.0A
+      - address: 63013
+        name: "BMS_Discharge_Current_Limit"
+        generator:
+          type: constant
+          value: 1500
+
+faults:
+  enabled: false
+  scenarios: []

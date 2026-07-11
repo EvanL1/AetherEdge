@@ -1,0 +1,6 @@
+[Unit]
+Description=AetherEMS (all services)
+Wants=aether-io.service aether-automation.service aether-history.service aether-api.service aether-uplink.service aether-alarm.service
+
+[Install]
+WantedBy=multi-user.target

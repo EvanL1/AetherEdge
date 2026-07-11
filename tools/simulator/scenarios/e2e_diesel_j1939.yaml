@@ -1,0 +1,62 @@
+# E2E Diesel J1939 Test Scenario
+# Combines Modbus TCP + J1939 sender + State Machine
+# Port: 5025 (separate from normal E2E), HTTP: 9101
+# vcan interface: vcan1
+
+name: E2E Diesel J1939 Scenario
+devices:
+- type: diesel
+  unit_id: 1
+  registers:
+  - address: 0
+    name: engine_speed
+    generator:
+      type: constant
+      value: 0.0
+  - address: 1
+    name: coolant_temp
+    generator:
+      type: constant
+      value: 25.0
+  - address: 2
+    name: fuel_level
+    generator:
+      type: constant
+      value: 80.0
+  coils:
+  - address: 200
+    value: false
+  state_machine:
+    initial_state: standby
+    transitions:
+    - from: standby
+      to: running
+      trigger:
+        type: coil
+        address: 200
+        value: true
+    - from: running
+      to: standby
+      trigger:
+        type: coil
+        address: 200
+        value: false
+    - from: running
+      to: fault
+      trigger:
+        type: register
+        address: 2000
+        value: 99
+    - from: fault
+      to: standby
+      trigger:
+        type: register
+        address: 2000
+        value: 0
+  j1939:
+    interface: vcan1
+    source_address: 0
+    interval_ms: 500
+
+faults:
+  enabled: false

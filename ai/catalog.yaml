@@ -1,0 +1,63 @@
+version: 1
+project: aether
+components:
+  domain:
+    path: crates/aether-domain
+    responsibility: Industry-neutral entities, values, commands, and events
+    verify:
+      - cargo test -p aether-domain
+  ports:
+    path: crates/aether-ports
+    responsibility: Object-safe extension contracts with recovery semantics
+    verify:
+      - cargo test -p aether-ports
+  dataplane:
+    path: crates/aether-dataplane
+    responsibility: Database-free physical SHM layout, mmap I/O, slots, and snapshots
+    verify:
+      - cargo test -p aether-dataplane
+  application:
+    path: crates/aether-application
+    responsibility: Commands, queries, authorization, safety, and audit flow
+    verify:
+      - cargo test -p aether-application
+  local_store:
+    path: extensions/store-local
+    responsibility: Zero-external-service state, history, audit, and crash-recoverable outbox adapters
+    verify:
+      - cargo test -p aether-store-local
+  shm_bridge:
+    path: extensions/shm-bridge
+    responsibility: Transitional read-only adapter from legacy SlotIo to LiveState
+    verify:
+      - cargo test -p aether-shm-bridge
+  redis_bridge:
+    path: extensions/redis-bridge
+    responsibility: Optional external state mirror; never a source of truth
+    verify:
+      - cargo test -p aether-redis-bridge
+  postgres_history:
+    path: extensions/postgres-history
+    responsibility: Optional historical and audit persistence
+    verify:
+      - cargo test -p aether-postgres-history
+  legacy_shm_adapters:
+    path: libs/aether-rtdb-shm
+    responsibility: Channel, instance, routing, and action adapters during migration
+    verify:
+      - cargo test -p aether-rtdb-shm
+  aether_uplink_runtime:
+    path: services/uplink/src/uplink.rs
+    responsibility: aether-uplink integration with DurableOutbox and UplinkPublisher
+    verify:
+      - cargo check -p aether-uplink
+  aether_io_protocol_runtime:
+    path: services/io/src/protocols
+    responsibility: aether-io device protocol runtime
+    verify:
+      - cargo test -p aether-io --lib
+  minimal_gateway_example:
+    path: examples/minimal-gateway
+    responsibility: Runnable SDK composition with no external services
+    verify:
+      - cargo test -p aether-example-minimal-gateway

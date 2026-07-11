@@ -1,0 +1,38 @@
+[package]
+name = "aether-model"
+publish = false
+version.workspace = true
+edition = "2024"
+license.workspace = true
+description = "Model layer library for AetherEMS - calculations, products, and instance management"
+
+[features]
+default = []
+schema = ["dep:schemars", "aether-core/schema"]
+
+[dependencies]
+# Core types (re-exported)
+aether-core = { path = "../aether-core", features = ["serde"] }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# Schema generation (optional)
+schemars = { version = "0.8", optional = true }
+
+# Error handling
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+
+# Database
+sqlx = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+
+[lints]
+workspace = true

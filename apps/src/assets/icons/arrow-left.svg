@@ -1,0 +1,16 @@
+<svg width="32" height="32" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+<foreignObject x="-10" y="-10" width="52" height="52"><div xmlns="http://www.w3.org/1999/xhtml" style="backdrop-filter:blur(5px);clip-path:url(#bgblur_0_186_6422_clip_path);height:100%;width:100%"></div></foreignObject><g data-figma-bg-blur-radius="10">
+<path d="M0 24V8C0 3.58172 3.58172 0 8 0H26L32 6V26L26 32H8C3.58172 32 0 28.4183 0 24Z" fill="#54628C" fill-opacity="0.4"/>
+<path d="M8 0.5C3.85786 0.5 0.5 3.85786 0.5 8V24C0.5 28.1421 3.85786 31.5 8 31.5H25.793L31.5 25.793V6.20703L25.793 0.5H8Z" stroke="url(#paint0_linear_186_6422)" stroke-opacity="0.3"/>
+</g>
+<path d="M10 16L18.4 22.0622L16.4 16L18.4 9.93781L10 16Z" fill="white"/>
+<defs>
+<clipPath id="bgblur_0_186_6422_clip_path" transform="translate(10 10)"><path d="M0 24V8C0 3.58172 3.58172 0 8 0H26L32 6V26L26 32H8C3.58172 32 0 28.4183 0 24Z"/>
+</clipPath><linearGradient id="paint0_linear_186_6422" x1="31.0857" y1="0.800002" x2="-5.5943" y2="20.0068" gradientUnits="userSpaceOnUse">
+<stop stop-color="#94A6C5"/>
+<stop offset="0.30251" stop-color="#94A6C5" stop-opacity="0"/>
+<stop offset="0.718599" stop-color="#94A6C5" stop-opacity="0.344221"/>
+<stop offset="0.990385" stop-color="#94A6C5"/>
+</linearGradient>
+</defs>
+</svg>

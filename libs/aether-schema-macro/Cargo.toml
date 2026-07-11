@@ -1,0 +1,27 @@
+[package]
+name = "aether-schema-macro"
+publish = false
+version.workspace = true
+edition = "2024"
+license.workspace = true
+description = "Procedural macros for automatic SQL DDL generation from Rust structs"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+# Syntax parsing and code generation
+syn = { version = "2.0", features = ["full", "extra-traits"] }
+quote = "1.0"
+proc-macro2 = "1.0"
+
+# Attribute parsing helper
+darling = "0.20"
+
+# String case conversion (snake_case, etc.)
+heck = "0.5"
+
+[dev-dependencies]
+
+[lints]
+workspace = true

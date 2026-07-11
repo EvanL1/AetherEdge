@@ -1,0 +1,91 @@
+# Rust build artifacts - exclude heavy intermediate artifacts, keep release binaries
+target/**/deps/
+target/**/build/
+target/**/.fingerprint/
+target/**/incremental/
+target/**/examples/
+target/debug/
+target/doc/
+target/.rustc_info.json
+target/.cargo-lock
+**/*.rs.bk
+*.pdb
+
+# Cargo lock for libraries (keep for binaries)
+# Cargo.lock
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# CI/CD
+.github/
+
+# Documentation
+*.md
+!README.md
+docs/
+
+# Test files
+tests/
+benches/
+
+# Build outputs
+build/
+dist/
+release/
+offline-bundle/
+
+# Logs
+*.log
+logs/
+
+# Database files
+*.db
+*.db-shm
+*.db-wal
+data/
+
+# Node.js (for apps/)
+node_modules/
+npm-debug.log
+yarn-error.log
+.pnpm-debug.log
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+venv/
+env/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.bak
+*.cache
+
+# Docker
+.dockerignore
+Dockerfile*
+docker-compose*.yml
+docker/
+
+# Scripts (not needed in image)
+scripts/
+
+# Development tools
+.env
+.env.local
+.env.*.local

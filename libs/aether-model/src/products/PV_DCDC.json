@@ -1,0 +1,38 @@
+{
+  "name": "PV DCDC",
+  "pName": "Generator",
+  "P": [
+    {"id":1,"name":"Max Power","unit":"kw","type":"number"},
+    {"id":2,"name":"Max Voltage","unit":"V","type":"number"},
+    {"id":3,"name":"Max Current","unit":"A","type":"number"},
+    {"id":4,"name":"Station","unit":"","type":"string"},
+    {"id":5,"name":"String Count","unit":"","type":"number"},
+    {"id":6,"name":"Cell type","unit":"","type":"string"},
+    {"id":7,"name":"Tracking method","unit":"","type":"string"},
+    {"id":8,"name":"Tilt angle","unit":"","type":"number"},
+    {"id":9,"name":"Azimuth angle","unit":"","type":"number"}
+  ],
+  "M": [
+    {"id":1,"name":"PV Power (Array)","unit":"kw","type":"number"},
+    {"id":2,"name":"PV Voltage (Array)","unit":"V","type":"number"},
+    {"id":3,"name":"PV Current (Array)","unit":"A","type":"number"},
+    {"id":4,"name":"Sub PVI","unit":"kw","type":"number"},
+    {"id":5,"name":"Energy Today","unit":"kwh","type":"number"},
+    {"id":6,"name":"Start Stop Status","unit":"","type":"number"},
+    {"id":7,"name":"PV Power","unit":"kw","type":"number"},
+    {"id":8,"name":"PV Voltage","unit":"V","type":"number"},
+    {"id":9,"name":"PV Current","unit":"A","type":"number"},
+    {"id":10,"name":"Peak Efficiency","unit":"%","type":"number"},
+    {"id":11,"name":"Average Efficiency","unit":"%","type":"number"},
+    {"id":12,"name":"Minimum Efficiency","unit":"%","type":"number"},
+    {"id":13,"name":"Solar Panels","unit":"%","type":"number"},
+    {"id":14,"name":"PV System","unit":"%","type":"number"},
+    {"id":15,"name":"Energy Total","unit":"kwh","type":"number"}
+  ],
+  "A": [
+    {"id":1,"name":"Start","unit":"","type":"string"},
+    {"id":2,"name":"Stop","unit":"","type":"string"},
+    {"id":3,"name":"Power Set","unit":"kw","type":"number"},
+    {"id":4,"name":"Clear Error","unit":"","type":"string"}
+  ]
+}

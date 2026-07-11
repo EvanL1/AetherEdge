@@ -1,0 +1,33 @@
+[package]
+name = "aether-store-local"
+version.workspace = true
+edition = "2024"
+rust-version = "1.90"
+description = "Zero-external-service adapters for the Aether edge kernel"
+license.workspace = true
+repository.workspace = true
+documentation = "https://docs.rs/aether-store-local"
+readme = "README.md"
+keywords = ["iot", "edge", "gateway", "offline"]
+categories = ["embedded", "asynchronous"]
+
+[dependencies]
+aether-domain = { version = "0.5.0", path = "../../crates/aether-domain" }
+aether-ports = { version = "0.5.0", path = "../../crates/aether-ports" }
+async-trait = { workspace = true }
+fs2 = "0.4"
+tokio = { version = "1.35", default-features = false, features = ["sync"] }
+sqlx = { workspace = true, optional = true }
+
+[features]
+default = []
+sqlite-audit = ["dep:sqlx"]
+
+[dev-dependencies]
+aether-testkit = { version = "0.5.0", path = "../../crates/aether-testkit" }
+tempfile = { workspace = true }
+tokio = { workspace = true }
+sqlx = { workspace = true }
+
+[lints]
+workspace = true

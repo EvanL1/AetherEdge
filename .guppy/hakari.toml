@@ -1,0 +1,22 @@
+# cargo-hakari configuration
+hakari-package = "workspace-hack"
+resolver = "v3"
+dep-format-version = "4"
+platforms = []
+
+# These independently deployable edge consumers intentionally keep a small,
+# external-database-free default graph. Depending on workspace-hack would pull
+# the workspace-wide Redis/PostgreSQL feature union back into those binaries.
+[traversal-excludes]
+workspace-members = [
+    "aether-alarm",
+    "aether-api",
+    "aether-history",
+    "aether-uplink",
+    "aether-io",
+    "aether-automation",
+    "aether-routing",
+    "aether-rtdb-shm",
+    "aether-rules",
+    "aether-calc",
+]

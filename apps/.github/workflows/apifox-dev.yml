@@ -1,0 +1,36 @@
+name: apifox-tests-dev
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ['dev']
+
+jobs:
+  apifox:
+    runs-on: ubuntu-latest
+    environment: dev # 指定dev环境，自动读取dev环境下的secrets和变量
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Install Apifox CLI
+        run: npm i -g apifox-cli@latest
+
+      - name: Run Apifox tests (DEV env)
+        env:
+          APIFOX_ACCESS_TOKEN: ${{ secrets.APIFOX_ACCESS_TOKEN }}
+          APIFOX_TEST_SCENE_ID: ${{ vars.APIFOX_TEST_SCENE_ID }}
+          APIFOX_DEV_ENV_ID: ${{ vars.APIFOX_DEV_ENV_ID }}
+        run: |
+          apifox run \
+            --access-token "${APIFOX_ACCESS_TOKEN}" \
+            -t "${APIFOX_TEST_SCENE_ID}" \
+            -e "${APIFOX_DEV_ENV_ID}" \
+            -n 1 \
+            -r html,cli \
+            --upload-report

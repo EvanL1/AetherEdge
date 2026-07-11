@@ -1,0 +1,37 @@
+{
+    "name": "Load_Three_Phase",
+    "pName": "Station",
+    "P": [
+      {"id":1,"name":"Max Voltage","unit":"V","type":"number"},
+      {"id":2,"name":"Max Current","unit":"A","type":"number"},
+      {"id":3,"name":"Rated Frequency","unit":"Hz","type":"number"},
+      {"id":4,"name":"Max Power","unit":"kw","type":"number"},
+      {"id":5,"name":"Load Flexibility","unit":"","type":"string","options":["rigid","flexible"]},
+      {"id":6,"name":"Adjustable Power Range","unit":"kw","type":"number"},
+      {"id":7,"name":"Response Time","unit":"min","type":"number"},
+      {"id":8,"name":"Min Runtime","unit":"min","type":"number"},
+      {"id":9,"name":"Max Interrupt Time","unit":"min","type":"number"},
+      {"id":10,"name":"Shiftable Time Window","unit":"min","type":"number"}
+    ],
+    "M": [
+        {"id":1,"name":"Total Active Power","unit":"kW","type":"number"},
+        {"id":2,"name":"Total Reactive Power","unit":"kVar","type":"number"},
+        {"id":3,"name":"Power Factor","type":"number"},
+        {"id":4,"name":"Frequency","unit":"Hz","type":"number"},
+        {"id":5,"name":"A Phase Voltage","unit":"V","type":"number"},
+        {"id":6,"name":"B Phase Voltage","unit":"V","type":"number"},
+        {"id":7,"name":"C Phase Voltage","unit":"V","type":"number"},
+        {"id":8,"name":"A Phase Current","unit":"A","type":"number"},
+        {"id":9,"name":"B Phase Current","unit":"A","type":"number"},
+        {"id":10,"name":"C Phase Current","unit":"A","type":"number"},
+        {"id":11,"name":"A Phase Active Power","unit":"kW","type":"number"},
+        {"id":12,"name":"B Phase Active Power","unit":"kW","type":"number"},
+        {"id":13,"name":"C Phase Active Power","unit":"kW","type":"number"},
+        {"id":14,"name":"Total Energy","unit":"kWh","type":"number"},
+        {"id":15,"name":"Energy Today","unit":"kWh","type":"number"},
+        {"id":16,"name":"Energy This Month","unit":"kWh","type":"number"},
+        {"id":17,"name":"Max Demand This Month","unit":"kW","type":"number"},
+        {"id":18,"name":"Current Demand","unit":"kW","type":"number"}
+    ],
+    "A": []
+  }
