@@ -6,17 +6,17 @@
 //! - List: pagination and search
 //! - Batch: create/delete multiple instances
 //!
-//! Note: Products are now compile-time built-in constants from aether-model crate.
-//! Use built-in product names like "Battery", "PCS", "ESS", "Station", etc.
+//! The fixture explicitly loads Energy Pack products such as Battery, PCS,
+//! ESS, and Station.
 
 #![allow(clippy::disallowed_methods)] // Test code - unwrap is acceptable
 
 mod common;
 
 use aether_automation::instance_manager::InstanceManager;
-use aether_automation::product_loader::{CreateInstanceRequest, ProductLoader};
+use aether_automation::product_loader::CreateInstanceRequest;
 use aether_routing::RoutingCache;
-use common::TestEnv;
+use common::{TestEnv, energy_product_loader};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -27,11 +27,9 @@ use std::sync::Arc;
 /// Create an SQLite/SHM-oriented InstanceManager for testing.
 async fn create_test_instance_manager(env: &TestEnv) -> InstanceManager {
     let routing_cache = Arc::new(RoutingCache::new());
-    let product_loader = Arc::new(ProductLoader::new(env.pool.clone()));
+    let product_loader = Arc::new(energy_product_loader(env.pool.clone()));
 
-    let dispatch: Arc<dyn aether_automation::infra::shm_dispatch::ActionDispatch> =
-        Arc::new(aether_automation::infra::shm_dispatch::NoopDispatch);
-    InstanceManager::new(env.pool.clone(), routing_cache, product_loader, dispatch)
+    InstanceManager::new(env.pool.clone(), routing_cache, product_loader)
 }
 
 /// Setup standard hierarchy for tests: Station(9901) -> ESS(9902)

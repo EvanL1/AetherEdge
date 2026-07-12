@@ -7,6 +7,7 @@ readonly DEFAULT_AUTOMATION="config.template/automation/automation.yaml"
 readonly DEFAULT_INSTANCES="config.template/automation/instances.yaml"
 readonly ENERGY_MANIFEST="packs/energy/pack.yaml"
 readonly ENERGY_EXAMPLES="packs/energy/examples/config"
+readonly ENERGY_RULES="packs/energy/rules"
 
 fail() {
     echo "ERROR: $*"
@@ -83,17 +84,24 @@ fi
 if rg -n 'config\.template/' "$ENERGY_MANIFEST"; then
     fail "energy pack must own its examples rather than reference default config"
 fi
+if rg -n '^legacy_assets:' "$ENERGY_MANIFEST"; then
+    fail "Pack v1 must not expose repository-relative legacy assets"
+fi
+require_exact_setting "$ENERGY_MANIFEST" '^version:[[:space:]]*0\.5\.0[[:space:]]*$' \
+    "energy pack must declare its own release version"
 require_exact_setting "$ENERGY_MANIFEST" '^  aether:[[:space:]]*">=0\.5\.0,<0\.6\.0"[[:space:]]*$' \
     "energy distribution must declare its compatible Aether release range"
-require_exact_setting "$ENERGY_MANIFEST" '^  composition:[[:space:]]*examples/energy-gateway[[:space:]]*$' \
+require_exact_setting "$ENERGY_MANIFEST" '^  composition:[[:space:]]*aether-example-energy-gateway[[:space:]]*$' \
     "energy distribution must declare its conformance composition"
+require_exact_setting "$ENERGY_MANIFEST" '^  commissioned:[[:space:]]*false[[:space:]]*$' \
+    "energy pack examples must explicitly declare commissioned: false"
 
 for required_example in \
     "$ENERGY_EXAMPLES/io/io.yaml" \
     "$ENERGY_EXAMPLES/automation/automation.yaml" \
     "$ENERGY_EXAMPLES/automation/instances.yaml" \
-    "$ENERGY_EXAMPLES/automation/rules/battery_soc_management.json"; do
-    [[ -s "$required_example" ]] || fail "missing energy-pack example: $required_example"
+    "$ENERGY_RULES/battery_soc_management.json"; do
+    [[ -s "$required_example" ]] || fail "missing required energy-pack file: $required_example"
 done
 
 if enabled_channels=$(find_enabled_channels "$ENERGY_EXAMPLES/io/io.yaml") \
@@ -103,14 +111,16 @@ if enabled_channels=$(find_enabled_channels "$ENERGY_EXAMPLES/io/io.yaml") \
 fi
 require_all_channels_explicitly_disabled "$ENERGY_EXAMPLES/io/io.yaml"
 
-if enabled_rules=$(find_enabled_rules "$ENERGY_EXAMPLES/automation/rules") \
+if enabled_rules=$(find_enabled_rules "$ENERGY_RULES") \
     && [[ -n "$enabled_rules" ]]; then
     echo "$enabled_rules"
     fail "energy-pack examples must not enable control rules"
 fi
-for rule in "$ENERGY_EXAMPLES"/automation/rules/*.json; do
+for rule in "$ENERGY_RULES"/*.json; do
     require_exact_setting "$rule" '"enabled"[[:space:]]*:[[:space:]]*false' \
-        "every energy-pack rule example must declare enabled: false"
+        "every energy-pack rule asset must declare enabled: false"
+    require_exact_setting "$rule" '"commissioned"[[:space:]]*:[[:space:]]*false' \
+        "every energy-pack rule template must declare commissioned: false"
 done
 
 if rg -n '^[[:space:]]{2}enabled:[[:space:]]*true([[:space:]#]|$)' \

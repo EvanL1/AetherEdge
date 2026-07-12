@@ -6,7 +6,7 @@ use crate::core::config::Point;
 #[cfg(test)]
 use crate::core::config::{
     ADJUSTMENT_POINTS_TABLE, CHANNELS_TABLE, CONTROL_POINTS_TABLE, SERVICE_CONFIG_TABLE,
-    SIGNAL_POINTS_TABLE, TELEMETRY_POINTS_TABLE,
+    SIGNAL_POINTS_TABLE, TELEMETRY_POINTS_TABLE, install_channel_revision_triggers,
 };
 use crate::core::config::{
     AdjustmentPoint, AppConfig, ChannelConfig, ControlPoint, RuntimeChannelConfig, ServiceConfig,
@@ -439,6 +439,7 @@ mod tests {
 
         // Create channels table
         sqlx::query(CHANNELS_TABLE).execute(&pool).await.unwrap();
+        install_channel_revision_triggers(&pool).await.unwrap();
 
         // Insert test channels
         sqlx::query(
@@ -756,6 +757,7 @@ mod tests {
 
         // Create empty channels table
         sqlx::query(CHANNELS_TABLE).execute(&pool).await.unwrap();
+        install_channel_revision_triggers(&pool).await.unwrap();
 
         pool.close().await;
 

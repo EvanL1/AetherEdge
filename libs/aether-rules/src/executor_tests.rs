@@ -1,6 +1,8 @@
 use super::*;
 use crate::MemoryRuleLiveState;
-use aether_rtdb_shm::NoopDispatch;
+use aether_domain::TimestampMs;
+use aether_ports::{CommandReceipt, PortError, PortErrorKind, PortResult};
+use async_trait::async_trait;
 use serde_json::json;
 
 use crate::parser::extract_rule_flow;
@@ -13,13 +15,35 @@ fn new_executor() -> (Arc<MemoryRuleLiveState>, RuleExecutor) {
     (live_state, executor)
 }
 
-fn new_executor_with_m2c_route() -> (Arc<MemoryRuleLiveState>, RuleExecutor) {
+fn new_executor_without_action_commands() -> (Arc<MemoryRuleLiveState>, RuleExecutor) {
     let live_state = Arc::new(MemoryRuleLiveState::new());
-    let mut m2c = HashMap::new();
-    m2c.insert("42:A:7".to_string(), "1001:C:0".to_string());
-    let routing_cache = Arc::new(RoutingCache::from_maps(HashMap::new(), m2c, HashMap::new()));
+    let routing_cache = Arc::new(RoutingCache::default());
     let executor = RuleExecutor::new(Arc::clone(&live_state), routing_cache);
     (live_state, executor)
+}
+
+struct SuccessfulActionCommands;
+
+#[async_trait]
+impl RuleActionCommandFacade for SuccessfulActionCommands {
+    async fn write_action(&self, command: RuleActionCommand) -> PortResult<CommandReceipt> {
+        Ok(CommandReceipt::new(
+            aether_domain::CommandId::new(1),
+            TimestampMs::new(command.target().point_id().get().into()),
+        ))
+    }
+}
+
+struct FailingActionCommands;
+
+#[async_trait]
+impl RuleActionCommandFacade for FailingActionCommands {
+    async fn write_action(&self, _command: RuleActionCommand) -> PortResult<CommandReceipt> {
+        Err(PortError::new(
+            PortErrorKind::Unavailable,
+            "simulated governed action failure",
+        ))
+    }
 }
 
 /// Helper: setup SOC strategy test with given battery value
@@ -27,13 +51,9 @@ async fn setup_soc_test(soc_value: &'static str) -> (Arc<MemoryRuleLiveState>, R
     let live_state = Arc::new(MemoryRuleLiveState::new());
     let soc_value = soc_value.parse::<f64>().unwrap();
     assert!(live_state.set_instance(5, 0, 3, soc_value, 1));
-    let m2c = HashMap::from([
-        ("6:A:5".to_string(), "1001:C:5".to_string()),
-        ("7:A:2".to_string(), "1002:C:2".to_string()),
-    ]);
-    let routing_cache = Arc::new(RoutingCache::from_maps(HashMap::new(), m2c, HashMap::new()));
+    let routing_cache = Arc::new(RoutingCache::default());
     let executor = RuleExecutor::new(Arc::clone(&live_state), routing_cache)
-        .with_action_dispatch(Arc::new(NoopDispatch));
+        .with_action_command_facade(Arc::new(SuccessfulActionCommands));
     let rule = create_soc_rule();
     (live_state, executor, rule)
 }
@@ -250,6 +270,67 @@ async fn test_soc_strategy_low_battery() {
     );
     assert_eq!(result.actions_executed.len(), 1);
     assert_eq!(result.actions_executed[0].value, 999.0);
+}
+
+#[tokio::test]
+async fn failed_attempted_action_makes_rule_execution_fail() {
+    let live_state = Arc::new(MemoryRuleLiveState::new());
+    assert!(live_state.set_instance(5, 0, 3, 3.5, 1));
+    let executor = RuleExecutor::new(Arc::clone(&live_state), Arc::new(RoutingCache::default()))
+        .with_action_command_facade(Arc::new(FailingActionCommands));
+
+    let result = executor
+        .execute(&create_soc_rule())
+        .await
+        .unwrap_or_else(|error| panic!("execute test rule: {error}"));
+
+    assert_eq!(result.actions_executed.len(), 1);
+    assert!(!result.actions_executed[0].success);
+    assert!(
+        !result.success,
+        "failed action must fail the rule execution"
+    );
+    assert_eq!(
+        result.error.as_deref(),
+        Some("1 of 1 attempted rule actions failed")
+    );
+}
+
+#[tokio::test]
+async fn no_action_rule_still_completes_successfully() {
+    let (_live_state, executor) = new_executor();
+    let rule = Rule {
+        id: 99,
+        name: "no-action".to_string(),
+        description: None,
+        enabled: true,
+        priority: 0,
+        cooldown_ms: 0,
+        trigger_config: None,
+        flow: crate::types::RuleFlow {
+            start_node: "start".to_string(),
+            nodes: HashMap::from([
+                (
+                    "start".to_string(),
+                    RuleNode::Start {
+                        wires: RuleWires {
+                            default: vec!["end".to_string()],
+                        },
+                    },
+                ),
+                ("end".to_string(), RuleNode::End),
+            ]),
+        },
+    };
+
+    let result = executor
+        .execute(&rule)
+        .await
+        .unwrap_or_else(|error| panic!("execute test rule: {error}"));
+
+    assert!(result.success);
+    assert!(result.actions_executed.is_empty());
+    assert!(result.error.is_none());
 }
 
 #[tokio::test]
@@ -470,7 +551,7 @@ async fn test_assignment_unknown_variable_does_not_write_zero() {
         "skipped action carries NaN, not 0.0 — caller can distinguish"
     );
 
-    // The rejected assignment never reaches ActionDispatch.
+    // The rejected assignment never reaches the governed command facade.
 }
 
 /// Numeric literals encoded as strings (some frontends do this) still resolve.
@@ -500,8 +581,8 @@ async fn test_assignment_numeric_string_literal_resolves() {
 }
 
 #[tokio::test]
-async fn test_routed_action_without_shm_writer_fails_closed() {
-    let (_live_state, executor) = new_executor_with_m2c_route();
+async fn test_action_without_governed_command_facade_fails_closed() {
+    let (_live_state, executor) = new_executor_without_action_commands();
     let target = RuleVariable {
         name: "Y".to_string(),
         instance: Some(42),
@@ -521,7 +602,7 @@ async fn test_routed_action_without_shm_writer_fails_closed() {
 
     assert!(
         !result.success,
-        "routed rule action must fail when SHM/UDS dispatch is unavailable"
+        "rule action must fail when the governed command facade is unavailable"
     );
 }
 

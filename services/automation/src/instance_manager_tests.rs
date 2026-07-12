@@ -7,10 +7,6 @@ use tempfile::TempDir;
 
 use super::*;
 
-fn noop_dispatch() -> Arc<dyn crate::infra::shm_dispatch::ActionDispatch> {
-    Arc::new(crate::infra::shm_dispatch::NoopDispatch)
-}
-
 async fn test_manager() -> (TempDir, InstanceManager) {
     let temp_dir = TempDir::new().unwrap();
     let db_path = temp_dir.path().join("instance-manager.db");
@@ -19,12 +15,13 @@ async fn test_manager() -> (TempDir, InstanceManager) {
     common::test_utils::schema::init_automation_schema(&pool)
         .await
         .unwrap();
-    let product_loader = Arc::new(ProductLoader::new(pool.clone()));
+    let product_loader = Arc::new(crate::product_loader::test_energy_product_loader(
+        pool.clone(),
+    ));
     let manager = InstanceManager::new(
         pool,
         Arc::new(aether_routing::RoutingCache::new()),
         product_loader,
-        noop_dispatch(),
     );
     (temp_dir, manager)
 }
@@ -128,61 +125,4 @@ async fn instance_properties_are_persisted_in_sqlite() {
     .await
     .unwrap();
     assert_eq!(value, "5000.0");
-}
-
-#[tokio::test]
-async fn action_without_route_is_rejected_instead_of_stored_elsewhere() {
-    let (_temp_dir, manager) = test_manager().await;
-
-    let result = manager.execute_action(1001, "1", 42.0).await;
-
-    assert!(matches!(result, Err(AutomationError::InvalidRouting(_))));
-}
-
-#[tokio::test]
-async fn routed_action_requires_channel_health_shm() {
-    let temp_dir = TempDir::new().unwrap();
-    let db_path = temp_dir.path().join("routed-action.db");
-    let db_url = format!("sqlite://{}?mode=rwc", db_path.display());
-    let pool = SqlitePool::connect(&db_url).await.unwrap();
-    common::test_utils::schema::init_automation_schema(&pool)
-        .await
-        .unwrap();
-    common::test_utils::schema::init_io_schema(&pool)
-        .await
-        .unwrap();
-    sqlx::query(
-        "INSERT INTO channels (channel_id, name, protocol, enabled) VALUES (2, 'device', 'virtual', 1)",
-    )
-    .execute(&pool)
-    .await
-    .unwrap();
-    sqlx::query(
-        "INSERT INTO adjustment_points
-         (channel_id, point_id, signal_name, min_value, max_value, step)
-         VALUES (2, 5, 'setpoint', 0.0, 100.0, 1.0)",
-    )
-    .execute(&pool)
-    .await
-    .unwrap();
-    let mut routes = HashMap::new();
-    routes.insert("1001:A:1".to_string(), "2:A:5".to_string());
-    let routing_cache = Arc::new(aether_routing::RoutingCache::from_maps(
-        HashMap::new(),
-        routes,
-        HashMap::new(),
-    ));
-    let manager = InstanceManager::new(
-        pool.clone(),
-        routing_cache,
-        Arc::new(ProductLoader::new(pool)),
-        noop_dispatch(),
-    );
-
-    let unsafe_value = manager.execute_action(1001, "1", 101.0).await;
-    assert!(matches!(unsafe_value, Err(AutomationError::InvalidData(_))));
-
-    let result = manager.execute_action(1001, "1", 42.0).await;
-
-    assert!(matches!(result, Err(AutomationError::DispatchDegraded(_))));
 }

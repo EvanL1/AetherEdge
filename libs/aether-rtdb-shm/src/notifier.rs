@@ -1,4 +1,4 @@
-//! UDS Notification Sender
+//! Legacy UDS notification sender retained for compatibility tests/benchmarks.
 //!
 //! Used by automation to send M2C command notifications to io.
 //! Supports graceful degradation: on connection loss the notifier does not block,

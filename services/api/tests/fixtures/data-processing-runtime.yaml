@@ -1,0 +1,141 @@
+# Industry-neutral runtime fixture for composition-root contract tests.
+schema: aether.data-processing-runtime.v1
+
+history:
+  path: /app/data/aether-history.db
+  max_raw_samples_per_feature: 50000
+
+covariates:
+  path: /app/data/config/data-processing/covariates.json
+  max_file_bytes: 4194304
+  max_bindings: 16
+  max_runs_per_binding: 8
+  max_features: 16
+  max_samples: 4096
+
+routes:
+  - enabled: true
+    deadline_ms: 5000
+    max_concurrency: 1
+    remote_preapproved: false
+
+    task:
+      id: example.signal-forecast
+      revision: 1
+      processor_contract: aether.data-processing.forecast.v1
+      target:
+        name: signal
+        unit: "1"
+        sign_convention: positive_increase
+      cadence_seconds: 900
+      history_aggregation: mean
+      history_duplicate_policy: latest
+      history_steps: 672
+      max_horizon_steps: 288
+      max_quantiles: 0
+      max_output_age_seconds: 3600
+      max_missing_ratio: 0.0
+      max_input_age_seconds: 900
+      max_gap_seconds: 1800
+      require_future_issue_time: true
+      remote_egress_allowed: false
+      features:
+        - { name: signal, role: history, value_type: number, unit: "1", history_aggregation: mean, history_duplicate_policy: latest }
+        - { name: ambient_temperature, role: history, value_type: number, unit: Cel, history_aggregation: mean, history_duplicate_policy: latest }
+        - { name: relative_humidity, role: history, value_type: number, unit: "%", history_aggregation: mean, history_duplicate_policy: latest, constraints: { minimum: 0.0, maximum: 100.0 } }
+        - { name: precipitation, role: history, value_type: number, unit: mm, history_aggregation: sum, history_duplicate_policy: latest, constraints: { minimum: 0.0 } }
+        - { name: interval_index, role: history, value_type: number, unit: "1", history_aggregation: last, history_duplicate_policy: reject, constraints: { minimum: 0.0, maximum: 95.0, integer: true } }
+        - { name: ambient_temperature, role: future_covariate, value_type: number, unit: Cel }
+        - { name: relative_humidity, role: future_covariate, value_type: number, unit: "%", constraints: { minimum: 0.0, maximum: 100.0 } }
+        - { name: precipitation, role: future_covariate, value_type: number, unit: mm, constraints: { minimum: 0.0 } }
+        - { name: interval_index, role: future_covariate, value_type: number, unit: "1", constraints: { minimum: 0.0, maximum: 95.0, integer: true } }
+      fallbacks:
+        - strategy: persistence
+          version: "1"
+          source_feature: signal
+          max_output_age_seconds: 1800
+
+    binding:
+      id: example.edge-asset
+      revision: 1
+      commissioned: true
+      remote_egress_allowed: false
+      point_features:
+        - feature: signal
+          instance_id: 1001
+          point_id: 1
+          kind: telemetry
+          live_tail: false
+      artifact:
+        kind: model
+        family: example-signal
+        version: v1
+        artifact_digest: sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+
+    history:
+      routes:
+        - binding_id: example.edge-asset
+          binding_revision: 1
+          feature: signal
+          source_ref: example.asset.signal
+          source:
+            kind: stored
+            series_key: inst:1001:M
+            point_id: "1"
+            source_unit: "1"
+            expected_scale: 1.0
+            expected_offset: 0.0
+            source_sign_convention: positive_increase
+        - binding_id: example.edge-asset
+          binding_revision: 1
+          feature: ambient_temperature
+          source_ref: environment.observed.air_temperature
+          source:
+            kind: stored
+            series_key: inst:2001:M
+            point_id: "1"
+            source_unit: Cel
+            expected_scale: 1.0
+            expected_offset: 0.0
+        - binding_id: example.edge-asset
+          binding_revision: 1
+          feature: relative_humidity
+          source_ref: environment.observed.relative_humidity
+          source:
+            kind: stored
+            series_key: inst:2001:M
+            point_id: "2"
+            source_unit: "%"
+            expected_scale: 1.0
+            expected_offset: 0.0
+        - binding_id: example.edge-asset
+          binding_revision: 1
+          feature: precipitation
+          source_ref: environment.observed.precipitation
+          source:
+            kind: stored
+            series_key: inst:2001:M
+            point_id: "3"
+            source_unit: mm
+            expected_scale: 1.0
+            expected_offset: 0.0
+        - binding_id: example.edge-asset
+          binding_revision: 1
+          feature: interval_index
+          source_ref: calendar.utc.interval_index
+          source:
+            kind: quarter_hour_of_day
+
+    processor:
+      endpoint: http://127.0.0.1:8989/
+      id: example-forecast-processor
+      version: 0.1.0
+      contract: aether.data-processing.forecast.v1
+      requires_artifact: true
+      boundary: local
+      max_frame_cells: 5000
+      max_request_bytes: 4194304
+      connect_timeout_ms: 500
+      request_timeout_ms: 4500
+      max_response_bytes: 4194304
+      bearer_token_env: AETHER_EXAMPLE_FORECAST_BEARER_TOKEN

@@ -1,6 +1,6 @@
 //! Validated device-control commands.
 
-use crate::{CommandId, DomainError, PointAddress, TimestampMs};
+use crate::{ChannelCommandAddress, CommandId, DomainError, PointAddress, TimestampMs};
 
 /// Default lifetime for a device-control command after interface acceptance.
 pub const DEFAULT_COMMAND_TTL_MS: u64 = 5_000;
@@ -158,7 +158,7 @@ impl ControlCommand {
         constraints.validate_value(self.value)
     }
 
-    /// Returns the caller-provided idempotency identifier.
+    /// Returns the caller-provided command correlation identifier.
     #[must_use]
     pub const fn id(self) -> CommandId {
         self.id
@@ -183,6 +183,83 @@ impl ControlCommand {
     }
 
     /// Returns the exclusive command deadline.
+    #[must_use]
+    pub const fn expires_at(self) -> TimestampMs {
+        self.expires_at
+    }
+}
+
+/// A routed command addressed to one physical channel point.
+///
+/// Logical instance routing and configured limits are resolved before this
+/// value is constructed. The physical sink still rechecks finiteness and the
+/// exclusive deadline at its own trust boundary.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PhysicalDeviceCommand {
+    id: CommandId,
+    target: ChannelCommandAddress,
+    value: f64,
+    issued_at: TimestampMs,
+    expires_at: TimestampMs,
+}
+
+impl PhysicalDeviceCommand {
+    /// Creates a finite physical command with a non-empty local transport window.
+    pub fn new(
+        id: CommandId,
+        target: ChannelCommandAddress,
+        value: f64,
+        issued_at: TimestampMs,
+        expires_at: TimestampMs,
+    ) -> Result<Self, DomainError> {
+        if !value.is_finite() {
+            return Err(DomainError::NonFiniteCommandValue);
+        }
+        if expires_at <= issued_at {
+            return Err(DomainError::InvalidCommandWindow);
+        }
+        Ok(Self {
+            id,
+            target,
+            value,
+            issued_at,
+            expires_at,
+        })
+    }
+
+    /// Rejects a command at or after its exclusive deadline.
+    pub fn validate_at(self, now: TimestampMs) -> Result<(), DomainError> {
+        if now >= self.expires_at {
+            return Err(DomainError::CommandExpired);
+        }
+        Ok(())
+    }
+
+    /// Returns the end-to-end command correlation identifier.
+    #[must_use]
+    pub const fn id(self) -> CommandId {
+        self.id
+    }
+
+    /// Returns the routed physical target.
+    #[must_use]
+    pub const fn target(self) -> ChannelCommandAddress {
+        self.target
+    }
+
+    /// Returns the requested engineering value.
+    #[must_use]
+    pub const fn value(self) -> f64 {
+        self.value
+    }
+
+    /// Returns the interface acceptance time.
+    #[must_use]
+    pub const fn issued_at(self) -> TimestampMs {
+        self.issued_at
+    }
+
+    /// Returns the exclusive local command-transport deadline.
     #[must_use]
     pub const fn expires_at(self) -> TimestampMs {
         self.expires_at

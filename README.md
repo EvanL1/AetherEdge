@@ -8,390 +8,122 @@
 
 [中文](README-CN.md) | [Documentation](https://docs.aetheriot.workers.dev/) | [Changelog](CHANGELOG.md) | [llms.txt](https://docs.aetheriot.workers.dev/llms.txt)
 
-**An AI-native edge runtime, kernel, and SDK—built because IoT work is a
-natural fit for agents.**
+**An AI-native, industry-neutral IoT edge kernel, runtime, and Rust SDK for Linux gateways.**
 
-Aether turns industrial devices, live point state, history, alarms, rules, and
-control actions into typed capabilities that AI agents and operators can
-discover and use through the same command/query application API.
+Aether connects field devices, keeps authoritative live state in shared memory, runs deterministic
+local rules and alarms, and stores embedded history. Its default runtime works offline without an
+LLM, Redis, PostgreSQL, a cloud service, or a browser.
 
-It is built for Linux IoT gateways, runs fully offline, and keeps acquisition
-and safety deterministic when no AI client is connected. The default runtime
-requires no LLM, cloud connection, Redis, PostgreSQL, or browser.
+> **Beta:** this repository is the integration workspace for the Aether kernel and the optional
+> AetherEMS energy distribution. The neutral kernel is usable; the remaining compatibility work is
+> tracked in [ADR-0007](docs/adr/0007-aether-core-and-ems-distribution.md).
 
-## Why Aether exists
+## Try the SDK
 
-IoT engineering is full of work that agents are unusually good at: reading
-protocol and device documentation, discovering capabilities, mapping points,
-interpreting live context, diagnosing faults, generating rules, checking
-configurations, and operating tools through constrained actions.
-
-Conventional gateways make that work difficult. Their knowledge is scattered
-across dashboards, databases, scripts, vendor APIs, and documents written only
-for humans. Adding a chatbot does not fix the underlying boundary.
-
-Aether was built around a different premise: make the edge system itself
-legible and operable to agents. Capabilities, state, policy, documentation, and
-verification live beside the code as typed, machine-readable contracts. The
-deterministic runtime still owns acquisition and safety; agents work through a
-controlled application boundary rather than entering the real-time loop.
-
-**AetherEMS is the first official industry reference case for this idea.** It
-combines the industry-neutral Aether kernel with the optional energy pack to
-show how an agent-native IoT foundation becomes an energy gateway without
-turning the core into an EMS-only product.
-
-## Start with one device. Grow without replatforming.
-
-Aether is designed as a progressive adoption path. A team can begin with one
-Linux host and one protocol, then add context, automation, AI access, safe
-control, and industry knowledge without replacing the live-state authority or
-changing the application boundary.
-
-| Stage | Outcome | Aether building block |
-|---|---|---|
-| **Connect** | Acquire one device reliably | Protocol adapter + `aether-io` + authoritative SHM |
-| **Understand** | Give raw points stable meaning and history | Instance model + alarms + embedded history |
-| **Process** | Turn governed IoT windows into validated derived data | Aether Data Processing + typed tasks + optional processors |
-| **Automate** | Run deterministic behavior offline | Local rules + `aether-automation` |
-| **Assist** | Let agents inspect state and retrieve operational knowledge | Read-only MCP tools/resources + `llms.txt` |
-| **Act** | Allow bounded physical actions | Typed commands + authentication + confirmation + audit |
-| **Extend** | Build a product for another industry or infrastructure stack | Domain packs + ports + optional adapters |
-
-Every stage remains useful without the next one. AI never becomes a dependency
-of acquisition, local automation, or safety behavior.
-
-This makes Aether suitable for teams building branded edge products, system
-integrators connecting existing equipment, agent developers who need a safe
-physical-world tool surface, and domain experts packaging reusable industry
-knowledge.
-
-## Prove the foundation locally
-
-Both examples are uncommissioned, contact no field device, and require no
-external service:
+These compositions require no external service and commission no hardware:
 
 ```bash
-# Industry-neutral Aether SDK composition
 cargo run -p aether-example-minimal-gateway
-
-# Aether plus the optional energy domain pack
 cargo run -p aether-example-energy-gateway
 ```
 
-Expected output:
-
-```text
-Aether minimal gateway ready: 5 capabilities, no external services
-AetherEMS ready: pack=energy, capabilities=7, processing_tasks=2, example_channels=8, commissioned=0
-```
-
-The first composition proves the public SDK has no energy dependency. The
-second proves that AetherEMS is assembled from the same kernel by adding the
-energy manifest, example models, disabled load/PV data-processing tasks, and
-fail-closed commissioning policy.
-
-## What AI-native means in Aether
-
-AI-native is a runtime contract, not a chatbot attached to a conventional
-gateway:
-
-- **Capabilities are discoverable.** MCP tools, MCP resources, `llms.txt`, and
-  the repository-owned AI catalog describe what the edge node can do.
-- **Core operations are typed.** Queries and commands have explicit inputs,
-  permissions, risk, idempotency, confirmation, and audit policy.
-- **Device control shares one application boundary.** External actions from
-  AI, CLI, and HTTP cannot bypass policy by writing SHM, a database, or a
-  protocol driver directly.
-- **Control is deny-by-default.** A device action requires authenticated
-  authority, explicit confirmation, validation, and a durable audit record.
-- **The real-time plane is independent of AI.** Protocol acquisition, local
-  rules, reconnect behavior, and safety continue deterministically if the
-  agent, model, network, or cloud disappears.
-- **Industry knowledge is composable.** Domain packs teach agents and the
-  runtime about an industry without adding domain dependencies to the kernel.
-- **Data processing is governed.** Optional local or remote processors receive
-  complete, bounded frames; they cannot reverse-read Aether state or turn a
-  derived result into a device command. The landed v1 application surface is
-  authenticated HTTP; Data Processing CLI/MCP bindings remain future work, and
-  every non-idempotent process invocation requires durable audit. Historical
-  `as_of` is event-time only; point-in-time model evaluation needs frozen
-  history/source epochs and an artifact set frozen at the evaluation cut.
-
-The contracts are versioned with the code:
-
-| Contract | Purpose |
-|---|---|
-| [`llms.txt`](llms.txt) | AI-readable documentation index |
-| [`ai/catalog.yaml`](ai/catalog.yaml) | Machine-readable component and verification catalog |
-| [`ai/invariants.md`](ai/invariants.md) | Non-negotiable runtime and safety invariants |
-| [`ai/safety-policy.yaml`](ai/safety-policy.yaml) | Capability risk, permission, confirmation, and audit policy |
-| [`contracts/data-processing`](contracts/data-processing/README.md) | Strict v1 caller, frame, processor, result, derived-data, and error schemas |
-| [`AGENTS.md`](AGENTS.md) | Canonical rules for coding agents working in the repository |
-| [`ai/evals`](ai/evals) | Evaluation entry point for agent behavior and architectural conformance |
-
-## Agent-to-device trust path
-
-```text
-AI agent or operator
-        │
-        ▼
-MCP / CLI / authenticated HTTP
-        │
-        ▼
-typed capability + request context
-        │
-        ├── query or command
-        ├── risk level
-        ├── required permission
-        ├── confirmation policy
-        ├── idempotency contract
-        └── typed audit policy
-        │
-        ▼
-application command/query API
-        │
-        ├── deny ──► audit when required
-        │
-        └── allow ─► apply audit policy + safety validation ─► SHM/UDS ─► device driver
-```
-
-For example, the machine-readable policy declares real device control as a
-high-risk command:
-
-```yaml
-device.write_point:
-  kind: command
-  risk: high
-  permission: device.control
-  idempotent: false
-  confirmation: always
-  audit: required
-```
-
-This metadata is enforced by the application boundary for external device
-actions; it is not documentation attached to an unchecked driver call.
-Capabilities whose `AuditPolicy` is `Required`, including processing and
-device writes, fail closed when the durable audit sink is unavailable.
-Read-only point, task, and health discovery use `NotRequired` and do not create
-an audit obligation.
-
-## Connect an AI client
-
-With an installed and running Aether edge runtime, build the CLI/MCP adapter:
-
-```bash
-cargo build --release -p aether
-./target/release/aether mcp
-```
-
-The default MCP surface is read-only. A compatible desktop agent can launch it
-over stdio:
-
-```json
-{
-  "mcpServers": {
-    "aether": {
-      "command": "/absolute/path/to/aether",
-      "args": ["mcp"]
-    }
-  }
-}
-```
-
-Read-only tools can inspect channels, instances, live SHM values, alarms,
-history, rules, and runtime status. Operational documentation is also exposed
-as MCP resources so the agent can retrieve repository-owned guidance instead
-of guessing device semantics.
-
-Write tools are absent unless the operator explicitly starts
-`aether mcp --allow-write`. Real device actions additionally require
-`AETHER_ACCESS_TOKEN` from an authenticated Admin or Engineer session:
-
-```bash
-AETHER_ACCESS_TOKEN='<signed access JWT>' aether mcp --allow-write
-```
-
-Do not store access tokens directly in a checked-in MCP configuration. Use the
-client's secret store or process environment. Before enabling writes, read
-[Safe Operations for AI Agents](docs/domain/safe-operations.md) and the
-[MCP Tool Reference](docs/reference/mcp-tools.md).
-
-## Safety properties for physical systems
-
-- SHM is authoritative for current point state and has explicit writer
-  ownership.
-- Only acquisition owns the live telemetry/signal writer; application
-  interfaces receive read-only live state.
-- External C/A device commands enter through automation's authenticated,
-  confirmed, and audited application use case.
-- Forged actor or role headers do not grant control authority.
-- Uplink commands use a separately generated service credential and a fixed
-  server-side identity.
-- T/S simulation writes are disabled by default because forged measurements
-  can trigger real automation rules.
-- AI is never placed inside a protocol polling loop or hard real-time safety
-  loop.
-- External-service or AI failure cannot stop local acquisition and safety
-  behavior.
-
-The detailed trust-boundary decision is recorded in
-[ADR-0008](docs/adr/0008-application-control-boundary.md).
+The first is an empty industry-neutral gateway. The second adds the optional
+[Energy Pack](packs/energy). They are SDK smoke tests, not the supervised production runtime.
 
 ## Edge runtime
 
-Aether acquires device data, maintains a sub-millisecond shared-memory live
-state plane, evaluates local automation and alarms, stores embedded history,
-and delivers cloud data through a crash-recoverable local outbox.
-
-Production deliberately uses six independently supervised Rust processes:
-
 | Process | Responsibility |
 |---|---|
-| `aether-io` | Protocol acquisition and sole telemetry/signal writer |
-| `aether-automation` | Instances, rules, and control/action dispatch |
+| `aether-io` | Protocol acquisition and sole telemetry/status writer |
+| `aether-automation` | Instances, rules, and audited control dispatch |
 | `aether-alarm` | Alarm evaluation and lifecycle |
 | `aether-history` | Embedded history and optional history adapters |
 | `aether-api` | Authenticated management API and WebSocket |
-| `aether-uplink` | MQTT/cloud delivery with a local durable outbox |
+| `aether-uplink` | Cloud/MQTT delivery through a durable local outbox |
 
-A blocked driver, failed cloud connection, or crashed peripheral process must
-not take down acquisition or the other services. Only `aether-api` is intended
-for remote access; packaged internal service APIs bind to loopback.
+Start from the reviewed safe-empty configuration in
+[Getting Started](docs/guides/getting-started.md), then use `aether doctor` for acceptance. The
+browser client, external databases, and cloud connectivity are optional.
 
-```text
-Devices ─► aether-io ─► authoritative SHM
-             │              ├─ event hint ─► aether-automation
-             │              ├─ event hint ─► aether-alarm
-             │              ├─ event hint ─► aether-api
-             │              ├─ reconcile ──► aether-history ─► SQLite
-             │              └─ reconcile ──► aether-uplink ─► FileOutbox ─► cloud
-             │
-             └─ optional adapters ─► Redis mirror / PostgreSQL history
-```
+## Swagger UI
 
-## Kernel and SDK contract
-
-Dependency direction is one-way:
-
-```text
-domain <- ports <- application <- runtime/interfaces
-             ^
-             +---- extensions
-```
-
-| Layer | Responsibility |
-|---|---|
-| `aether-domain` | Industry-neutral point, identity, quality, command, and data-processing types |
-| `aether-dataplane` | Database-free SHM layout, atomic slots, mmap I/O, snapshots |
-| `aether-ports` | Capabilities such as `LiveState`, `HistoryQuery`, `DataProcessor`, and `StateMirror` |
-| `aether-application` | Commands, queries, governed frame assembly, permissions, confirmation, and audit |
-| `aether-data-processing` | Strict transport-neutral v1 processor codec and canonical input digest |
-| `aether-edge-sdk` (`aether_sdk`) | Stable builder and public facade |
-| `extensions/*` | Local, SHM, HTTP processor, Redis, PostgreSQL, and platform adapters |
-| `packs/*` | Declarative industry knowledge; energy is the first official pack |
-
-The default Cargo members and edge composition do not require Redis or
-PostgreSQL. Embedded SQLite and the local durable outbox cover the standalone
-runtime; external stores are opt-in port implementations and never live-state
-authorities.
-
-## Protocols and extensions
-
-The standard edge build includes Modbus TCP/RTU, IEC 61850 MMS, CAN, GPIO,
-Aether-485, and Virtual channels. Optional Cargo features add IEC 104, OPC UA,
-MQTT, HTTP, DL/T 645, J1939, BLE, Zigbee, and Matter.
-
-Protocol support means the adapter compiles and is covered by conformance
-tests. A real deployment must still validate mappings, timeouts, command
-bounds, reconnect semantics, and hardware behavior.
-
-```text
-extensions/store-local       default embedded state, audit, and outbox
-extensions/sqlite-history-query default read-only Data Processing history query
-extensions/http-history-query optional pre-aligned Last/Reject history query
-extensions/http-data-processor optional bounded DataProcessor transport
-extensions/redis-bridge      optional non-authoritative state mirror
-extensions/postgres-history  optional external history sink
-```
-
-## Domain packs and AetherEMS
-
-Aether is industry-neutral. A domain pack can provide models, mappings, rules,
-agent guidance, capability policy references, and disabled commissioning
-examples without changing the kernel.
-
-[`packs/energy`](packs/energy) is the first official pack. It forms the
-AetherEMS energy distribution while the kernel remains usable for industrial
-automation, buildings, agriculture, environmental monitoring, and other IoT
-domains.
-
-## Installation and deployment
-
-Build the CLI from source and generate a reviewable setup plan:
+The built-in interface documentation is generated from each service's Rust OpenAPI contract. It
+is feature-gated; include it in an edge package with:
 
 ```bash
-cargo build --release -p aether
-./target/release/aether --json setup
+./scripts/build-installer.sh v0.5.0 arm64 -s rust --enable-swagger
 ```
 
-Applying a plan initializes an empty local site and never enables hardware by
-default. The standalone CLI installer installs only the CLI; the edge `.run`
-package installs the complete six-process runtime and generates local control
-credentials without printing them.
+| Service | Swagger UI | OpenAPI JSON |
+|---|---|---|
+| `aether-io` | `http://127.0.0.1:6001/docs` | `http://127.0.0.1:6001/openapi.json` |
+| `aether-automation` | `http://127.0.0.1:6002/docs` | `http://127.0.0.1:6002/openapi.json` |
+| `aether-history` | `http://127.0.0.1:6004/docs` | `http://127.0.0.1:6004/openapi.json` |
+| `aether-api` | `http://<edge-host>:6005/docs` | `http://<edge-host>:6005/openapi.json` |
+| `aether-uplink` | `http://127.0.0.1:6006/docs` | `http://127.0.0.1:6006/openapi.json` |
+| `aether-alarm` | `http://127.0.0.1:6007/docs` | `http://127.0.0.1:6007/openapi.json` |
 
-- [Getting Started](docs/guides/getting-started.md)
-- [Connect AI Assistants](docs/guides/ai-assistants.md)
-- [Deployment](docs/guides/deployment.md)
-- [CLI Reference](docs/reference/cli.md)
-- [Configuration Reference](docs/reference/configuration.md)
+Only `aether-api` is intended for remote access. Keep the other five services on loopback. The
+documentation routes are public and never bypass operation authorization. Governed channel,
+automation, alarm, and Data Processing operations show their authentication, confirmation,
+correlation, accepted/degraded results, and audit contract in Swagger; remaining service-local
+management routes are still migration work.
+Enable Swagger only on a trusted commissioning network.
 
-The browser application is an optional client and is not required by the SDK,
-runtime, MCP server, or either composition example.
-
-## Repository map
+## Architecture and safety
 
 ```text
-crates/       stable industry-neutral kernel and SDK
-extensions/   optional storage, SHM, and platform adapters
-integrations/ optional adapters for independently maintained external services
-contracts/    machine-readable transport and capability schemas
-services/     six production process-isolation boundaries
-tools/        Aether CLI/MCP launcher and simulator
-examples/     runnable Aether and AetherEMS compositions
-packs/        declarative industry knowledge
-ai/           machine-readable invariants, capability policy, runbooks, evals
-docs/         architecture, concepts, guides, and reference
-libs/         shared runtime and configuration libraries
-apps/         optional legacy browser client
+Devices -> aether-io -> authoritative SHM
+                         |-> automation and alarms
+                         |-> API and embedded history
+                         `-> durable outbox -> optional cloud
+
+domain <- ports <- application <- runtime/interfaces
+             ^
+             `---- extensions
 ```
+
+- SHM is authoritative for current point state; external stores may only mirror it.
+- Only acquisition owns telemetry/status writes. Application interfaces are read-only consumers.
+- Device control is deny-by-default and requires permission, confirmation, validation, and audit.
+- Channel commissioning, external device actions, manual rule execution, and physical
+  action-routing changes share application command boundaries across HTTP, CLI, and MCP; MCP
+  writes additionally require explicit `--allow-write`.
+- AI is outside polling and hard real-time safety loops.
+
+## Maturity
+
+Available now: typed domain/ports/application/data-plane and Pack v1 crates, six service binaries,
+SHM/SQLite/local-outbox operation without external services, SDK examples, optional adapters, and
+OpenAPI contract checks.
+
+Still migrating: sensitive channel-configuration queries, instance, point/template/provisioning,
+measurement-routing, history, uplink, and other configuration
+mutations need complete application command/query boundaries; dev-only compatibility shims still
+need removal; and Aether/AetherEMS still need independent signed releases, downstream consuming
+CI, and the actual repository split. See
+[Architecture](ARCHITECTURE.md) for the current facts.
+
+## Documentation
+
+- [Getting Started](docs/guides/getting-started.md)
+- [Connect Devices](docs/guides/connect-devices.md)
+- [HTTP API and Swagger](docs/reference/http-api.md)
+- [Connect AI Assistants](docs/guides/ai-assistants.md)
+- [Deployment](docs/guides/deployment.md)
+- [Architecture](ARCHITECTURE.md) and [ADR index](docs/adr)
 
 ## Development
 
 ```bash
-cargo test
-cargo test -p aether-example-minimal-gateway --test composition_contract
-cargo test -p aether-example-energy-gateway --test composition_contract
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo test --workspace --lib --bins
+./scripts/check-openapi-contracts.sh
 ./scripts/check-architecture.sh
 ```
 
 Tests requiring an external service are excluded from the default path.
-
-## Status
-
-Version 0.5 is beta. CI enforces the industry-neutral kernel boundary, SHM
-authority, local outbox, canonical service identities, fail-safe installation,
-and the authenticated external device-action path.
-
-The default AI surface is read-only. `--allow-write` exposes operational tools
-only after an explicit operator decision; capability-specific permissions and
-safety requirements are documented in the MCP reference. Real device actions
-require authenticated authority, confirmation, validation, and durable audit.
-
-See [ARCHITECTURE.md](ARCHITECTURE.md), the [ADR index](docs/adr), and the
-[changelog](CHANGELOG.md) for exact boundaries.
 
 ## License
 

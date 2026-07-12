@@ -61,20 +61,20 @@ fn default_page_size() -> u32 {
                 "list": [
                     {
                         "instance_id": 1,
-                        "instance_name": "pv_inverter_01",
-                        "product_name": "pv_inverter",
+                        "instance_name": "pump_01",
+                        "product_name": "pump",
                         "properties": {
-                            "rated_power": 5000.0,
-                            "manufacturer": "Huawei"
+                            "max_flow_lpm": 500.0,
+                            "manufacturer": "Example Corp"
                         }
                     },
                     {
                         "instance_id": 2,
-                        "instance_name": "battery_pack_01",
-                        "product_name": "battery_pack",
+                        "instance_name": "conveyor_01",
+                        "product_name": "conveyor",
                         "properties": {
-                            "capacity_kwh": 10.0,
-                            "voltage": 384.0
+                            "max_speed_mps": 2.5,
+                            "length_m": 12.0
                         }
                     }
                 ]
@@ -131,14 +131,14 @@ pub async fn list_instances(
                 "list": [
                     {
                         "instance_id": 1,
-                        "instance_name": "pcs_01",
-                        "product_name": "pcs",
+                        "instance_name": "pump_01",
+                        "product_name": "pump",
                         "properties": {}
                     },
                     {
                         "instance_id": 2,
-                        "instance_name": "pcs_02",
-                        "product_name": "pcs",
+                        "instance_name": "pump_02",
+                        "product_name": "pump",
                         "properties": {}
                     }
                 ]
@@ -152,10 +152,10 @@ pub async fn search_instances(
     RawQuery(raw_query): RawQuery,
 ) -> Result<Json<SuccessResponse<serde_json::Value>>, AutomationError> {
     // raw_query is Option<String>:
-    // /search?pcs                   => Some("pcs")                 (legacy keyword-only)
+    // /search?pump                  => Some("pump")                (legacy keyword-only)
     // /search?ids=1,2,3             => Some("ids=1,2,3")           (filter by ids)
-    // /search?keyword=pcs&ids=1,2   => Some("keyword=pcs&ids=1,2") (named params)
-    // /search?pcs&ids=1,2           => Some("pcs&ids=1,2")         (mixed legacy + ids)
+    // /search?keyword=pump&ids=1,2  => Some("keyword=pump&ids=1,2") (named params)
+    // /search?pump&ids=1,2          => Some("pump&ids=1,2")         (mixed legacy + ids)
     // /search?                      => Some("")
     // /search                       => None
 
@@ -242,7 +242,7 @@ pub async fn search_instances(
         let product_name = inst.product_name().to_string();
 
         // Load product template (cached) - includes properties, measurements, actions
-        // Products are compile-time constants, synchronous access
+        // The validated Pack-backed product library is process-local and synchronous.
         let product = if let Some(cached) = product_cache.get(&product_name) {
             Arc::clone(cached) // O(1) ref count increment
         } else {
@@ -290,8 +290,8 @@ pub async fn search_instances(
         (status = 200, description = "Instance list", body = serde_json::Value,
             example = json!({
                 "list": [
-                    {"id": 1, "name": "battery_01"},
-                    {"id": 2, "name": "pcs_01"}
+                    {"id": 1, "name": "pump_01"},
+                    {"id": 2, "name": "conveyor_01"}
                 ]
             })
         )
@@ -327,20 +327,20 @@ pub async fn list_instances_slim(
     get,
     path = "/api/instances/{id}",
     params(
-        ("id" = u16, Path, description = "Instance ID")
+        ("id" = u32, Path, description = "Instance ID")
     ),
     responses(
         (status = 200, description = "Instance details", body = serde_json::Value,
             example = json!({
                 "instance": {
                     "instance_id": 1,
-                    "instance_name": "pv_inverter_01",
-                    "product_name": "pv_inverter",
+                    "instance_name": "pump_01",
+                    "product_name": "pump",
                     "properties": {
-                        "rated_power": 5000.0,
-                        "manufacturer": "Huawei",
-                        "model": "SUN2000-5KTL-L1",
-                        "grid_type": "three_phase"
+                        "max_flow_lpm": 500.0,
+                        "manufacturer": "Example Corp",
+                        "model": "P-500",
+                        "process_zone": "line_a"
                     },
                     "created_at": "2025-10-15T10:30:00Z",
                     "updated_at": "2025-10-15T14:25:00Z"
@@ -379,7 +379,7 @@ pub async fn get_instance(
     get,
     path = "/api/instances/{id}/data",
     params(
-        ("id" = u16, Path, description = "Instance ID"),
+        ("id" = u32, Path, description = "Instance ID"),
         ("type" = Option<String>, Query, description = "Optional data type filter (measurement/action)")
     ),
     responses(
@@ -394,8 +394,8 @@ pub async fn get_instance(
                     "201": "4500.0"
                 },
                 "properties": {
-                    "rated_power": 5000.0,
-                    "manufacturer": "Huawei"
+                    "max_flow_lpm": 500.0,
+                    "manufacturer": "Example Corp"
                 }
             })
         )
@@ -435,13 +435,13 @@ pub async fn get_instance_data(
     get,
     path = "/api/instances/{id}/points",
     params(
-        ("id" = u16, Path, description = "Instance ID")
+        ("id" = u32, Path, description = "Instance ID")
     ),
     responses(
         (status = 200, description = "Instance points with routing/values",
             body = InstancePointsResponse,
             example = json!({
-                "instance_name": "pv_inverter_01",
+                "instance_name": "pump_01",
                 "measurements": [
                     {
                         "measurement_id": 1,
@@ -542,7 +542,7 @@ pub async fn get_instance_points(
 ///
 /// One-level descent on the `parent_id` foreign key — does **not**
 /// recurse. Returns each child's full instance row. For deep
-/// hierarchies (Station → ESS → Battery → BMS) call this repeatedly
+/// hierarchies (Facility → ProcessLine → Pump → Motor) call this repeatedly
 /// or use a separate tree-walk endpoint.
 #[cfg_attr(feature = "swagger-ui", utoipa::path(
     get,
@@ -552,7 +552,7 @@ pub async fn get_instance_points(
         (status = 200, description = "Child instances", body = serde_json::Value,
             example = json!({
                 "list": [
-                    {"instance_id": 2, "instance_name": "ess_01", "product_name": "ESS", "parent_id": 1}
+                    {"instance_id": 2, "instance_name": "line_01", "product_name": "ProcessLine", "parent_id": 1}
                 ]
             })
         )
@@ -586,9 +586,9 @@ pub async fn get_instance_children(
         (status = 200, description = "Full topology tree", body = serde_json::Value,
             example = json!({
                 "tree": [
-                    {"instance_id": 1, "instance_name": "station_01", "product_name": "Station"},
-                    {"instance_id": 2, "instance_name": "ess_01", "product_name": "ESS", "parent_id": 1},
-                    {"instance_id": 3, "instance_name": "pcs_01", "product_name": "PCS", "parent_id": 2}
+                    {"instance_id": 1, "instance_name": "facility_01", "product_name": "Facility"},
+                    {"instance_id": 2, "instance_name": "line_01", "product_name": "ProcessLine", "parent_id": 1},
+                    {"instance_id": 3, "instance_name": "pump_01", "product_name": "Pump", "parent_id": 2}
                 ]
             })
         )

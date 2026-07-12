@@ -101,19 +101,6 @@ pub struct LatestParams {
     pub point_id: String,
 }
 
-/// Paginated query result.
-#[allow(dead_code)]
-#[derive(Debug, Serialize, ToSchema)]
-pub struct QueryResult {
-    pub status: String,
-    pub message: String,
-    pub data: Vec<HistoryRecord>,
-    pub total: i64,
-    pub page: i64,
-    pub page_size: i64,
-    pub has_more: bool,
-}
-
 /// Response for `GET /hisApi/data/range`.
 #[derive(Debug, Serialize, ToSchema)]
 pub struct DataStats {

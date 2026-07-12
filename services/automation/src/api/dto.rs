@@ -104,6 +104,10 @@ pub struct RoutingRequest {
     #[schema(example = 101)]
     #[serde(default, deserialize_with = "deserialize_optional_u32")]
     pub channel_point_id: Option<u32>,
+    /// Explicit confirmation required when this request changes an action route.
+    #[serde(default)]
+    #[schema(default = false, example = true)]
+    pub confirmed: bool,
 }
 
 /// Request to create or update routing for a single point
@@ -120,6 +124,10 @@ pub struct SinglePointRoutingRequest {
     #[serde(default = "default_enabled")]
     #[schema(example = true)]
     pub enabled: bool,
+    /// Explicitly confirms a high-risk physical command-topology change.
+    #[serde(default)]
+    #[schema(default = false, example = true)]
+    pub confirmed: bool,
 }
 
 /// Request to toggle routing enabled state for a single point
@@ -127,6 +135,107 @@ pub struct SinglePointRoutingRequest {
 pub struct ToggleRoutingRequest {
     #[schema(example = true)]
     pub enabled: bool,
+    /// Explicitly confirms a high-risk physical command-topology change.
+    #[serde(default)]
+    #[schema(default = false, example = true)]
+    pub confirmed: bool,
+}
+
+/// Confirmation body for destructive action-routing commands.
+#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, ToSchema)]
+pub struct RoutingMutationConfirmation {
+    /// Explicitly confirms a high-risk physical command-topology change.
+    #[serde(default)]
+    #[schema(default = false, example = true)]
+    pub confirmed: bool,
+}
+
+/// Channel point kinds that are valid destinations for an action route.
+#[derive(Debug, Clone, Copy, Serialize, ToSchema)]
+pub enum ActionRoutingFourRemote {
+    /// Channel command point (`C`).
+    #[serde(rename = "C")]
+    Control,
+    /// Channel adjustment point (`A`).
+    #[serde(rename = "A")]
+    Adjustment,
+}
+
+/// Swagger request body for a governed action-route upsert or unbind command.
+///
+/// This is intentionally separate from [`SinglePointRoutingRequest`]:
+/// measurement routing supports T/S destinations without high-risk
+/// confirmation, while action routing supports only C/A and requires it.
+#[derive(Debug, Clone, ToSchema)]
+pub struct ActionRoutingUpsertBody {
+    #[schema(example = 1)]
+    pub channel_id: Option<i32>,
+    pub four_remote: Option<ActionRoutingFourRemote>,
+    #[schema(example = 201)]
+    pub channel_point_id: Option<u32>,
+    #[schema(default = true, example = true)]
+    pub enabled: bool,
+    /// Required explicit confirmation for the physical command-topology change.
+    #[schema(example = true)]
+    pub confirmed: bool,
+}
+
+/// Swagger request body for a governed action-route enable/disable command.
+#[derive(Debug, Clone, ToSchema)]
+pub struct ActionRoutingToggleBody {
+    #[schema(example = true)]
+    pub enabled: bool,
+    /// Required explicit confirmation for the physical command-topology change.
+    #[schema(example = true)]
+    pub confirmed: bool,
+}
+
+/// Swagger request body for a governed action-route deletion command.
+#[derive(Debug, Clone, ToSchema)]
+pub struct ActionRoutingConfirmationBody {
+    /// Required explicit confirmation for the physical command-topology change.
+    #[schema(example = true)]
+    pub confirmed: bool,
+}
+
+/// Terminal audit state returned after an accepted action-routing mutation.
+#[derive(Debug, Clone, ToSchema)]
+pub struct ActionRoutingAuditState {
+    /// `recorded`, or `incomplete` when terminal audit persistence degraded.
+    #[schema(example = "recorded")]
+    pub status: String,
+    /// Accepted mutations are never safe for automatic retry.
+    #[schema(example = false)]
+    pub retryable: bool,
+    /// Present only when terminal audit persistence is incomplete.
+    pub message: Option<String>,
+}
+
+/// Stable application-command result nested below the success envelope.
+#[derive(Debug, Clone, ToSchema)]
+pub struct ActionRoutingMutationData {
+    #[schema(example = "Routing updated for action point 201")]
+    pub message: String,
+    /// Caller-supplied or generated audit correlation identifier.
+    #[schema(example = "018f0000-0000-7000-8000-000000000007")]
+    pub request_id: String,
+    /// Stable mutation kind: `upsert`, `delete`, `enable`, or `disable`.
+    #[schema(example = "upsert")]
+    pub operation: String,
+    #[schema(example = 1)]
+    pub affected_routes: u64,
+    pub audit: ActionRoutingAuditState,
+    /// Always false after the application command has been accepted.
+    #[schema(example = false)]
+    pub retryable: bool,
+}
+
+/// Success envelope for a governed action-routing mutation.
+#[derive(Debug, Clone, ToSchema)]
+pub struct ActionRoutingMutationResponse {
+    #[schema(example = true)]
+    pub success: bool,
+    pub data: ActionRoutingMutationData,
 }
 
 /// Request to upsert a single instance property value.
@@ -152,15 +261,15 @@ fn default_enabled() -> bool {
 pub struct CreateInstanceDto {
     #[schema(example = 1)]
     pub instance_id: Option<u32>, // Optional - auto-generated if not provided
-    #[schema(example = "pv_inverter_01")]
+    #[schema(example = "pump_01")]
     pub instance_name: String,
-    #[schema(example = "pv_inverter")]
+    #[schema(example = "pump")]
     pub product_name: String,
     /// Parent instance ID for topology hierarchy (required for non-root products)
     #[schema(example = 1)]
     #[serde(default)]
     pub parent_id: Option<u32>,
-    #[schema(value_type = Object, example = json!({"rated_power": 5000.0, "manufacturer": "Huawei"}))]
+    #[schema(value_type = Object, example = json!({"max_flow_lpm": 500.0, "manufacturer": "Example Corp"}))]
     pub properties: Option<HashMap<String, serde_json::Value>>,
 }
 
@@ -171,11 +280,11 @@ pub struct CreateInstanceDto {
 #[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
 pub struct UpdateInstanceDto {
     /// New instance name (optional, must be unique if provided)
-    #[schema(example = "pv_inverter_renamed")]
+    #[schema(example = "pump_renamed")]
     pub instance_name: Option<String>,
 
     /// Updated properties (optional)
-    #[schema(value_type = Option<Object>, example = json!({"rated_power": 5000.0, "manufacturer": "Huawei", "model": "SUN2000-5KTL-L1"}))]
+    #[schema(value_type = Option<Object>, example = json!({"max_flow_lpm": 500.0, "manufacturer": "Example Corp", "model": "P-500"}))]
     pub properties: Option<HashMap<String, serde_json::Value>>,
 }
 
@@ -190,7 +299,6 @@ pub struct ActionRequest {
     #[schema(example = 4500.0)]
     pub value: f64,
     /// Explicit confirmation for this high-risk device command.
-    #[serde(default)]
     #[schema(example = true)]
     pub confirmed: bool,
 }
@@ -268,11 +376,11 @@ pub struct PointRouting {
     pub enabled: bool,
 
     /// Channel name (for display purposes)
-    #[schema(example = "PV Inverter #1")]
+    #[schema(example = "Packaging PLC #1")]
     pub channel_name: Option<String>,
 
     /// Channel point name (signal_name from the point table)
-    #[schema(example = "DC_Voltage")]
+    #[schema(example = "Outlet_Pressure")]
     pub channel_point_name: Option<String>,
 }
 
@@ -370,7 +478,7 @@ pub struct InstancePropertyPoint {
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct InstancePointsResponse {
     /// Instance name
-    #[schema(example = "pv_inverter_01")]
+    #[schema(example = "pump_01")]
     pub instance_name: String,
 
     /// Measurement points with routing

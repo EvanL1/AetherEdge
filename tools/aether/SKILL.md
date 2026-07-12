@@ -33,7 +33,10 @@ aether channels --help
 
 ## Authentication
 
-`aether` requires **no login**. All commands talk directly to local services.
+Read-only `aether` queries require no login on the local interface. Governed
+mutations require a signed Admin/Engineer JWT in `AETHER_ACCESS_TOKEN` plus
+explicit `--confirmed`; talking to a loopback service does not grant write
+authority.
 
 ## Connecting to a Remote Machine
 
@@ -58,7 +61,22 @@ aether channels status <id>
 aether channels health
 aether channels points list <channel_id>
 aether channels points get <channel_id> <point_type> <point_id>
+AETHER_ACCESS_TOKEN='<Admin/Engineer JWT>' aether channels create \
+  --name <name> --protocol <protocol> --params '<json>' --confirmed
+AETHER_ACCESS_TOKEN='<Admin/Engineer JWT>' aether channels update <id> \
+  --description <text> --expected-revision <revision> --confirmed
+AETHER_ACCESS_TOKEN='<Admin/Engineer JWT>' aether channels enable <id> \
+  --expected-revision <revision> --confirmed
+AETHER_ACCESS_TOKEN='<Admin/Engineer JWT>' aether channels disable <id> --confirmed
+AETHER_ACCESS_TOKEN='<Admin/Engineer JWT>' aether channels delete <id> \
+  --expected-revision <revision> --confirmed
 ```
+
+Channel creation defaults to disabled. All five mutations are high-risk and
+non-idempotent. A successful response can carry a degraded runtime projection:
+preserve `request_id`, inspect `resulting_revision` and
+`reconciliation_required`, and never automatically retry. `--force` on delete
+only skips the interactive prompt and never substitutes for `--confirmed`.
 
 ### Models — Products & Instances (automation :6002)
 ```bash
@@ -83,6 +101,7 @@ aether alarms list --level 3           # high-severity only
 aether alarms list --channel <id>
 aether alarms list --keyword overvolt
 aether alarms get <id>
+AETHER_ACCESS_TOKEN='<Admin/Engineer JWT>' aether alarms resolve <id> --confirmed
 aether alarms rules                    # alarm rule definitions
 aether alarms rules --enabled          # only enabled rules
 aether alarms rules --channel <id>
@@ -93,6 +112,11 @@ aether alarms events --event-type trigger
 aether alarms events --rule <rule_id>
 aether alarms stats                    # alert count by level
 aether alarms monitor                  # alarm monitor loop status
+AETHER_ACCESS_TOKEN='<Admin/Engineer JWT>' aether alarms rule-create --file <json> --confirmed
+AETHER_ACCESS_TOKEN='<Admin/Engineer JWT>' aether alarms rule-update <id> --file <json> --confirmed
+AETHER_ACCESS_TOKEN='<Admin/Engineer JWT>' aether alarms rule-delete <id> --confirmed
+AETHER_ACCESS_TOKEN='<Admin/Engineer JWT>' aether alarms rule-enable <id> --confirmed
+AETHER_ACCESS_TOKEN='<Admin/Engineer JWT>' aether alarms rule-disable <id> --confirmed
 ```
 
 ### Historical Data (history :6004)
@@ -187,7 +211,7 @@ aether alarms list --channel <id> --json
 
 ## Guardrails
 
-- **Read-only**: Do not run commands that mutate state (`models instances action`, `channels write`, `rules enable/disable`) unless the user explicitly asks to make a change. `channels write` injects simulated telemetry; it never sends C/A device commands.
+- **Read-only**: Do not run commands that mutate state (`models instances action`, channel create/update/delete/enable/disable, `channels write`, action-routing create/delete, `rules create/update/enable/disable/delete`, `alarms resolve/rule-create/rule-update/rule-delete/rule-enable/rule-disable`) unless the user explicitly asks to make a change. `channels write` injects simulated telemetry; it never sends C/A device commands. Channel commissioning/lifecycle, device actions, physical action-routing changes, and every automation/alarm policy mutation require `AETHER_ACCESS_TOKEN` plus `--confirmed`; `--force` only skips an interactive prompt and is not safety confirmation. MCP's `--allow-write` only registers governed tools and is not confirmation.
 - **No source diving**: Never open `*.rs`, `*.yaml`, or `*.db` files to answer live data questions.
 - **No external store needed**: use `aether shm` or SHM-backed service APIs for live data and `aether history` for historical data.
 - If a service is not reachable, report the error message from `aether` directly; do not guess at data.

@@ -1,9 +1,9 @@
 //! PointWatch dispatcher — automation side
 //!
 //! Maintains a `(channel_id, point_id) → Vec<rule_id>` subscription index
-//! built from the loaded rules. When a `PointWatchEvent` arrives from
-//! `PointWatchListener`, the dispatcher looks up matching rules and forwards
-//! a `WatchEvent` to the `RuleScheduler`'s event channel.
+//! built from the loaded rules. When the service adapter supplies a
+//! [`PointWatchHint`], the dispatcher looks up matching rules and forwards a
+//! [`WatchEvent`] to the `RuleScheduler`'s event channel.
 //!
 //! ## Subscription index lifecycle
 //!
@@ -12,7 +12,7 @@
 //! 2. `rebuild_from_rules` iterates C2M routes from `RoutingCache` once to
 //!    build `HashMap<(channel_id, point_id_on_channel), Vec<rule_id>>`.
 //!    It also updates `SubscriptionBitmap` slots so io starts emitting.
-//! 3. Incoming `PointWatchEvent`s are dispatched by `dispatch()`, which tries
+//! 3. Incoming `PointWatchHint`s are dispatched by `dispatch()`, which tries
 //!    a fast non-blocking `try_send` to the scheduler's event channel.
 
 use std::collections::HashMap;
@@ -23,8 +23,7 @@ use tokio::sync::mpsc;
 use tracing::{debug, warn};
 
 use aether_routing::RoutingCache;
-use aether_rtdb_shm::point_watch_event::PointWatchEvent;
-use aether_rtdb_shm::{ChannelToSlotIndex, SubscriptionBitmap};
+use aether_shm_bridge::{ChannelPointManifest, SubscriptionBitmap};
 
 use crate::scheduler::TriggerConfig;
 
@@ -64,15 +63,49 @@ pub struct WatchEvent {
     pub timestamp_ms: u64,
 }
 
+/// Transport-neutral point-change hint accepted by the rule dispatcher.
+///
+/// SHM/UDS adapters translate their wire event into this value at the service
+/// composition boundary. The hinted value is best effort; rule evaluation
+/// still re-reads the authoritative live-state source before acting.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PointWatchHint {
+    channel_id: u32,
+    point_id: u32,
+    value: f64,
+    raw: f64,
+    timestamp_ms: u64,
+}
+
+impl PointWatchHint {
+    /// Creates a transport-neutral point-change hint.
+    #[must_use]
+    pub const fn new(
+        channel_id: u32,
+        point_id: u32,
+        value: f64,
+        raw: f64,
+        timestamp_ms: u64,
+    ) -> Self {
+        Self {
+            channel_id,
+            point_id,
+            value,
+            raw,
+            timestamp_ms,
+        }
+    }
+}
+
 /// automation-side PointWatch dispatcher.
 ///
 /// Holds a subscription index keyed by `(channel_id, point_id)` and forwards
-/// incoming `PointWatchEvent`s to the `RuleScheduler` via an mpsc channel.
+/// incoming [`PointWatchHint`] values to the `RuleScheduler` via an mpsc channel.
 pub struct PointWatchDispatcher {
     /// (channel_id, point_id) → Vec<rule_id>
     ///
     /// `point_id` here is the **channel-level** point ID (i.e. the source key
-    /// from `ChannelToSlotIndex`), NOT the instance-level point ID.
+    /// from `ChannelPointManifest`), NOT the instance-level point ID.
     /// `point_type` is intentionally absent from the key: T and S can both
     /// trigger `OnChange` rules; the per-rule deadband logic in
     /// `should_trigger_onchange` handles type disambiguation if needed.
@@ -108,13 +141,13 @@ impl PointWatchDispatcher {
     /// 3. Look up the C2M route: `instance_id + point_type → (channel_id,
     ///    channel_point_id)` via `routing_cache.c2m_iter()`.
     /// 4. Insert `(channel_id, channel_point_id) → rule_id` into `sub_index`.
-    /// 5. Look up the SHM slot via `ChannelToSlotIndex::lookup` and call
+    /// 5. Look up the SHM slot via `ChannelPointManifest::slot` and call
     ///    `bitmap.set_watched(slot)`.
     pub fn rebuild_from_rules(
         &mut self,
         rules: &[impl RuleSubscriptionInfo],
         routing_cache: &RoutingCache,
-        channel_slot_index: &ChannelToSlotIndex,
+        manifest: &ChannelPointManifest,
         bitmap: &SubscriptionBitmap,
     ) {
         bitmap.clear_all();
@@ -166,9 +199,15 @@ impl PointWatchDispatcher {
                             .push(rule.rule_id());
 
                         // Update subscription bitmap
-                        if let Some(slot) =
-                            channel_slot_index.lookup(channel_id, point_type, channel_point_id)
-                        {
+                        let kind = match point_type {
+                            aether_model::PointType::Telemetry => {
+                                aether_domain::PointKind::Telemetry
+                            },
+                            aether_model::PointType::Signal => aether_domain::PointKind::Status,
+                            aether_model::PointType::Control
+                            | aether_model::PointType::Adjustment => continue,
+                        };
+                        if let Some(slot) = manifest.slot(channel_id, kind, channel_point_id) {
                             bitmap.set_watched(slot);
                             debug!(
                                 "PointWatch: subscribed slot={} ch={} pt={:?} pid={} for rule={}",
@@ -193,29 +232,29 @@ impl PointWatchDispatcher {
         );
     }
 
-    /// Dispatch an incoming `PointWatchEvent` to the scheduler.
+    /// Dispatch an incoming transport-neutral point-change hint to the scheduler.
     ///
     /// Non-blocking: uses `try_send`. On overflow, increments `dropped_count`.
-    pub fn dispatch(&self, ev: &PointWatchEvent) {
-        let key = (ev.channel_id, ev.point_id);
+    pub fn dispatch(&self, hint: PointWatchHint) {
+        let key = (hint.channel_id, hint.point_id);
         let Some(rule_ids) = self.sub_index.get(&key) else {
             return; // No rules subscribed to this point
         };
 
         let watch_event = WatchEvent {
             rule_ids: rule_ids.clone(),
-            channel_id: ev.channel_id,
-            point_id: ev.point_id,
-            value: f64::from_bits(ev.value_bits),
-            raw: f64::from_bits(ev.raw_bits),
-            timestamp_ms: ev.timestamp_ms,
+            channel_id: hint.channel_id,
+            point_id: hint.point_id,
+            value: hint.value,
+            raw: hint.raw,
+            timestamp_ms: hint.timestamp_ms,
         };
 
         if self.event_tx.try_send(watch_event).is_err() {
             self.dropped_count.fetch_add(1, Ordering::Relaxed);
             warn!(
                 "PointWatchDispatcher: event dropped (channel full) ch={} pt={}",
-                ev.channel_id, ev.point_id
+                hint.channel_id, hint.point_id
             );
         }
     }
@@ -237,7 +276,7 @@ mod tests {
     use super::*;
     use crate::scheduler::{PointKind, PointRef, TriggerConfig};
     use aether_routing::RoutingCache;
-    use aether_rtdb_shm::SubscriptionBitmap;
+    use aether_shm_bridge::{ChannelPointManifest, SubscriptionBitmap};
     use std::collections::HashMap;
 
     /// Minimal rule for subscription tests
@@ -259,25 +298,21 @@ mod tests {
         }
     }
 
-    fn make_routing_cache_and_slot_index()
-    -> (Arc<RoutingCache>, aether_rtdb_shm::ChannelToSlotIndex) {
+    fn make_routing_cache_and_manifest() -> (Arc<RoutingCache>, ChannelPointManifest) {
         // C2M: ch=1001, T, pt=0 → instance=5, pt=10
         let mut c2m = HashMap::new();
         c2m.insert("1001:T:0".to_string(), "5:M:10".to_string());
         c2m.insert("1001:T:1".to_string(), "5:M:11".to_string());
         let routing = Arc::new(RoutingCache::from_maps(c2m, HashMap::new(), HashMap::new()));
 
-        // Build an empty ChannelToSlotIndex — no slots allocated in test
-        // (bitmap set_watched with no valid slot just skips the bitmap update;
-        //  the sub_index is still built correctly for dispatch testing)
-        let idx = aether_rtdb_shm::ChannelToSlotIndex::empty_for_test();
-        (routing, idx)
+        let manifest = ChannelPointManifest::from_entries([(1001, [2, 0, 0, 0])]);
+        (routing, manifest)
     }
 
     #[test]
     fn rebuild_subscribes_matching_ch_pt_pair() {
         let (mut disp, _rx) = PointWatchDispatcher::new();
-        let (routing, idx) = make_routing_cache_and_slot_index();
+        let (routing, manifest) = make_routing_cache_and_manifest();
         let bm = SubscriptionBitmap::new_in_memory().unwrap();
 
         let rules = vec![TestRule {
@@ -294,7 +329,7 @@ mod tests {
             },
         }];
 
-        disp.rebuild_from_rules(&rules, &routing, &idx, &bm);
+        disp.rebuild_from_rules(&rules, &routing, &manifest, &bm);
 
         // sub_index should have one entry for (ch=1001, pt=0)
         assert_eq!(disp.subscription_count(), 1);
@@ -303,7 +338,7 @@ mod tests {
     #[test]
     fn disabled_rule_not_subscribed() {
         let (mut disp, _rx) = PointWatchDispatcher::new();
-        let (routing, idx) = make_routing_cache_and_slot_index();
+        let (routing, manifest) = make_routing_cache_and_manifest();
         let bm = SubscriptionBitmap::new_in_memory().unwrap();
 
         let rules = vec![TestRule {
@@ -320,14 +355,14 @@ mod tests {
             },
         }];
 
-        disp.rebuild_from_rules(&rules, &routing, &idx, &bm);
+        disp.rebuild_from_rules(&rules, &routing, &manifest, &bm);
         assert_eq!(disp.subscription_count(), 0);
     }
 
     #[test]
     fn interval_rule_not_subscribed() {
         let (mut disp, _rx) = PointWatchDispatcher::new();
-        let (routing, idx) = make_routing_cache_and_slot_index();
+        let (routing, manifest) = make_routing_cache_and_manifest();
         let bm = SubscriptionBitmap::new_in_memory().unwrap();
 
         let rules = vec![TestRule {
@@ -336,14 +371,14 @@ mod tests {
             trigger: TriggerConfig::Interval { interval_ms: 1000 },
         }];
 
-        disp.rebuild_from_rules(&rules, &routing, &idx, &bm);
+        disp.rebuild_from_rules(&rules, &routing, &manifest, &bm);
         assert_eq!(disp.subscription_count(), 0);
     }
 
     #[test]
     fn dispatch_sends_event_to_channel() {
         let (mut disp, mut rx) = PointWatchDispatcher::new();
-        let (routing, idx) = make_routing_cache_and_slot_index();
+        let (routing, manifest) = make_routing_cache_and_manifest();
         let bm = SubscriptionBitmap::new_in_memory().unwrap();
 
         let rules = vec![TestRule {
@@ -360,45 +395,30 @@ mod tests {
             },
         }];
 
-        disp.rebuild_from_rules(&rules, &routing, &idx, &bm);
+        disp.rebuild_from_rules(&rules, &routing, &manifest, &bm);
 
-        let ev = PointWatchEvent {
-            channel_id: 1001,
-            point_id: 0, // channel_pt=0
-            point_type: 0,
-            _padding: [0; 7],
-            value_bits: 220.0f64.to_bits(),
-            raw_bits: 2200.0f64.to_bits(),
-            slot_index: 100,
-            timestamp_ms: 12345,
-            producer_id: 1,
-        };
+        let hint = PointWatchHint::new(
+            1001, 0, // channel_pt=0
+            220.0, 2200.0, 12345,
+        );
 
-        disp.dispatch(&ev);
+        disp.dispatch(hint);
 
         let watch_ev = rx.try_recv().expect("should have event");
         assert_eq!(watch_ev.rule_ids, vec![42]);
         assert_eq!(watch_ev.channel_id, 1001);
         assert_eq!(watch_ev.point_id, 0);
         assert!((watch_ev.value - 220.0).abs() < f64::EPSILON);
+        assert!((watch_ev.raw - 2200.0).abs() < f64::EPSILON);
+        assert_eq!(watch_ev.timestamp_ms, 12345);
     }
 
     #[test]
     fn dispatch_miss_sends_nothing() {
         let (disp, mut rx) = PointWatchDispatcher::new();
 
-        let ev = PointWatchEvent {
-            channel_id: 9999,
-            point_id: 0,
-            point_type: 0,
-            _padding: [0; 7],
-            value_bits: 0.0f64.to_bits(),
-            raw_bits: 0.0f64.to_bits(),
-            slot_index: 0,
-            timestamp_ms: 0,
-            producer_id: 1,
-        };
-        disp.dispatch(&ev);
+        let hint = PointWatchHint::new(9999, 0, 0.0, 0.0, 0);
+        disp.dispatch(hint);
         assert!(rx.try_recv().is_err());
     }
 
@@ -416,20 +436,10 @@ mod tests {
             dropped_count: Arc::clone(&dropped_count),
         };
 
-        let ev = PointWatchEvent {
-            channel_id: 1001,
-            point_id: 0,
-            point_type: 0,
-            _padding: [0; 7],
-            value_bits: 1.0f64.to_bits(),
-            raw_bits: 1.0f64.to_bits(),
-            slot_index: 0,
-            timestamp_ms: 0,
-            producer_id: 1,
-        };
+        let hint = PointWatchHint::new(1001, 0, 1.0, 1.0, 0);
 
-        d.dispatch(&ev); // fills the channel
-        d.dispatch(&ev); // overflows → dropped
+        d.dispatch(hint); // fills the channel
+        d.dispatch(hint); // overflows → dropped
 
         assert_eq!(d.dropped_count(), 1);
     }

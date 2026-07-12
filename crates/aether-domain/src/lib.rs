@@ -4,13 +4,17 @@
 
 extern crate alloc;
 
+mod alarm;
 mod command;
 mod data_processing;
 mod error;
 mod identity;
 mod point;
 
-pub use command::{CommandConstraints, ControlCommand, DEFAULT_COMMAND_TTL_MS};
+pub use alarm::{AlarmComparator, AlarmRuleDefinition, AlarmRuleTarget, AlarmSeverity};
+pub use command::{
+    CommandConstraints, ControlCommand, DEFAULT_COMMAND_TTL_MS, PhysicalDeviceCommand,
+};
 pub use data_processing::{
     ArtifactProvenance, ArtifactSelector, BindingIdentity, DataProcessingRequest,
     DataProcessingTask, DerivedData, FallbackInfo, FallbackPolicy, FeatureDefinition, FeatureRole,
@@ -23,5 +27,10 @@ pub use data_processing::{
     maximum_observation_gap,
 };
 pub use error::DomainError;
-pub use identity::{CommandId, InstanceId, PointId, TimestampMs};
-pub use point::{PointAddress, PointKind, PointQuality, PointSample};
+pub use identity::{
+    AlarmRuleId, AlertId, ChannelId, CommandId, InstanceId, PointId, RuleId, TimestampMs,
+};
+pub use point::{
+    AcquiredPointSample, ChannelCommandAddress, ChannelPointAddress, PointAddress, PointKind,
+    PointQuality, PointSample,
+};

@@ -12,6 +12,7 @@ keywords = ["iot", "edge", "shared-memory", "gateway"]
 categories = ["embedded", "concurrency"]
 
 [dependencies]
+fs2 = "0.4"
 memmap2 = "0.9.11"
 thiserror = { workspace = true }
 tracing = { workspace = true }

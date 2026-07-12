@@ -1,6 +1,9 @@
 # Model Service Configuration
 # Only business config - service params are hardcoded in the program
 
-products_path: "config/automation/products"
 instances_path: "config/automation/instances"
 auto_load_instances: false
+
+# Versioned rules are Pack assets under ../../../rules and are never copied or
+# auto-loaded from this example directory. Import and enable one only after the
+# referenced instances, points, permissions, and safety limits are commissioned.

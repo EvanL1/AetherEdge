@@ -1,0 +1,180 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aether.dev/schemas/pack-manifest.v1.json",
+  "title": "Aether Pack Manifest v1",
+  "description": "Fail-closed manifest for an industry domain pack. Loading validates compatibility but never installs or commissions the pack.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "id",
+    "name",
+    "version",
+    "status",
+    "description",
+    "distribution",
+    "compatibility",
+    "assets",
+    "examples",
+    "capabilities"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "id": {
+      "$ref": "#/$defs/identifier"
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "version": {
+      "$ref": "#/$defs/semver"
+    },
+    "status": {
+      "type": "string",
+      "minLength": 1
+    },
+    "description": {
+      "type": "string",
+      "minLength": 1
+    },
+    "distribution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "version", "composition"],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "version": {
+          "$ref": "#/$defs/semver"
+        },
+        "composition": {
+          "$ref": "#/$defs/identifier"
+        }
+      }
+    },
+    "compatibility": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["aether", "required_capabilities", "required_protocols"],
+      "properties": {
+        "aether": {
+          "type": "string",
+          "minLength": 1
+        },
+        "required_capabilities": {
+          "$ref": "#/$defs/identifierList"
+        },
+        "required_protocols": {
+          "$ref": "#/$defs/identifierList"
+        }
+      }
+    },
+    "assets": {
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "properties": {
+        "config": {
+          "$ref": "#/$defs/relativeDirectory"
+        },
+        "data_processing": {
+          "$ref": "#/$defs/relativeDirectory"
+        },
+        "models": {
+          "$ref": "#/$defs/relativeDirectory"
+        },
+        "knowledge": {
+          "$ref": "#/$defs/relativeDirectory"
+        },
+        "rules": {
+          "$ref": "#/$defs/relativeDirectory"
+        },
+        "mappings": {
+          "$ref": "#/$defs/relativeDirectory"
+        },
+        "evaluations": {
+          "$ref": "#/$defs/relativeDirectory"
+        }
+      }
+    },
+    "examples": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["commissioned"],
+      "properties": {
+        "commissioned": {
+          "const": false
+        }
+      }
+    },
+    "capabilities": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "models": {
+          "$ref": "#/$defs/nonEmptyUniqueStrings"
+        },
+        "rule_topics": {
+          "$ref": "#/$defs/nonEmptyUniqueStrings"
+        },
+        "data_processing_tasks": {
+          "$ref": "#/$defs/nonEmptyUniqueStrings"
+        },
+        "mappings": {
+          "$ref": "#/$defs/nonEmptyUniqueStrings"
+        },
+        "rules": {
+          "$ref": "#/$defs/nonEmptyUniqueStrings"
+        },
+        "evaluations": {
+          "$ref": "#/$defs/nonEmptyUniqueStrings"
+        }
+      }
+    }
+  },
+  "$defs": {
+    "identifier": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+    },
+    "identifierList": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/identifier"
+      }
+    },
+    "nonEmptyUniqueStrings": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "semver": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$"
+    },
+    "relativeDirectory": {
+      "type": "string",
+      "minLength": 1,
+      "allOf": [
+        {
+          "not": {
+            "pattern": "^(?:/|\\\\|[A-Za-z]:)"
+          }
+        },
+        {
+          "not": {
+            "pattern": "(^|[/\\\\])\\.\\.([/\\\\]|$)"
+          }
+        }
+      ]
+    }
+  }
+}

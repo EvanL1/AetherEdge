@@ -7,9 +7,10 @@ use std::time::Duration;
 use aether_domain::PointKind;
 use aether_ports::{PortError, PortErrorKind, PortResult};
 use aether_shm_bridge::{
-    ChannelHealthManifest, ChannelPointManifest, ReconnectingSlotSource, ShmChannelHealthReader,
-    ShmClientConfig, SlotSnapshot, SlotSource,
+    ChannelPointManifest, ReconnectingSlotSource, ShmChannelHealthReader, ShmClientConfig,
+    SlotSnapshot, SlotSource,
 };
+use aether_store_local::load_sqlite_shm_topology;
 use anyhow::Context;
 use sqlx::SqlitePool;
 
@@ -267,9 +268,13 @@ pub async fn build_shm_alarm_source(
     pool: &SqlitePool,
     config: &AlarmConfig,
 ) -> anyhow::Result<Arc<ShmAlarmValueSource>> {
-    let manifest = Arc::new(load_channel_manifest(pool).await?);
+    let (point_manifest, health_manifest) = load_sqlite_shm_topology(pool)
+        .await
+        .context("load canonical SHM topology for alarm")?
+        .into_manifests();
+    let manifest = Arc::new(point_manifest);
     let routing = Arc::new(load_alarm_routing(pool).await?);
-    let health_manifest = Arc::new(load_channel_health_manifest(pool).await?);
+    let health_manifest = Arc::new(health_manifest);
     let slot_source = Arc::new(ReconnectingSlotSource::new(
         ShmClientConfig::new(&config.shm_path, manifest.layout_hash())
             .with_writer_stale_after(Duration::from_millis(config.shm_writer_stale_after_ms))
@@ -294,55 +299,6 @@ pub async fn build_shm_alarm_source(
         routing,
         channel_health,
     )))
-}
-
-async fn load_channel_health_manifest(pool: &SqlitePool) -> anyhow::Result<ChannelHealthManifest> {
-    let channel_ids: Vec<i64> =
-        sqlx::query_scalar("SELECT channel_id FROM channels ORDER BY channel_id")
-            .fetch_all(pool)
-            .await
-            .context("load channel ids for health SHM manifest")?;
-    let channel_ids = channel_ids
-        .into_iter()
-        .map(|channel_id| config_u32(channel_id, "health channel_id"))
-        .collect::<anyhow::Result<Vec<_>>>()?;
-    Ok(ChannelHealthManifest::from_channel_ids(channel_ids))
-}
-
-async fn load_channel_manifest(pool: &SqlitePool) -> anyhow::Result<ChannelPointManifest> {
-    let mut counts = std::collections::BTreeMap::<u32, [u32; 4]>::new();
-    let table_specs = [
-        ("telemetry_points", 0_usize, true),
-        ("signal_points", 1_usize, true),
-        ("control_points", 2_usize, false),
-        ("adjustment_points", 3_usize, false),
-    ];
-
-    for (table, type_index, physical_only) in table_specs {
-        let query = if physical_only {
-            format!(
-                "SELECT p.channel_id, MAX(p.point_id) + 1 AS count \
-                 FROM {table} p JOIN channels c ON c.channel_id = p.channel_id \
-                 WHERE c.protocol != 'virtual' GROUP BY p.channel_id"
-            )
-        } else {
-            format!(
-                "SELECT channel_id, MAX(point_id) + 1 AS count \
-                 FROM {table} GROUP BY channel_id"
-            )
-        };
-        let rows: Vec<(i64, i64)> = sqlx::query_as(&query)
-            .fetch_all(pool)
-            .await
-            .with_context(|| format!("load SHM point counts from {table}"))?;
-        for (channel_id, count) in rows {
-            let channel_id = config_u32(channel_id, "channel_id")?;
-            let count = config_u32(count, "point count")?;
-            counts.entry(channel_id).or_insert([0; 4])[type_index] = count;
-        }
-    }
-
-    Ok(ChannelPointManifest::from_map(counts))
 }
 
 async fn load_alarm_routing(pool: &SqlitePool) -> anyhow::Result<AlarmRouting> {

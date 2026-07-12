@@ -251,6 +251,43 @@ upgrade is not supported; installing another release requires the explicit
 fresh-deployment workflow above rather than expanding the API process's
 authority.
 
+## Pack-only artifact
+
+A domain Pack is released separately from the fresh-install `.run` package. A
+Pack bundle contains only `pack-artifact.json` and the declarative `pack/`
+tree—never the `aether` CLI, a service binary, or a core crate. Build it from
+the exact runtime manifest generated for the target Kernel composition:
+
+```bash
+./scripts/build-pack-artifact.sh \
+  packs/<pack-id> \
+  build/installer/runtime/runtime-manifest.json \
+  release/<pack-id>.bundle
+```
+
+Copy that directory to an edge host which already has the matching Kernel,
+then install it with the host's CLI:
+
+```bash
+aether packs install --artifact /tmp/<pack-id>.bundle
+```
+
+The command refuses a different Kernel version, target triple, or complete
+runtime-manifest digest. It also rejects extra top-level entries, symlinks,
+executables/source trees, payload tampering, unbounded files, and an
+incompatible `pack.yaml`. After verification it publishes the data below the
+installed data directory as `packs/<id>/<version>` and replaces `global.yaml`
+atomically only after validating the complete candidate active Pack set. A
+failed activation preserves the previous configuration and removes the newly
+published version.
+
+This command does not restart services or commission the Pack. Plan any
+maintenance restart separately, then run `aether doctor`; enabling channels,
+instances, rules, processors, or physical control remains a distinct audited
+commissioning action. The repository can build and test this local format, but
+does not yet claim an independently published/signed Kernel artifact, Pack
+artifact, or downstream second-repository release gate.
+
 ## Bare-metal Linux (systemd)
 
 For edge devices that cannot or should not run Docker,

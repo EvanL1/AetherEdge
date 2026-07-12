@@ -11,6 +11,7 @@ use common::service_bootstrap::{ServiceInfo, get_service_port};
 use common::sqlite::ServiceConfigLoader;
 use common::{ApiConfig, BaseServiceConfig, DEFAULT_API_HOST};
 use sqlx::SqlitePool;
+use std::path::PathBuf;
 use std::sync::Arc;
 use tracing::{debug, error, info, warn};
 
@@ -21,6 +22,7 @@ use crate::app_state::AppState;
 use crate::infra::application_control::{AutomationCommandDispatcher, ControlAuthenticator};
 use crate::instance_manager::InstanceManager;
 use crate::product_loader::ProductLoader;
+use aether_pack::{ActivePackSet, load_active_packs};
 use aether_store_local::SqliteAuditSink;
 
 /// Initialize service info for unified bootstrap
@@ -155,33 +157,166 @@ async fn setup_sqlite() -> Result<SqlitePool> {
     setup_sqlite_pool(&db_path).await.map_err(Into::into)
 }
 
-/// Load product definitions and initialize their SQLite schema.
+/// Assembles models from validated active Packs and an optional site directory.
 ///
-/// If `config.products_path` is set and the directory exists, external product
-/// JSON files override built-in products. Otherwise, built-in products are used.
+/// Pack directories are ordered as declared in `global.yaml`; the explicitly
+/// configured site directory is last and may intentionally override a Pack
+/// model. No active Pack and no site directory produces an empty library.
+pub fn load_product_library(
+    active_packs: &ActivePackSet,
+    site_products: Option<&std::path::Path>,
+) -> Result<aether_model::product_lib::ProductLibrary> {
+    use aether_model::product_lib::ProductLibrary;
+    use std::collections::{BTreeMap, BTreeSet};
+
+    let mut directories = Vec::new();
+    let mut owners = BTreeMap::<String, String>::new();
+    for pack in active_packs.iter() {
+        let model_directory = pack.asset_directory("models");
+        let pack_library = match model_directory.as_deref() {
+            Some(directory) => ProductLibrary::load(Some(directory)).map_err(|error| {
+                AutomationError::ConfigError(format!(
+                    "Failed to load models for active Pack {}: {error}",
+                    pack.id()
+                ))
+            })?,
+            None => ProductLibrary::load(None).map_err(|error| {
+                AutomationError::ConfigError(format!(
+                    "Failed to create empty model set for active Pack {}: {error}",
+                    pack.id()
+                ))
+            })?,
+        };
+        let actual = pack_library
+            .names()
+            .into_iter()
+            .map(str::to_string)
+            .collect::<BTreeSet<_>>();
+        let declared = pack
+            .manifest()
+            .capability_ids("models")
+            .unwrap_or(&[])
+            .iter()
+            .cloned()
+            .collect::<BTreeSet<_>>();
+        if actual != declared {
+            let missing = declared.difference(&actual).cloned().collect::<Vec<_>>();
+            let unexpected = actual.difference(&declared).cloned().collect::<Vec<_>>();
+            return Err(AutomationError::InvalidConfig(format!(
+                "active Pack {} model capabilities do not match assets; missing={missing:?}, unexpected={unexpected:?}",
+                pack.id()
+            )));
+        }
+        for name in actual {
+            if let Some(previous) = owners.insert(name.clone(), pack.id().to_string()) {
+                return Err(AutomationError::InvalidConfig(format!(
+                    "product {name:?} is declared by both active Packs {previous:?} and {:?}",
+                    pack.id()
+                )));
+            }
+        }
+        if let Some(directory) = model_directory {
+            directories.push(directory);
+        }
+    }
+    if let Some(site_products) = site_products {
+        let metadata = std::fs::symlink_metadata(site_products).map_err(|error| {
+            AutomationError::ConfigError(format!(
+                "explicit products_path {} is unavailable: {error}",
+                site_products.display()
+            ))
+        })?;
+        if metadata.file_type().is_symlink() || !metadata.file_type().is_dir() {
+            return Err(AutomationError::ConfigError(format!(
+                "explicit products_path must be a real directory: {}",
+                site_products.display()
+            )));
+        }
+        directories.push(site_products.to_path_buf());
+    }
+    let selected = directories.iter().map(PathBuf::as_path).collect::<Vec<_>>();
+    ProductLibrary::load_directories(&selected).map_err(|error| {
+        AutomationError::ConfigError(format!("Failed to load product library: {error}"))
+    })
+}
+
+/// Rejects startup when persisted instances reference products that are no
+/// longer supplied by the active Pack/site library.
+pub async fn validate_instance_product_references(
+    sqlite_pool: &SqlitePool,
+    library: &aether_model::product_lib::ProductLibrary,
+) -> Result<()> {
+    let referenced = sqlx::query_scalar::<_, String>(
+        "SELECT DISTINCT product_name FROM instances ORDER BY product_name",
+    )
+    .fetch_all(sqlite_pool)
+    .await?;
+    let missing = referenced
+        .into_iter()
+        .filter(|name| !library.exists(name))
+        .collect::<Vec<_>>();
+    if missing.is_empty() {
+        Ok(())
+    } else {
+        Err(AutomationError::InvalidConfig(format!(
+            "persisted instances reference products absent from active Packs/site products: {missing:?}"
+        )))
+    }
+}
+
+fn active_pack_config_directory() -> PathBuf {
+    if let Some(path) = std::env::var_os("AETHER_CONFIG_PATH").filter(|path| !path.is_empty()) {
+        return PathBuf::from(path);
+    }
+    let container = PathBuf::from("/app/config");
+    if container.join("global.yaml").is_file() {
+        return container;
+    }
+    PathBuf::from("data/config")
+}
+
+/// Loads the mandatory, feature-exact runtime compatibility view used by the
+/// active-Pack loader. Missing, tampered, cross-target, or cross-version
+/// metadata fails startup; production never substitutes a static catalog.
+pub fn load_pack_runtime_from_manifest(
+    config_directory: impl AsRef<std::path::Path>,
+) -> Result<aether_pack::PackRuntime> {
+    let runtime_manifest = aether_runtime_catalog::load_runtime_manifest_for_current_process(
+        config_directory,
+        env!("CARGO_PKG_VERSION"),
+    )
+    .map_err(|error| {
+        AutomationError::ConfigError(format!(
+            "Failed to load mandatory runtime manifest: {error}"
+        ))
+    })?;
+    runtime_manifest
+        .pack_runtime()
+        .map_err(|error| AutomationError::ConfigError(format!("Invalid runtime manifest: {error}")))
+}
+
+/// Loads product definitions and initializes their SQLite schema.
 pub async fn load_products(
     config: &AutomationConfig,
     sqlite_pool: &SqlitePool,
 ) -> Result<Arc<ProductLoader>> {
-    use aether_model::product_lib::ProductLibrary;
     use std::sync::Arc as StdArc;
 
-    // Load product library with optional external overrides
-    let products_dir = config
-        .products_path
-        .as_ref()
-        .map(std::path::Path::new)
-        .filter(|p| p.is_dir());
-
-    let library = ProductLibrary::load(products_dir).map_err(|e| {
-        super::error::AutomationError::ConfigError(format!("Failed to load product library: {}", e))
+    let config_directory = active_pack_config_directory();
+    let pack_runtime = load_pack_runtime_from_manifest(&config_directory)?;
+    let active_packs = load_active_packs(&config_directory, &pack_runtime).map_err(|error| {
+        AutomationError::ConfigError(format!("Failed to load active Packs: {error}"))
     })?;
+    let products_dir = config.products_path.as_ref().map(std::path::Path::new);
+    let library = load_product_library(&active_packs, products_dir)?;
     let product_count = library.len();
+    let library = StdArc::new(library);
 
-    let product_loader = ProductLoader::with_library(sqlite_pool.clone(), StdArc::new(library));
+    let product_loader = ProductLoader::with_library(sqlite_pool.clone(), StdArc::clone(&library));
 
     // Initialize instance schema
     product_loader.init_schema().await?;
+    validate_instance_product_references(sqlite_pool, &library).await?;
 
     // Ensure rules tables exist (normally created by `aether init`,
     // but needed for standalone startup)
@@ -217,14 +352,12 @@ pub async fn load_products(
     .execute(sqlite_pool)
     .await?;
 
-    if products_dir.is_some() {
-        info!(
-            "{} products loaded (with external overrides)",
-            product_count
-        );
-    } else {
-        info!("{} built-in products available", product_count);
-    }
+    info!(
+        active_pack_count = active_packs.len(),
+        site_products = products_dir.is_some(),
+        "{} explicitly selected products available",
+        product_count
+    );
 
     Ok(Arc::new(product_loader))
 }
@@ -234,13 +367,11 @@ pub async fn setup_instance_manager(
     sqlite_pool: &SqlitePool,
     routing_cache: Arc<aether_routing::RoutingCache>,
     product_loader: Arc<ProductLoader>,
-    dispatch: Arc<dyn crate::infra::shm_dispatch::ActionDispatch>,
 ) -> Result<Arc<InstanceManager>> {
     let instance_manager = Arc::new(InstanceManager::new(
         sqlite_pool.clone(),
         routing_cache,
         product_loader,
-        dispatch,
     ));
 
     // Instances loaded by aether (may be empty on first startup)
@@ -451,29 +582,39 @@ pub async fn create_app_state(service_info: &ServiceInfo) -> Result<Arc<AppState
     // Load products and their local SQLite schema.
     let product_loader = load_products(&config, &sqlite_pool).await?;
 
-    // Create ShmDispatch (initially unconfigured, configured later in main.rs)
-    let shm_dispatch = Arc::new(crate::infra::shm_dispatch::ShmDispatch::new());
-    let dispatch: Arc<dyn crate::infra::shm_dispatch::ActionDispatch> =
-        Arc::clone(&shm_dispatch) as Arc<dyn crate::infra::shm_dispatch::ActionDispatch>;
+    // The physical command sink is configured with SHM and UDS resources later
+    // in main, after IO's canonical generation becomes available.
+    let shm_dispatch = Arc::new(aether_shm_bridge::ShmDeviceCommandSink::new());
 
     // Setup instance manager (routing handled externally by aether-routing library)
     let instance_manager = setup_instance_manager(
         &sqlite_pool,
         routing_cache.clone(),
         Arc::clone(&product_loader),
-        dispatch,
     )
     .await?;
 
     let audit_sink = SqliteAuditSink::initialize(sqlite_pool.clone())
         .await
         .map_err(|error| AutomationError::DatabaseError(error.to_string()))?;
-    let command_dispatcher: Arc<dyn aether_ports::CommandDispatcher> = Arc::new(
-        AutomationCommandDispatcher::new(Arc::clone(&instance_manager)),
-    );
+    let command_dispatcher: Arc<dyn aether_ports::CommandDispatcher> =
+        Arc::new(AutomationCommandDispatcher::new(
+            Arc::clone(&instance_manager),
+            Arc::clone(&shm_dispatch) as Arc<dyn aether_ports::DeviceCommandSink>,
+        ));
     let audit_sink: Arc<dyn aether_ports::AuditSink> = Arc::new(audit_sink);
     let control_application = Arc::new(aether_application::ControlApplication::new(
         command_dispatcher,
+        Arc::clone(&audit_sink),
+        aether_application::SafetyPolicy,
+    ));
+    let action_routing_mutator: Arc<dyn aether_ports::AutomationActionRoutingMutator> = Arc::new(
+        crate::infra::action_routing::SqliteActionRoutingMutator::new(Arc::clone(
+            &instance_manager,
+        )),
+    );
+    let action_routing_application = Arc::new(aether_application::ActionRoutingApplication::new(
+        action_routing_mutator,
         audit_sink,
         aether_application::SafetyPolicy,
     ));
@@ -487,6 +628,7 @@ pub async fn create_app_state(service_info: &ServiceInfo) -> Result<Arc<AppState
         config,
         instance_manager,
         control_application,
+        action_routing_application,
         control_authenticator,
         shm_dispatch,
     )))

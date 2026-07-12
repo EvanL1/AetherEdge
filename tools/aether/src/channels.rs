@@ -5,6 +5,7 @@
 use anyhow::Result;
 use clap::Subcommand;
 use reqwest::Client;
+use serde::Deserialize;
 use serde_json::Value;
 
 #[derive(Subcommand)]
@@ -20,9 +21,13 @@ pub enum ChannelCommands {
         channel_id: u32,
     },
 
-    /// Reload channel configuration
-    #[command(about = "Reload all channel configurations")]
-    Reload,
+    /// Reconcile all channel runtimes from authoritative desired state
+    #[command(about = "Reconcile all channel runtimes from authoritative desired state")]
+    Reload {
+        /// Explicitly confirm this high-risk runtime reconciliation
+        #[arg(long)]
+        confirmed: bool,
+    },
 
     /// Check service health
     #[command(about = "Check communication service health")]
@@ -43,12 +48,15 @@ pub enum ChannelCommands {
         /// Channel description
         #[arg(long)]
         description: Option<String>,
-        /// Start channel immediately (default: true)
-        #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
+        /// Start channel immediately (default: false)
+        #[arg(long, default_value_t = false, action = clap::ArgAction::Set)]
         enabled: bool,
         /// Override channel ID (auto-assigned if omitted)
         #[arg(long)]
         id: Option<u32>,
+        /// Explicitly confirm this high-risk commissioning change
+        #[arg(long)]
+        confirmed: bool,
     },
 
     /// Update channel configuration
@@ -65,16 +73,30 @@ pub enum ChannelCommands {
         /// Updated description
         #[arg(long)]
         description: Option<String>,
+        /// Compare-and-set guard for the current desired-state revision
+        #[arg(long)]
+        expected_revision: Option<u64>,
+        /// Explicitly confirm this high-risk commissioning change
+        #[arg(long)]
+        confirmed: bool,
     },
 
-    /// Delete a channel (cascades: points, mappings, routing)
-    #[command(about = "Delete a channel and cascade-remove its points, mappings, and routing")]
+    /// Delete a channel and its measurement-owned dependents
+    #[command(
+        about = "Delete a channel and its measurement-owned dependents (action routes must be removed first)"
+    )]
     Delete {
         /// Channel ID to delete
         channel_id: u32,
         /// Skip confirmation prompt
         #[arg(short, long)]
         force: bool,
+        /// Compare-and-set guard for the current desired-state revision
+        #[arg(long)]
+        expected_revision: Option<u64>,
+        /// Explicitly confirm this high-risk commissioning change
+        #[arg(long)]
+        confirmed: bool,
     },
 
     /// Enable a channel
@@ -82,6 +104,12 @@ pub enum ChannelCommands {
     Enable {
         /// Channel ID
         channel_id: u32,
+        /// Compare-and-set guard for the current desired-state revision
+        #[arg(long)]
+        expected_revision: Option<u64>,
+        /// Explicitly confirm this high-risk commissioning change
+        #[arg(long)]
+        confirmed: bool,
     },
 
     /// Disable a channel
@@ -89,6 +117,12 @@ pub enum ChannelCommands {
     Disable {
         /// Channel ID
         channel_id: u32,
+        /// Compare-and-set guard for the current desired-state revision
+        #[arg(long)]
+        expected_revision: Option<u64>,
+        /// Explicitly confirm this high-risk commissioning change
+        #[arg(long)]
+        confirmed: bool,
     },
 
     /// Show a channel's point mappings
@@ -251,13 +285,9 @@ pub async fn handle_command(cmd: ChannelCommands, base_url: &str, json: bool) ->
                 );
             }
         },
-        ChannelCommands::Reload => {
-            client.reload_config().await?;
-            if json {
-                crate::output::print_ok();
-            } else {
-                println!("Configuration reloaded");
-            }
+        ChannelCommands::Reload { confirmed } => {
+            let result = client.reconcile_channels(confirmed).await?;
+            print_reconciliation_receipt(&result, json)?;
         },
         ChannelCommands::Health => {
             let health = client.check_health().await?;
@@ -274,6 +304,7 @@ pub async fn handle_command(cmd: ChannelCommands, base_url: &str, json: bool) ->
             description,
             enabled,
             id,
+            confirmed,
         } => {
             let parameters: Value = serde_json::from_str(&params)
                 .map_err(|e| anyhow::anyhow!("--params must be valid JSON: {}", e))?;
@@ -285,26 +316,18 @@ pub async fn handle_command(cmd: ChannelCommands, base_url: &str, json: bool) ->
                     description.as_deref(),
                     id,
                     enabled,
+                    confirmed,
                 )
                 .await?;
-            if json {
-                crate::output::print_success(&result);
-            } else {
-                println!(
-                    "Channel created: {}",
-                    result
-                        .get("data")
-                        .and_then(|d| d.get("channel_id"))
-                        .map(|v| v.to_string())
-                        .unwrap_or_default()
-                );
-            }
+            print_mutation_receipt(&result, json)?;
         },
         ChannelCommands::Update {
             channel_id,
             name,
             params,
             description,
+            expected_revision,
+            confirmed,
         } => {
             let mut body = serde_json::Map::new();
             if let Some(n) = name {
@@ -319,15 +342,22 @@ pub async fn handle_command(cmd: ChannelCommands, base_url: &str, json: bool) ->
                 body.insert("description".to_string(), Value::String(d));
             }
             let result = client
-                .update_channel(channel_id, Value::Object(body))
+                .update_channel(
+                    channel_id,
+                    Value::Object(body),
+                    confirmed,
+                    expected_revision,
+                )
                 .await?;
-            if json {
-                crate::output::print_success(&result);
-            } else {
-                println!("Channel {} updated", channel_id);
-            }
+            print_mutation_receipt(&result, json)?;
         },
-        ChannelCommands::Delete { channel_id, force } => {
+        ChannelCommands::Delete {
+            channel_id,
+            force,
+            expected_revision,
+            confirmed,
+        } => {
+            client.validate_mutation(confirmed, expected_revision)?;
             if !force && !json {
                 println!("Delete channel {}? [y/N]", channel_id);
                 let mut input = String::new();
@@ -337,20 +367,30 @@ pub async fn handle_command(cmd: ChannelCommands, base_url: &str, json: bool) ->
                     return Ok(());
                 }
             }
-            client.delete_channel(channel_id).await?;
-            if json {
-                crate::output::print_ok();
-            } else {
-                println!("Channel {} deleted", channel_id);
-            }
+            let result = client
+                .delete_channel(channel_id, confirmed, expected_revision)
+                .await?;
+            print_mutation_receipt(&result, json)?;
         },
-        ChannelCommands::Enable { channel_id } => {
-            let data = client.set_enabled(channel_id, true).await?;
-            crate::output::print_action(&data, &format!("Channel {channel_id} enabled"), json);
+        ChannelCommands::Enable {
+            channel_id,
+            expected_revision,
+            confirmed,
+        } => {
+            let data = client
+                .set_enabled(channel_id, true, confirmed, expected_revision)
+                .await?;
+            print_mutation_receipt(&data, json)?;
         },
-        ChannelCommands::Disable { channel_id } => {
-            let data = client.set_enabled(channel_id, false).await?;
-            crate::output::print_action(&data, &format!("Channel {channel_id} disabled"), json);
+        ChannelCommands::Disable {
+            channel_id,
+            expected_revision,
+            confirmed,
+        } => {
+            let data = client
+                .set_enabled(channel_id, false, confirmed, expected_revision)
+                .await?;
+            print_mutation_receipt(&data, json)?;
         },
         ChannelCommands::Mappings { channel_id } => {
             let data = client.mappings(channel_id).await?;
@@ -505,10 +545,238 @@ pub async fn handle_command(cmd: ChannelCommands, base_url: &str, json: bool) ->
     Ok(())
 }
 
+#[derive(Deserialize)]
+struct ChannelMutationEnvelope {
+    data: ChannelMutationReceipt,
+}
+
+#[derive(Deserialize)]
+struct ChannelMutationReceipt {
+    channel_id: u32,
+    request_id: String,
+    operation: String,
+    resulting_revision: u64,
+    desired_enabled: bool,
+    runtime_projection: String,
+    reconciliation_required: bool,
+    completion_audit: ChannelCompletionAuditReceipt,
+    retryable: bool,
+}
+
+#[derive(Debug, Deserialize)]
+struct ChannelCompletionAuditReceipt {
+    status: String,
+    retryable: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum ChannelReconciliationScopeReceipt {
+    All,
+    One,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum ChannelRuntimeProjectionReceipt {
+    Stopped,
+    ActivationPending,
+    Active,
+    Degraded,
+    Removed,
+}
+
+impl ChannelRuntimeProjectionReceipt {
+    const fn reconciliation_required(self) -> bool {
+        matches!(self, Self::ActivationPending | Self::Degraded)
+    }
+}
+
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+enum ChannelDesiredStateReceipt {
+    Present { revision: u64, enabled: bool },
+    Absent { last_revision: Option<u64> },
+}
+
+#[derive(Debug, Deserialize)]
+struct ChannelReconciliationItemReceipt {
+    channel_id: u32,
+    desired: ChannelDesiredStateReceipt,
+    runtime_projection: ChannelRuntimeProjectionReceipt,
+    reconciliation_required: bool,
+}
+
+#[derive(Debug, Deserialize)]
+struct ChannelReconciliationReceipt {
+    request_id: String,
+    scope: ChannelReconciliationScopeReceipt,
+    channel_id: Option<u32>,
+    items: Vec<ChannelReconciliationItemReceipt>,
+    degraded_count: usize,
+    reconciliation_required: bool,
+    completion_audit: ChannelCompletionAuditReceipt,
+    retryable: bool,
+    message: String,
+}
+
+#[derive(Deserialize)]
+struct ChannelReconciliationEnvelope {
+    success: bool,
+    data: ChannelReconciliationReceipt,
+}
+
+fn mutation_receipt_summary(response: &Value) -> Result<String> {
+    let envelope: ChannelMutationEnvelope = serde_json::from_value(response.clone())
+        .map_err(|error| anyhow::anyhow!("invalid channel mutation receipt: {error}"))?;
+    let receipt = envelope.data;
+    if receipt.retryable || receipt.completion_audit.retryable {
+        anyhow::bail!("invalid channel mutation receipt: channel commands are non-idempotent");
+    }
+    let desired_state = if receipt.desired_enabled {
+        "enabled"
+    } else {
+        "disabled"
+    };
+    let reconciliation = if receipt.reconciliation_required {
+        "reconciliation required"
+    } else {
+        "runtime projection reconciled"
+    };
+    Ok(format!(
+        "Channel {} {} accepted at revision {}; desired {}; runtime projection {}; {}; completion audit {}; request {}; do not retry automatically",
+        receipt.channel_id,
+        receipt.operation,
+        receipt.resulting_revision,
+        desired_state,
+        receipt.runtime_projection,
+        reconciliation,
+        receipt.completion_audit.status,
+        receipt.request_id
+    ))
+}
+
+fn print_mutation_receipt(response: &Value, json: bool) -> Result<()> {
+    if json {
+        crate::output::print_success(response);
+    } else {
+        println!("{}", mutation_receipt_summary(response)?);
+    }
+    Ok(())
+}
+
+fn parse_reconciliation_receipt(response: &Value) -> Result<ChannelReconciliationReceipt> {
+    let envelope: ChannelReconciliationEnvelope = serde_json::from_value(response.clone())
+        .map_err(|error| anyhow::anyhow!("invalid channel reconciliation receipt: {error}"))?;
+    if !envelope.success {
+        anyhow::bail!("invalid channel reconciliation receipt: success must be true");
+    }
+
+    let receipt = envelope.data;
+    match (receipt.scope, receipt.channel_id) {
+        (ChannelReconciliationScopeReceipt::All, None)
+        | (ChannelReconciliationScopeReceipt::One, Some(_)) => {},
+        _ => anyhow::bail!("invalid channel reconciliation receipt: scope and channel_id disagree"),
+    }
+    uuid::Uuid::parse_str(&receipt.request_id)
+        .map_err(|error| anyhow::anyhow!("invalid channel reconciliation request_id: {error}"))?;
+    if receipt.retryable || receipt.completion_audit.retryable {
+        anyhow::bail!("invalid channel reconciliation receipt: reconciliation is non-idempotent");
+    }
+    if receipt.message.trim().is_empty() {
+        anyhow::bail!("invalid channel reconciliation receipt: message must not be empty");
+    }
+
+    let mut computed_degraded_count = 0;
+    let mut computed_reconciliation_required = false;
+    for item in &receipt.items {
+        if item.channel_id > 9_999 {
+            anyhow::bail!(
+                "invalid channel reconciliation receipt: channel ID {} exceeds 9999",
+                item.channel_id
+            );
+        }
+        match item.desired {
+            ChannelDesiredStateReceipt::Present { revision, enabled } => {
+                if revision == 0 {
+                    anyhow::bail!(
+                        "invalid channel reconciliation receipt: desired revision must be at least 1"
+                    );
+                }
+                let _desired_enabled = enabled;
+            },
+            ChannelDesiredStateReceipt::Absent { last_revision } => {
+                if last_revision == Some(0) {
+                    anyhow::bail!(
+                        "invalid channel reconciliation receipt: last revision must be at least 1"
+                    );
+                }
+            },
+        }
+        if item.runtime_projection == ChannelRuntimeProjectionReceipt::Degraded {
+            computed_degraded_count += 1;
+        }
+        let item_reconciliation_required = item.runtime_projection.reconciliation_required();
+        if item.reconciliation_required != item_reconciliation_required {
+            anyhow::bail!(
+                "invalid channel reconciliation receipt: channel {} projection and reconciliation flag disagree",
+                item.channel_id
+            );
+        }
+        computed_reconciliation_required |= item_reconciliation_required;
+    }
+    if receipt.degraded_count != computed_degraded_count {
+        anyhow::bail!(
+            "invalid channel reconciliation receipt: degraded_count does not match items"
+        );
+    }
+    if receipt.reconciliation_required != computed_reconciliation_required {
+        anyhow::bail!(
+            "invalid channel reconciliation receipt: reconciliation_required does not match items"
+        );
+    }
+
+    Ok(receipt)
+}
+
+fn reconciliation_receipt_summary(response: &Value) -> Result<String> {
+    let receipt = parse_reconciliation_receipt(response)?;
+    let scope = match (receipt.scope, receipt.channel_id) {
+        (ChannelReconciliationScopeReceipt::All, None) => "all channels".to_string(),
+        (ChannelReconciliationScopeReceipt::One, Some(channel_id)) => {
+            format!("channel {channel_id}")
+        },
+        _ => anyhow::bail!("invalid channel reconciliation receipt: scope and channel_id disagree"),
+    };
+    let reconciliation = if receipt.reconciliation_required {
+        "reconciliation required"
+    } else {
+        "runtime projections reconciled"
+    };
+    Ok(format!(
+        "Runtime reconciliation for {scope} accepted: {} channel(s), {} degraded; {reconciliation}; completion audit {}; request {}; do not retry automatically",
+        receipt.items.len(),
+        receipt.degraded_count,
+        receipt.completion_audit.status,
+        receipt.request_id
+    ))
+}
+
+fn print_reconciliation_receipt(response: &Value, json: bool) -> Result<()> {
+    let summary = reconciliation_receipt_summary(response)?;
+    if json {
+        crate::output::print_success(response);
+    } else {
+        println!("{summary}");
+    }
+    Ok(())
+}
+
 // HTTP client for channel management
 pub(crate) struct ChannelClient {
     client: Client,
     base_url: String,
+    access_token: Option<String>,
 }
 
 impl ChannelClient {
@@ -516,6 +784,18 @@ impl ChannelClient {
         Ok(Self {
             client: Client::new(),
             base_url: base_url.to_string(),
+            access_token: std::env::var("AETHER_ACCESS_TOKEN")
+                .ok()
+                .filter(|value| !value.trim().is_empty() && value.trim() == value),
+        })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_access_token(base_url: &str, access_token: &str) -> Result<Self> {
+        Ok(Self {
+            client: Client::new(),
+            base_url: base_url.to_string(),
+            access_token: Some(access_token.to_string()),
         })
     }
 
@@ -556,20 +836,31 @@ impl ChannelClient {
         }
     }
 
-    async fn reload_config(&self) -> Result<()> {
-        let response = self
+    pub(crate) async fn reconcile_channels(&self, confirmed: bool) -> Result<Value> {
+        let request = self
             .client
-            .post(format!("{}/api/channels/reload", self.base_url))
+            .post(format!("{}/api/channels/reconcile", self.base_url));
+        let response = self
+            .governed_request(request, confirmed, None)?
             .send()
             .await?;
 
         if response.status().is_success() {
-            Ok(())
+            let value = response.json().await?;
+            let receipt = parse_reconciliation_receipt(&value)?;
+            if receipt.scope != ChannelReconciliationScopeReceipt::All
+                || receipt.channel_id.is_some()
+            {
+                anyhow::bail!(
+                    "invalid channel reconciliation receipt: full reconciliation must report scope=all"
+                );
+            }
+            Ok(value)
         } else {
-            Err(anyhow::anyhow!(
-                "Failed to reload config: {}",
-                response.status()
-            ))
+            Err(
+                crate::output::parse_error_body("Failed to reconcile channel runtimes", response)
+                    .await,
+            )
         }
     }
 
@@ -596,6 +887,7 @@ impl ChannelClient {
         description: Option<&str>,
         id: Option<u32>,
         enabled: bool,
+        confirmed: bool,
     ) -> Result<Value> {
         let mut body = serde_json::json!({
             "name": name,
@@ -609,77 +901,90 @@ impl ChannelClient {
         if let Some(channel_id) = id {
             body["channel_id"] = Value::Number(channel_id.into());
         }
-        let response = self
+        let request = self
             .client
             .post(format!("{}/api/channels", self.base_url))
-            .json(&body)
+            .json(&body);
+        let response = self
+            .governed_request(request, confirmed, None)?
             .send()
             .await?;
 
         if response.status().is_success() {
             Ok(response.json().await?)
         } else {
-            let status = response.status();
-            let text = response.text().await.unwrap_or_default();
-            Err(anyhow::anyhow!(
-                "Failed to create channel: {} - {}",
-                status,
-                text
-            ))
+            Err(crate::output::parse_error_body("Failed to create channel", response).await)
         }
     }
 
-    pub(crate) async fn update_channel(&self, channel_id: u32, body: Value) -> Result<Value> {
-        let response = self
+    pub(crate) async fn update_channel(
+        &self,
+        channel_id: u32,
+        body: Value,
+        confirmed: bool,
+        expected_revision: Option<u64>,
+    ) -> Result<Value> {
+        let request = self
             .client
             .put(format!("{}/api/channels/{}", self.base_url, channel_id))
-            .json(&body)
-            .send()
-            .await?;
-
-        if response.status().is_success() {
-            Ok(response.json().await?)
-        } else {
-            let status = response.status();
-            let text = response.text().await.unwrap_or_default();
-            Err(anyhow::anyhow!(
-                "Failed to update channel {}: {} - {}",
-                channel_id,
-                status,
-                text
-            ))
-        }
-    }
-
-    pub(crate) async fn delete_channel(&self, channel_id: u32) -> Result<Value> {
+            .json(&body);
         let response = self
-            .client
-            .delete(format!("{}/api/channels/{}", self.base_url, channel_id))
+            .governed_request(request, confirmed, expected_revision)?
             .send()
             .await?;
 
         if response.status().is_success() {
             Ok(response.json().await?)
         } else {
-            let status = response.status();
-            let text = response.text().await.unwrap_or_default();
-            Err(anyhow::anyhow!(
-                "Failed to delete channel {}: {} - {}",
-                channel_id,
-                status,
-                text
-            ))
+            Err(crate::output::parse_error_body(
+                &format!("Failed to update channel {channel_id}"),
+                response,
+            )
+            .await)
         }
     }
 
-    pub(crate) async fn set_enabled(&self, channel_id: u32, enabled: bool) -> Result<Value> {
-        let resp = self
+    pub(crate) async fn delete_channel(
+        &self,
+        channel_id: u32,
+        confirmed: bool,
+        expected_revision: Option<u64>,
+    ) -> Result<Value> {
+        let request = self
+            .client
+            .delete(format!("{}/api/channels/{}", self.base_url, channel_id));
+        let response = self
+            .governed_request(request, confirmed, expected_revision)?
+            .send()
+            .await?;
+
+        if response.status().is_success() {
+            Ok(response.json().await?)
+        } else {
+            Err(crate::output::parse_error_body(
+                &format!("Failed to delete channel {channel_id}"),
+                response,
+            )
+            .await)
+        }
+    }
+
+    pub(crate) async fn set_enabled(
+        &self,
+        channel_id: u32,
+        enabled: bool,
+        confirmed: bool,
+        expected_revision: Option<u64>,
+    ) -> Result<Value> {
+        let request = self
             .client
             .put(format!(
                 "{}/api/channels/{}/enabled",
                 self.base_url, channel_id
             ))
-            .json(&serde_json::json!({ "enabled": enabled }))
+            .json(&serde_json::json!({ "enabled": enabled }));
+        let resp = self
+            .governed_request(request, confirmed, expected_revision)?
             .send()
             .await?;
 
@@ -688,6 +993,38 @@ impl ChannelClient {
         } else {
             Err(crate::output::parse_error_body("Failed to set channel enabled state", resp).await)
         }
+    }
+
+    fn validate_mutation(&self, confirmed: bool, expected_revision: Option<u64>) -> Result<&str> {
+        if !confirmed {
+            anyhow::bail!("channel management requires explicit --confirmed");
+        }
+        if expected_revision == Some(0) {
+            anyhow::bail!("--expected-revision must be at least 1");
+        }
+        crate::transport_security::require_secure_bearer_transport(&self.base_url)?;
+        self.access_token.as_deref().ok_or_else(|| {
+            anyhow::anyhow!(
+                "channel management requires AETHER_ACCESS_TOKEN from an authenticated Admin or Engineer session"
+            )
+        })
+    }
+
+    fn governed_request(
+        &self,
+        request: reqwest::RequestBuilder,
+        confirmed: bool,
+        expected_revision: Option<u64>,
+    ) -> Result<reqwest::RequestBuilder> {
+        let access_token = self.validate_mutation(confirmed, expected_revision)?;
+        let mut request = request
+            .bearer_auth(access_token)
+            .header("x-request-id", uuid::Uuid::new_v4().to_string())
+            .header("x-aether-confirmed", "true");
+        if let Some(revision) = expected_revision {
+            request = request.header("x-aether-expected-revision", revision.to_string());
+        }
+        Ok(request)
     }
 
     pub(crate) async fn mappings(&self, channel_id: u32) -> Result<Value> {
@@ -955,9 +1292,499 @@ impl PointClient {
 
 #[cfg(test)]
 mod tests {
-    use super::{ChannelClient, PointClient};
-    use wiremock::matchers::{body_json, method, path};
+    use super::{
+        ChannelClient, ChannelCommands, PointClient, mutation_receipt_summary,
+        reconciliation_receipt_summary,
+    };
+    use clap::Parser;
+    use reqwest::Client;
+    use wiremock::matchers::{body_json, header, header_exists, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    #[derive(Parser)]
+    struct ChannelCli {
+        #[command(subcommand)]
+        command: ChannelCommands,
+    }
+
+    #[test]
+    fn create_is_disabled_by_default_and_requires_explicit_confirmation() {
+        let cli = ChannelCli::try_parse_from([
+            "channels",
+            "create",
+            "--name",
+            "meter",
+            "--protocol",
+            "modbus",
+            "--params",
+            "{}",
+            "--confirmed",
+        ])
+        .unwrap();
+
+        match cli.command {
+            ChannelCommands::Create {
+                enabled, confirmed, ..
+            } => {
+                assert!(!enabled, "new channels must be inert by default");
+                assert!(confirmed);
+            },
+            _ => panic!("expected create command"),
+        }
+    }
+
+    #[test]
+    fn lifecycle_commands_parse_optional_expected_revision_and_confirmation() {
+        let cli = ChannelCli::try_parse_from([
+            "channels",
+            "delete",
+            "1001",
+            "--force",
+            "--confirmed",
+            "--expected-revision",
+            "7",
+        ])
+        .unwrap();
+
+        match cli.command {
+            ChannelCommands::Delete {
+                force,
+                confirmed,
+                expected_revision,
+                ..
+            } => {
+                assert!(force);
+                assert!(confirmed, "--force must not replace --confirmed");
+                assert_eq!(expected_revision, Some(7));
+            },
+            _ => panic!("expected delete command"),
+        }
+    }
+
+    #[test]
+    fn reload_requires_explicit_confirmation_in_the_cli_schema() {
+        let cli = ChannelCli::try_parse_from(["channels", "reload", "--confirmed"]).unwrap();
+
+        match cli.command {
+            ChannelCommands::Reload { confirmed } => assert!(confirmed),
+            _ => panic!("expected reload command"),
+        }
+    }
+
+    #[test]
+    fn update_enable_and_disable_parse_revision_guards_and_confirmation() {
+        let cases = [
+            vec![
+                "channels",
+                "update",
+                "1001",
+                "--name",
+                "meter-2",
+                "--confirmed",
+                "--expected-revision",
+                "7",
+            ],
+            vec![
+                "channels",
+                "enable",
+                "1001",
+                "--confirmed",
+                "--expected-revision",
+                "7",
+            ],
+            vec![
+                "channels",
+                "disable",
+                "1001",
+                "--confirmed",
+                "--expected-revision",
+                "7",
+            ],
+        ];
+
+        for args in cases {
+            let cli = ChannelCli::try_parse_from(args).unwrap();
+            let (confirmed, expected_revision) = match cli.command {
+                ChannelCommands::Update {
+                    confirmed,
+                    expected_revision,
+                    ..
+                }
+                | ChannelCommands::Enable {
+                    confirmed,
+                    expected_revision,
+                    ..
+                }
+                | ChannelCommands::Disable {
+                    confirmed,
+                    expected_revision,
+                    ..
+                } => (confirmed, expected_revision),
+                _ => panic!("expected governed channel mutation"),
+            };
+            assert!(confirmed);
+            assert_eq!(expected_revision, Some(7));
+        }
+    }
+
+    #[test]
+    fn typed_receipt_summary_exposes_degraded_runtime_and_incomplete_audit() {
+        let response = serde_json::json!({
+            "success": true,
+            "data": {
+                "channel_id": 1001,
+                "request_id": "018f2a74-5700-7f42-9da4-73b247c9c001",
+                "operation": "enable",
+                "resulting_revision": 8,
+                "desired_enabled": true,
+                "runtime_projection": "degraded",
+                "reconciliation_required": true,
+                "completion_audit": {
+                    "status": "incomplete",
+                    "retryable": false,
+                    "message": "terminal audit must be reconciled"
+                },
+                "retryable": false
+            }
+        });
+
+        let summary = mutation_receipt_summary(&response).expect("typed receipt");
+        assert!(summary.contains("desired enabled"), "{summary}");
+        assert!(summary.contains("runtime projection degraded"), "{summary}");
+        assert!(summary.contains("reconciliation required"), "{summary}");
+        assert!(summary.contains("completion audit incomplete"), "{summary}");
+        assert!(summary.contains("do not retry automatically"), "{summary}");
+        assert!(!summary.contains("connected"), "{summary}");
+    }
+
+    #[test]
+    fn typed_reconciliation_receipt_exposes_scope_degradation_and_audit_state() {
+        let response = reconciliation_response();
+
+        let summary = reconciliation_receipt_summary(&response).expect("typed receipt");
+        assert!(summary.contains("all channels"), "{summary}");
+        assert!(summary.contains("2 channel(s)"), "{summary}");
+        assert!(summary.contains("1 degraded"), "{summary}");
+        assert!(summary.contains("reconciliation required"), "{summary}");
+        assert!(summary.contains("completion audit incomplete"), "{summary}");
+        assert!(summary.contains("do not retry automatically"), "{summary}");
+        assert!(!summary.contains("parameters"), "{summary}");
+    }
+
+    fn reconciliation_response() -> serde_json::Value {
+        serde_json::json!({
+            "success": true,
+            "data": {
+                "request_id": "018f2a74-5700-7f42-9da4-73b247c9c002",
+                "scope": "all",
+                "channel_id": null,
+                "items": [
+                    {
+                        "channel_id": 7,
+                        "desired": {
+                            "status": "present",
+                            "revision": 3,
+                            "enabled": true
+                        },
+                        "runtime_projection": "active",
+                        "reconciliation_required": false
+                    },
+                    {
+                        "channel_id": 8,
+                        "desired": {
+                            "status": "absent",
+                            "last_revision": 4
+                        },
+                        "runtime_projection": "degraded",
+                        "reconciliation_required": true
+                    }
+                ],
+                "degraded_count": 1,
+                "reconciliation_required": true,
+                "completion_audit": {
+                    "status": "incomplete",
+                    "retryable": false,
+                    "message": "terminal audit must be reconciled"
+                },
+                "retryable": false,
+                "message": "runtime reconciliation for all channels accepted"
+            }
+        })
+    }
+
+    #[tokio::test]
+    async fn channel_mutation_fails_before_http_without_confirmation_token_or_valid_revision() {
+        let server = MockServer::start().await;
+        let authenticated =
+            ChannelClient::with_access_token(&server.uri(), "signed-access-token").unwrap();
+
+        let unconfirmed = [
+            authenticated
+                .create_channel(
+                    "blocked",
+                    "virtual",
+                    serde_json::json!({}),
+                    None,
+                    None,
+                    false,
+                    false,
+                )
+                .await,
+            authenticated
+                .update_channel(1001, serde_json::json!({ "name": "blocked" }), false, None)
+                .await,
+            authenticated.delete_channel(1001, false, None).await,
+            authenticated.set_enabled(1001, true, false, None).await,
+            authenticated.set_enabled(1001, false, false, None).await,
+        ];
+        assert!(unconfirmed.iter().all(Result::is_err), "{unconfirmed:?}");
+        assert!(
+            unconfirmed.iter().all(|result| result
+                .as_ref()
+                .unwrap_err()
+                .to_string()
+                .contains("--confirmed")),
+            "{unconfirmed:?}"
+        );
+
+        let unauthenticated = ChannelClient {
+            client: Client::new(),
+            base_url: server.uri(),
+            access_token: None,
+        };
+        let unauthenticated_results = [
+            unauthenticated
+                .create_channel(
+                    "blocked",
+                    "virtual",
+                    serde_json::json!({}),
+                    None,
+                    None,
+                    false,
+                    true,
+                )
+                .await,
+            unauthenticated
+                .update_channel(1001, serde_json::json!({ "name": "blocked" }), true, None)
+                .await,
+            unauthenticated.delete_channel(1001, true, None).await,
+            unauthenticated.set_enabled(1001, true, true, None).await,
+            unauthenticated.set_enabled(1001, false, true, None).await,
+        ];
+        assert!(
+            unauthenticated_results.iter().all(Result::is_err),
+            "{unauthenticated_results:?}"
+        );
+        assert!(
+            unauthenticated_results.iter().all(|result| result
+                .as_ref()
+                .unwrap_err()
+                .to_string()
+                .contains("AETHER_ACCESS_TOKEN")),
+            "{unauthenticated_results:?}"
+        );
+
+        let error = authenticated
+            .update_channel(1001, serde_json::json!({ "name": "meter" }), true, Some(0))
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("at least 1"), "{error}");
+
+        assert!(server.received_requests().await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn reconciliation_fails_before_http_without_confirmation_or_token() {
+        let server = MockServer::start().await;
+        let authenticated =
+            ChannelClient::with_access_token(&server.uri(), "signed-access-token").unwrap();
+        let unconfirmed = authenticated
+            .reconcile_channels(false)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(unconfirmed.contains("--confirmed"), "{unconfirmed}");
+
+        let unauthenticated = ChannelClient {
+            client: Client::new(),
+            base_url: server.uri(),
+            access_token: None,
+        };
+        let missing_token = unauthenticated
+            .reconcile_channels(true)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(
+            missing_token.contains("AETHER_ACCESS_TOKEN"),
+            "{missing_token}"
+        );
+        assert!(server.received_requests().await.unwrap().is_empty());
+    }
+
+    #[test]
+    fn channel_mutation_never_attaches_bearer_to_remote_plaintext_http() {
+        let plaintext =
+            ChannelClient::with_access_token("http://192.0.2.10:6001", "signed-access-token")
+                .unwrap();
+        let error = plaintext
+            .validate_mutation(true, None)
+            .expect_err("remote plaintext must fail before request construction")
+            .to_string();
+        assert!(error.contains("non-loopback plaintext"), "{error}");
+
+        let https =
+            ChannelClient::with_access_token("https://edge.example.test", "signed-access-token")
+                .unwrap();
+        assert_eq!(
+            https.validate_mutation(true, Some(1)).unwrap(),
+            "signed-access-token"
+        );
+    }
+
+    #[tokio::test]
+    async fn create_posts_governed_headers_and_defaults_disabled() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/api/channels"))
+            .and(header("authorization", "Bearer signed-access-token"))
+            .and(header_exists("x-request-id"))
+            .and(header("x-aether-confirmed", "true"))
+            .and(body_json(serde_json::json!({
+                "name": "meter",
+                "protocol": "modbus",
+                "parameters": {},
+                "enabled": false,
+            })))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let client =
+            ChannelClient::with_access_token(&server.uri(), "signed-access-token").unwrap();
+        client
+            .create_channel(
+                "meter",
+                "modbus",
+                serde_json::json!({}),
+                None,
+                None,
+                false,
+                true,
+            )
+            .await
+            .unwrap();
+
+        let requests = server.received_requests().await.unwrap();
+        assert_eq!(requests.len(), 1);
+        assert!(
+            requests[0]
+                .headers
+                .get("x-aether-expected-revision")
+                .is_none(),
+            "create has no prior revision and must omit the CAS header"
+        );
+    }
+
+    #[tokio::test]
+    async fn reconciliation_posts_the_canonical_governed_endpoint_with_a_uuid_request_id() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/api/channels/reconcile"))
+            .and(header("authorization", "Bearer signed-access-token"))
+            .and(header_exists("x-request-id"))
+            .and(header("x-aether-confirmed", "true"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(reconciliation_response()))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let client =
+            ChannelClient::with_access_token(&server.uri(), "signed-access-token").unwrap();
+        let response = client.reconcile_channels(true).await.unwrap();
+        assert_eq!(response["data"]["scope"], "all");
+        assert_eq!(response["data"]["retryable"], false);
+
+        let requests = server.received_requests().await.unwrap();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].url.path(), "/api/channels/reconcile");
+        let request_id = requests[0]
+            .headers
+            .get("x-request-id")
+            .expect("request ID header")
+            .to_str()
+            .expect("ASCII request ID");
+        uuid::Uuid::parse_str(request_id).expect("UUID request ID");
+    }
+
+    #[tokio::test]
+    async fn update_delete_and_enabled_forward_revision_and_governance_headers() {
+        for (method_name, endpoint, body) in [
+            (
+                "PUT",
+                "/api/channels/1001",
+                Some(serde_json::json!({ "name": "meter" })),
+            ),
+            ("DELETE", "/api/channels/1001", None),
+            (
+                "PUT",
+                "/api/channels/1001/enabled",
+                Some(serde_json::json!({ "enabled": true })),
+            ),
+        ] {
+            let server = MockServer::start().await;
+            let mut mock = Mock::given(method(method_name))
+                .and(path(endpoint))
+                .and(header("authorization", "Bearer signed-access-token"))
+                .and(header_exists("x-request-id"))
+                .and(header("x-aether-confirmed", "true"))
+                .and(header("x-aether-expected-revision", "7"));
+            if let Some(body) = body.clone() {
+                mock = mock.and(body_json(body));
+            }
+            mock.respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
+                .expect(1)
+                .mount(&server)
+                .await;
+
+            let client =
+                ChannelClient::with_access_token(&server.uri(), "signed-access-token").unwrap();
+            match endpoint {
+                "/api/channels/1001" if method_name == "PUT" => {
+                    client
+                        .update_channel(1001, body.unwrap(), true, Some(7))
+                        .await
+                        .unwrap();
+                },
+                "/api/channels/1001" => {
+                    client.delete_channel(1001, true, Some(7)).await.unwrap();
+                },
+                _ => {
+                    client.set_enabled(1001, true, true, Some(7)).await.unwrap();
+                },
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn channel_queries_remain_available_without_an_access_token() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/channels"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([])))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let client = ChannelClient {
+            client: Client::new(),
+            base_url: server.uri(),
+            access_token: None,
+        };
+        client.list_channels().await.unwrap();
+    }
 
     #[tokio::test]
     async fn set_enabled_puts_enabled_body() {
@@ -970,8 +1797,9 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = ChannelClient::new(&server.uri()).unwrap();
-        client.set_enabled(1001, false).await.unwrap();
+        let client =
+            ChannelClient::with_access_token(&server.uri(), "signed-access-token").unwrap();
+        client.set_enabled(1001, false, true, None).await.unwrap();
     }
 
     #[tokio::test]
@@ -990,8 +1818,13 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = ChannelClient::new(&server.uri()).unwrap();
-        let err = client.set_enabled(9, true).await.unwrap_err().to_string();
+        let client =
+            ChannelClient::with_access_token(&server.uri(), "signed-access-token").unwrap();
+        let err = client
+            .set_enabled(9, true, true, None)
+            .await
+            .unwrap_err()
+            .to_string();
 
         assert!(err.contains("channel 9 missing"), "{err}");
         assert!(err.contains("run aether sync"), "{err}");

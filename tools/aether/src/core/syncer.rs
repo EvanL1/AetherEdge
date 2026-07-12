@@ -17,6 +17,8 @@ use tracing::{debug, info, warn};
 use super::file_utils::{flatten_json, load_csv, load_csv_typed_with_errors, load_csv_with_errors};
 use super::schema;
 
+const ACTION_ROUTING_SYNC_GUARD: &str = "action routing requires the governed action-routing command; configuration sync supports measurement routing only";
+
 /// Try parsing a string as a JSON number. Empty strings default to 0.
 fn str_to_json_number(s: &str) -> Option<JsonValue> {
     use serde_json::Number;
@@ -102,38 +104,6 @@ fn normalize_protocol_mapping(
         },
         "di_do" | "gpio" | "dido" => convert_fields(mapping, &["gpio_number"]),
         _ => convert_fields(mapping, &[]),
-    }
-}
-
-/// Normalize legacy product names to match built-in product library.
-///
-/// Maps old snake_case names (from config files) to the canonical names
-/// used by `aether-model` crate's built-in product definitions.
-fn normalize_product_name(name: &str) -> &str {
-    match name {
-        "battery_pack" => {
-            warn!("Legacy product name 'battery_pack' → 'Battery'. Please update instances.yaml");
-            "Battery"
-        },
-        "pcs" => {
-            warn!("Legacy product name 'pcs' → 'PCS'. Please update instances.yaml");
-            "PCS"
-        },
-        "diesel_generator" => {
-            warn!(
-                "Legacy product name 'diesel_generator' → 'Diesel'. Please update instances.yaml"
-            );
-            "Diesel"
-        },
-        "pv_inverter" => {
-            warn!("Legacy product name 'pv_inverter' → 'PVInverter'. Please update instances.yaml");
-            "PVInverter"
-        },
-        "pv_dcdc" | "PV_DCDC" => {
-            warn!("Legacy product name '{name}' → 'PV DCDC'. Please update instances.yaml");
-            "PV DCDC"
-        },
-        _ => name,
     }
 }
 
@@ -368,6 +338,18 @@ impl ConfigSyncer {
             pool.begin().await?
         };
 
+        if self.force {
+            let action_route_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM action_routing")
+                .fetch_one(&mut *tx)
+                .await?;
+            if action_route_count != 0 {
+                anyhow::bail!(
+                    "{ACTION_ROUTING_SYNC_GUARD}; --force would mutate \
+                     {action_route_count} existing action route(s)"
+                );
+            }
+        }
+
         if self.require_empty_site {
             for table in ["channels", "instances", "rules"] {
                 let count: i64 = sqlx::query_scalar(&format!("SELECT COUNT(*) FROM {table}"))
@@ -581,17 +563,14 @@ impl ConfigSyncer {
             sqlx::query("DELETE FROM measurement_routing")
                 .execute(&mut **tx)
                 .await?;
-            sqlx::query("DELETE FROM action_routing")
-                .execute(&mut **tx)
-                .await?;
 
-            // Note: Products are now compile-time built-in constants (aether-model crate),
-            // no need to clear or sync product-related tables
+            // Product definitions are filesystem/Pack inputs, not rows owned by
+            // the generic kernel schema, so only instance state is cleared.
             sqlx::query("DELETE FROM instances")
                 .execute(&mut **tx)
                 .await?;
 
-            stats.items_deleted = 4; // Cleared 4 tables (config, routing x2, instances)
+            stats.items_deleted = 3; // Cleared config, measurement routing, and instances
         }
 
         // Insert service configuration
@@ -613,10 +592,10 @@ impl ConfigSyncer {
                 });
             }
             if product_errors.is_empty() {
-                // Try loading to verify override semantics
+                // Load once to verify the explicit site-library contract.
                 match aether_model::product_lib::ProductLibrary::load(Some(&products_dir)) {
                     Ok(lib) => {
-                        info!("Products: {} (with external overrides)", lib.len());
+                        info!("Products: {} (explicit site library)", lib.len());
                     },
                     Err(e) => {
                         stats.errors.push(SyncError {
@@ -1090,8 +1069,6 @@ impl ConfigSyncer {
             "{}".to_string()
         };
 
-        let normalized_product = normalize_product_name(product_name);
-
         // Since schema v5 the `instances` table no longer has a `properties` column.
         // Properties are stored in the `instance_properties` table keyed by property_id.
         if let Err(e) = sqlx::query(
@@ -1105,7 +1082,7 @@ impl ConfigSyncer {
         )
         .bind(instance_id)
         .bind(instance_name)
-        .bind(normalized_product)
+        .bind(product_name)
         .bind(parent_id.map(|id| id as i64))
         .execute(&mut **tx)
         .await
@@ -1279,7 +1256,8 @@ impl ConfigSyncer {
                 continue;
             };
 
-            // M (Measurement) → measurement_routing, A (Action) → action_routing
+            // Measurement routes remain configuration-owned. Action routes are
+            // commands and must pass through the governed application boundary.
             let insert_result = match instance_type.as_str() {
                 "M" => {
                     sqlx::query(
@@ -1297,19 +1275,11 @@ impl ConfigSyncer {
                     .execute(&mut **tx).await
                 },
                 "A" => {
-                    sqlx::query(
-                        "INSERT INTO action_routing (instance_id, instance_name, action_id, channel_id, channel_type, channel_point_id)
-                         VALUES ((SELECT instance_id FROM instances WHERE instance_name = ?), ?, ?, ?, ?, ?)
-                         ON CONFLICT(instance_id, action_id) DO UPDATE SET
-                             instance_name = excluded.instance_name,
-                             channel_id = excluded.channel_id,
-                             channel_type = excluded.channel_type,
-                             channel_point_id = excluded.channel_point_id,
-                             updated_at = CURRENT_TIMESTAMP"
-                    )
-                    .bind(instance_name).bind(instance_name)
-                    .bind(instance_point_id).bind(channel_id).bind(&channel_type).bind(channel_point_id)
-                    .execute(&mut **tx).await
+                    errors.push(SyncError {
+                        item: format!("Action routing {route_ctx}:{channel_point_id}"),
+                        error: ACTION_ROUTING_SYNC_GUARD.to_owned(),
+                    });
+                    continue;
                 },
                 _ => Err(sqlx::Error::Configuration(
                     format!("Invalid instance_type: {}. Must be 'M' or 'A'", instance_type).into(),
@@ -1517,7 +1487,7 @@ channels:
 instances:
   - instance_id: 1
     instance_name: configured-device
-    product_name: Battery
+    product_name: ExampleDevice
 "#,
         )
         .unwrap();
@@ -1557,6 +1527,18 @@ instances:
         .unwrap();
     }
 
+    fn write_instance_routing(config_path: &Path, rows: &str) {
+        let instance_directory = config_path.join("automation/instances/configured-device");
+        fs::create_dir_all(&instance_directory).unwrap();
+        fs::write(
+            instance_directory.join("channel_routing.csv"),
+            format!(
+                "channel_id,channel_type,channel_point_id,instance_type,instance_point_id\n{rows}"
+            ),
+        )
+        .unwrap();
+    }
+
     async fn connect_to_database(database_file: &Path) -> sqlx::SqlitePool {
         sqlx::sqlite::SqlitePoolOptions::new()
             .connect_with(common::bootstrap_database::sqlite_connect_options(
@@ -1564,6 +1546,146 @@ instances:
             ))
             .await
             .unwrap()
+    }
+
+    #[tokio::test]
+    async fn generic_sync_preserves_distribution_product_identity_verbatim() {
+        let workspace = TempDir::new().unwrap();
+        let (config_path, database_path) = write_site_config_with_managed_entities(&workspace);
+        let instances_path = config_path.join("automation/instances.yaml");
+        let instances = fs::read_to_string(&instances_path)
+            .unwrap()
+            .replace("ExampleDevice", "distribution_alias");
+        fs::write(instances_path, instances).unwrap();
+
+        ConfigSyncer::new(&config_path, &database_path)
+            .sync_all()
+            .await
+            .unwrap();
+
+        let pool = connect_to_database(&database_path.join("aether.db")).await;
+        let product_name: String =
+            sqlx::query_scalar("SELECT product_name FROM instances WHERE instance_id = 1")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(product_name, "distribution_alias");
+    }
+
+    #[tokio::test]
+    async fn measurement_routing_remains_supported_by_configuration_sync() {
+        let workspace = TempDir::new().unwrap();
+        let (config_path, database_path) = write_site_config_with_managed_entities(&workspace);
+        write_instance_routing(&config_path, "1,T,77,M,88\n");
+
+        ConfigSyncer::new(&config_path, &database_path)
+            .sync_all()
+            .await
+            .unwrap();
+
+        let pool = connect_to_database(&database_path.join("aether.db")).await;
+        let route: (i64, String, i64) = sqlx::query_as(
+            "SELECT channel_id, channel_type, measurement_id FROM measurement_routing \
+             WHERE instance_id = 1",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(route, (1, "T".to_owned(), 88));
+    }
+
+    #[tokio::test]
+    async fn action_routing_in_configuration_fails_closed_and_rolls_back_measurements() {
+        let workspace = TempDir::new().unwrap();
+        let (config_path, database_path) = write_site_config_with_managed_entities(&workspace);
+        write_instance_routing(&config_path, "1,T,77,M,88\n1,C,9,A,10\n");
+
+        let error = ConfigSyncer::new(&config_path, &database_path)
+            .sync_all()
+            .await
+            .unwrap_err();
+        assert!(
+            format!("{error:#}").contains("governed action-routing command"),
+            "unexpected error: {error:#}"
+        );
+
+        let pool = connect_to_database(&database_path.join("aether.db")).await;
+        let measurement_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM measurement_routing")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let action_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM action_routing")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let instance_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM instances")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(measurement_count, 0, "the site transaction must roll back");
+        assert_eq!(action_count, 0);
+        assert_eq!(instance_count, 0);
+    }
+
+    #[tokio::test]
+    async fn force_sync_refuses_to_cascade_delete_existing_action_routing() {
+        let workspace = TempDir::new().unwrap();
+        let (config_path, database_path) = write_site_config_with_managed_entities(&workspace);
+        ConfigSyncer::new(&config_path, &database_path)
+            .sync_all()
+            .await
+            .unwrap();
+
+        let database_file = database_path.join("aether.db");
+        let pool = connect_to_database(&database_file).await;
+        sqlx::query(
+            "INSERT INTO control_points \
+             (point_id, channel_id, signal_name, reverse, data_type) \
+             VALUES (9, 1, 'start', 0, 'bool')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO action_routing \
+             (instance_id, instance_name, action_id, channel_id, channel_type, channel_point_id) \
+             VALUES (1, 'configured-device', 10, 1, 'C', 9)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        pool.close().await;
+        fs::write(config_path.join("global.yaml"), "site_name: replacement\n").unwrap();
+
+        let error = ConfigSyncer::new(&config_path, &database_path)
+            .with_force(true)
+            .sync_all()
+            .await
+            .unwrap_err();
+        assert!(
+            format!("{error:#}").contains("governed action-routing command"),
+            "unexpected error: {error:#}"
+        );
+
+        let pool = connect_to_database(&database_file).await;
+        let action_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM action_routing")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let control_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM control_points")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let site_name: String = sqlx::query_scalar(
+            "SELECT value FROM service_config \
+             WHERE service_name = 'global' AND key = 'site_name'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(action_count, 1);
+        assert_eq!(control_count, 1);
+        assert_eq!(site_name, "commissioned");
     }
 
     #[tokio::test]
@@ -1816,7 +1938,7 @@ channels:
         .unwrap();
         sqlx::query(
             "INSERT INTO instances (instance_id, instance_name, product_name) \
-             VALUES (99, 'api-device', 'Battery')",
+             VALUES (99, 'api-device', 'ExampleDevice')",
         )
         .execute(&pool)
         .await

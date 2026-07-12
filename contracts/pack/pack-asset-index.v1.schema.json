@@ -1,0 +1,102 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aether.dev/schemas/pack-asset-index.v1.json",
+  "title": "Aether Pack Asset Index v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "category", "assets"],
+  "properties": {
+    "schema": { "const": "aether.pack.asset-index.v1" },
+    "category": {
+      "enum": ["mappings", "rules", "evaluations", "data_processing"]
+    },
+    "assets": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "path", "schema", "media_type"],
+        "properties": {
+          "id": { "$ref": "#/$defs/identifier" },
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[^/\\\\]+(?:/[^/\\\\]+)*$",
+            "allOf": [
+              { "not": { "pattern": "^[A-Za-z]:" } },
+              { "not": { "pattern": "(^|/)\\.{1,2}(/|$)" } }
+            ]
+          },
+          "schema": { "$ref": "#/$defs/identifier" },
+          "media_type": { "enum": ["application/json", "application/yaml"] }
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "category": { "const": "mappings" } } },
+      "then": {
+        "properties": {
+          "assets": {
+            "items": {
+              "properties": {
+                "schema": { "const": "aether.pack.mapping-set.v1" }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "category": { "const": "rules" } } },
+      "then": {
+        "properties": {
+          "assets": {
+            "items": {
+              "properties": {
+                "schema": { "const": "aether.pack.rule.v1" }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "category": { "const": "evaluations" } } },
+      "then": {
+        "properties": {
+          "assets": {
+            "items": {
+              "properties": {
+                "schema": { "const": "aether.pack.evaluation-suite.v1" }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "category": { "const": "data_processing" } } },
+      "then": {
+        "properties": {
+          "assets": {
+            "items": {
+              "properties": {
+                "schema": { "const": "aether.data-processing-task.v1" }
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "identifier": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+    }
+  }
+}

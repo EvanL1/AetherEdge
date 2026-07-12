@@ -28,8 +28,8 @@ pub enum ModelCommands {
 
 #[derive(Subcommand)]
 pub enum ProductCommands {
-    /// List all built-in products
-    #[command(about = "Show all built-in products from aether-model")]
+    /// List products selected by active Packs and site configuration
+    #[command(about = "Show products selected by aether-automation")]
     List,
 
     /// Show available products in products/ directory (for development)
@@ -37,7 +37,7 @@ pub enum ProductCommands {
     Available,
 
     /// Get product details
-    #[command(about = "Show detailed information about a built-in product")]
+    #[command(about = "Show detailed information about a selected product")]
     Get {
         /// Product name
         name: String,
@@ -104,7 +104,7 @@ pub enum InstanceCommands {
     },
 
     /// Execute a control action on an instance
-    #[command(about = "Execute a control action on an instance (writes to the device)")]
+    #[command(about = "Submit a confirmed control action to the local command plane")]
     Action {
         /// Instance ID
         instance_id: u32,
@@ -114,19 +114,9 @@ pub enum InstanceCommands {
         /// Value to write
         #[arg(long)]
         value: f64,
-    },
-
-    /// Set a measurement value on an instance
-    #[command(about = "Set a measurement value on an instance")]
-    Measurement {
-        /// Instance ID
-        instance_id: u32,
-        /// Point ID: numeric ("101") or semantic name
+        /// Explicitly confirm this high-risk device command
         #[arg(long)]
-        point_id: String,
-        /// Value to set
-        #[arg(long)]
-        value: f64,
+        confirmed: bool,
     },
 }
 
@@ -274,25 +264,16 @@ async fn handle_instance_command(cmd: InstanceCommands, base_url: &str, json: bo
             instance_id,
             point_id,
             value,
-        } => {
-            let data = client.execute_action(instance_id, &point_id, value).await?;
-            crate::output::print_action(
-                &data,
-                &format!("Action executed on instance {instance_id} point {point_id}: {value}"),
-                json,
-            );
-        },
-        InstanceCommands::Measurement {
-            instance_id,
-            point_id,
-            value,
+            confirmed,
         } => {
             let data = client
-                .set_measurement(instance_id, &point_id, value)
+                .execute_action(instance_id, &point_id, value, confirmed)
                 .await?;
             crate::output::print_action(
                 &data,
-                &format!("Measurement set on instance {instance_id} point {point_id}: {value}"),
+                &format!(
+                    "Local command plane accepted instance {instance_id} point {point_id}: {value}"
+                ),
                 json,
             );
         },

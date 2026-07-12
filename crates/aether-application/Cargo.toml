@@ -16,6 +16,7 @@ aether-data-processing = { version = "0.5.0", path = "../aether-data-processing"
 aether-domain = { version = "0.5.0", path = "../aether-domain" }
 aether-ports = { version = "0.5.0", path = "../aether-ports" }
 thiserror = { workspace = true }
+sha2 = { workspace = true }
 tokio = { workspace = true, features = ["time"] }
 uuid = { workspace = true, features = ["v5"] }
 

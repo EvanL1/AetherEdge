@@ -16,7 +16,9 @@
 
 use super::{AppConfig, ChannelConfig, ServiceConfig};
 #[cfg(test)]
-use crate::core::config::{CHANNELS_TABLE, SERVICE_CONFIG_TABLE};
+use crate::core::config::{
+    CHANNELS_TABLE, SERVICE_CONFIG_TABLE, install_channel_revision_triggers,
+};
 use crate::error::{IoError, Result};
 use std::path::Path;
 use std::sync::Arc;
@@ -197,6 +199,7 @@ mod tests {
 
         // Create channels table
         sqlx::query(CHANNELS_TABLE).execute(&pool).await.unwrap();
+        install_channel_revision_triggers(&pool).await.unwrap();
 
         // Insert test channels
         sqlx::query(
@@ -460,6 +463,7 @@ mod tests {
         .unwrap();
 
         sqlx::query(CHANNELS_TABLE).execute(&pool).await.unwrap();
+        install_channel_revision_triggers(&pool).await.unwrap();
 
         // Try to insert duplicate channel IDs - but SQLite will reject the second one
         // So we need a different approach - let's create two channels and manually test validation
@@ -505,6 +509,7 @@ mod tests {
         .unwrap();
 
         sqlx::query(CHANNELS_TABLE).execute(&pool).await.unwrap();
+        install_channel_revision_triggers(&pool).await.unwrap();
 
         pool.close().await;
 
@@ -539,6 +544,7 @@ mod tests {
         .unwrap();
 
         sqlx::query(CHANNELS_TABLE).execute(&pool).await.unwrap();
+        install_channel_revision_triggers(&pool).await.unwrap();
 
         sqlx::query(
             "INSERT INTO channels (channel_id, name, protocol, config) VALUES (1001, 'Single Channel', 'modbus_tcp', '{}')",

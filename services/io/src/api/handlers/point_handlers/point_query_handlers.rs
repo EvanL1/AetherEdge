@@ -4,8 +4,8 @@
 
 use crate::api::routes::AppState;
 use crate::dto::{AppError, SuccessResponse};
+use aether_domain::PointKind;
 use aether_model::PointType;
-use aether_rtdb_shm::SlotIo;
 use axum::{
     extract::{Path, Query, State},
     response::Json,
@@ -59,12 +59,18 @@ pub async fn get_point_info_handler(
     let layout = state
         .channel_manager
         .shm_handle()
-        .layout_arc()
+        .generation()
         .ok_or_else(|| AppError::service_unavailable("authoritative SHM is unavailable"))?;
+    let kind = match point_type {
+        PointType::Telemetry => PointKind::Telemetry,
+        PointType::Signal => PointKind::Status,
+        PointType::Control => PointKind::Command,
+        PointType::Adjustment => PointKind::Action,
+    };
     let sample = layout
-        .index
-        .lookup(channel_id, point_type, point_id)
-        .and_then(|slot| layout.writer.read_slot(slot));
+        .manifest()
+        .slot(channel_id, kind, point_id)
+        .and_then(|slot| layout.read_slot(slot));
     let value = sample
         .filter(|sample| sample.value.is_finite())
         .map(|sample| sample.value.to_string());
@@ -209,22 +215,7 @@ pub async fn get_point_mapping_with_type_handler(
 /// Reads the point definition from SQLite: register address, byte order, scale factor,
 /// unit, alarm limits, etc. Does not query live SHM — returns static configuration
 /// only. Use this to pre-populate the "edit point" dialog in the frontend. For the
-/// real-time value use `/api/channels/{id}/points/{point_id}`.
-#[utoipa::path(
-    get,
-    path = "/api/channels/{channel_id}/{type}/points/{point_id}/config",
-    params(
-        ("channel_id" = u32, Path, description = "Channel identifier"),
-        ("type" = String, Path, description = "Point type: T, S, C, or A"),
-        ("point_id" = u32, Path, description = "Point identifier")
-    ),
-    responses(
-        (status = 200, description = "Point configuration", body = crate::dto::PointDefinition),
-        (status = 400, description = "Invalid point type"),
-        (status = 404, description = "Channel or point not found")
-    ),
-    tag = "io"
-)]
+/// real-time value use `/api/channels/{channel_id}/{type}/{point_id}`.
 async fn get_point_config_handler_inner(
     channel_id: u32,
     point_type: &str,
@@ -342,6 +333,19 @@ pub async fn get_unmapped_points_handler(
 // ============================================================================
 
 /// Get telemetry point configuration
+#[utoipa::path(
+    get,
+    path = "/api/channels/{channel_id}/T/points/{point_id}",
+    params(
+        ("channel_id" = u32, Path, description = "Channel identifier"),
+        ("point_id" = u32, Path, description = "Telemetry point identifier")
+    ),
+    responses(
+        (status = 200, description = "Telemetry point configuration", body = crate::dto::PointDefinition),
+        (status = 404, description = "Channel or telemetry point not found")
+    ),
+    tag = "io"
+)]
 pub async fn get_telemetry_point_config_handler(
     Path((channel_id, point_id)): Path<(u32, u32)>,
     State(state): State<AppState>,
@@ -350,6 +354,19 @@ pub async fn get_telemetry_point_config_handler(
 }
 
 /// Get signal point configuration
+#[utoipa::path(
+    get,
+    path = "/api/channels/{channel_id}/S/points/{point_id}",
+    params(
+        ("channel_id" = u32, Path, description = "Channel identifier"),
+        ("point_id" = u32, Path, description = "Signal point identifier")
+    ),
+    responses(
+        (status = 200, description = "Signal point configuration", body = crate::dto::PointDefinition),
+        (status = 404, description = "Channel or signal point not found")
+    ),
+    tag = "io"
+)]
 pub async fn get_signal_point_config_handler(
     Path((channel_id, point_id)): Path<(u32, u32)>,
     State(state): State<AppState>,
@@ -358,6 +375,19 @@ pub async fn get_signal_point_config_handler(
 }
 
 /// Get control point configuration
+#[utoipa::path(
+    get,
+    path = "/api/channels/{channel_id}/C/points/{point_id}",
+    params(
+        ("channel_id" = u32, Path, description = "Channel identifier"),
+        ("point_id" = u32, Path, description = "Control point identifier")
+    ),
+    responses(
+        (status = 200, description = "Control point configuration", body = crate::dto::PointDefinition),
+        (status = 404, description = "Channel or control point not found")
+    ),
+    tag = "io"
+)]
 pub async fn get_control_point_config_handler(
     Path((channel_id, point_id)): Path<(u32, u32)>,
     State(state): State<AppState>,
@@ -366,6 +396,19 @@ pub async fn get_control_point_config_handler(
 }
 
 /// Get adjustment point configuration
+#[utoipa::path(
+    get,
+    path = "/api/channels/{channel_id}/A/points/{point_id}",
+    params(
+        ("channel_id" = u32, Path, description = "Channel identifier"),
+        ("point_id" = u32, Path, description = "Adjustment point identifier")
+    ),
+    responses(
+        (status = 200, description = "Adjustment point configuration", body = crate::dto::PointDefinition),
+        (status = 404, description = "Channel or adjustment point not found")
+    ),
+    tag = "io"
+)]
 pub async fn get_adjustment_point_config_handler(
     Path((channel_id, point_id)): Path<(u32, u32)>,
     State(state): State<AppState>,
@@ -420,6 +463,7 @@ mod cache_tests {
             sqlite_pool,
             command_tx_cache,
             allow_simulation_writes: false,
+            channel_reconciliation: None,
         }
     }
 
@@ -431,13 +475,26 @@ mod cache_tests {
         let layout = state
             .channel_manager
             .shm_handle()
-            .layout_arc()
+            .generation()
             .expect("test SHM layout");
-        let slot = layout
-            .index
-            .lookup(channel_id, PointType::Telemetry, point_id)
-            .expect("telemetry slot");
-        layout.writer.set_direct(slot, 750.0, 7500.0, 1_729_001_000);
+        let address = aether_domain::ChannelPointAddress::new(
+            aether_domain::ChannelId::new(channel_id),
+            PointKind::Telemetry,
+            aether_domain::PointId::new(point_id),
+        )
+        .expect("telemetry address");
+        let sample = aether_domain::AcquiredPointSample::new(
+            address,
+            750.0,
+            7500.0,
+            aether_domain::TimestampMs::new(1_729_001_000),
+            aether_domain::PointQuality::Good,
+        )
+        .expect("finite sample");
+        layout
+            .acquisition_writer()
+            .commit_batch(&[sample])
+            .expect("seed telemetry through the acquisition port");
 
         let result =
             get_point_info_handler(State(state), Path((channel_id, "T".to_string(), point_id)))

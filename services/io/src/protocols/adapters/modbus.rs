@@ -235,9 +235,10 @@ impl ModbusChannel {
 // Trait Implementations
 // ============================================================================
 
-impl HasMetadata for ModbusChannel {
+impl ModbusChannel {
+    /// Exact commissioning metadata for the TCP transport.
     #[allow(clippy::disallowed_methods)]
-    fn metadata() -> DriverMetadata {
+    pub(crate) fn tcp_metadata() -> DriverMetadata {
         DriverMetadata {
             name: "modbus_tcp",
             display_name: "Modbus TCP",
@@ -246,12 +247,8 @@ impl HasMetadata for ModbusChannel {
             example_config: serde_json::json!({
                 "host": "192.168.1.100",
                 "port": 502,
-                "slave_id": 1,
-                "connect_timeout_ms": 5000,
                 "read_timeout_ms": 3000,
-                "polling_interval_ms": 1000,
-                "max_batch_size": 64,
-                "max_reconnect_attempts": 5
+                "poll_interval_ms": 1000
             }),
             parameters: vec![
                 ParameterMetadata::required(
@@ -259,58 +256,88 @@ impl HasMetadata for ModbusChannel {
                     "Host",
                     "Modbus device IP address or hostname",
                     ParameterType::String,
-                ),
-                ParameterMetadata::optional(
+                )
+                .with_min_length(1),
+                ParameterMetadata::required(
                     "port",
                     "Port",
-                    "Modbus TCP port",
+                    "Modbus TCP port (1-65535)",
                     ParameterType::Integer,
-                    serde_json::json!(502),
-                ),
-                ParameterMetadata::optional(
-                    "slave_id",
-                    "Slave ID",
-                    "Modbus slave/unit ID (1-247)",
-                    ParameterType::Integer,
-                    serde_json::json!(1),
-                ),
-                ParameterMetadata::optional(
-                    "connect_timeout_ms",
-                    "Connect Timeout (ms)",
-                    "Connection timeout in milliseconds",
-                    ParameterType::Integer,
-                    serde_json::json!(5000),
-                ),
+                )
+                .with_integer_range(1, u64::from(u16::MAX)),
                 ParameterMetadata::optional(
                     "read_timeout_ms",
                     "Read Timeout (ms)",
-                    "Read operation timeout in milliseconds",
+                    "Read operation timeout in milliseconds (1-86400000)",
                     ParameterType::Integer,
                     serde_json::json!(3000),
-                ),
+                )
+                .with_integer_range(1, 86_400_000),
                 ParameterMetadata::optional(
-                    "polling_interval_ms",
+                    "poll_interval_ms",
                     "Polling Interval (ms)",
-                    "Polling interval in milliseconds",
+                    "Polling interval in milliseconds (1-86400000)",
                     ParameterType::Integer,
                     serde_json::json!(1000),
-                ),
-                ParameterMetadata::optional(
-                    "max_batch_size",
-                    "Max Batch Size",
-                    "Maximum registers per batch read (default 64, max 125)",
-                    ParameterType::Integer,
-                    serde_json::json!(64),
-                ),
-                ParameterMetadata::optional(
-                    "max_reconnect_attempts",
-                    "Max Reconnect Attempts",
-                    "Maximum reconnection attempts before giving up",
-                    ParameterType::Integer,
-                    serde_json::json!(5),
-                ),
+                )
+                .with_integer_range(1, 86_400_000),
             ],
         }
+    }
+
+    /// Exact commissioning metadata for the serial RTU transport.
+    #[allow(clippy::disallowed_methods)]
+    pub(crate) fn rtu_metadata() -> DriverMetadata {
+        DriverMetadata {
+            name: "modbus_rtu",
+            display_name: "Modbus RTU",
+            description: "Industrial Modbus RTU protocol over a serial device.",
+            is_recommended: true,
+            example_config: serde_json::json!({
+                "device": "/dev/ttyUSB0",
+                "baud_rate": 9600,
+                "read_timeout_ms": 3000,
+                "poll_interval_ms": 1000
+            }),
+            parameters: vec![
+                ParameterMetadata::required(
+                    "device",
+                    "Serial Device",
+                    "Non-empty serial device path",
+                    ParameterType::String,
+                )
+                .with_min_length(1),
+                ParameterMetadata::required(
+                    "baud_rate",
+                    "Baud Rate",
+                    "Serial baud rate (1-4294967295)",
+                    ParameterType::Integer,
+                )
+                .with_integer_range(1, u64::from(u32::MAX)),
+                ParameterMetadata::optional(
+                    "read_timeout_ms",
+                    "Read Timeout (ms)",
+                    "Read operation timeout in milliseconds (1-86400000)",
+                    ParameterType::Integer,
+                    serde_json::json!(3000),
+                )
+                .with_integer_range(1, 86_400_000),
+                ParameterMetadata::optional(
+                    "poll_interval_ms",
+                    "Polling Interval (ms)",
+                    "Polling interval in milliseconds (1-86400000)",
+                    ParameterType::Integer,
+                    serde_json::json!(1000),
+                )
+                .with_integer_range(1, 86_400_000),
+            ],
+        }
+    }
+}
+
+impl HasMetadata for ModbusChannel {
+    fn metadata() -> DriverMetadata {
+        Self::tcp_metadata()
     }
 }
 

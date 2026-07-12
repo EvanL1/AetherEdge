@@ -3,17 +3,105 @@
 use std::collections::BTreeMap;
 use std::hash::{Hash, Hasher};
 
-use aether_domain::PointKind;
+use aether_domain::{ChannelId, PointId, PointKind};
 
+/// Point kinds in their stable physical SHM allocation order.
+pub const CHANNEL_POINT_KINDS: [PointKind; 4] = [
+    PointKind::Telemetry,
+    PointKind::Status,
+    PointKind::Command,
+    PointKind::Action,
+];
+
+/// Strongly typed address of one physical channel point.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct PhysicalPointAddress {
+    channel_id: ChannelId,
+    kind: PointKind,
+    point_id: PointId,
+}
+
+impl PhysicalPointAddress {
+    /// Creates a physical channel-point address.
+    #[must_use]
+    pub const fn new(channel_id: ChannelId, kind: PointKind, point_id: PointId) -> Self {
+        Self {
+            channel_id,
+            kind,
+            point_id,
+        }
+    }
+
+    /// Creates an address from the legacy database/wire representation.
+    ///
+    /// New domain code should use [`Self::new`]. This named conversion remains
+    /// only while existing service interfaces still expose raw numeric IDs.
+    #[must_use]
+    pub const fn from_legacy_raw(channel_id: u32, kind: PointKind, point_id: u32) -> Self {
+        Self::new(ChannelId::new(channel_id), kind, PointId::new(point_id))
+    }
+
+    /// Returns the owning physical channel identifier.
+    #[must_use]
+    pub const fn channel_id(self) -> ChannelId {
+        self.channel_id
+    }
+
+    /// Returns the point kind without exposing numeric wire codes.
+    #[must_use]
+    pub const fn kind(self) -> PointKind {
+        self.kind
+    }
+
+    /// Returns the point identifier within the channel and kind.
+    #[must_use]
+    pub const fn point_id(self) -> PointId {
+        self.point_id
+    }
+}
+
+/// Deterministic slot layout for one physical channel.
 #[derive(Debug, Clone, Default)]
-struct ChannelLayout {
+pub struct ChannelPointLayout {
     base_slot: usize,
     type_offsets: [usize; 4],
     type_counts: [u32; 4],
 }
 
-impl ChannelLayout {
-    fn slot(&self, kind: PointKind, point_id: u32) -> Option<usize> {
+impl ChannelPointLayout {
+    /// Returns the first slot reserved for this channel.
+    #[must_use]
+    pub const fn base_slot(&self) -> usize {
+        self.base_slot
+    }
+
+    /// Returns the four point counts in stable T/S/C/A order.
+    #[must_use]
+    pub const fn counts(&self) -> [u32; 4] {
+        self.type_counts
+    }
+
+    /// Returns one kind's offset from this channel's base slot.
+    #[must_use]
+    pub const fn type_offset(&self, kind: PointKind) -> usize {
+        self.type_offsets[kind_index(kind)]
+    }
+
+    /// Returns the number of points of one typed kind.
+    #[must_use]
+    pub const fn point_count(&self, kind: PointKind) -> u32 {
+        self.type_counts[kind_index(kind)]
+    }
+
+    /// Returns the total number of physical points, excluding padding slots.
+    #[must_use]
+    pub fn total_points(&self) -> u32 {
+        self.type_counts.iter().copied().sum()
+    }
+
+    /// Resolves a typed point within this channel to a physical slot.
+    #[must_use]
+    pub fn slot(&self, kind: PointKind, point_id: u32) -> Option<usize> {
         let type_index = kind_index(kind);
         if point_id >= self.type_counts[type_index] {
             return None;
@@ -30,7 +118,9 @@ impl ChannelLayout {
 #[derive(Debug, Clone, Default)]
 pub struct ChannelPointManifest {
     counts: BTreeMap<u32, [u32; 4]>,
-    layouts: BTreeMap<u32, ChannelLayout>,
+    layouts: BTreeMap<u32, ChannelPointLayout>,
+    physical_points: Vec<Option<PhysicalPointAddress>>,
+    point_count: usize,
     slot_count: usize,
 }
 
@@ -63,7 +153,7 @@ impl ChannelPointManifest {
 
             layouts.insert(
                 channel_id,
-                ChannelLayout {
+                ChannelPointLayout {
                     base_slot,
                     type_offsets,
                     type_counts: *channel_counts,
@@ -71,23 +161,89 @@ impl ChannelPointManifest {
             );
         }
 
+        let mut physical_points = vec![None; next_slot];
+        let mut point_count = 0_usize;
+        for (&channel_id, layout) in &layouts {
+            for kind in CHANNEL_POINT_KINDS {
+                for point_id in 0..layout.point_count(kind) {
+                    if let Some(slot) = layout.slot(kind, point_id) {
+                        physical_points[slot] = Some(PhysicalPointAddress::new(
+                            ChannelId::new(channel_id),
+                            kind,
+                            PointId::new(point_id),
+                        ));
+                        point_count += 1;
+                    }
+                }
+            }
+        }
+
         Self {
             counts,
             layouts,
+            physical_points,
+            point_count,
             slot_count: next_slot,
         }
     }
 
-    /// Resolves a channel point to its physical SHM slot.
+    /// Resolves a strongly typed physical point address to its SHM slot.
+    #[must_use]
+    pub fn slot_for(&self, address: PhysicalPointAddress) -> Option<usize> {
+        self.layouts
+            .get(&address.channel_id().get())?
+            .slot(address.kind(), address.point_id().get())
+    }
+
+    /// Resolves a legacy raw channel point to its physical SHM slot.
+    ///
+    /// This compatibility shim can be removed once HTTP/CLI adapters convert
+    /// their numeric IDs into domain IDs before invoking the manifest.
     #[must_use]
     pub fn slot(&self, channel_id: u32, kind: PointKind, point_id: u32) -> Option<usize> {
-        self.layouts.get(&channel_id)?.slot(kind, point_id)
+        self.slot_for(PhysicalPointAddress::from_legacy_raw(
+            channel_id, kind, point_id,
+        ))
+    }
+
+    /// Returns the typed physical point occupying a slot, or `None` for
+    /// padding and out-of-range slots.
+    #[must_use]
+    pub fn physical_point_at(&self, slot: usize) -> Option<PhysicalPointAddress> {
+        self.physical_points.get(slot).copied().flatten()
+    }
+
+    /// Iterates physical points in ascending slot order, skipping padding.
+    pub fn iter_physical_points(&self) -> impl Iterator<Item = (usize, PhysicalPointAddress)> + '_ {
+        self.physical_points
+            .iter()
+            .enumerate()
+            .filter_map(|(slot, address)| address.map(|address| (slot, address)))
+    }
+
+    /// Returns one channel's deterministic typed layout.
+    #[must_use]
+    pub fn channel_layout(&self, channel_id: u32) -> Option<&ChannelPointLayout> {
+        self.layouts.get(&channel_id)
+    }
+
+    /// Iterates channel layouts in ascending channel-id order.
+    pub fn iter_channel_layouts(&self) -> impl Iterator<Item = (u32, &ChannelPointLayout)> + '_ {
+        self.layouts
+            .iter()
+            .map(|(&channel_id, layout)| (channel_id, layout))
     }
 
     /// Returns the number of live slots, including cache-line padding.
     #[must_use]
     pub const fn slot_count(&self) -> usize {
         self.slot_count
+    }
+
+    /// Returns the number of physical points, excluding padding slots.
+    #[must_use]
+    pub const fn point_count(&self) -> usize {
+        self.point_count
     }
 
     /// Computes the exact layout fingerprint written into the SHM header.

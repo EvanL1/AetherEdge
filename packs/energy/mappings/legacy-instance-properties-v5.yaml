@@ -1,0 +1,10 @@
+schema: aether.pack.mapping-set.v1
+id: energy.legacy-instance-properties-v5
+kind: legacy_instance_properties_migration
+description: Resolve legacy JSON property names through Energy model templates before kernel schema v5.
+compatibility:
+  owner: energy
+  removed_from_kernel: 0.5.0
+  apply_before_kernel_schema: 5
+  source: instances.properties
+  target: instance_properties.property_id

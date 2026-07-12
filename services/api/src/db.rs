@@ -80,16 +80,10 @@ pub async fn init_roles(pool: &SqlitePool) -> Result<()> {
     Ok(())
 }
 
-pub async fn init_calculated_points(pool: &SqlitePool) -> Result<()> {
-    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM calculated_points")
-        .fetch_one(pool)
-        .await?;
-
-    if count == 0 {
-        const DEFAULT_SQL: &str = include_str!("../assets/calculated_points.sql");
-        sqlx::query(DEFAULT_SQL).execute(pool).await?;
-    }
-
+/// Retained as an explicit bootstrap hook while the Kernel default remains
+/// industry-neutral. Domain distributions may provision their own points at a
+/// composition root, but the core API never imports them automatically.
+pub async fn init_calculated_points(_pool: &SqlitePool) -> Result<()> {
     Ok(())
 }
 
@@ -368,12 +362,59 @@ pub async fn reset_calculated_points(pool: &SqlitePool) -> Result<i64> {
         .execute(pool)
         .await?;
 
-    const DEFAULT_SQL: &str = include_str!("../assets/calculated_points.sql");
-    sqlx::query(DEFAULT_SQL).execute(pool).await?;
+    Ok(0)
+}
 
-    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM calculated_points")
-        .fetch_one(pool)
-        .await?;
+#[cfg(test)]
+mod calculated_point_defaults_tests {
+    use sqlx::sqlite::SqlitePoolOptions;
 
-    Ok(count)
+    use super::*;
+
+    async fn empty_database() -> SqlitePool {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("open isolated API database");
+        create_tables(&pool).await.expect("create API tables");
+        pool
+    }
+
+    #[tokio::test]
+    async fn empty_database_initialization_keeps_calculated_points_empty() {
+        let pool = empty_database().await;
+
+        init_calculated_points(&pool)
+            .await
+            .expect("initialize calculated points");
+
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM calculated_points")
+            .fetch_one(&pool)
+            .await
+            .expect("count calculated points");
+        assert_eq!(count, 0);
+    }
+
+    #[tokio::test]
+    async fn reset_clears_calculated_points_without_restoring_domain_defaults() {
+        let pool = empty_database().await;
+        sqlx::query(
+            "INSERT INTO calculated_points (name, formula, unit) VALUES ('Derived signal', '1+1', '1')",
+        )
+        .execute(&pool)
+        .await
+        .expect("insert calculated point");
+
+        let remaining_count = reset_calculated_points(&pool)
+            .await
+            .expect("reset calculated points");
+
+        assert_eq!(remaining_count, 0);
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM calculated_points")
+            .fetch_one(&pool)
+            .await
+            .expect("count calculated points");
+        assert_eq!(count, 0);
+    }
 }

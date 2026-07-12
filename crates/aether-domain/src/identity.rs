@@ -36,6 +36,10 @@ macro_rules! numeric_id {
 }
 
 numeric_id!(InstanceId, u32);
+numeric_id!(ChannelId, u32);
 numeric_id!(PointId, u32);
+numeric_id!(RuleId, u64);
+numeric_id!(AlarmRuleId, u64);
+numeric_id!(AlertId, u64);
 numeric_id!(CommandId, u128);
 numeric_id!(TimestampMs, u64);

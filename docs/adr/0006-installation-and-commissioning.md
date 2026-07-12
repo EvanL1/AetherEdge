@@ -57,10 +57,13 @@ boundaries.
    humans. A setup apply never starts services, installs a pack, or enables a
    channel, instance, rule, or physical control capability. Future device
    commissioning plans remain explicit and audited.
-9. Repository Markdown remains the documentation source of truth. A hosted
-   static mirror may improve discovery, search, and version navigation, but it
-   cannot become an edge-runtime dependency and must retain version-matched
-   offline resources.
+9. Repository Markdown remains the source of truth for narrative and
+   operational guidance. Per-operation HTTP parameters, security, schemas,
+   and responses come from each service's generated OpenAPI document and
+   built-in Swagger UI; Markdown links to that contract instead of duplicating
+   it. A hosted static mirror may improve discovery, search, and version
+   navigation, but it cannot become an edge-runtime dependency and must retain
+   version-matched offline resources.
 10. Setup plan IDs bind the absolute configuration/data paths, setup plan
     schema, CLI build version, core schema version, and expected hashes of all
     embedded safe files. SQLite inspection uses a stable private DB+WAL
@@ -80,6 +83,15 @@ boundaries.
     or old-database import. Replacing a release requires an explicit backup and
     deployment-specific uninstall followed by operator-managed removal or
     relocation of every retained footprint.
+13. A Pack-only artifact is a separate, data-only directory containing exactly
+    `pack-artifact.json` and `pack/`. Its metadata binds the Pack to an exact
+    Kernel version, target triple, and verified runtime-manifest digest, and
+    inventories every payload file by size and SHA-256. The already installed
+    `aether packs install` command verifies that closed contract, publishes to
+    `<data-dir>/packs/<id>/<version>`, then atomically activates the absolute
+    root in `global.yaml`. A failure leaves the prior configuration active and
+    removes a newly published version. Pack installation never starts services
+    or commissions devices, instances, channels, rules, or processors.
 
 ## Consequences
 
@@ -93,6 +105,8 @@ boundaries.
 - The standalone runtime stays industry-neutral and external-service-free.
 - Online documentation can evolve independently from deterministic edge
   operation.
+- Pack releases can be installed without copying or rebuilding Kernel binaries
+  and without exposing a partially written active configuration.
 
 ### Negative
 

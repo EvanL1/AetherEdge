@@ -2,11 +2,7 @@
 //!
 //! Extracted from shm.rs to keep each module focused on a single concern.
 
-use aether_model::KeySpaceConfig;
-use aether_routing::RoutingCache;
-use aether_rtdb_shm::UnifiedReader;
 use anyhow::{Context, Result};
-use common::PointType;
 use crossterm::ExecutableCommand;
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use crossterm::terminal::{
@@ -18,9 +14,10 @@ use ratatui::layout::{Constraint, Direction, Layout};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::widgets::{Block, Borders, Cell, Paragraph, Row, Table, TableState};
 use std::io;
+use std::path::Path;
 use std::time::{Duration, Instant};
 
-use crate::shm::{get_value, open_reader, parse_key};
+use crate::shm::{ShmKey, ShmRuntimeView, get_value, open_reader, parse_key};
 
 /// Point data for display in TUI
 struct PointRow {
@@ -65,7 +62,8 @@ impl DashboardState {
 }
 
 /// Run the TUI dashboard
-pub fn run_dashboard() -> Result<()> {
+pub async fn run_dashboard(data_directory: &Path) -> Result<()> {
+    let reader = open_reader(data_directory).await?;
     enable_raw_mode().context("Failed to enable raw mode")?;
     let mut stdout = io::stdout();
     stdout
@@ -74,17 +72,10 @@ pub fn run_dashboard() -> Result<()> {
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend).context("Failed to create terminal")?;
 
-    let (reader, routing_cache) = open_reader()?;
     let mut state = DashboardState::new();
     let tick_rate = Duration::from_millis(250);
 
-    let result = run_dashboard_loop(
-        &mut terminal,
-        &reader,
-        &routing_cache,
-        &mut state,
-        tick_rate,
-    );
+    let result = run_dashboard_loop(&mut terminal, &reader, &mut state, tick_rate);
 
     disable_raw_mode().context("Failed to disable raw mode")?;
     terminal
@@ -97,16 +88,15 @@ pub fn run_dashboard() -> Result<()> {
 
 fn run_dashboard_loop(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
-    reader: &UnifiedReader,
-    routing_cache: &RoutingCache,
+    reader: &ShmRuntimeView,
     state: &mut DashboardState,
     tick_rate: Duration,
 ) -> Result<()> {
     let mut last_tick = Instant::now();
 
     loop {
-        refresh_point_data(reader, routing_cache, state);
-        terminal.draw(|f| draw_dashboard(f, reader, routing_cache, state))?;
+        refresh_point_data(reader, state);
+        terminal.draw(|f| draw_dashboard(f, reader, state))?;
 
         let timeout = tick_rate.saturating_sub(last_tick.elapsed());
         if event::poll(timeout).context("Failed to poll events")?
@@ -131,12 +121,8 @@ fn run_dashboard_loop(
     }
 }
 
-fn refresh_point_data(
-    reader: &UnifiedReader,
-    routing_cache: &RoutingCache,
-    state: &mut DashboardState,
-) {
-    let instance_count = reader.instance_ids(routing_cache).len();
+fn refresh_point_data(reader: &ShmRuntimeView, state: &mut DashboardState) {
+    let instance_count = reader.instance_ids().len();
     let channel_count = reader.channel_ids().len();
 
     let should_rescan = instance_count != state.last_instance_count
@@ -144,49 +130,29 @@ fn refresh_point_data(
         || state.last_scan.elapsed() > Duration::from_secs(5);
 
     if should_rescan {
-        state.points = collect_all_points(reader, routing_cache);
+        state.points = collect_all_points(reader);
         state.last_instance_count = instance_count;
         state.last_channel_count = channel_count;
         state.last_scan = Instant::now();
     } else {
-        update_point_values(reader, routing_cache, &mut state.points);
+        update_point_values(reader, &mut state.points);
     }
 }
 
-fn collect_all_points(reader: &UnifiedReader, routing_cache: &RoutingCache) -> Vec<PointRow> {
+fn collect_all_points(reader: &ShmRuntimeView) -> Vec<PointRow> {
     let mut rows = Vec::new();
-    let keyspace = KeySpaceConfig::production_cached();
 
-    for inst_id in reader.instance_ids(routing_cache) {
-        reader.iter_instance_measurements(inst_id, routing_cache, |point_id, value| {
+    for key in reader.named_keys() {
+        let kind = match &key {
+            ShmKey::Instance { point_type: 0, .. } => "M",
+            ShmKey::Instance { .. } => "A",
+            ShmKey::Channel { point_type, .. } => point_type.as_str(),
+        };
+        if let Ok(Some(value)) = get_value(reader, &key) {
             rows.push(PointRow {
-                key: keyspace.instance_measurement_point_key(inst_id, &point_id.to_string()),
-                kind: "M",
+                key: key.to_string(),
+                kind,
                 value,
-            });
-        });
-        reader.iter_instance_actions(inst_id, routing_cache, |point_id, value| {
-            rows.push(PointRow {
-                key: keyspace.instance_action_point_key(inst_id, &point_id.to_string()),
-                kind: "A",
-                value,
-            });
-        });
-    }
-
-    for &ch_id in reader.channel_ids() {
-        for point_type in [
-            PointType::Telemetry,
-            PointType::Signal,
-            PointType::Control,
-            PointType::Adjustment,
-        ] {
-            reader.iter_channel_points(ch_id, point_type, |point_id, value| {
-                rows.push(PointRow {
-                    key: format!("ch:{}:{}:{}", ch_id, point_type.as_str(), point_id),
-                    kind: point_type.as_str(),
-                    value,
-                });
             });
         }
     }
@@ -194,29 +160,20 @@ fn collect_all_points(reader: &UnifiedReader, routing_cache: &RoutingCache) -> V
     rows
 }
 
-fn update_point_values(
-    reader: &UnifiedReader,
-    routing_cache: &RoutingCache,
-    points: &mut [PointRow],
-) {
+fn update_point_values(reader: &ShmRuntimeView, points: &mut [PointRow]) {
     for point in points.iter_mut() {
         if let Ok(key) = parse_key(&point.key)
-            && let Some(value) = get_value(reader, &key, routing_cache)
+            && let Ok(Some(value)) = get_value(reader, &key)
         {
             point.value = value;
         }
     }
 }
 
-fn draw_dashboard(
-    f: &mut ratatui::Frame,
-    reader: &UnifiedReader,
-    routing_cache: &RoutingCache,
-    state: &DashboardState,
-) {
-    let alive = reader.is_writer_alive(5000);
+fn draw_dashboard(f: &mut ratatui::Frame, reader: &ShmRuntimeView, state: &DashboardState) {
+    let alive = reader.is_writer_alive(Duration::from_secs(5));
     let heartbeat = reader.writer_heartbeat();
-    let heartbeat_age = aether_rtdb_shm::timestamp_ms().saturating_sub(heartbeat);
+    let heartbeat_age = aether_dataplane::core::config::timestamp_ms().saturating_sub(heartbeat);
 
     let chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -231,7 +188,7 @@ fn draw_dashboard(
 
     let status_text = format!(
         " Instances: {}  Channels: {}  Points: {}  Writer: {}  │  [q]uit [↑↓]scroll [r]efresh",
-        reader.instance_ids(routing_cache).len(),
+        reader.instance_ids().len(),
         reader.channel_ids().len(),
         state.points.len(),
         writer_status

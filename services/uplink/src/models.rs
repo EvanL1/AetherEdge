@@ -130,6 +130,10 @@ pub struct CommandReply {
 
 // ── Dynamic service configuration ────────────────────────────────────────────
 
+fn always_omit_mqtt_password(_: &Option<String>) -> bool {
+    true
+}
+
 /// MQTT gateway service configuration (`POST /netApi/mqtt/config`).
 ///
 /// Changes take effect immediately — uplink reconnects to the broker without
@@ -192,9 +196,11 @@ pub struct NetConfig {
     #[serde(default)]
     pub username: Option<String>,
 
-    /// MQTT password (optional). Used together with `username`.
-    #[schema(example = json!(null))]
-    #[serde(default)]
+    /// MQTT password (optional). Used together with `username`. Omit or send
+    /// `null` on update to retain the stored secret; send an empty string to
+    /// clear it. The value is never returned by read APIs.
+    #[schema(write_only, example = json!(null))]
+    #[serde(default, skip_serializing_if = "always_omit_mqtt_password")]
     pub password: Option<String>,
 
     // -- TLS --
@@ -297,6 +303,12 @@ impl NetConfig {
         self.report_batch_size = self.report_batch_size.max(1);
         self.system_monitor_interval_secs = self.system_monitor_interval_secs.max(1);
     }
+
+    pub fn preserve_write_only_secrets_from(&mut self, current: &Self) {
+        if self.password.is_none() {
+            self.password.clone_from(&current.password);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -325,6 +337,40 @@ mod config_tests {
         assert_eq!(cfg.report_interval_secs, 1);
         assert_eq!(cfg.report_batch_size, 1);
         assert_eq!(cfg.system_monitor_interval_secs, 1);
+    }
+
+    #[test]
+    fn mqtt_password_is_accepted_but_never_serialized() {
+        let mut input =
+            serde_json::to_value(NetConfig::default()).expect("serialize default config");
+        input["password"] = serde_json::json!("private-broker-secret");
+        let config: NetConfig = serde_json::from_value(input).expect("deserialize MQTT password");
+        assert_eq!(config.password.as_deref(), Some("private-broker-secret"));
+
+        let serialized = serde_json::to_value(config).expect("serialize redacted config");
+        assert!(
+            serialized.get("password").is_none(),
+            "MQTT password must never appear in API serialization"
+        );
+    }
+
+    #[test]
+    fn omitted_password_is_preserved_and_empty_password_clears_it() {
+        let current = NetConfig {
+            password: Some("private-broker-secret".to_string()),
+            ..NetConfig::default()
+        };
+
+        let mut omitted = NetConfig::default();
+        omitted.preserve_write_only_secrets_from(&current);
+        assert_eq!(omitted.password, current.password);
+
+        let mut explicit_clear = NetConfig {
+            password: Some(String::new()),
+            ..NetConfig::default()
+        };
+        explicit_clear.preserve_write_only_secrets_from(&current);
+        assert_eq!(explicit_clear.password.as_deref(), Some(""));
     }
 }
 
@@ -365,4 +411,20 @@ pub struct SystemMetrics {
     pub network_bytes_sent: u64,
     pub network_bytes_recv: u64,
     pub system_uptime_hours: f64,
+}
+
+#[allow(dead_code)] // OpenAPI-only compatibility schema.
+#[derive(Debug, ToSchema)]
+pub struct UplinkDataResponse<T> {
+    pub success: bool,
+    pub message: String,
+    pub data: T,
+}
+
+#[allow(dead_code)] // OpenAPI-only compatibility schema.
+#[derive(Debug, ToSchema)]
+pub struct AlarmQueuedResponse {
+    pub success: bool,
+    pub message: String,
+    pub outbox_id: u64,
 }

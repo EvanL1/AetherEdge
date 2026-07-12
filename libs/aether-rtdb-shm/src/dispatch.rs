@@ -1,11 +1,9 @@
-//! SHM/UDS Action Dispatch Infrastructure
+//! Legacy SHM/UDS action-dispatch compatibility surface.
 //!
-//! Provides the low-latency M2C dispatch path via shared memory and Unix
-//! Domain Socket notifications. Lives in aether-rtdb-shm so both automation
-//! (HTTP /control path) and aether-rules (rule engine actions) can share
-//! the same generation-checked writer and rebuild signal — without this
-//! shared trait the rules executor would carry its own raw UnifiedWriter
-//! and silently write to stale slots after a io restart.
+//! Production automation uses `DeviceCommandSink` from `aether-ports` and the
+//! typed implementation in `aether-shm-bridge`. These raw routing-context
+//! types remain only for legacy tests/benchmarks. The architecture guard
+//! forbids production callers; delete this module once those fixtures migrate.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};

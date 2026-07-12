@@ -3,9 +3,19 @@
 #![allow(clippy::disallowed_methods)]
 #![allow(dead_code)]
 
+use aether_automation::product_loader::ProductLoader;
+use aether_model::product_lib::ProductLibrary;
 use anyhow::Result;
 use sqlx::SqlitePool;
+use std::path::Path;
+use std::sync::Arc;
 use tempfile::TempDir;
+
+pub fn energy_product_loader(pool: SqlitePool) -> ProductLoader {
+    let directory = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../packs/energy/models");
+    let library = ProductLibrary::load(Some(&directory)).expect("load Energy Pack model fixture");
+    ProductLoader::with_library(pool, Arc::new(library))
+}
 
 pub struct TestEnv {
     pub pool: SqlitePool,

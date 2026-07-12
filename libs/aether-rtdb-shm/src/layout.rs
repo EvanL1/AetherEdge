@@ -1,25 +1,23 @@
-//! Channel slot layout — **business-side**, not part of `core::`.
+//! Legacy channel-layout projection — **business-side**, not part of `core::`.
 //!
-//! `ChannelLayout` knows the 4 PointType semantics (T/S/C/A) and translates
-//! `(channel_id, point_type, point_id)` triples into flat slot indices. This
-//! is the adapter between SHM's slot-only world (`core::slot::PointSlot`,
-//! addressed by usize) and the channel/point-type vocabulary that io
-//! and automation speak.
+//! Slot allocation is implemented only by
+//! `aether_shm_bridge::ChannelPointManifest`. `ChannelLayout` projects that
+//! typed result into the historical public fields and `u8` lookup API used by
+//! io and automation; it does not own layout math.
 //!
-//! Long-term direction: when SHM core is promoted to a standalone crate,
-//! this module stays in the business adapter. The header on-mmap already
-//! captures the layout fingerprint as `routing_hash` (a manifest hash);
-//! `ChannelLayout` itself never crosses the process boundary — it is
-//! re-derived in each process from the same `ChannelPointCounts` source.
+//! Removal criterion: delete this projection when no production caller
+//! imports `ChannelLayout`/`allocate_layouts` and both SHM owners construct
+//! their indexes directly from the formal manifest.
 
 use crate::channel_points::ChannelPointCounts;
+use aether_shm_bridge::{CHANNEL_POINT_KINDS, ChannelPointLayout};
 
-/// Channel layout — allocation info for one channel.
+/// Legacy projection of one channel's formal allocation.
 ///
 /// Stored in process memory as `Vec<ChannelLayout>`, indexed by `channel_id`.
 /// Re-derived independently in io (writer) and automation (reader) from the
-/// same `ChannelPointCounts` source; cross-process agreement is verified via
-/// the header's `routing_hash` field, not by sharing this struct.
+/// same manifest source; cross-process agreement is verified via the header's
+/// `routing_hash` field, not by sharing this struct.
 #[derive(Clone, Default, Debug)]
 pub struct ChannelLayout {
     /// Base slot index for this channel
@@ -30,17 +28,15 @@ pub struct ChannelLayout {
     pub type_counts: [u32; 4],
     /// Total points for this channel
     pub total_points: u32,
+    formal: ChannelPointLayout,
 }
 
 impl ChannelLayout {
     /// Calculate slot index for given type and point_id.
     #[inline]
     pub fn slot(&self, point_type: u8, point_id: u32) -> Option<usize> {
-        let type_idx = point_type as usize;
-        if type_idx >= 4 || point_id >= self.type_counts[type_idx] {
-            return None;
-        }
-        Some(self.base_slot + self.type_offsets[type_idx] + point_id as usize)
+        let kind = *CHANNEL_POINT_KINDS.get(point_type as usize)?;
+        self.formal.slot(kind, point_id)
     }
 
     /// Check if this layout is valid (has any points).
@@ -48,22 +44,22 @@ impl ChannelLayout {
     pub fn is_valid(&self) -> bool {
         self.total_points > 0
     }
+
+    fn from_formal(formal: &ChannelPointLayout) -> Self {
+        Self {
+            base_slot: formal.base_slot(),
+            type_offsets: CHANNEL_POINT_KINDS.map(|kind| formal.type_offset(kind)),
+            type_counts: formal.counts(),
+            total_points: formal.total_points(),
+            formal: formal.clone(),
+        }
+    }
 }
 
-/// Round a slot index up to the next 64-byte cache-line boundary.
+/// Projects formal manifest layouts into the legacy vector representation.
 ///
-/// `PointSlot` is 32 B and the slot array starts 64-byte-aligned (the header
-/// is exactly 64 B), so an even slot index begins a fresh cache line.
-#[inline]
-const fn align_to_cache_line(slot: usize) -> usize {
-    (slot + 1) & !1
-}
-
-/// Allocate layouts from channel point counts.
-///
-/// Both Writer and Reader call this with the same `ChannelPointCounts` →
-/// same slot allocation. Routing-independent: layout only depends on which
-/// channels have which point counts.
+/// Both Writer and Reader call this with the same manifest, so the adapter
+/// cannot diverge from the formal allocation algorithm.
 ///
 /// # Writer-ownership cache-line padding
 ///
@@ -83,41 +79,14 @@ const fn align_to_cache_line(slot: usize) -> usize {
 /// Dev-machine caveat: Apple Silicon has 128-byte lines, so residual
 /// sharing is possible there — the production targets (A55, x86) are 64 B.
 pub fn allocate_layouts(channel_points: &ChannelPointCounts) -> (Vec<ChannelLayout>, usize) {
-    // Find max channel_id to size the Vec
-    let max_channel_id = channel_points.0.keys().copied().max().unwrap_or(0);
+    let manifest = channel_points.manifest();
+    let max_channel_id = manifest.counts().keys().copied().max().unwrap_or(0);
     let vec_size = (max_channel_id + 1) as usize;
-
     let mut layouts = vec![ChannelLayout::default(); vec_size];
-    let mut next_slot = 0usize;
-
-    // Allocate in channel_id order (BTreeMap is sorted)
-    for (&channel_id, counts) in &channel_points.0 {
-        let layout = &mut layouts[channel_id as usize];
-
-        // Ownership boundary: previous channel's automation-owned tail must not
-        // share a cache line with this channel's io-owned head.
-        next_slot = align_to_cache_line(next_slot);
-        layout.base_slot = next_slot;
-
-        let has_action_slots = counts[2] + counts[3] > 0;
-
-        // Allocate each type in T/S/C/A order
-        for (type_idx, &count) in counts.iter().enumerate() {
-            // Ownership boundary inside the channel: C/A (automation) must not
-            // share a cache line with T/S (io). Skipped when the channel
-            // has no C/A points so pure-telemetry channels stay dense.
-            if type_idx == 2 && has_action_slots {
-                next_slot = align_to_cache_line(next_slot);
-            }
-            layout.type_offsets[type_idx] = next_slot - layout.base_slot;
-            layout.type_counts[type_idx] = count;
-            next_slot += count as usize;
-        }
-
-        layout.total_points = counts.iter().sum();
+    for (channel_id, formal) in manifest.iter_channel_layouts() {
+        layouts[channel_id as usize] = ChannelLayout::from_formal(formal);
     }
-
-    (layouts, next_slot)
+    (layouts, manifest.slot_count())
 }
 
 #[cfg(test)]

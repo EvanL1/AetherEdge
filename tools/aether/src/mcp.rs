@@ -1,10 +1,10 @@
 //! `aether mcp` — expose CLI capabilities as MCP tools.
 //!
-//! Read-only tools are always registered. Write tools (anything that changes
-//! device state, channel/rule configuration, or persisted data) register only
-//! when `--allow-write` is passed, via a separately-merged ToolRouter — they
-//! are absent from `tools/list`, not merely hint-annotated, when the flag is
-//! off. See docs/reference/mcp-tools.md.
+//! Read-only tools are always registered. `--allow-write` adds only high-risk
+//! commands that already pass through transport-neutral application
+//! capability, authorization, confirmation, and audit policy. Ungoverned
+//! management mutations remain available through their compatibility CLI/HTTP
+//! surfaces but are deliberately absent from MCP `tools/list`.
 //!
 //! Every tool calls exactly one client method and passes the result through
 //! `to_call_result`, which maps `Ok` onto `CallToolResult::structured` and
@@ -26,6 +26,13 @@ use rmcp::{ErrorData, RoleServer, ServerHandler, tool, tool_handler, tool_router
 use serde::Deserialize;
 use serde_json::Value;
 
+use aether_application::{
+    CapabilityDescriptor, EXECUTE_RULE_CAPABILITY, MANAGE_ALARM_RULE_CAPABILITY,
+    MANAGE_CHANNEL_CAPABILITY, MANAGE_ROUTING_CAPABILITY, MANAGE_RULE_CAPABILITY,
+    RECONCILE_CHANNELS_CAPABILITY, RESOLVE_ALERT_CAPABILITY, WRITE_POINT_CAPABILITY,
+};
+use aether_pack::{ActivePackSet, load_active_packs};
+
 use crate::alarms::AlarmClient;
 use crate::channels::{ChannelClient, PointClient};
 use crate::history::HistoryClient;
@@ -45,6 +52,34 @@ fn to_call_result(result: anyhow::Result<Value>) -> CallToolResult {
     }
 }
 
+/// The complete MCP write surface and its transport-neutral application
+/// capability. Keep this mapping exact: `--allow-write` is only a registration
+/// gate and never substitutes for per-invocation confirmation.
+const MCP_WRITE_CAPABILITY_MAPPING: [(&str, CapabilityDescriptor); 22] = [
+    ("channels_create", MANAGE_CHANNEL_CAPABILITY),
+    ("channels_update", MANAGE_CHANNEL_CAPABILITY),
+    ("channels_delete", MANAGE_CHANNEL_CAPABILITY),
+    ("channels_enable", MANAGE_CHANNEL_CAPABILITY),
+    ("channels_disable", MANAGE_CHANNEL_CAPABILITY),
+    ("channels_reconcile", RECONCILE_CHANNELS_CAPABILITY),
+    ("models_instances_action", WRITE_POINT_CAPABILITY),
+    ("rules_execute", EXECUTE_RULE_CAPABILITY),
+    ("rules_enable", MANAGE_RULE_CAPABILITY),
+    ("rules_disable", MANAGE_RULE_CAPABILITY),
+    ("rules_create", MANAGE_RULE_CAPABILITY),
+    ("rules_update", MANAGE_RULE_CAPABILITY),
+    ("rules_delete", MANAGE_RULE_CAPABILITY),
+    ("alarms_rule_create", MANAGE_ALARM_RULE_CAPABILITY),
+    ("alarms_rule_update", MANAGE_ALARM_RULE_CAPABILITY),
+    ("alarms_rule_delete", MANAGE_ALARM_RULE_CAPABILITY),
+    ("alarms_rule_enable", MANAGE_ALARM_RULE_CAPABILITY),
+    ("alarms_rule_disable", MANAGE_ALARM_RULE_CAPABILITY),
+    ("alarms_resolve", RESOLVE_ALERT_CAPABILITY),
+    ("routing_action_upsert", MANAGE_ROUTING_CAPABILITY),
+    ("routing_action_delete", MANAGE_ROUTING_CAPABILITY),
+    ("routing_action_set_enabled", MANAGE_ROUTING_CAPABILITY),
+];
+
 pub(crate) struct AetherMcp {
     channels: ChannelClient,
     points: PointClient,
@@ -55,6 +90,7 @@ pub(crate) struct AetherMcp {
     models: ModelClient,
     templates: TemplateClient,
     net: NetClient,
+    doc_resources: Vec<crate::mcp_docs::DocResource>,
     tool_router: ToolRouter<AetherMcp>,
 }
 
@@ -67,22 +103,58 @@ pub(crate) struct BaseUrls {
 }
 
 impl AetherMcp {
+    /// Constructs the fail-safe generic MCP surface with no domain Pack active.
+    #[cfg(test)]
     pub(crate) fn new(urls: &BaseUrls, allow_write: bool) -> anyhow::Result<Self> {
+        Self::with_active_packs(urls, allow_write, &ActivePackSet::empty())
+    }
+
+    /// Constructs MCP from the single shared `<config>/global.yaml` Pack entry.
+    pub(crate) fn from_active_pack_config(
+        urls: &BaseUrls,
+        allow_write: bool,
+        config_directory: &Path,
+    ) -> anyhow::Result<Self> {
+        let runtime_manifest = aether_runtime_catalog::load_runtime_manifest_for_current_process(
+            config_directory,
+            env!("CARGO_PKG_VERSION"),
+        )?;
+        let pack_runtime = runtime_manifest.pack_runtime()?;
+        let active_packs = load_active_packs(config_directory, &pack_runtime)?;
+        Self::with_active_packs(urls, allow_write, &active_packs)
+    }
+
+    fn with_active_packs(
+        urls: &BaseUrls,
+        allow_write: bool,
+        active_packs: &ActivePackSet,
+    ) -> anyhow::Result<Self> {
         let mut tool_router = Self::read_only_router();
         if allow_write {
-            tool_router += Self::write_router();
+            let write_router = Self::write_router();
+            debug_assert_eq!(
+                write_router.list_all().len(),
+                MCP_WRITE_CAPABILITY_MAPPING.len()
+            );
+            tool_router += write_router;
         }
+
+        #[cfg(test)]
+        let alarms = AlarmClient::with_access_token(&urls.alarm, "mcp-test-access-token")?;
+        #[cfg(not(test))]
+        let alarms = AlarmClient::new(&urls.alarm)?;
 
         Ok(Self {
             channels: ChannelClient::new(&urls.io)?,
             points: PointClient::new(&urls.io)?,
-            alarms: AlarmClient::new(&urls.alarm)?,
+            alarms,
             rules: RuleClient::new(&urls.automation)?,
             routing: RoutingClient::new(&urls.automation)?,
             history: HistoryClient::new(&urls.history)?,
             models: ModelClient::new(&urls.automation)?,
             templates: TemplateClient::new(&urls.io)?,
             net: NetClient::new(&urls.uplink)?,
+            doc_resources: crate::mcp_docs::doc_resources(active_packs)?,
             tool_router,
         })
     }
@@ -187,6 +259,30 @@ struct ChannelsPointsMappingParams {
 struct RuleIdParams {
     /// Rule ID
     rule_id: i64,
+}
+
+#[derive(Deserialize, schemars::JsonSchema)]
+struct RuleMutationIdParams {
+    /// Rule ID
+    rule_id: i64,
+    /// Explicitly confirms this high-risk rule-policy mutation.
+    confirmed: bool,
+}
+
+#[derive(Deserialize, schemars::JsonSchema)]
+struct AlarmRuleMutationIdParams {
+    /// Alarm rule ID
+    id: i64,
+    /// Explicitly confirms this high-risk alarm-policy mutation.
+    confirmed: bool,
+}
+
+#[derive(Deserialize, schemars::JsonSchema)]
+struct AlertResolveParams {
+    /// Active alert ID
+    id: i64,
+    /// Explicitly confirms that the active alert indication may be cleared.
+    confirmed: bool,
 }
 
 #[derive(Deserialize, schemars::JsonSchema)]
@@ -423,6 +519,7 @@ impl AetherMcp {
     }
 }
 
+#[cfg(test)]
 #[derive(Deserialize, schemars::JsonSchema)]
 struct ChannelsWriteParams {
     /// Channel ID
@@ -447,12 +544,12 @@ struct ChannelsCreateParams {
     description: Option<String>,
     /// Explicit channel ID; omit to auto-assign
     id: Option<u32>,
-    /// Whether the channel starts enabled
-    #[serde(default = "default_true")]
+    /// Whether the channel starts enabled. Defaults to false so creation is inert.
+    #[serde(default)]
+    #[schemars(default)]
     enabled: bool,
-}
-fn default_true() -> bool {
-    true
+    /// Explicitly confirms this high-risk channel commissioning mutation.
+    confirmed: bool,
 }
 
 #[derive(Deserialize, schemars::JsonSchema)]
@@ -461,8 +558,31 @@ struct ChannelsUpdateParams {
     channel_id: u32,
     /// Partial update body -- only fields present are changed
     body: Value,
+    /// Optional desired-state compare-and-set revision (minimum 1)
+    #[schemars(range(min = 1))]
+    expected_revision: Option<u64>,
+    /// Explicitly confirms this high-risk channel commissioning mutation.
+    confirmed: bool,
 }
 
+#[derive(Deserialize, schemars::JsonSchema)]
+struct ChannelMutationIdParams {
+    /// Channel ID
+    channel_id: u32,
+    /// Optional desired-state compare-and-set revision (minimum 1)
+    #[schemars(range(min = 1))]
+    expected_revision: Option<u64>,
+    /// Explicitly confirms this high-risk channel commissioning mutation.
+    confirmed: bool,
+}
+
+#[derive(Deserialize, schemars::JsonSchema)]
+struct ChannelsReconcileParams {
+    /// Explicitly confirms this high-risk, non-idempotent runtime reconciliation.
+    confirmed: bool,
+}
+
+#[cfg(test)]
 #[derive(Deserialize, schemars::JsonSchema)]
 struct ChannelsPointsBatchParams {
     /// Channel ID
@@ -479,6 +599,8 @@ struct RulesCreateParams {
     name: String,
     /// Optional description
     description: Option<String>,
+    /// Explicitly confirms this high-risk rule-policy mutation.
+    confirmed: bool,
 }
 
 #[derive(Deserialize, schemars::JsonSchema)]
@@ -487,17 +609,16 @@ struct RulesUpdateParams {
     rule_id: i64,
     /// Partial update body -- only fields present are changed
     body: Value,
+    /// Explicitly confirms this high-risk rule-policy mutation.
+    confirmed: bool,
 }
 
 #[derive(Deserialize, schemars::JsonSchema)]
 struct RulesExecuteParams {
     /// Rule ID
     rule_id: i64,
-    /// Currently ignored server-side (automation's execute handler takes no
-    /// request body); the rule's actual conditions always decide which
-    /// actions fire. Kept for forward compatibility.
-    #[serde(default)]
-    force: bool,
+    /// Explicitly confirms that the rule may dispatch real device commands.
+    confirmed: bool,
 }
 
 #[derive(Deserialize, schemars::JsonSchema)]
@@ -506,6 +627,8 @@ struct AlarmsRuleCreateParams {
     /// point_id, rule_name, operator, value, and optionally warning_level,
     /// enabled, description
     body: Value,
+    /// Explicitly confirms this high-risk alarm-policy mutation.
+    confirmed: bool,
 }
 
 #[derive(Deserialize, schemars::JsonSchema)]
@@ -514,6 +637,8 @@ struct AlarmsRuleUpdateParams {
     id: i64,
     /// Partial UpdateRuleRequest body -- only fields present are changed
     body: Value,
+    /// Explicitly confirms this high-risk alarm-policy mutation.
+    confirmed: bool,
 }
 
 #[derive(Deserialize, schemars::JsonSchema)]
@@ -524,24 +649,63 @@ struct ModelsInstancesActionParams {
     point_id: String,
     /// Value to write
     value: f64,
+    /// Explicitly confirms this high-risk device command.
+    confirmed: bool,
 }
 
 #[derive(Deserialize, schemars::JsonSchema)]
-struct ModelsInstancesMeasurementParams {
-    /// Instance ID
+struct RoutingActionUpsertParams {
+    /// Instance that owns the logical action point.
     instance_id: u32,
-    /// Point ID: numeric ("1") or semantic ("power_setpoint")
-    point_id: String,
-    /// Measurement value to set
-    value: f64,
+    /// Logical action-point ID within the instance model.
+    action_point_id: u32,
+    /// Physical destination channel.
+    channel_id: u32,
+    /// Physical command-owned point type: C or A.
+    channel_type: String,
+    /// Physical destination point ID within the channel.
+    channel_point_id: u32,
+    /// Whether the new route participates in command dispatch.
+    #[serde(default = "default_routing_enabled")]
+    enabled: bool,
+    /// Explicitly confirms this high-risk physical topology change.
+    confirmed: bool,
 }
 
+const fn default_routing_enabled() -> bool {
+    true
+}
+
+#[derive(Deserialize, schemars::JsonSchema)]
+struct RoutingActionDeleteParams {
+    /// Instance that owns the logical action point.
+    instance_id: u32,
+    /// Logical action-point ID within the instance model.
+    action_point_id: u32,
+    /// Explicitly confirms this high-risk physical topology change.
+    confirmed: bool,
+}
+
+#[derive(Deserialize, schemars::JsonSchema)]
+struct RoutingActionSetEnabledParams {
+    /// Instance that owns the logical action point.
+    instance_id: u32,
+    /// Logical action-point ID within the instance model.
+    action_point_id: u32,
+    /// Whether the route participates in command dispatch.
+    enabled: bool,
+    /// Explicitly confirms this high-risk physical topology change.
+    confirmed: bool,
+}
+
+#[cfg(test)]
 #[derive(Deserialize, schemars::JsonSchema)]
 struct NetMqttConfigSetParams {
     /// Complete NetConfig object (partial updates are not supported by uplink)
     config: Value,
 }
 
+#[cfg(test)]
 #[derive(Deserialize, schemars::JsonSchema)]
 struct NetCertUploadParams {
     /// Certificate role: ca_cert | client_cert | client_key
@@ -552,6 +716,7 @@ struct NetCertUploadParams {
     file_path: String,
 }
 
+#[cfg(test)]
 #[derive(Deserialize, schemars::JsonSchema)]
 struct NetCertDeleteParams {
     /// Certificate role: ca_cert | client_cert | client_key
@@ -559,6 +724,303 @@ struct NetCertDeleteParams {
 }
 
 #[tool_router(router = write_router)]
+impl AetherMcp {
+    #[tool(
+        description = "Create a communication channel through the authenticated, explicitly confirmed, and audited io.channel.manage application command. This is a high-risk, non-idempotent commissioning mutation; enabled defaults to false. Success may report a degraded runtime projection or incomplete completion audit: inspect request_id, resulting_revision, and reconciliation_required. Clients must not automatically retry.",
+        annotations(read_only_hint = false)
+    )]
+    async fn channels_create(
+        &self,
+        Parameters(p): Parameters<ChannelsCreateParams>,
+    ) -> CallToolResult {
+        to_call_result(
+            self.channels
+                .create_channel(
+                    &p.name,
+                    &p.protocol,
+                    p.parameters,
+                    p.description.as_deref(),
+                    p.id,
+                    p.enabled,
+                    p.confirmed,
+                )
+                .await,
+        )
+    }
+
+    #[tool(
+        description = "Update a communication channel through the authenticated, explicitly confirmed, and audited io.channel.manage application command. This is a high-risk, non-idempotent commissioning mutation; expected_revision is an optional compare-and-set guard. Success may report a degraded runtime projection or incomplete completion audit: inspect request_id, resulting_revision, and reconciliation_required. Clients must not automatically retry.",
+        annotations(read_only_hint = false)
+    )]
+    async fn channels_update(
+        &self,
+        Parameters(p): Parameters<ChannelsUpdateParams>,
+    ) -> CallToolResult {
+        to_call_result(
+            self.channels
+                .update_channel(p.channel_id, p.body, p.confirmed, p.expected_revision)
+                .await,
+        )
+    }
+
+    #[tool(
+        description = "Delete a communication channel through the authenticated, explicitly confirmed, and audited io.channel.manage application command. Action-route references cause a conflict and are never silently cascaded. This is a high-risk, non-idempotent commissioning mutation; success may report a degraded runtime projection or incomplete completion audit. Inspect request_id, resulting_revision, and reconciliation_required. Clients must not automatically retry.",
+        annotations(read_only_hint = false)
+    )]
+    async fn channels_delete(
+        &self,
+        Parameters(p): Parameters<ChannelMutationIdParams>,
+    ) -> CallToolResult {
+        to_call_result(
+            self.channels
+                .delete_channel(p.channel_id, p.confirmed, p.expected_revision)
+                .await,
+        )
+    }
+
+    #[tool(
+        description = "Enable a communication channel through the authenticated, explicitly confirmed, and audited io.channel.manage application command. This is a high-risk, non-idempotent lifecycle mutation; activation-pending or degraded is accepted and requires reconciliation, not proof of connectivity. Inspect request_id, resulting_revision, and reconciliation_required. Clients must not automatically retry, including when completion audit is incomplete.",
+        annotations(read_only_hint = false)
+    )]
+    async fn channels_enable(
+        &self,
+        Parameters(p): Parameters<ChannelMutationIdParams>,
+    ) -> CallToolResult {
+        to_call_result(
+            self.channels
+                .set_enabled(p.channel_id, true, p.confirmed, p.expected_revision)
+                .await,
+        )
+    }
+
+    #[tool(
+        description = "Disable a communication channel through the authenticated, explicitly confirmed, and audited io.channel.manage application command. This is a high-risk, non-idempotent lifecycle mutation; a degraded runtime projection is accepted and requires reconciliation. Inspect request_id, resulting_revision, and reconciliation_required. Clients must not automatically retry, including when completion audit is incomplete.",
+        annotations(read_only_hint = false)
+    )]
+    async fn channels_disable(
+        &self,
+        Parameters(p): Parameters<ChannelMutationIdParams>,
+    ) -> CallToolResult {
+        to_call_result(
+            self.channels
+                .set_enabled(p.channel_id, false, p.confirmed, p.expected_revision)
+                .await,
+        )
+    }
+
+    #[tool(
+        description = "Reconcile every channel runtime from authoritative desired state through the authenticated, explicitly confirmed, and audited io.channel.reconcile application command. This is a high-risk, non-idempotent operation that can reconnect protocol sessions. Inspect request_id, each sanitized item, degraded_count, reconciliation_required, and completion_audit. Clients must not automatically retry, including when runtime convergence or terminal audit remains incomplete.",
+        annotations(read_only_hint = false)
+    )]
+    async fn channels_reconcile(
+        &self,
+        Parameters(p): Parameters<ChannelsReconcileParams>,
+    ) -> CallToolResult {
+        to_call_result(self.channels.reconcile_channels(p.confirmed).await)
+    }
+
+    #[tool(
+        description = "Execute a rule now through the authenticated, explicitly confirmed, and audited application command. Selected device actions are accepted by the local command plane; success does not prove physical-device completion.",
+        annotations(read_only_hint = false)
+    )]
+    async fn rules_execute(&self, Parameters(p): Parameters<RulesExecuteParams>) -> CallToolResult {
+        to_call_result(self.rules.execute_rule(p.rule_id, p.confirmed).await)
+    }
+
+    #[tool(
+        description = "Enable a business rule through the authenticated, explicitly confirmed, and audited rule-management application command. This is a high-risk rule-policy mutation; clients must not automatically retry an incomplete audit result.",
+        annotations(read_only_hint = false)
+    )]
+    async fn rules_enable(
+        &self,
+        Parameters(p): Parameters<RuleMutationIdParams>,
+    ) -> CallToolResult {
+        to_call_result(self.rules.enable_rule(p.rule_id, p.confirmed).await)
+    }
+
+    #[tool(
+        description = "Disable a business rule through the authenticated, explicitly confirmed, and audited rule-management application command. This is a high-risk rule-policy mutation; clients must not automatically retry an incomplete audit result.",
+        annotations(read_only_hint = false)
+    )]
+    async fn rules_disable(
+        &self,
+        Parameters(p): Parameters<RuleMutationIdParams>,
+    ) -> CallToolResult {
+        to_call_result(self.rules.disable_rule(p.rule_id, p.confirmed).await)
+    }
+
+    #[tool(
+        description = "Create a disabled business-rule shell through the authenticated, explicitly confirmed, and audited rule-management application command. This is a high-risk rule-policy mutation; clients must not automatically retry an incomplete audit result.",
+        annotations(read_only_hint = false)
+    )]
+    async fn rules_create(&self, Parameters(p): Parameters<RulesCreateParams>) -> CallToolResult {
+        to_call_result(
+            self.rules
+                .create_rule(&p.name, p.description.as_deref(), p.confirmed)
+                .await,
+        )
+    }
+
+    #[tool(
+        description = "Update a business rule through the authenticated, explicitly confirmed, and audited rule-management application command. `body` is the partial rule update object. This is a high-risk rule-policy mutation; clients must not automatically retry an incomplete audit result.",
+        annotations(read_only_hint = false)
+    )]
+    async fn rules_update(&self, Parameters(p): Parameters<RulesUpdateParams>) -> CallToolResult {
+        to_call_result(self.rules.update_rule(p.rule_id, p.body, p.confirmed).await)
+    }
+
+    #[tool(
+        description = "Delete a business rule through the authenticated, explicitly confirmed, and audited rule-management application command. This is a high-risk rule-policy mutation; clients must not automatically retry an incomplete audit result.",
+        annotations(read_only_hint = false)
+    )]
+    async fn rules_delete(
+        &self,
+        Parameters(p): Parameters<RuleMutationIdParams>,
+    ) -> CallToolResult {
+        to_call_result(self.rules.delete_rule(p.rule_id, p.confirmed).await)
+    }
+
+    #[tool(
+        description = "Create an alarm rule through the authenticated, explicitly confirmed, and audited alarm-policy application command. `body` must match the alarm CreateRuleRequest. This is a high-risk alarm-policy mutation; clients must not automatically retry an incomplete audit result.",
+        annotations(read_only_hint = false)
+    )]
+    async fn alarms_rule_create(
+        &self,
+        Parameters(p): Parameters<AlarmsRuleCreateParams>,
+    ) -> CallToolResult {
+        to_call_result(self.alarms.create_rule(&p.body, p.confirmed).await)
+    }
+
+    #[tool(
+        description = "Update an alarm rule through the authenticated, explicitly confirmed, and audited alarm-policy application command. `body` is a partial UpdateRuleRequest. This is a high-risk alarm-policy mutation; clients must not automatically retry an incomplete audit result.",
+        annotations(read_only_hint = false)
+    )]
+    async fn alarms_rule_update(
+        &self,
+        Parameters(p): Parameters<AlarmsRuleUpdateParams>,
+    ) -> CallToolResult {
+        to_call_result(self.alarms.update_rule(p.id, &p.body, p.confirmed).await)
+    }
+
+    #[tool(
+        description = "Delete an alarm rule through the authenticated, explicitly confirmed, and audited alarm-policy application command. This is a high-risk alarm-policy mutation; clients must not automatically retry an incomplete audit result.",
+        annotations(read_only_hint = false)
+    )]
+    async fn alarms_rule_delete(
+        &self,
+        Parameters(p): Parameters<AlarmRuleMutationIdParams>,
+    ) -> CallToolResult {
+        to_call_result(self.alarms.delete_rule(p.id, p.confirmed).await)
+    }
+
+    #[tool(
+        description = "Enable an alarm rule through the authenticated, explicitly confirmed, and audited alarm-policy application command. This is a high-risk alarm-policy mutation; clients must not automatically retry an incomplete audit result.",
+        annotations(read_only_hint = false)
+    )]
+    async fn alarms_rule_enable(
+        &self,
+        Parameters(p): Parameters<AlarmRuleMutationIdParams>,
+    ) -> CallToolResult {
+        to_call_result(self.alarms.set_rule_enabled(p.id, true, p.confirmed).await)
+    }
+
+    #[tool(
+        description = "Disable an alarm rule through the authenticated, explicitly confirmed, and audited alarm-policy application command. This is a high-risk alarm-policy mutation; clients must not automatically retry an incomplete audit result.",
+        annotations(read_only_hint = false)
+    )]
+    async fn alarms_rule_disable(
+        &self,
+        Parameters(p): Parameters<AlarmRuleMutationIdParams>,
+    ) -> CallToolResult {
+        to_call_result(self.alarms.set_rule_enabled(p.id, false, p.confirmed).await)
+    }
+
+    #[tool(
+        description = "Resolve an active alert through the authenticated, explicitly confirmed, and audited alert-resolution application command. This high-risk command clears an operator-visible alert indication; clients must not automatically retry an incomplete audit result.",
+        annotations(read_only_hint = false)
+    )]
+    async fn alarms_resolve(
+        &self,
+        Parameters(p): Parameters<AlertResolveParams>,
+    ) -> CallToolResult {
+        to_call_result(self.alarms.resolve_alert(p.id, p.confirmed).await)
+    }
+
+    #[tool(
+        description = "Submit a control action through the authenticated, explicitly confirmed, and audited application command. Success means the local command plane accepted it, not that the physical device executed it.",
+        annotations(read_only_hint = false)
+    )]
+    async fn models_instances_action(
+        &self,
+        Parameters(p): Parameters<ModelsInstancesActionParams>,
+    ) -> CallToolResult {
+        to_call_result(
+            self.models
+                .execute_action(p.instance_id, &p.point_id, p.value, p.confirmed)
+                .await,
+        )
+    }
+
+    #[tool(
+        description = "Change the physical C/A destination of an action route through the authenticated, explicitly confirmed, and audited application command. This is a high-risk topology mutation; success does not execute a device command, and clients must not automatically retry an incomplete audit or publication result.",
+        annotations(read_only_hint = false)
+    )]
+    async fn routing_action_upsert(
+        &self,
+        Parameters(p): Parameters<RoutingActionUpsertParams>,
+    ) -> CallToolResult {
+        to_call_result(
+            self.routing
+                .upsert_action_route(
+                    p.instance_id,
+                    p.action_point_id,
+                    p.channel_id,
+                    &p.channel_type,
+                    p.channel_point_id,
+                    p.enabled,
+                    p.confirmed,
+                )
+                .await,
+        )
+    }
+
+    #[tool(
+        description = "Delete an action route through the authenticated, explicitly confirmed, and audited application command. This is a high-risk physical-topology mutation; success does not execute a device command, and clients must not automatically retry an incomplete audit or publication result.",
+        annotations(read_only_hint = false)
+    )]
+    async fn routing_action_delete(
+        &self,
+        Parameters(p): Parameters<RoutingActionDeleteParams>,
+    ) -> CallToolResult {
+        to_call_result(
+            self.routing
+                .delete_action_route(p.instance_id, p.action_point_id, p.confirmed)
+                .await,
+        )
+    }
+
+    #[tool(
+        description = "Enable or disable an action route through the authenticated, explicitly confirmed, and audited application command. This is a high-risk physical-topology mutation; success does not execute a device command, and clients must not automatically retry an incomplete audit or publication result.",
+        annotations(read_only_hint = false)
+    )]
+    async fn routing_action_set_enabled(
+        &self,
+        Parameters(p): Parameters<RoutingActionSetEnabledParams>,
+    ) -> CallToolResult {
+        to_call_result(
+            self.routing
+                .set_action_route_enabled(p.instance_id, p.action_point_id, p.enabled, p.confirmed)
+                .await,
+        )
+    }
+}
+
+// Preserve direct wrapper coverage for management mutations that are not yet
+// explicitly mapped into the production MCP write catalog. Some already have
+// governed HTTP boundaries; none is registered merely because a wrapper
+// exists.
+#[cfg(test)]
+#[tool_router(router = legacy_write_test_router)]
 impl AetherMcp {
     #[tool(
         description = "Inject a simulated T/S value into the acquisition SHM plane. This does not command a device, but downstream rules and alarms treat it as telemetry.",
@@ -576,57 +1038,6 @@ impl AetherMcp {
     }
 
     #[tool(
-        description = "Create a new communication channel",
-        annotations(read_only_hint = false)
-    )]
-    async fn channels_create(
-        &self,
-        Parameters(p): Parameters<ChannelsCreateParams>,
-    ) -> CallToolResult {
-        to_call_result(
-            self.channels
-                .create_channel(
-                    &p.name,
-                    &p.protocol,
-                    p.parameters,
-                    p.description.as_deref(),
-                    p.id,
-                    p.enabled,
-                )
-                .await,
-        )
-    }
-
-    #[tool(
-        description = "Update an existing channel's configuration",
-        annotations(read_only_hint = false)
-    )]
-    async fn channels_update(
-        &self,
-        Parameters(p): Parameters<ChannelsUpdateParams>,
-    ) -> CallToolResult {
-        to_call_result(self.channels.update_channel(p.channel_id, p.body).await)
-    }
-
-    #[tool(
-        description = "Delete a channel and cascade-remove its points, mappings, and routing",
-        annotations(read_only_hint = false)
-    )]
-    async fn channels_delete(&self, Parameters(p): Parameters<ChannelIdParams>) -> CallToolResult {
-        to_call_result(self.channels.delete_channel(p.channel_id).await)
-    }
-
-    #[tool(description = "Enable a channel", annotations(read_only_hint = false))]
-    async fn channels_enable(&self, Parameters(p): Parameters<ChannelIdParams>) -> CallToolResult {
-        to_call_result(self.channels.set_enabled(p.channel_id, true).await)
-    }
-
-    #[tool(description = "Disable a channel", annotations(read_only_hint = false))]
-    async fn channels_disable(&self, Parameters(p): Parameters<ChannelIdParams>) -> CallToolResult {
-        to_call_result(self.channels.set_enabled(p.channel_id, false).await)
-    }
-
-    #[tool(
         description = "Batch create/update/delete points on a channel. `body` is {\"create\":[...],\"update\":[...],\"delete\":[...]}.",
         annotations(read_only_hint = false)
     )]
@@ -635,143 +1046,6 @@ impl AetherMcp {
         Parameters(p): Parameters<ChannelsPointsBatchParams>,
     ) -> CallToolResult {
         to_call_result(self.points.points_batch(p.channel_id, &p.body).await)
-    }
-
-    #[tool(
-        description = "Enable a business rule",
-        annotations(read_only_hint = false)
-    )]
-    async fn rules_enable(&self, Parameters(p): Parameters<RuleIdParams>) -> CallToolResult {
-        to_call_result(self.rules.enable_rule(p.rule_id).await)
-    }
-
-    #[tool(
-        description = "Disable a business rule",
-        annotations(read_only_hint = false)
-    )]
-    async fn rules_disable(&self, Parameters(p): Parameters<RuleIdParams>) -> CallToolResult {
-        to_call_result(self.rules.disable_rule(p.rule_id).await)
-    }
-
-    #[tool(
-        description = "Create a new business rule (name + optional description; add conditions/actions afterward via rules_update)",
-        annotations(read_only_hint = false)
-    )]
-    async fn rules_create(&self, Parameters(p): Parameters<RulesCreateParams>) -> CallToolResult {
-        to_call_result(
-            self.rules
-                .create_rule(&p.name, p.description.as_deref())
-                .await,
-        )
-    }
-
-    #[tool(
-        description = "Update a business rule's configuration",
-        annotations(read_only_hint = false)
-    )]
-    async fn rules_update(&self, Parameters(p): Parameters<RulesUpdateParams>) -> CallToolResult {
-        to_call_result(self.rules.update_rule(p.rule_id, p.body).await)
-    }
-
-    #[tool(
-        description = "Delete a business rule",
-        annotations(read_only_hint = false)
-    )]
-    async fn rules_delete(&self, Parameters(p): Parameters<RuleIdParams>) -> CallToolResult {
-        to_call_result(self.rules.delete_rule(p.rule_id).await)
-    }
-
-    #[tool(
-        description = "Execute a rule now: evaluates its conditions and dispatches whichever actions they select to real devices. This is a real execution, not a dry run.",
-        annotations(read_only_hint = false)
-    )]
-    async fn rules_execute(&self, Parameters(p): Parameters<RulesExecuteParams>) -> CallToolResult {
-        to_call_result(self.rules.execute_rule(p.rule_id, p.force).await)
-    }
-
-    #[tool(
-        description = "Create an alarm rule. `body` must match alarm's CreateRuleRequest.",
-        annotations(read_only_hint = false)
-    )]
-    async fn alarms_rule_create(
-        &self,
-        Parameters(p): Parameters<AlarmsRuleCreateParams>,
-    ) -> CallToolResult {
-        to_call_result(self.alarms.create_rule(&p.body).await)
-    }
-
-    #[tool(
-        description = "Update an alarm rule (partial update -- only fields present in `body` change)",
-        annotations(read_only_hint = false)
-    )]
-    async fn alarms_rule_update(
-        &self,
-        Parameters(p): Parameters<AlarmsRuleUpdateParams>,
-    ) -> CallToolResult {
-        to_call_result(self.alarms.update_rule(p.id, &p.body).await)
-    }
-
-    #[tool(
-        description = "Delete an alarm rule",
-        annotations(read_only_hint = false)
-    )]
-    async fn alarms_rule_delete(
-        &self,
-        Parameters(p): Parameters<AlarmsRuleGetParams>,
-    ) -> CallToolResult {
-        to_call_result(self.alarms.delete_rule(p.id).await)
-    }
-
-    #[tool(
-        description = "Enable an alarm rule",
-        annotations(read_only_hint = false)
-    )]
-    async fn alarms_rule_enable(
-        &self,
-        Parameters(p): Parameters<AlarmsRuleGetParams>,
-    ) -> CallToolResult {
-        to_call_result(self.alarms.set_rule_enabled(p.id, true).await)
-    }
-
-    #[tool(
-        description = "Disable an alarm rule",
-        annotations(read_only_hint = false)
-    )]
-    async fn alarms_rule_disable(
-        &self,
-        Parameters(p): Parameters<AlarmsRuleGetParams>,
-    ) -> CallToolResult {
-        to_call_result(self.alarms.set_rule_enabled(p.id, false).await)
-    }
-
-    #[tool(
-        description = "Execute a control action on an instance. This writes to a real device via SHM + io.",
-        annotations(read_only_hint = false)
-    )]
-    async fn models_instances_action(
-        &self,
-        Parameters(p): Parameters<ModelsInstancesActionParams>,
-    ) -> CallToolResult {
-        to_call_result(
-            self.models
-                .execute_action(p.instance_id, &p.point_id, p.value)
-                .await,
-        )
-    }
-
-    #[tool(
-        description = "Set a measurement value on an instance. This overwrites the live inst:{id}:M value -- the same field real device telemetry populates -- so rules, alarms, and dashboards will treat it as genuine until the next real update arrives.",
-        annotations(read_only_hint = false)
-    )]
-    async fn models_instances_measurement(
-        &self,
-        Parameters(p): Parameters<ModelsInstancesMeasurementParams>,
-    ) -> CallToolResult {
-        to_call_result(
-            self.models
-                .set_measurement(p.instance_id, &p.point_id, p.value)
-                .await,
-        )
     }
 
     #[tool(
@@ -844,15 +1118,16 @@ impl ServerHandler for AetherMcp {
         _request: Option<PaginatedRequestParams>,
         _context: RequestContext<RoleServer>,
     ) -> Result<ListResourcesResult, ErrorData> {
-        let resources = crate::mcp_docs::DOC_RESOURCES
+        let resources = self
+            .doc_resources
             .iter()
             .map(|d| {
-                let mut r = Resource::new(d.uri, crate::mcp_docs::resource_name(d.uri))
+                let mut r = Resource::new(&d.uri, crate::mcp_docs::resource_name(&d.uri))
                     .with_mime_type("text/markdown");
-                if let Some(title) = crate::mcp_docs::frontmatter_field(d.body, "title") {
+                if let Some(title) = crate::mcp_docs::frontmatter_field(&d.body, "title") {
                     r = r.with_title(title);
                 }
-                if let Some(desc) = crate::mcp_docs::frontmatter_field(d.body, "description") {
+                if let Some(desc) = crate::mcp_docs::frontmatter_field(&d.body, "description") {
                     r = r.with_description(desc);
                 }
                 r
@@ -866,7 +1141,8 @@ impl ServerHandler for AetherMcp {
         request: ReadResourceRequestParams,
         _context: RequestContext<RoleServer>,
     ) -> Result<ReadResourceResult, ErrorData> {
-        let doc = crate::mcp_docs::DOC_RESOURCES
+        let doc = self
+            .doc_resources
             .iter()
             .find(|d| d.uri == request.uri)
             .ok_or_else(|| {
@@ -886,8 +1162,26 @@ impl ServerHandler for AetherMcp {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use wiremock::matchers::{body_json, header, method, path, query_param};
+    use wiremock::matchers::{body_json, header, header_exists, method, path, query_param};
     use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    #[test]
+    fn configured_pack_knowledge_requires_the_runtime_manifest() {
+        let config = tempfile::tempdir().expect("temporary MCP config");
+        std::fs::write(config.path().join("global.yaml"), "packs: []\n")
+            .expect("empty Pack selection");
+
+        let error = match AetherMcp::from_active_pack_config(
+            &test_urls("http://localhost:1"),
+            false,
+            config.path(),
+        ) {
+            Ok(_) => panic!("production MCP startup must not use a static runtime fallback"),
+            Err(error) => error,
+        };
+
+        assert!(error.to_string().contains("runtime-manifest.json"));
+    }
 
     #[test]
     fn resources_capability_is_advertised() {
@@ -913,41 +1207,256 @@ mod tests {
     /// this mock's base URL" step shared by every write-tool test below.
     fn write_mcp(base: &str) -> AetherMcp {
         let mut server = AetherMcp::new(&test_urls(base), true).unwrap();
+        server.channels = ChannelClient::with_access_token(base, "signed-access-token").unwrap();
         server.models = ModelClient::with_access_token(base, "signed-access-token").unwrap();
+        server.alarms = AlarmClient::with_access_token(base, "signed-access-token").unwrap();
+        server.rules =
+            crate::rules::RuleClient::with_access_token(base, "signed-access-token").unwrap();
+        server.routing = RoutingClient::with_access_token(base, "signed-access-token").unwrap();
         server
     }
 
-    /// The full set of tool names that only exist when --allow-write is
-    /// passed. Kept in one place so the gating tests can assert none of
-    /// them leak into the read-only router, not just the one or two named
-    /// in each individual assertion.
-    const WRITE_TOOL_NAMES: &[&str] = &[
+    /// Mutations deliberately absent from the production MCP catalog. A name
+    /// stays here until its application capability and exact MCP mapping are
+    /// both reviewed; direct wrappers exist only for unit coverage.
+    const UNEXPOSED_WRITE_TOOL_NAMES: &[&str] = &[
         "channels_write",
-        "channels_create",
-        "channels_update",
-        "channels_delete",
-        "channels_enable",
-        "channels_disable",
         "channels_points_batch",
-        "rules_enable",
-        "rules_disable",
-        "rules_create",
-        "rules_update",
-        "rules_delete",
-        "rules_execute",
-        "alarms_rule_create",
-        "alarms_rule_update",
-        "alarms_rule_delete",
-        "alarms_rule_enable",
-        "alarms_rule_disable",
-        "models_instances_action",
-        "models_instances_measurement",
         "net_mqtt_config_set",
         "net_mqtt_reconnect",
         "net_mqtt_disconnect",
         "net_cert_upload",
         "net_cert_delete",
     ];
+
+    #[test]
+    fn retired_instance_measurement_write_is_absent_from_capability_surfaces() {
+        let mcp = AetherMcp::new(&test_urls("http://localhost:1"), true).unwrap();
+        let names = mcp
+            .tool_router
+            .list_all()
+            .iter()
+            .map(|tool| tool.name.to_string())
+            .collect::<Vec<_>>();
+        assert!(
+            !names.contains(&"models_instances_measurement".to_string()),
+            "retired live-state write must not be registered as an MCP tool"
+        );
+    }
+
+    #[test]
+    fn every_exposed_mcp_write_maps_to_a_governed_application_capability() {
+        use aether_application::{AuditPolicy, ConfirmationPolicy, OperationKind};
+
+        let catalog = aether_application::capability_catalog();
+        for (tool_name, mapped_capability) in MCP_WRITE_CAPABILITY_MAPPING {
+            let catalog_capability = catalog
+                .iter()
+                .copied()
+                .find(|capability| capability.name() == mapped_capability.name())
+                .unwrap_or_else(|| panic!("{tool_name} maps to a capability absent from catalog"));
+
+            assert_eq!(catalog_capability, mapped_capability, "{tool_name}");
+            assert_eq!(
+                mapped_capability.kind(),
+                OperationKind::Command,
+                "{tool_name}"
+            );
+            assert_eq!(
+                mapped_capability.confirmation(),
+                ConfirmationPolicy::Always,
+                "{tool_name}"
+            );
+            assert_eq!(
+                mapped_capability.audit_policy(),
+                AuditPolicy::Required,
+                "{tool_name}"
+            );
+        }
+
+        let read_only = AetherMcp::new(&test_urls("http://localhost:1"), false).unwrap();
+        let write_enabled = AetherMcp::new(&test_urls("http://localhost:1"), true).unwrap();
+        let read_only_names = read_only
+            .tool_router
+            .list_all()
+            .iter()
+            .map(|tool| tool.name.to_string())
+            .collect::<std::collections::BTreeSet<_>>();
+        let exposed_writes = write_enabled
+            .tool_router
+            .list_all()
+            .iter()
+            .map(|tool| tool.name.to_string())
+            .filter(|tool_name| !read_only_names.contains(tool_name))
+            .collect::<std::collections::BTreeSet<_>>();
+        let mapped_tools = MCP_WRITE_CAPABILITY_MAPPING
+            .iter()
+            .map(|(tool_name, _)| (*tool_name).to_string())
+            .collect::<std::collections::BTreeSet<_>>();
+
+        assert_eq!(exposed_writes, mapped_tools);
+    }
+
+    #[test]
+    fn governed_policy_mutations_have_exact_capability_mappings_and_confirmation_schema() {
+        use aether_application::{
+            MANAGE_ALARM_RULE_CAPABILITY, MANAGE_RULE_CAPABILITY, RESOLVE_ALERT_CAPABILITY,
+        };
+
+        let expected = [
+            ("rules_enable", MANAGE_RULE_CAPABILITY),
+            ("rules_disable", MANAGE_RULE_CAPABILITY),
+            ("rules_create", MANAGE_RULE_CAPABILITY),
+            ("rules_update", MANAGE_RULE_CAPABILITY),
+            ("rules_delete", MANAGE_RULE_CAPABILITY),
+            ("alarms_rule_create", MANAGE_ALARM_RULE_CAPABILITY),
+            ("alarms_rule_update", MANAGE_ALARM_RULE_CAPABILITY),
+            ("alarms_rule_delete", MANAGE_ALARM_RULE_CAPABILITY),
+            ("alarms_rule_enable", MANAGE_ALARM_RULE_CAPABILITY),
+            ("alarms_rule_disable", MANAGE_ALARM_RULE_CAPABILITY),
+            ("alarms_resolve", RESOLVE_ALERT_CAPABILITY),
+        ];
+
+        for (tool_name, capability) in expected {
+            assert!(
+                MCP_WRITE_CAPABILITY_MAPPING.contains(&(tool_name, capability)),
+                "missing exact capability mapping for {tool_name}"
+            );
+        }
+
+        let mcp = AetherMcp::new(&test_urls("http://localhost:1"), true).unwrap();
+        let tools = mcp.tool_router.list_all();
+        for (tool_name, _) in expected {
+            let tool = tools
+                .iter()
+                .find(|tool| tool.name == tool_name)
+                .unwrap_or_else(|| panic!("production write tool is absent: {tool_name}"));
+            let required = tool
+                .input_schema
+                .get("required")
+                .and_then(serde_json::Value::as_array)
+                .expect("write tool schema has required properties");
+            assert!(
+                required.iter().any(|name| name == "confirmed"),
+                "{tool_name} must require confirmed"
+            );
+            let description = tool.description.as_deref().unwrap_or_default();
+            assert!(
+                description.contains("high-risk"),
+                "{tool_name} must disclose its high-risk classification"
+            );
+            assert!(
+                description
+                    .contains("clients must not automatically retry an incomplete audit result"),
+                "{tool_name} must disclose terminal-audit retry semantics"
+            );
+        }
+
+        let alert_description = tools
+            .iter()
+            .find(|tool| tool.name == "alarms_resolve")
+            .and_then(|tool| tool.description.as_deref())
+            .expect("alert-resolution description");
+        assert!(
+            alert_description.contains("clears an operator-visible alert indication"),
+            "alert resolution must disclose its indication-clearing risk"
+        );
+    }
+
+    #[test]
+    fn governed_channel_commands_have_exact_capability_mapping_and_safe_schema() {
+        use aether_application::{MANAGE_CHANNEL_CAPABILITY, RECONCILE_CHANNELS_CAPABILITY};
+
+        let expected = [
+            ("channels_create", MANAGE_CHANNEL_CAPABILITY),
+            ("channels_update", MANAGE_CHANNEL_CAPABILITY),
+            ("channels_delete", MANAGE_CHANNEL_CAPABILITY),
+            ("channels_enable", MANAGE_CHANNEL_CAPABILITY),
+            ("channels_disable", MANAGE_CHANNEL_CAPABILITY),
+            ("channels_reconcile", RECONCILE_CHANNELS_CAPABILITY),
+        ];
+        for (tool_name, capability) in expected {
+            assert!(
+                MCP_WRITE_CAPABILITY_MAPPING.contains(&(tool_name, capability)),
+                "missing exact capability mapping for {tool_name}"
+            );
+        }
+
+        let mcp = AetherMcp::new(&test_urls("http://localhost:1"), true).unwrap();
+        let tools = mcp.tool_router.list_all();
+        for (tool_name, _) in expected {
+            let tool = tools
+                .iter()
+                .find(|tool| tool.name == tool_name)
+                .unwrap_or_else(|| panic!("production write tool is absent: {tool_name}"));
+            let required = tool
+                .input_schema
+                .get("required")
+                .and_then(serde_json::Value::as_array)
+                .expect("channel write schema has required properties");
+            assert!(
+                required.iter().any(|name| name == "confirmed"),
+                "{tool_name} must require confirmed"
+            );
+            let description = tool.description.as_deref().unwrap_or_default();
+            assert!(description.contains("high-risk"), "{tool_name}");
+            assert!(description.contains("degraded"), "{tool_name}");
+            assert!(
+                description.contains("must not automatically retry"),
+                "{tool_name}"
+            );
+        }
+
+        let create = tools
+            .iter()
+            .find(|tool| tool.name == "channels_create")
+            .expect("create tool");
+        assert!(
+            !create
+                .input_schema
+                .get("required")
+                .and_then(serde_json::Value::as_array)
+                .expect("create required fields")
+                .iter()
+                .any(|name| name == "enabled"),
+            "enabled must be optional and default false"
+        );
+        assert_eq!(
+            create
+                .input_schema
+                .get("properties")
+                .and_then(|properties| properties.get("enabled"))
+                .and_then(|enabled| enabled.get("default")),
+            Some(&serde_json::Value::Bool(false)),
+            "enabled schema must advertise the inert false default"
+        );
+        assert!(
+            create
+                .input_schema
+                .get("properties")
+                .and_then(|properties| properties.get("expected_revision"))
+                .is_none(),
+            "create has no prior revision and must not expose expected_revision"
+        );
+
+        for tool_name in [
+            "channels_update",
+            "channels_delete",
+            "channels_enable",
+            "channels_disable",
+        ] {
+            let tool = tools
+                .iter()
+                .find(|tool| tool.name == tool_name)
+                .unwrap_or_else(|| panic!("missing {tool_name}"));
+            let revision = tool
+                .input_schema
+                .get("properties")
+                .and_then(|properties| properties.get("expected_revision"))
+                .unwrap_or_else(|| panic!("{tool_name} must expose expected_revision"));
+            assert_eq!(revision.get("minimum").and_then(Value::as_u64), Some(1));
+        }
+    }
 
     #[tokio::test]
     async fn read_only_router_has_no_write_tools() {
@@ -1544,15 +2053,14 @@ mod tests {
             .map(|t| t.name.to_string())
             .collect();
 
-        // Exhaustive: none of the write tools added so far are reachable
-        // without --allow-write -- not just the two spot-checked below.
-        for write_tool in WRITE_TOOL_NAMES {
+        for (write_tool, _) in MCP_WRITE_CAPABILITY_MAPPING {
             assert!(!names.contains(&write_tool.to_string()), "{names:?}");
         }
-        assert!(!names.contains(&"channels_write".to_string()), "{names:?}");
-        // Route-count safety net: catches a future write tool landing in the
-        // wrong impl block (and so never getting added to WRITE_TOOL_NAMES),
-        // or a name collision silently overwriting a read-only route.
+        for unexposed_tool in UNEXPOSED_WRITE_TOOL_NAMES {
+            assert!(!names.contains(&unexposed_tool.to_string()), "{names:?}");
+        }
+        // Route-count safety net catches a future write tool landing in the
+        // wrong impl block or a name collision overwriting a read-only route.
         assert_eq!(names.len(), 23, "{names:?}");
     }
 
@@ -1567,14 +2075,16 @@ mod tests {
             .map(|t| t.name.to_string())
             .collect();
 
-        for write_tool in WRITE_TOOL_NAMES {
+        for (write_tool, _) in MCP_WRITE_CAPABILITY_MAPPING {
             assert!(names.contains(&write_tool.to_string()), "{names:?}");
         }
-        assert!(names.contains(&"channels_write".to_string()), "{names:?}");
+        for unexposed_tool in UNEXPOSED_WRITE_TOOL_NAMES {
+            assert!(!names.contains(&unexposed_tool.to_string()), "{names:?}");
+        }
         // Read-only tools are still present too -- --allow-write ADDS, doesn't replace.
         assert!(names.contains(&"channels_list".to_string()), "{names:?}");
-        // Route-count safety net: 23 read-only + 25 write, no collisions/overwrites.
-        assert_eq!(names.len(), 48, "{names:?}");
+        // Route-count safety net: 23 read-only + 22 governed writes.
+        assert_eq!(names.len(), 45, "{names:?}");
     }
 
     #[tokio::test]
@@ -1610,11 +2120,14 @@ mod tests {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
             .and(path("/api/channels"))
+            .and(header("authorization", "Bearer signed-access-token"))
+            .and(header_exists("x-request-id"))
+            .and(header("x-aether-confirmed", "true"))
             .and(body_json(serde_json::json!({
                 "name": "new-channel",
                 "protocol": "modbus",
                 "parameters": { "host": "10.0.0.5", "port": 502 },
-                "enabled": true,
+                "enabled": false,
             })))
             .respond_with(
                 ResponseTemplate::new(200).set_body_json(serde_json::json!({ "id": 1002 })),
@@ -1631,7 +2144,8 @@ mod tests {
                 parameters: serde_json::json!({ "host": "10.0.0.5", "port": 502 }),
                 description: None,
                 id: None,
-                enabled: true,
+                enabled: false,
+                confirmed: true,
             }))
             .await;
 
@@ -1643,6 +2157,10 @@ mod tests {
         let server = MockServer::start().await;
         Mock::given(method("PUT"))
             .and(path("/api/channels/1001"))
+            .and(header("authorization", "Bearer signed-access-token"))
+            .and(header_exists("x-request-id"))
+            .and(header("x-aether-confirmed", "true"))
+            .and(header("x-aether-expected-revision", "7"))
             .and(body_json(serde_json::json!({ "description": "updated" })))
             .respond_with(
                 ResponseTemplate::new(200).set_body_json(serde_json::json!({ "id": 1001 })),
@@ -1656,6 +2174,8 @@ mod tests {
             .channels_update(Parameters(ChannelsUpdateParams {
                 channel_id: 1001,
                 body: serde_json::json!({ "description": "updated" }),
+                expected_revision: Some(7),
+                confirmed: true,
             }))
             .await;
 
@@ -1667,6 +2187,10 @@ mod tests {
         let server = MockServer::start().await;
         Mock::given(method("DELETE"))
             .and(path("/api/channels/1001"))
+            .and(header("authorization", "Bearer signed-access-token"))
+            .and(header_exists("x-request-id"))
+            .and(header("x-aether-confirmed", "true"))
+            .and(header("x-aether-expected-revision", "7"))
             .respond_with(
                 ResponseTemplate::new(200).set_body_json(serde_json::json!({ "success": true })),
             )
@@ -1676,7 +2200,11 @@ mod tests {
 
         let mcp = write_mcp(&server.uri());
         let result = mcp
-            .channels_delete(Parameters(ChannelIdParams { channel_id: 1001 }))
+            .channels_delete(Parameters(ChannelMutationIdParams {
+                channel_id: 1001,
+                expected_revision: Some(7),
+                confirmed: true,
+            }))
             .await;
 
         assert_ne!(result.is_error, Some(true), "{result:?}");
@@ -1690,6 +2218,10 @@ mod tests {
         let enable_server = MockServer::start().await;
         Mock::given(method("PUT"))
             .and(path("/api/channels/1001/enabled"))
+            .and(header("authorization", "Bearer signed-access-token"))
+            .and(header_exists("x-request-id"))
+            .and(header("x-aether-confirmed", "true"))
+            .and(header("x-aether-expected-revision", "7"))
             .and(body_json(serde_json::json!({ "enabled": true })))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
             .expect(1)
@@ -1697,13 +2229,21 @@ mod tests {
             .await;
         let mcp = write_mcp(&enable_server.uri());
         let result = mcp
-            .channels_enable(Parameters(ChannelIdParams { channel_id: 1001 }))
+            .channels_enable(Parameters(ChannelMutationIdParams {
+                channel_id: 1001,
+                expected_revision: Some(7),
+                confirmed: true,
+            }))
             .await;
         assert_ne!(result.is_error, Some(true), "{result:?}");
 
         let disable_server = MockServer::start().await;
         Mock::given(method("PUT"))
             .and(path("/api/channels/1001/enabled"))
+            .and(header("authorization", "Bearer signed-access-token"))
+            .and(header_exists("x-request-id"))
+            .and(header("x-aether-confirmed", "true"))
+            .and(header("x-aether-expected-revision", "8"))
             .and(body_json(serde_json::json!({ "enabled": false })))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
             .expect(1)
@@ -1711,9 +2251,153 @@ mod tests {
             .await;
         let mcp = write_mcp(&disable_server.uri());
         let result = mcp
-            .channels_disable(Parameters(ChannelIdParams { channel_id: 1001 }))
+            .channels_disable(Parameters(ChannelMutationIdParams {
+                channel_id: 1001,
+                expected_revision: Some(8),
+                confirmed: true,
+            }))
             .await;
         assert_ne!(result.is_error, Some(true), "{result:?}");
+    }
+
+    fn channel_reconciliation_response() -> Value {
+        serde_json::json!({
+            "success": true,
+            "data": {
+                "request_id": "018f2a74-5700-7f42-9da4-73b247c9c003",
+                "scope": "all",
+                "channel_id": null,
+                "items": [
+                    {
+                        "channel_id": 7,
+                        "desired": {
+                            "status": "present",
+                            "revision": 3,
+                            "enabled": true
+                        },
+                        "runtime_projection": "degraded",
+                        "reconciliation_required": true
+                    }
+                ],
+                "degraded_count": 1,
+                "reconciliation_required": true,
+                "completion_audit": {
+                    "status": "incomplete",
+                    "retryable": false,
+                    "message": "terminal audit must be reconciled"
+                },
+                "retryable": false,
+                "message": "runtime reconciliation for all channels accepted"
+            }
+        })
+    }
+
+    #[tokio::test]
+    async fn channels_reconcile_uses_the_canonical_governed_endpoint_and_typed_receipt() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/api/channels/reconcile"))
+            .and(header("authorization", "Bearer signed-access-token"))
+            .and(header_exists("x-request-id"))
+            .and(header("x-aether-confirmed", "true"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(channel_reconciliation_response()),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let mcp = write_mcp(&server.uri());
+        let result = mcp
+            .channels_reconcile(Parameters(ChannelsReconcileParams { confirmed: true }))
+            .await;
+
+        assert_ne!(result.is_error, Some(true), "{result:?}");
+        let structured = result
+            .structured_content
+            .expect("structured reconciliation receipt");
+        assert_eq!(structured["data"]["scope"], "all");
+        assert_eq!(structured["data"]["reconciliation_required"], true);
+        assert_eq!(
+            structured["data"]["completion_audit"]["status"],
+            "incomplete"
+        );
+        assert_eq!(structured["data"]["retryable"], false);
+
+        let requests = server.received_requests().await.unwrap();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].url.path(), "/api/channels/reconcile");
+        let request_id = requests[0]
+            .headers
+            .get("x-request-id")
+            .expect("request ID header")
+            .to_str()
+            .expect("ASCII request ID");
+        uuid::Uuid::parse_str(request_id).expect("UUID request ID");
+    }
+
+    #[tokio::test]
+    async fn channels_reconcile_rejects_remote_plaintext_before_http() {
+        let mcp = write_mcp("http://192.0.2.10:6001");
+        let result = mcp
+            .channels_reconcile(Parameters(ChannelsReconcileParams { confirmed: true }))
+            .await;
+
+        assert_eq!(result.is_error, Some(true), "{result:?}");
+        let rendered = serde_json::to_string(&result).expect("serialize MCP result");
+        assert!(rendered.contains("non-loopback plaintext"), "{rendered}");
+    }
+
+    #[tokio::test]
+    async fn every_unconfirmed_channel_tool_stops_before_http() {
+        let server = MockServer::start().await;
+        let mcp = write_mcp(&server.uri());
+
+        let results = [
+            mcp.channels_create(Parameters(ChannelsCreateParams {
+                name: "blocked".to_string(),
+                protocol: "virtual".to_string(),
+                parameters: serde_json::json!({}),
+                description: None,
+                id: None,
+                enabled: false,
+                confirmed: false,
+            }))
+            .await,
+            mcp.channels_update(Parameters(ChannelsUpdateParams {
+                channel_id: 1001,
+                body: serde_json::json!({"name": "blocked"}),
+                expected_revision: None,
+                confirmed: false,
+            }))
+            .await,
+            mcp.channels_delete(Parameters(ChannelMutationIdParams {
+                channel_id: 1001,
+                expected_revision: None,
+                confirmed: false,
+            }))
+            .await,
+            mcp.channels_enable(Parameters(ChannelMutationIdParams {
+                channel_id: 1001,
+                expected_revision: None,
+                confirmed: false,
+            }))
+            .await,
+            mcp.channels_disable(Parameters(ChannelMutationIdParams {
+                channel_id: 1001,
+                expected_revision: None,
+                confirmed: false,
+            }))
+            .await,
+            mcp.channels_reconcile(Parameters(ChannelsReconcileParams { confirmed: false }))
+                .await,
+        ];
+
+        assert!(
+            results.iter().all(|result| result.is_error == Some(true)),
+            "{results:?}"
+        );
+        assert!(server.received_requests().await.unwrap().is_empty());
     }
 
     #[tokio::test]
@@ -1745,26 +2429,38 @@ mod tests {
         let enable_server = MockServer::start().await;
         Mock::given(method("POST"))
             .and(path("/api/rules/9/enable"))
+            .and(header("authorization", "Bearer signed-access-token"))
+            .and(header_exists("x-request-id"))
+            .and(body_json(serde_json::json!({ "confirmed": true })))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
             .expect(1)
             .mount(&enable_server)
             .await;
         let mcp = write_mcp(&enable_server.uri());
         let result = mcp
-            .rules_enable(Parameters(RuleIdParams { rule_id: 9 }))
+            .rules_enable(Parameters(RuleMutationIdParams {
+                rule_id: 9,
+                confirmed: true,
+            }))
             .await;
         assert_ne!(result.is_error, Some(true), "{result:?}");
 
         let disable_server = MockServer::start().await;
         Mock::given(method("POST"))
             .and(path("/api/rules/9/disable"))
+            .and(header("authorization", "Bearer signed-access-token"))
+            .and(header_exists("x-request-id"))
+            .and(body_json(serde_json::json!({ "confirmed": true })))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
             .expect(1)
             .mount(&disable_server)
             .await;
         let mcp = write_mcp(&disable_server.uri());
         let result = mcp
-            .rules_disable(Parameters(RuleIdParams { rule_id: 9 }))
+            .rules_disable(Parameters(RuleMutationIdParams {
+                rule_id: 9,
+                confirmed: true,
+            }))
             .await;
         assert_ne!(result.is_error, Some(true), "{result:?}");
     }
@@ -1777,7 +2473,12 @@ mod tests {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
             .and(path("/api/rules"))
-            .and(body_json(serde_json::json!({ "name": "new-rule" })))
+            .and(header("authorization", "Bearer signed-access-token"))
+            .and(header_exists("x-request-id"))
+            .and(body_json(serde_json::json!({
+                "name": "new-rule",
+                "confirmed": true
+            })))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({ "id": 10 })))
             .expect(1)
             .mount(&server)
@@ -1788,6 +2489,7 @@ mod tests {
             .rules_create(Parameters(RulesCreateParams {
                 name: "new-rule".to_string(),
                 description: None,
+                confirmed: true,
             }))
             .await;
 
@@ -1802,7 +2504,12 @@ mod tests {
         let server = MockServer::start().await;
         Mock::given(method("PUT"))
             .and(path("/api/rules/9"))
-            .and(body_json(serde_json::json!({ "name": "renamed" })))
+            .and(header("authorization", "Bearer signed-access-token"))
+            .and(header_exists("x-request-id"))
+            .and(body_json(serde_json::json!({
+                "name": "renamed",
+                "confirmed": true
+            })))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({ "id": 9 })))
             .expect(1)
             .mount(&server)
@@ -1813,6 +2520,7 @@ mod tests {
             .rules_update(Parameters(RulesUpdateParams {
                 rule_id: 9,
                 body: serde_json::json!({ "name": "renamed" }),
+                confirmed: true,
             }))
             .await;
 
@@ -1824,6 +2532,9 @@ mod tests {
         let server = MockServer::start().await;
         Mock::given(method("DELETE"))
             .and(path("/api/rules/9"))
+            .and(header("authorization", "Bearer signed-access-token"))
+            .and(header_exists("x-request-id"))
+            .and(body_json(serde_json::json!({ "confirmed": true })))
             .respond_with(
                 ResponseTemplate::new(200).set_body_json(serde_json::json!({ "success": true })),
             )
@@ -1833,18 +2544,22 @@ mod tests {
 
         let mcp = write_mcp(&server.uri());
         let result = mcp
-            .rules_delete(Parameters(RuleIdParams { rule_id: 9 }))
+            .rules_delete(Parameters(RuleMutationIdParams {
+                rule_id: 9,
+                confirmed: true,
+            }))
             .await;
 
         assert_ne!(result.is_error, Some(true), "{result:?}");
     }
 
     #[tokio::test]
-    async fn rules_execute_forwards_the_force_flag() {
+    async fn rules_execute_forwards_authenticated_confirmation() {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
             .and(path("/api/rules/9/execute"))
-            .and(body_json(serde_json::json!({ "force": true })))
+            .and(header("authorization", "Bearer signed-access-token"))
+            .and(body_json(serde_json::json!({ "confirmed": true })))
             .respond_with(
                 ResponseTemplate::new(200).set_body_json(serde_json::json!({ "executed": true })),
             )
@@ -1856,7 +2571,7 @@ mod tests {
         let result = mcp
             .rules_execute(Parameters(RulesExecuteParams {
                 rule_id: 9,
-                force: true,
+                confirmed: true,
             }))
             .await;
 
@@ -1874,6 +2589,9 @@ mod tests {
         });
         Mock::given(method("POST"))
             .and(path("/alarmApi/rules"))
+            .and(header("authorization", "Bearer signed-access-token"))
+            .and(header_exists("x-request-id"))
+            .and(header("x-aether-confirmed", "true"))
             .and(body_json(body.clone()))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({ "id": 7 })))
             .expect(1)
@@ -1882,7 +2600,10 @@ mod tests {
 
         let mcp = write_mcp(&server.uri());
         let result = mcp
-            .alarms_rule_create(Parameters(AlarmsRuleCreateParams { body }))
+            .alarms_rule_create(Parameters(AlarmsRuleCreateParams {
+                body,
+                confirmed: true,
+            }))
             .await;
 
         assert_ne!(result.is_error, Some(true), "{result:?}");
@@ -1896,6 +2617,9 @@ mod tests {
         let server = MockServer::start().await;
         Mock::given(method("PUT"))
             .and(path("/alarmApi/rules/7"))
+            .and(header("authorization", "Bearer signed-access-token"))
+            .and(header_exists("x-request-id"))
+            .and(header("x-aether-confirmed", "true"))
             .and(body_json(serde_json::json!({ "value": 90.0 })))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
             .expect(1)
@@ -1907,6 +2631,7 @@ mod tests {
             .alarms_rule_update(Parameters(AlarmsRuleUpdateParams {
                 id: 7,
                 body: serde_json::json!({ "value": 90.0 }),
+                confirmed: true,
             }))
             .await;
 
@@ -1918,6 +2643,9 @@ mod tests {
         let server = MockServer::start().await;
         Mock::given(method("DELETE"))
             .and(path("/alarmApi/rules/7"))
+            .and(header("authorization", "Bearer signed-access-token"))
+            .and(header_exists("x-request-id"))
+            .and(header("x-aether-confirmed", "true"))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
             .expect(1)
             .mount(&server)
@@ -1925,7 +2653,10 @@ mod tests {
 
         let mcp = write_mcp(&server.uri());
         let result = mcp
-            .alarms_rule_delete(Parameters(AlarmsRuleGetParams { id: 7 }))
+            .alarms_rule_delete(Parameters(AlarmRuleMutationIdParams {
+                id: 7,
+                confirmed: true,
+            }))
             .await;
 
         assert_ne!(result.is_error, Some(true), "{result:?}");
@@ -1940,28 +2671,140 @@ mod tests {
         let enable_server = MockServer::start().await;
         Mock::given(method("PATCH"))
             .and(path("/alarmApi/rules/7/enable"))
+            .and(header("authorization", "Bearer signed-access-token"))
+            .and(header_exists("x-request-id"))
+            .and(header("x-aether-confirmed", "true"))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
             .expect(1)
             .mount(&enable_server)
             .await;
         let mcp = write_mcp(&enable_server.uri());
         let result = mcp
-            .alarms_rule_enable(Parameters(AlarmsRuleGetParams { id: 7 }))
+            .alarms_rule_enable(Parameters(AlarmRuleMutationIdParams {
+                id: 7,
+                confirmed: true,
+            }))
             .await;
         assert_ne!(result.is_error, Some(true), "{result:?}");
 
         let disable_server = MockServer::start().await;
         Mock::given(method("PATCH"))
             .and(path("/alarmApi/rules/7/disable"))
+            .and(header("authorization", "Bearer signed-access-token"))
+            .and(header_exists("x-request-id"))
+            .and(header("x-aether-confirmed", "true"))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
             .expect(1)
             .mount(&disable_server)
             .await;
         let mcp = write_mcp(&disable_server.uri());
         let result = mcp
-            .alarms_rule_disable(Parameters(AlarmsRuleGetParams { id: 7 }))
+            .alarms_rule_disable(Parameters(AlarmRuleMutationIdParams {
+                id: 7,
+                confirmed: true,
+            }))
             .await;
         assert_ne!(result.is_error, Some(true), "{result:?}");
+    }
+
+    #[tokio::test]
+    async fn alarms_resolve_forwards_authenticated_confirmation() {
+        let server = MockServer::start().await;
+        Mock::given(method("PATCH"))
+            .and(path("/alarmApi/alerts/12/resolve"))
+            .and(header("authorization", "Bearer signed-access-token"))
+            .and(header_exists("x-request-id"))
+            .and(header("x-aether-confirmed", "true"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let mcp = write_mcp(&server.uri());
+        let result = mcp
+            .alarms_resolve(Parameters(AlertResolveParams {
+                id: 12,
+                confirmed: true,
+            }))
+            .await;
+
+        assert_ne!(result.is_error, Some(true), "{result:?}");
+    }
+
+    #[tokio::test]
+    async fn policy_mutations_reject_unconfirmed_before_any_http_request() {
+        let server = MockServer::start().await;
+        let mcp = write_mcp(&server.uri());
+
+        let results = [
+            mcp.rules_enable(Parameters(RuleMutationIdParams {
+                rule_id: 9,
+                confirmed: false,
+            }))
+            .await,
+            mcp.rules_disable(Parameters(RuleMutationIdParams {
+                rule_id: 9,
+                confirmed: false,
+            }))
+            .await,
+            mcp.rules_create(Parameters(RulesCreateParams {
+                name: "blocked".to_string(),
+                description: None,
+                confirmed: false,
+            }))
+            .await,
+            mcp.rules_update(Parameters(RulesUpdateParams {
+                rule_id: 9,
+                body: serde_json::json!({ "name": "blocked" }),
+                confirmed: false,
+            }))
+            .await,
+            mcp.rules_delete(Parameters(RuleMutationIdParams {
+                rule_id: 9,
+                confirmed: false,
+            }))
+            .await,
+            mcp.alarms_rule_create(Parameters(AlarmsRuleCreateParams {
+                body: serde_json::json!({}),
+                confirmed: false,
+            }))
+            .await,
+            mcp.alarms_rule_update(Parameters(AlarmsRuleUpdateParams {
+                id: 7,
+                body: serde_json::json!({}),
+                confirmed: false,
+            }))
+            .await,
+            mcp.alarms_rule_delete(Parameters(AlarmRuleMutationIdParams {
+                id: 7,
+                confirmed: false,
+            }))
+            .await,
+            mcp.alarms_rule_enable(Parameters(AlarmRuleMutationIdParams {
+                id: 7,
+                confirmed: false,
+            }))
+            .await,
+            mcp.alarms_rule_disable(Parameters(AlarmRuleMutationIdParams {
+                id: 7,
+                confirmed: false,
+            }))
+            .await,
+            mcp.alarms_resolve(Parameters(AlertResolveParams {
+                id: 12,
+                confirmed: false,
+            }))
+            .await,
+        ];
+
+        assert!(
+            results.iter().all(|result| result.is_error == Some(true)),
+            "every unconfirmed mutation must fail: {results:?}"
+        );
+        assert!(
+            server.received_requests().await.unwrap().is_empty(),
+            "unconfirmed MCP policy mutations must perform zero HTTP requests"
+        );
     }
 
     #[tokio::test]
@@ -1986,6 +2829,7 @@ mod tests {
                 instance_id: 3,
                 point_id: "1".to_string(),
                 value: 4500.0,
+                confirmed: true,
             }))
             .await;
 
@@ -1993,13 +2837,40 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn models_instances_measurement_posts_to_the_measurement_endpoint() {
+    async fn models_instances_action_rejects_unconfirmed_before_http() {
         let server = MockServer::start().await;
-        Mock::given(method("POST"))
-            .and(path("/api/instances/3/measurement"))
-            .and(body_json(
-                serde_json::json!({ "point_id": "101", "value": 650.5 }),
-            ))
+        let mcp = write_mcp(&server.uri());
+
+        let result = mcp
+            .models_instances_action(Parameters(ModelsInstancesActionParams {
+                instance_id: 3,
+                point_id: "1".to_string(),
+                value: 4500.0,
+                confirmed: false,
+            }))
+            .await;
+
+        assert_eq!(result.is_error, Some(true), "{result:?}");
+        assert!(
+            server.received_requests().await.unwrap().is_empty(),
+            "--allow-write must not substitute for per-call confirmation"
+        );
+    }
+
+    #[tokio::test]
+    async fn routing_action_upsert_forwards_the_governed_topology_command() {
+        let server = MockServer::start().await;
+        Mock::given(method("PUT"))
+            .and(path("/api/instances/7/actions/1/routing"))
+            .and(header("authorization", "Bearer signed-access-token"))
+            .and(header_exists("x-request-id"))
+            .and(body_json(serde_json::json!({
+                "channel_id": 3,
+                "four_remote": "A",
+                "channel_point_id": 5,
+                "enabled": true,
+                "confirmed": true
+            })))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
             .expect(1)
             .mount(&server)
@@ -2007,13 +2878,60 @@ mod tests {
 
         let mcp = write_mcp(&server.uri());
         let result = mcp
-            .models_instances_measurement(Parameters(ModelsInstancesMeasurementParams {
-                instance_id: 3,
-                point_id: "101".to_string(),
-                value: 650.5,
+            .routing_action_upsert(Parameters(RoutingActionUpsertParams {
+                instance_id: 7,
+                action_point_id: 1,
+                channel_id: 3,
+                channel_type: "A".to_string(),
+                channel_point_id: 5,
+                enabled: true,
+                confirmed: true,
             }))
             .await;
+        assert_ne!(result.is_error, Some(true), "{result:?}");
+    }
 
+    #[tokio::test]
+    async fn routing_action_delete_rejects_unconfirmed_before_http() {
+        let server = MockServer::start().await;
+        let mcp = write_mcp(&server.uri());
+
+        let result = mcp
+            .routing_action_delete(Parameters(RoutingActionDeleteParams {
+                instance_id: 7,
+                action_point_id: 1,
+                confirmed: false,
+            }))
+            .await;
+        assert_eq!(result.is_error, Some(true), "{result:?}");
+        assert!(server.received_requests().await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn routing_action_set_enabled_forwards_the_governed_topology_command() {
+        let server = MockServer::start().await;
+        Mock::given(method("PATCH"))
+            .and(path("/api/instances/7/actions/1/routing"))
+            .and(header("authorization", "Bearer signed-access-token"))
+            .and(header_exists("x-request-id"))
+            .and(body_json(serde_json::json!({
+                "enabled": false,
+                "confirmed": true
+            })))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let mcp = write_mcp(&server.uri());
+        let result = mcp
+            .routing_action_set_enabled(Parameters(RoutingActionSetEnabledParams {
+                instance_id: 7,
+                action_point_id: 1,
+                enabled: false,
+                confirmed: true,
+            }))
+            .await;
         assert_ne!(result.is_error, Some(true), "{result:?}");
     }
 

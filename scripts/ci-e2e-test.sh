@@ -261,6 +261,7 @@ fi
 
 echo -e "${LINE_V} Syncing configuration..."
 if ! ./target/release/aether sync \
+    --confirmed \
     --config-path config.e2e \
     --db-path /tmp/e2e_io.db \
     --force 2>&1 | while read -r line; do

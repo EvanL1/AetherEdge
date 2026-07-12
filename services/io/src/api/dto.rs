@@ -92,7 +92,7 @@ pub struct AdjustmentValueRequest {
 pub struct WritePointRequest {
     /// Simulation point type: T/Telemetry or S/Signal.
     #[serde(alias = "point_type", alias = "t")]
-    #[schema(example = "A")]
+    #[schema(example = "T")]
     pub r#type: String,
 
     /// Single point or batch points (automatically detected)
@@ -151,7 +151,12 @@ pub struct ServiceStatus {
 /// channel status response for list endpoint
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct ChannelStatusResponse {
+    #[schema(maximum = 9999)]
     pub id: u32,
+    /// Monotonic desired-state revision usable with
+    /// `x-aether-expected-revision` on channel mutations.
+    #[schema(example = 3, minimum = 1, maximum = 9223372036854775807_i64)]
+    pub revision: u64,
     pub name: String,
     pub description: Option<String>, // Channel description
     pub protocol: String,
@@ -241,42 +246,61 @@ pub fn create_health_status(
     }
 }
 
-/// channel operation request
+/// Governed channel lifecycle operation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ChannelOperationKind {
+    Start,
+    Stop,
+    Restart,
+}
+
+/// Channel operation request.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct ChannelOperation {
-    pub operation: String, // "start", "stop", "restart"
+    /// Governed operation: `start`, `stop`, or `restart`.
+    #[schema(example = "restart")]
+    pub operation: ChannelOperationKind,
 }
 
 /// Channel creation request
 ///
-/// - `channel_id` is optional (auto-assigned if not provided)
+/// - `channel_id` is optional; when omitted, the lowest ID in `1..10000` not
+///   occupied by a live channel or revision tombstone is selected
 /// - `name` must be unique across all channels
 /// - `parameters` are protocol-specific (see OpenAPI schema examples)
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct ChannelCreateRequest {
-    /// Channel ID (optional, auto-assigned via MAX+1 if null)
+    /// Optional channel ID below 10000. When omitted, allocation selects the
+    /// lowest ID in 1..9999 unused by live channels and revision tombstones.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schema(example = json!(null), nullable = true)]
+    #[schema(example = json!(null), maximum = 9999, nullable = true)]
     pub channel_id: Option<u32>,
 
     /// Channel name (must be unique)
-    #[schema(example = "PV Inverter Channel")]
+    #[schema(example = "Packaging PLC Channel")]
     pub name: String,
 
-    #[schema(example = "Primary PV inverter communication channel")]
+    #[schema(example = "Primary packaging-line controller channel")]
     pub description: Option<String>,
 
-    /// Protocol type: modbus_tcp, modbus_rtu, can, virtual
+    /// Protocol type identifier (for example `modbus_tcp` or `modbus_rtu`).
+    /// The active build's complete list is returned by `GET /api/protocols`.
     #[schema(example = "modbus_tcp", value_type = String)]
     pub protocol: String,
 
-    /// Enable channel immediately after creation (default: true)
+    /// Enable channel immediately after creation. Defaults to false so commissioning is explicit.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schema(example = true, nullable = true)]
+    #[schema(default = false, example = false, nullable = true)]
     pub enabled: Option<bool>,
 
-    /// Protocol-specific parameters (see OpenAPI schema for per-protocol fields)
-    #[schema(value_type = Object, example = json!({"host": "192.168.1.100", "port": 502, "connect_timeout_ms": 5000, "max_batch_size": 64}))]
+    /// Protocol-specific parameters validated with no type coercion or fallback.
+    /// Modbus TCP requires `host: non-empty string` and
+    /// `port: integer 1..65535`; Modbus RTU requires
+    /// `device: non-empty string` and `baud_rate: integer 1..4294967295`.
+    /// Optional `poll_interval_ms` and `read_timeout_ms` are integers in
+    /// `1..86400000`. See `GET /api/protocols` for all supported parameters.
+    #[schema(value_type = Object, example = json!({"host": "192.168.1.100", "port": 502, "read_timeout_ms": 3000, "poll_interval_ms": 1000}))]
     pub parameters: HashMap<String, serde_json::Value>,
 
     /// Logging configuration (optional, defaults to disabled)
@@ -284,13 +308,16 @@ pub struct ChannelCreateRequest {
     pub logging: Option<ChannelLoggingConfig>,
 }
 
-/// Channel configuration update request (PATCH semantics, null fields unchanged)
-/// If `channel_id` differs from path ID, triggers ID migration.
+/// Channel configuration update request with PATCH semantics.
+///
+/// Omitted or `null` fields are left unchanged. `channel_id` is retained only
+/// for wire compatibility and, when present, must equal the path identifier;
+/// ordinary channel updates never migrate identity.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct ChannelConfigUpdateRequest {
-    /// New channel ID (triggers migration if different from path ID)
+    /// Compatibility echo of the path ID. A different value is rejected.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schema(example = 6, nullable = true)]
+    #[schema(example = 6, maximum = 9999, nullable = true)]
     pub channel_id: Option<u32>,
     pub name: Option<String>,
     pub description: Option<String>,
@@ -306,47 +333,212 @@ pub struct ChannelEnabledRequest {
     pub enabled: bool,
 }
 
-/// Channel CRUD operation result
-/// Uses ChannelCore to eliminate field duplication
+/// Stable channel mutation reported by the governed application boundary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ChannelMutationOperation {
+    Create,
+    Update,
+    Delete,
+    Enable,
+    Disable,
+}
+
+/// Runtime projection of the authoritative desired SQLite configuration.
+///
+/// `activation_pending` and `degraded` are accepted outcomes that require
+/// reconciliation. They are not command failures and must not trigger an
+/// automatic retry of the non-idempotent mutation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ChannelRuntimeProjectionResult {
+    Stopped,
+    ActivationPending,
+    Active,
+    Degraded,
+    Removed,
+}
+
+/// Terminal completion-audit persistence state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ChannelCompletionAuditState {
+    Recorded,
+    Incomplete,
+}
+
+/// Completion-audit details for an already accepted non-idempotent mutation.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct ChannelCrudResult {
-    /// Core channel fields (id, name, description, protocol, enabled)
-    #[serde(flatten)]
-    #[schema(value_type = Object)]
-    pub core: ChannelCore,
-
-    /// Runtime status
-    #[schema(example = "running")]
-    pub runtime_status: String, // "running", "stopped", "error", "not_started"
-
-    /// Operation message
-    #[schema(example = "Channel configuration updated successfully")]
+pub struct ChannelCompletionAudit {
+    pub status: ChannelCompletionAuditState,
+    /// Always false: an incomplete terminal audit must be reconciled by
+    /// request ID rather than by repeating the channel mutation.
+    #[schema(default = false, example = false)]
+    pub retryable: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
 }
 
-impl From<(&ChannelConfig, String, Option<String>)> for ChannelCrudResult {
-    fn from((config, runtime_status, message): (&ChannelConfig, String, Option<String>)) -> Self {
-        Self {
-            core: config.core.clone(),
-            runtime_status,
-            message,
-        }
-    }
+/// Receipt returned after a channel desired-state mutation was accepted.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct ChannelMutationResult {
+    /// Legacy-compatible channel ID field.
+    #[schema(maximum = 9999)]
+    pub id: u32,
+    /// Explicit typed receipt channel identity.
+    #[schema(maximum = 9999)]
+    pub channel_id: u32,
+    /// Request-provided name retained for create/update wire compatibility.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// Request-provided description retained for create/update wire compatibility.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// Request-provided protocol retained for create/update wire compatibility.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub protocol: Option<String>,
+    #[schema(format = "uuid")]
+    pub request_id: String,
+    pub operation: ChannelMutationOperation,
+    #[schema(minimum = 1, maximum = 9223372036854775807_i64)]
+    pub resulting_revision: u64,
+    /// Legacy-compatible desired enabled field.
+    pub enabled: bool,
+    pub desired_enabled: bool,
+    pub runtime_projection: ChannelRuntimeProjectionResult,
+    /// Legacy-compatible runtime status (`running`, `connecting`, `stopped`,
+    /// `degraded`, or `removed`). New clients should use runtime_projection.
+    pub runtime_status: String,
+    pub reconciliation_required: bool,
+    pub completion_audit: ChannelCompletionAudit,
+    /// Channel mutations are non-idempotent and never advertised as safe for
+    /// automatic retry, including terminal-audit degradation.
+    #[schema(default = false, example = false)]
+    pub retryable: bool,
+    pub message: String,
 }
 
-/// Reload configuration result
+/// Standard successful channel-mutation response shown by Swagger UI.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct ReloadConfigResult {
-    #[schema(example = 3)]
-    pub total_channels: usize,
-    #[schema(example = json!([1, 2]))]
-    pub channels_added: Vec<u32>,
-    #[schema(example = json!([3]))]
-    pub channels_updated: Vec<u32>,
-    #[schema(example = json!([]))]
-    pub channels_removed: Vec<u32>,
-    #[schema(example = json!([]))]
-    pub errors: Vec<String>,
+pub struct ChannelMutationResponse {
+    #[schema(default = true, example = true)]
+    pub success: bool,
+    pub data: ChannelMutationResult,
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    #[schema(value_type = Object)]
+    pub metadata: HashMap<String, serde_json::Value>,
+}
+
+/// Scope reported by a governed channel runtime reconciliation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ChannelReconciliationScopeResult {
+    All,
+    One,
+}
+
+/// Sanitized desired-state fact for one reconciled channel.
+///
+/// Protocol parameters, logging configuration, and other potentially secret
+/// values are intentionally absent from this wire contract.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum ChannelDesiredStateResult {
+    Present {
+        #[schema(minimum = 1, maximum = 9223372036854775807_i64)]
+        revision: u64,
+        enabled: bool,
+    },
+    Absent {
+        #[schema(minimum = 1, maximum = 9223372036854775807_i64)]
+        last_revision: Option<u64>,
+    },
+}
+
+/// Sanitized per-channel projection returned by reconciliation.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct ChannelReconciliationItemResult {
+    #[schema(maximum = 9999)]
+    pub channel_id: u32,
+    pub desired: ChannelDesiredStateResult,
+    pub runtime_projection: ChannelRuntimeProjectionResult,
+    pub reconciliation_required: bool,
+}
+
+/// Accepted non-idempotent channel runtime-reconciliation receipt.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct ChannelReconciliationResult {
+    #[schema(format = "uuid")]
+    pub request_id: String,
+    pub scope: ChannelReconciliationScopeResult,
+    /// Selected channel for `scope=one`; null for a full reconciliation.
+    #[schema(maximum = 9999)]
+    pub channel_id: Option<u32>,
+    pub items: Vec<ChannelReconciliationItemResult>,
+    pub degraded_count: usize,
+    pub reconciliation_required: bool,
+    pub completion_audit: ChannelCompletionAudit,
+    /// Reconciliation can reconnect protocol sessions and is never safe for
+    /// automatic retry, including terminal-audit degradation.
+    #[schema(default = false, example = false)]
+    pub retryable: bool,
+    pub message: String,
+}
+
+/// Standard successful reconciliation response shown by Swagger UI.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct ChannelReconciliationResponse {
+    #[schema(default = true, example = true)]
+    pub success: bool,
+    pub data: ChannelReconciliationResult,
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    #[schema(value_type = Object)]
+    pub metadata: HashMap<String, serde_json::Value>,
+}
+
+/// Channel lifecycle operation accepted by the compatibility control route.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ChannelControlOperationResult {
+    Start,
+    Stop,
+    Restart,
+}
+
+/// Unified receipt for governed start, stop, and restart operations.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct ChannelControlResult {
+    #[schema(maximum = 9999)]
+    pub channel_id: u32,
+    #[schema(format = "uuid")]
+    pub request_id: String,
+    pub operation: ChannelControlOperationResult,
+    /// Desired-state revision observed after the operation. This can be null
+    /// when a reconciliation observes an absent channel without a tombstone.
+    #[schema(minimum = 1, maximum = 9223372036854775807_i64)]
+    pub desired_revision: Option<u64>,
+    /// Desired enabled state observed after the operation, or null when the
+    /// authoritative channel definition is absent.
+    pub desired_enabled: Option<bool>,
+    pub runtime_projection: ChannelRuntimeProjectionResult,
+    pub reconciliation_required: bool,
+    pub completion_audit: ChannelCompletionAudit,
+    /// Lifecycle operations can reconnect a protocol session and are never
+    /// safe for automatic retry.
+    #[schema(default = false, example = false)]
+    pub retryable: bool,
+    pub message: String,
+}
+
+/// Standard successful lifecycle-control response shown by Swagger UI.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct ChannelControlResponse {
+    #[schema(default = true, example = true)]
+    pub success: bool,
+    pub data: ChannelControlResult,
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    #[schema(value_type = Object)]
+    pub metadata: HashMap<String, serde_json::Value>,
 }
 
 /// Routing cache reload result
@@ -377,6 +569,11 @@ pub struct ChannelDetail {
     #[serde(flatten)]
     #[schema(value_type = Object)]
     pub config: ChannelConfig,
+
+    /// Monotonic desired-state revision usable with
+    /// `x-aether-expected-revision` on channel mutations.
+    #[schema(example = 3, minimum = 1, maximum = 9223372036854775807_i64)]
+    pub revision: u64,
 
     /// Runtime status information
     pub runtime_status: ChannelRuntimeStatus,
@@ -433,7 +630,7 @@ fn default_page_size() -> usize {
     20
 }
 
-/// Auto-reload query parameter (default true = changes take effect immediately)
+/// Optional governed runtime reconciliation after a point-topology mutation.
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct AutoReloadQuery {
     #[serde(default = "default_auto_reload")]
@@ -441,18 +638,7 @@ pub struct AutoReloadQuery {
 }
 
 fn default_auto_reload() -> bool {
-    true
-}
-
-/// Parameter change classification
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ToSchema)]
-pub enum ParameterChangeType {
-    /// Only metadata changed (name, description) - no reload needed
-    MetadataOnly,
-    /// Non-critical parameters changed (timeout, retry) - may need reload
-    NonCritical,
-    /// Critical parameters changed (host, port, slave_id) - must reload
-    Critical,
+    false
 }
 
 /// Point definition (from Points table)
@@ -622,7 +808,7 @@ pub struct TemplateDetail {
 /// Request to create a template from an existing channel
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct CreateTemplateFromChannelReq {
-    #[schema(example = "PCS Modbus Template")]
+    #[schema(example = "Packaging PLC Modbus Template")]
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
@@ -631,7 +817,7 @@ pub struct CreateTemplateFromChannelReq {
 /// Request to create a template manually (direct JSON)
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct CreateTemplateReq {
-    #[schema(example = "Battery BMS Template")]
+    #[schema(example = "Boiler Controller Template")]
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
@@ -745,15 +931,20 @@ mod tests {
     fn test_channel_operation_deserialization() {
         let json_data = r#"{"operation": "start"}"#;
         let operation: ChannelOperation = serde_json::from_str(json_data).unwrap();
-        assert_eq!(operation.operation, "start");
+        assert_eq!(operation.operation, ChannelOperationKind::Start);
 
         let json_data = r#"{"operation": "stop"}"#;
         let operation: ChannelOperation = serde_json::from_str(json_data).unwrap();
-        assert_eq!(operation.operation, "stop");
+        assert_eq!(operation.operation, ChannelOperationKind::Stop);
 
         let json_data = r#"{"operation": "restart"}"#;
         let operation: ChannelOperation = serde_json::from_str(json_data).unwrap();
-        assert_eq!(operation.operation, "restart");
+        assert_eq!(operation.operation, ChannelOperationKind::Restart);
+
+        assert!(
+            serde_json::from_str::<ChannelOperation>(r#"{"operation": "invalid"}"#).is_err(),
+            "unsupported lifecycle operations must be rejected by the typed DTO"
+        );
     }
 
     #[test]
@@ -901,5 +1092,13 @@ mod tests {
         assert!(request.protocol.is_none());
         assert!(request.parameters.is_none());
         assert!(request.logging.is_none());
+    }
+
+    #[test]
+    fn point_topology_mutations_do_not_reconcile_runtime_by_default() {
+        let query: AutoReloadQuery = serde_json::from_str("{}").unwrap();
+        assert!(!query.auto_reload);
+        let explicit: AutoReloadQuery = serde_json::from_str(r#"{"auto_reload":true}"#).unwrap();
+        assert!(explicit.auto_reload);
     }
 }

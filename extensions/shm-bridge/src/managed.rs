@@ -282,7 +282,11 @@ impl SlotSource for ReconnectingSlotSource {
                     format!("slot {index} was being updated during the read"),
                 )
             })?;
-            Ok(Some(SlotSnapshot::new(slot.value, slot.timestamp_ms)))
+            Ok(Some(SlotSnapshot::new_with_raw(
+                slot.value,
+                slot.raw,
+                slot.timestamp_ms,
+            )))
         })
     }
 }

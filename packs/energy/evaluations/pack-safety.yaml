@@ -1,0 +1,36 @@
+schema: aether.pack.evaluation-suite.v1
+id: energy.pack-safety
+description: Deterministic evidence that Energy Pack assets remain inactive until commissioning.
+execution: cargo_test_evidence
+scenarios:
+  - id: formal-payloads-are-versioned-and-uncommissioned
+    expect:
+      mapping_schema: aether.pack.mapping-set.v1
+      rule_enabled: false
+      rule_commissioned: false
+      data_processing_tasks_enabled: false
+    evidence:
+      command: cargo test -p aether-example-energy-gateway --test pack_artifact_contract formal_energy_assets_retain_versioned_fail_safe_payloads
+      test: formal_energy_assets_retain_versioned_fail_safe_payloads
+  - id: isolated-pack-is-self-contained
+    expect:
+      manifest_loads: true
+      external_asset_dependency: false
+    evidence:
+      command: cargo test -p aether-example-energy-gateway --test pack_artifact_contract energy_pack_loads_after_copying_only_the_pack_artifact
+      test: energy_pack_loads_after_copying_only_the_pack_artifact
+  - id: bundled-control-assets-are-disabled
+    expect:
+      enabled_channels: 0
+      enabled_rules: 0
+      commissioned_mappings: 0
+    evidence:
+      command: cargo test -p aether-example-energy-gateway --test composition_contract bundled_energy_composition_starts_uncommissioned_and_fail_safe
+      test: bundled_energy_composition_starts_uncommissioned_and_fail_safe
+  - id: inactive-pack-exposes-no-domain-assets
+    expect:
+      active_pack_count: 0
+      namespaced_assets: 0
+    evidence:
+      command: cargo test -p aether-example-energy-gateway --test pack_artifact_contract only_an_explicitly_active_energy_pack_exposes_namespaced_formal_assets
+      test: only_an_explicitly_active_energy_pack_exposes_namespaced_formal_assets

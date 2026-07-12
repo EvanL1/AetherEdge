@@ -20,9 +20,14 @@ uplink data survives network outages and process restarts.
 1. `aether-dataplane` owns the business-neutral physical SHM implementation:
    header/layout math, atomic slots, mmap reader/writer, dirty bitmap, path
    helpers, and tear-resistant snapshots.
-2. `aether-rtdb-shm::core` becomes a compatibility re-export. Channel,
-   instance, routing, and action adapters remain in the legacy crate until
-   migrated separately.
+2. `aether-rtdb-shm::core` becomes a compatibility re-export. The typed
+   `ChannelPointManifest` in `aether-shm-bridge` is the sole implementation of
+   deterministic T/S/C/A slot allocation, reverse attribution, and the layout
+   hash. The legacy SQLite count loader stays at the composition boundary;
+   `ChannelPointCounts`, `ChannelLayout`, `ChannelToSlotIndex`, and
+   `ReverseSlotIndex` are temporary compatibility projections. Instance,
+   routing, and action adapters remain in the legacy crate until migrated
+   separately.
 3. Public mmap constructors validate mapped length, declared capacity, and
    live slot count before any pointer dereference and return typed
    `DataplaneError` values. Read-only consumers receive a `HeaderSnapshot`,
@@ -40,6 +45,12 @@ uplink data survives network outages and process restarts.
 7. The compatibility `aether-uplink` routes periodic telemetry, gateway metrics, and
    alarm broadcasts through the durable outbox before MQTT submission and
    compacts acknowledged records at startup and hourly.
+8. `ShmAcquisitionStateWriter` implements the acquisition-owned write port over
+   one `SlotWriter` and its matching `ChannelPointManifest`. It resolves and
+   validates the complete typed T/S batch, including duplicate and generation
+   mismatch checks, before the first slot mutation. Its public lifecycle
+   surface is limited to heartbeat, generation/slot-count observation, dirty
+   draining, and snapshot saving; it exposes no arbitrary slot write.
 
 ## Delivery semantics
 
@@ -63,6 +74,11 @@ PUBACK events before claiming broker-confirmed crash durability.
 - The edge SDK has a real offline queue without requiring SQLite or another
   database engine.
 - Legacy services can migrate one data path at a time behind stable ports.
+- `ShmHandle` publishes the typed acquisition writer, formal manifest, legacy
+  writer, and compatibility indexes in one `ArcSwap` generation. Production
+  io expands and deduplicates C2C routes before one typed batch commit, while
+  PointWatch receives the committed domain address rather than consulting a
+  stale reverse index after rebuild.
 - Corruption, double writers, capacity exhaustion, and retryability produce
   explicit errors rather than silent fallback.
 
@@ -73,12 +89,41 @@ PUBACK events before claiming broker-confirmed crash durability.
 - `fs2` is required for portable advisory file locking.
 - The legacy SHM aggregation crate temporarily re-exports the new crate while
   business adapters are still split out.
+- `UnifiedWriter`, its raw index, and `write_channel_batch_direct` remain for
+  compatibility tests, benchmarks, action-side code, and staged consumer
+  migration. They are no longer on production io's acquisition-write path.
 - MQTT broker-level acknowledgement remains follow-up work.
+
+## Compatibility shim removal criteria
+
+The channel-layout shims in `aether-rtdb-shm` may be removed when all of the
+following are true:
+
+1. io and automation construct and consume `ChannelPointManifest` directly,
+   and the SQLite manifest loader has moved to a composition/configuration
+   adapter.
+2. No production target imports `ChannelPointCounts`, `ChannelLayout`,
+   `ChannelToSlotIndex`, or `ReverseSlotIndex`; test-only compatibility users
+   have also migrated to typed addresses.
+3. Golden layout-hash and slot/reverse-slot contract tests pass for the old
+   and new process versions used during a rolling restart.
+4. The legacy crate's dependency on `aether-shm-bridge` can be removed together
+   with the shims without changing SHM header or slot semantics.
+5. Production io already uses the typed writer published with each manifest
+   generation, expands C2C before the atomic port call, and preserves
+   PointWatch. Delete `write_channel_batch_direct` after its remaining legacy
+   tests and benchmarks migrate to domain batches; retain the fixed-generation
+   constructor only while testkit/in-process compositions require it.
 
 ## Verification
 
 ```bash
 cargo test -p aether-dataplane
+cargo test -p aether-shm-bridge --test channel_manifest_contract
+cargo test -p aether-shm-bridge --test acquisition_writer_contract
+cargo test -p aether-rtdb-shm --lib
+cargo test -p aether-io --test test_shm_store
+cargo test -p aether-rtdb-shm --lib shm_handle::tests
 cargo test -p aether-store-local
 cargo test -p aether-application --test outbox_forwarder
 cargo check -p aether-uplink

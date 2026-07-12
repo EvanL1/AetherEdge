@@ -26,6 +26,8 @@ use axum::{
     routing::{get, post},
 };
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "swagger-ui")]
+use utoipa::OpenApi;
 use uuid::Uuid;
 
 use crate::auth::Claims;
@@ -49,12 +51,42 @@ pub(crate) fn router() -> Router<Arc<AppState>> {
         )
 }
 
+#[cfg(feature = "swagger-ui")]
+#[derive(OpenApi)]
+#[openapi(
+    paths(list_tasks, processor_health, process),
+    components(schemas(
+        ErrorEnvelope,
+        ErrorDetail,
+        IdentityResponse,
+        FeatureResponse,
+        TargetResponse,
+        FallbackResponse,
+        ForecastPolicyResponse,
+        HistoryFeaturePolicyResponse,
+        ArtifactResponse,
+        TaskResponse,
+        TasksResponse,
+        ProcessorHealthResponse,
+        ProcessorsHealthResponse,
+        ProcessRequestBody,
+        ProcessOptionsBody,
+    )),
+    tags((
+        name = "Data Processing",
+        description = "Commissioned, authenticated data-processing tasks. This tag and its routes are present only when Data Processing is enabled and commissioned."
+    ))
+)]
+pub(crate) struct DataProcessingApiDoc;
+
 #[derive(Debug, Serialize)]
+#[cfg_attr(feature = "swagger-ui", derive(utoipa::ToSchema))]
 struct ErrorEnvelope {
     error: ErrorDetail,
 }
 
 #[derive(Debug, Serialize)]
+#[cfg_attr(feature = "swagger-ui", derive(utoipa::ToSchema))]
 struct ErrorDetail {
     code: &'static str,
     message: &'static str,
@@ -155,26 +187,31 @@ impl From<ApplicationError> for ApiError {
             | ApplicationError::CovariateSourceFailed(error)
             | ApplicationError::ProcessorFailed(error)
             | ApplicationError::Port(error) => {
-                let (status, code) = match error.kind() {
-                    PortErrorKind::Timeout => {
-                        (StatusCode::GATEWAY_TIMEOUT, "DATA_PROCESSING_TIMEOUT")
-                    },
+                let (status, code, message) = match error.kind() {
+                    PortErrorKind::Timeout => (
+                        StatusCode::GATEWAY_TIMEOUT,
+                        "DATA_PROCESSING_TIMEOUT",
+                        "a required data-processing dependency timed out",
+                    ),
+                    PortErrorKind::NotFound => (
+                        StatusCode::NOT_FOUND,
+                        "DATA_PROCESSING_DEPENDENCY_NOT_FOUND",
+                        "a required commissioned data-processing resource was not found",
+                    ),
                     PortErrorKind::InvalidData
                     | PortErrorKind::Permanent
                     | PortErrorKind::Rejected => (
                         StatusCode::BAD_GATEWAY,
                         "DATA_PROCESSING_DEPENDENCY_REJECTED",
+                        "a required data-processing dependency rejected the request",
                     ),
                     PortErrorKind::Unavailable | PortErrorKind::Conflict => (
                         StatusCode::SERVICE_UNAVAILABLE,
                         "DATA_PROCESSING_DEPENDENCY_UNAVAILABLE",
+                        "a required data-processing dependency is unavailable",
                     ),
                 };
-                Self::new(
-                    status,
-                    code,
-                    "a required data-processing dependency is unavailable",
-                )
+                Self::new(status, code, message)
             },
             ApplicationError::ProcessingRequestTooLarge { .. } => Self::new(
                 StatusCode::PAYLOAD_TOO_LARGE,
@@ -191,7 +228,9 @@ impl From<ApplicationError> for ApiError {
                 "DATA_PROCESSING_ENCODING_FAILED",
                 "the data-processing response could not be encoded",
             ),
-            ApplicationError::InvalidCommand(_) => Self::invalid_request(),
+            ApplicationError::InvalidCommand(_) | ApplicationError::InvalidChannelMutation(_) => {
+                Self::invalid_request()
+            },
         }
     }
 }
@@ -214,12 +253,14 @@ impl IntoResponse for ApiError {
 }
 
 #[derive(Debug, Serialize)]
+#[cfg_attr(feature = "swagger-ui", derive(utoipa::ToSchema))]
 struct IdentityResponse {
     id: String,
     revision: u32,
 }
 
 #[derive(Debug, Serialize)]
+#[cfg_attr(feature = "swagger-ui", derive(utoipa::ToSchema))]
 struct FeatureResponse {
     name: String,
     role: &'static str,
@@ -234,6 +275,7 @@ struct FeatureResponse {
 }
 
 #[derive(Debug, Serialize)]
+#[cfg_attr(feature = "swagger-ui", derive(utoipa::ToSchema))]
 struct TargetResponse {
     name: String,
     unit: String,
@@ -241,6 +283,7 @@ struct TargetResponse {
 }
 
 #[derive(Debug, Serialize)]
+#[cfg_attr(feature = "swagger-ui", derive(utoipa::ToSchema))]
 struct FallbackResponse {
     strategy: String,
     version: String,
@@ -249,6 +292,7 @@ struct FallbackResponse {
 }
 
 #[derive(Debug, Serialize)]
+#[cfg_attr(feature = "swagger-ui", derive(utoipa::ToSchema))]
 struct ForecastPolicyResponse {
     target: TargetResponse,
     cadence_ms: u64,
@@ -270,6 +314,7 @@ struct ForecastPolicyResponse {
 }
 
 #[derive(Debug, Serialize)]
+#[cfg_attr(feature = "swagger-ui", derive(utoipa::ToSchema))]
 struct HistoryFeaturePolicyResponse {
     feature: String,
     aggregation: &'static str,
@@ -277,6 +322,7 @@ struct HistoryFeaturePolicyResponse {
 }
 
 #[derive(Debug, Serialize)]
+#[cfg_attr(feature = "swagger-ui", derive(utoipa::ToSchema))]
 struct ArtifactResponse {
     kind: String,
     family: String,
@@ -287,6 +333,7 @@ struct ArtifactResponse {
 }
 
 #[derive(Debug, Serialize)]
+#[cfg_attr(feature = "swagger-ui", derive(utoipa::ToSchema))]
 struct TaskResponse {
     task: IdentityResponse,
     binding: IdentityResponse,
@@ -435,24 +482,28 @@ const fn duplicate_policy_name(value: HistoryDuplicatePolicy) -> &'static str {
 }
 
 #[derive(Debug, Serialize)]
+#[cfg_attr(feature = "swagger-ui", derive(utoipa::ToSchema))]
 struct TasksResponse {
     schema: &'static str,
     tasks: Vec<TaskResponse>,
 }
 
 #[derive(Debug, Serialize)]
+#[cfg_attr(feature = "swagger-ui", derive(utoipa::ToSchema))]
 struct ProcessorHealthResponse {
     processor_id: String,
     health: &'static str,
 }
 
 #[derive(Debug, Serialize)]
+#[cfg_attr(feature = "swagger-ui", derive(utoipa::ToSchema))]
 struct ProcessorsHealthResponse {
     schema: &'static str,
     processors: Vec<ProcessorHealthResponse>,
 }
 
 #[derive(Debug, Deserialize)]
+#[cfg_attr(feature = "swagger-ui", derive(utoipa::ToSchema))]
 #[serde(deny_unknown_fields)]
 struct ProcessRequestBody {
     task_id: String,
@@ -464,6 +515,7 @@ struct ProcessRequestBody {
 }
 
 #[derive(Debug, Deserialize)]
+#[cfg_attr(feature = "swagger-ui", derive(utoipa::ToSchema))]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 enum ProcessOptionsBody {
     Forecast {
@@ -519,6 +571,22 @@ impl ProcessRequestBody {
     }
 }
 
+#[cfg_attr(feature = "swagger-ui", utoipa::path(
+    get,
+    path = "/api/v1/data-processing/tasks",
+    params(
+        ("x-request-id" = Option<String>, Header, description = "Caller-provided audit correlation ID")
+    ),
+    responses(
+        (status = 200, description = "Commissioned task and binding summaries", body = TasksResponse),
+        (status = 400, description = "Invalid or repeated x-request-id header", body = ErrorEnvelope),
+        (status = 401, description = "Missing or invalid access token"),
+        (status = 403, description = "Authenticated actor lacks discovery permission", body = ErrorEnvelope),
+        (status = 503, description = "The request context cannot be constructed because the system clock is unavailable", body = ErrorEnvelope)
+    ),
+    security(("bearer_auth" = [])),
+    tag = "Data Processing"
+))]
 async fn list_tasks(
     State(state): State<Arc<AppState>>,
     Extension(claims): Extension<Claims>,
@@ -533,6 +601,22 @@ async fn list_tasks(
     }))
 }
 
+#[cfg_attr(feature = "swagger-ui", utoipa::path(
+    get,
+    path = "/api/v1/data-processing/processors/health",
+    params(
+        ("x-request-id" = Option<String>, Header, description = "Caller-provided audit correlation ID")
+    ),
+    responses(
+        (status = 200, description = "Health of commissioned processors", body = ProcessorsHealthResponse),
+        (status = 400, description = "Invalid or repeated x-request-id header", body = ErrorEnvelope),
+        (status = 401, description = "Missing or invalid access token"),
+        (status = 403, description = "Authenticated actor lacks discovery permission", body = ErrorEnvelope),
+        (status = 503, description = "The request context cannot be constructed because the system clock is unavailable", body = ErrorEnvelope)
+    ),
+    security(("bearer_auth" = [])),
+    tag = "Data Processing"
+))]
 async fn processor_health(
     State(state): State<Arc<AppState>>,
     Extension(claims): Extension<Claims>,
@@ -557,6 +641,37 @@ async fn processor_health(
     }))
 }
 
+#[cfg_attr(feature = "swagger-ui", utoipa::path(
+    post,
+    path = "/api/v1/data-processing/process",
+    params(
+        ("x-request-id" = Option<String>, Header, description = "Caller-provided audit correlation ID"),
+        ("x-aether-confirmed" = Option<bool>, Header, description = "Explicit confirmation for policies that require it")
+    ),
+    request_body(
+        content = ProcessRequestBody,
+        description = "Commissioned task and binding revisions with typed processing options",
+        content_type = "application/json"
+    ),
+    responses(
+        (status = 200, description = "Validated derived-data envelope", body = serde_json::Value,
+            content_type = "application/vnd.aether.data-processing+json;version=1"),
+        (status = 400, description = "Invalid request", body = ErrorEnvelope),
+        (status = 401, description = "Missing or invalid access token"),
+        (status = 403, description = "Authenticated actor lacks run permission", body = ErrorEnvelope),
+        (status = 404, description = "The requested task, binding revision, or required commissioned resource was not found", body = ErrorEnvelope),
+        (status = 413, description = "Request or assembled processor frame exceeds a configured limit", body = ErrorEnvelope),
+        (status = 415, description = "JSON Content-Type is required", body = ErrorEnvelope),
+        (status = 422, description = "Current source data fails the commissioned quality policy", body = ErrorEnvelope),
+        (status = 428, description = "Explicit confirmation is required", body = ErrorEnvelope),
+        (status = 502, description = "A processor or data-source dependency returned rejected or invalid data", body = ErrorEnvelope),
+        (status = 503, description = "Processing capacity, a dependency, the system clock, or the mandatory audit sink is unavailable", body = ErrorEnvelope),
+        (status = 504, description = "A commissioned dependency timed out", body = ErrorEnvelope),
+        (status = 500, description = "The derived-data response could not be encoded", body = ErrorEnvelope)
+    ),
+    security(("bearer_auth" = [])),
+    tag = "Data Processing"
+))]
 async fn process(
     State(state): State<Arc<AppState>>,
     Extension(claims): Extension<Claims>,
@@ -761,9 +876,9 @@ mod tests {
 
     fn valid_body() -> ProcessRequestBody {
         serde_json::from_value(serde_json::json!({
-            "task_id": "energy.site-load-forecast",
+            "task_id": "example.signal-forecast",
             "expected_task_revision": 1,
-            "binding_id": "energy.example-site",
+            "binding_id": "example.edge-asset",
             "expected_binding_revision": 1,
             "as_of": "1970-01-01T00:00:01Z",
             "options": {
@@ -840,9 +955,9 @@ mod tests {
     #[test]
     fn request_body_is_strict_and_versioned() {
         let unknown = serde_json::from_value::<ProcessRequestBody>(serde_json::json!({
-            "task_id": "energy.site-load-forecast",
+            "task_id": "example.signal-forecast",
             "expected_task_revision": 1,
-            "binding_id": "energy.example-site",
+            "binding_id": "example.edge-asset",
             "expected_binding_revision": 1,
             "as_of": "2026-07-11T12:00:00Z",
             "processor_endpoint": "https://attacker.invalid",
@@ -851,9 +966,9 @@ mod tests {
         assert!(unknown.is_err());
 
         let unknown_option = serde_json::from_value::<ProcessRequestBody>(serde_json::json!({
-            "task_id": "energy.site-load-forecast",
+            "task_id": "example.signal-forecast",
             "expected_task_revision": 1,
-            "binding_id": "energy.example-site",
+            "binding_id": "example.edge-asset",
             "expected_binding_revision": 1,
             "as_of": "2026-07-11T12:00:00Z",
             "options": {"kind": "forecast", "horizon_steps": 2, "frame": {}}
@@ -861,9 +976,9 @@ mod tests {
         assert!(unknown_option.is_err());
 
         let explicit_null = serde_json::from_value::<ProcessRequestBody>(serde_json::json!({
-            "task_id": "energy.site-load-forecast",
+            "task_id": "example.signal-forecast",
             "expected_task_revision": 1,
-            "binding_id": "energy.example-site",
+            "binding_id": "example.edge-asset",
             "expected_binding_revision": 1,
             "as_of": "2026-07-11T12:00:00Z",
             "options": {"kind": "forecast", "horizon_steps": 2, "quantiles": null}
@@ -871,9 +986,9 @@ mod tests {
         assert!(explicit_null.is_err());
 
         let empty_quantiles = serde_json::from_value::<ProcessRequestBody>(serde_json::json!({
-            "task_id": "energy.site-load-forecast",
+            "task_id": "example.signal-forecast",
             "expected_task_revision": 1,
-            "binding_id": "energy.example-site",
+            "binding_id": "example.edge-asset",
             "expected_binding_revision": 1,
             "as_of": "2026-07-11T12:00:00Z",
             "options": {"kind": "forecast", "horizon_steps": 2, "quantiles": []}
@@ -882,9 +997,9 @@ mod tests {
         assert!(empty_quantiles.into_domain().is_err());
 
         let stale_identity = serde_json::from_value::<ProcessRequestBody>(serde_json::json!({
-            "task_id": "energy.site-load-forecast",
+            "task_id": "example.signal-forecast",
             "expected_task_revision": 0,
-            "binding_id": "energy.example-site",
+            "binding_id": "example.edge-asset",
             "expected_binding_revision": 1,
             "as_of": "2026-07-11T12:00:00Z",
             "options": {"kind": "forecast", "horizon_steps": 2}
@@ -932,5 +1047,31 @@ mod tests {
             HeaderValue::from_static("contains space"),
         );
         assert!(request_id(&headers).is_err());
+    }
+
+    #[test]
+    fn missing_port_resource_maps_to_not_found() {
+        let error = ApiError::from(ApplicationError::Port(aether_ports::PortError::new(
+            PortErrorKind::NotFound,
+            "commissioned source is missing",
+        )));
+
+        assert_eq!(error.status, StatusCode::NOT_FOUND);
+        assert_eq!(error.code, "DATA_PROCESSING_DEPENDENCY_NOT_FOUND");
+        assert_eq!(
+            error.message,
+            "a required commissioned data-processing resource was not found"
+        );
+    }
+
+    #[test]
+    fn unrelated_invalid_application_input_is_sanitized_as_a_bad_request() {
+        let error = ApiError::from(ApplicationError::InvalidChannelMutation(
+            "adapter-specific diagnostic".to_string(),
+        ));
+
+        assert_eq!(error.status, StatusCode::BAD_REQUEST);
+        assert_eq!(error.code, "INVALID_PROCESS_REQUEST");
+        assert!(!error.message.contains("adapter-specific"));
     }
 }

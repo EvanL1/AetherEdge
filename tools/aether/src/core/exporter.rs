@@ -241,7 +241,7 @@ impl ConfigExporter {
         std::fs::write(&yaml_path, yaml_content)?;
         result.files_exported.push("automation.yaml".to_string());
 
-        // Export products hierarchy (from compile-time built-in products)
+        // The kernel has no implicit product hierarchy to export.
         let products_hierarchy = self.export_products_hierarchy();
         if !products_hierarchy.is_empty() {
             let products_yaml = output_dir.join("products.yaml");
@@ -534,8 +534,10 @@ impl ConfigExporter {
         Ok(config)
     }
 
-    /// Export products hierarchy from compile-time built-in products.
-    /// Products are now embedded in the binary via aether-model crate.
+    /// Export the legacy kernel compatibility product hierarchy.
+    ///
+    /// The generic library is empty by default; active Pack assets are never
+    /// compiled into this CLI compatibility surface.
     fn export_products_hierarchy(&self) -> BTreeMap<String, Option<String>> {
         product_lib::get_builtin_products()
             .iter()

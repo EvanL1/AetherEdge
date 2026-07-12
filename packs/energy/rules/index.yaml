@@ -1,0 +1,7 @@
+schema: aether.pack.asset-index.v1
+category: rules
+assets:
+  - id: energy.battery-soc-management
+    path: battery_soc_management.json
+    schema: aether.pack.rule.v1
+    media_type: application/json

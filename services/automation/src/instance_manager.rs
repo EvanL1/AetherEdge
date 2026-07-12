@@ -15,7 +15,6 @@ use tracing::{debug, error, info, warn};
 
 use crate::config::TopologyNode;
 use crate::error::AutomationError;
-use crate::infra::shm_dispatch::ActionDispatch;
 use crate::product_loader::{CreateInstanceRequest, Instance, ProductLoader};
 
 /// Row type returned by SQLite instance queries
@@ -56,14 +55,8 @@ pub struct InstanceManager {
     pub(crate) product_loader: Arc<ProductLoader>,
     /// Instance name → instance_id cache (for fast API lookups)
     pub(crate) name_cache: DashMap<String, u32>,
-    // ========== Dynamic Slot Allocation ==========
-    /// Dynamic SHM slot management (optional, graceful no-ops when disabled)
-    slot_runtime: crate::runtime::dynamic_slot_runtime::DynamicSlotRuntime,
-    // ========== Action Dispatch (SHM/UDS or Noop) ==========
-    /// Dispatches M2C action commands via SHM+UDS (production) or noop (tests)
-    pub(crate) dispatch: Arc<dyn ActionDispatch>,
     /// Atomically replaceable SHM reader used by HTTP queries.
-    pub(crate) live_reader: arc_swap::ArcSwapOption<aether_rtdb_shm::UnifiedReaderHandle>,
+    pub(crate) live_reader: arc_swap::ArcSwapOption<aether_shm_bridge::ShmChannelReaderHandle>,
     /// Self-healing SHM reader for per-channel online/offline state.
     pub(crate) channel_health_reader:
         arc_swap::ArcSwapOption<aether_shm_bridge::ShmChannelHealthReader>,
@@ -74,22 +67,19 @@ impl InstanceManager {
         pool: SqlitePool,
         routing_cache: Arc<aether_routing::RoutingCache>,
         product_loader: Arc<ProductLoader>,
-        dispatch: Arc<dyn ActionDispatch>,
     ) -> Self {
         Self {
             pool,
             routing_cache,
             product_loader,
             name_cache: DashMap::new(),
-            slot_runtime: crate::runtime::dynamic_slot_runtime::DynamicSlotRuntime::new(),
-            dispatch,
             live_reader: arc_swap::ArcSwapOption::empty(),
             channel_health_reader: arc_swap::ArcSwapOption::empty(),
         }
     }
 
     /// Publish the current SHM reader for live instance queries.
-    pub fn set_live_reader(&self, reader: Arc<aether_rtdb_shm::UnifiedReaderHandle>) {
+    pub fn set_live_reader(&self, reader: Arc<aether_shm_bridge::ShmChannelReaderHandle>) {
         self.live_reader.store(Some(reader));
     }
 
@@ -103,7 +93,7 @@ impl InstanceManager {
 
     /// Load per-instance property values from `instance_properties`, resolving
     /// each `property_id` back to its `name` via the product PropertyTemplate
-    /// (compile-time constants). Returns `name -> value` for use as
+    /// (selected runtime definitions). Returns `name -> value` for use as
     /// `InstanceCore.properties`.
     pub(crate) async fn fetch_properties(
         &self,
@@ -386,33 +376,6 @@ impl InstanceManager {
         Ok(())
     }
 
-    /// Configure dynamic slot allocation (optional feature)
-    ///
-    /// Call this after construction to enable unified pool architecture.
-    /// If not called, dynamic features are disabled (backward compatible).
-    pub fn with_dynamic_allocation(
-        mut self,
-        dynamic_index: Arc<aether_rtdb_shm::InstanceIndex>,
-        slot_bitmap: Arc<parking_lot::RwLock<aether_rtdb_shm::SlotBitmap>>,
-    ) -> Self {
-        self.slot_runtime =
-            crate::runtime::dynamic_slot_runtime::DynamicSlotRuntime::with_allocation(
-                dynamic_index,
-                slot_bitmap,
-            );
-        self
-    }
-
-    /// Get dynamic InstanceIndex (for external access, e.g., API stats)
-    pub fn dynamic_instance_index(&self) -> Option<&Arc<aether_rtdb_shm::InstanceIndex>> {
-        self.slot_runtime.instance_index()
-    }
-
-    /// Get SlotBitmap stats (for monitoring)
-    pub fn slot_bitmap_stats(&self) -> Option<aether_rtdb_shm::BitmapStats> {
-        self.slot_runtime.bitmap_stats()
-    }
-
     /// Get the SQLite pool reference
     pub fn pool(&self) -> &SqlitePool {
         &self.pool
@@ -522,11 +485,10 @@ impl InstanceManager {
             )));
         }
 
-        // 2. Verify product exists (products are compile-time constants)
+        // 2. Verify the product exists in the active Pack/site library.
         // Note: Name uniqueness is enforced by database UNIQUE constraint.
         // We rely on the constraint rather than check-then-act to avoid race conditions.
-        let product = self
-            .product_loader
+        self.product_loader
             .get_product(&req.product_name)
             .map_err(|e| AutomationError::InvalidData(format!("Unknown product: {}", e)))?;
 
@@ -654,15 +616,6 @@ impl InstanceManager {
         }
 
         info!("Successfully created instance {}", req.instance_name);
-
-        // 6. Dynamic Slot Allocation: Add instance to InstanceIndex
-        self.slot_runtime.add_instance(
-            instance_id,
-            [
-                product.measurements.len() as u32,
-                product.actions.len() as u32,
-            ],
-        );
 
         self.update_name_cache(req.instance_name.clone(), instance_id);
 
@@ -961,10 +914,7 @@ impl InstanceManager {
             )));
         }
 
-        // 5. Dynamic Slot Deallocation: Remove instance from InstanceIndex and free slots
-        self.slot_runtime.remove_instance(instance_id);
-
-        // 6. Remove from name cache
+        // 5. Remove from name cache
         self.remove_from_name_cache(&instance_name);
 
         info!(

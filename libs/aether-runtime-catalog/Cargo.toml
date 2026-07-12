@@ -1,0 +1,23 @@
+[package]
+name = "aether-runtime-catalog"
+publish = false
+version.workspace = true
+edition = "2024"
+license.workspace = true
+description = "Feature-exact, checksummed runtime composition metadata for Aether Pack validation"
+
+[dependencies]
+aether-application = { path = "../../crates/aether-application" }
+aether-pack = { path = "../../crates/aether-pack" }
+semver = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_json_canonicalizer = { workspace = true }
+sha2 = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+
+[lints]
+workspace = true

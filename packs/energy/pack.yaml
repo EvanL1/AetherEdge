@@ -1,34 +1,65 @@
 schema_version: 1
 id: energy
 name: Aether Energy
+version: 0.5.0
 status: migrating
 description: Energy storage, generation, load, and grid-management knowledge
 distribution:
   id: aether-ems
-  composition: examples/energy-gateway
+  version: 0.5.0
+  composition: aether-example-energy-gateway
 compatibility:
   aether: ">=0.5.0,<0.6.0"
-legacy_assets:
-  models: libs/aether-model/src/products
-  knowledge: docs/domain
-examples:
+  required_capabilities:
+    - device.read_point
+    - device.write_point
+    - automation.rule.execute
+    - automation.routing.manage
+    - data_processing.tasks.list
+    - data_processing.processors.health
+    - data_processing.process
+  required_protocols:
+    - modbus_tcp
+    - modbus_rtu
+    - di_do
+    - can
+    - mqtt
+    - http
+assets:
   config: examples/config
-  data_processing: data-processing
+  data_processing: data-processing/tasks
+  knowledge: knowledge
+  models: models
+  mappings: mappings
+  rules: rules
+  evaluations: evaluations
+examples:
+  commissioned: false
 capabilities:
   models:
     - Station
     - ESS
     - Battery
     - PCS
+    - Diesel
+    - Env
+    - EVChargingLoad
     - PVInverter
+    - PV DCDC
     - Generator
+    - HVACLoad
     - Load
+    - Load_Three_Phase
   rule_topics:
     - soc-management
-    - peak-shaving
-    - demand-control
+  mappings:
+    - energy.product-name-aliases
+    - energy.example-instance-channel-bindings
+    - energy.legacy-instance-properties-v5
+  rules:
+    - energy.battery-soc-management
+  evaluations:
+    - energy.pack-safety
   data_processing_tasks:
     - energy.site-load-forecast
     - energy.site-pv-forecast
-safety:
-  control_policy: ai/safety-policy.yaml

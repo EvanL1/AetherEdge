@@ -1,5 +1,11 @@
 # Energy data-processing assets
 
+The two task declarations under `tasks/` are formal Pack assets.
+`tasks/index.yaml` is the sole task inventory: its IDs must match
+`pack.yaml` `capabilities.data_processing_tasks` and the actual regular files
+exactly. The generic kernel exposes those task identities only when this Energy
+Pack is explicitly active; activation still leaves both declarations disabled.
+
 This directory lands load and photovoltaic forecasting on the industry-neutral
 Aether Data Processing contract. The normative task and binding assets are safe
 by default:

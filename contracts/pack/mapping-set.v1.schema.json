@@ -1,0 +1,86 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aether.dev/schemas/mapping-set.v1.json",
+  "title": "Aether Pack Mapping Set v1",
+  "type": "object",
+  "required": ["schema", "id", "kind", "description"],
+  "properties": {
+    "schema": { "const": "aether.pack.mapping-set.v1" },
+    "id": { "$ref": "#/$defs/identifier" },
+    "kind": { "enum": ["product_aliases", "instance_channel_bindings", "legacy_instance_properties_migration"] },
+    "description": { "type": "string", "minLength": 1 },
+    "commissioned": { "const": false },
+    "compatibility": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["owner", "removed_from_kernel", "apply_before_kernel_schema", "source", "target"],
+      "properties": {
+        "owner": { "$ref": "#/$defs/identifier" },
+        "removed_from_kernel": { "$ref": "#/$defs/semver" },
+        "apply_before_kernel_schema": { "type": "integer", "minimum": 1 },
+        "source": { "type": "string", "minLength": 1 },
+        "target": { "type": "string", "minLength": 1 }
+      }
+    },
+    "aliases": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": { "type": "string", "minLength": 1 }
+    },
+    "bindings": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["instance_ref", "product", "channel_ref", "enabled"],
+        "properties": {
+          "instance_ref": { "type": "string", "minLength": 1 },
+          "product": { "type": "string", "minLength": 1 },
+          "channel_ref": { "type": "string", "minLength": 1 },
+          "enabled": { "const": false }
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "kind": { "const": "product_aliases" } } },
+      "then": {
+        "required": ["compatibility", "aliases"],
+        "not": { "anyOf": [{ "required": ["bindings"] }, { "required": ["commissioned"] }] }
+      }
+    },
+    {
+      "if": { "properties": { "kind": { "const": "instance_channel_bindings" } } },
+      "then": {
+        "required": ["commissioned", "bindings"],
+        "not": { "required": ["aliases"] }
+      }
+    },
+    {
+      "if": { "properties": { "kind": { "const": "legacy_instance_properties_migration" } } },
+      "then": {
+        "required": ["compatibility"],
+        "not": {
+          "anyOf": [
+            { "required": ["aliases"] },
+            { "required": ["bindings"] },
+            { "required": ["commissioned"] }
+          ]
+        }
+      }
+    }
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "identifier": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+    },
+    "semver": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$"
+    }
+  }
+}

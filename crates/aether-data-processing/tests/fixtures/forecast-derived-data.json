@@ -1,0 +1,57 @@
+{
+  "schema": "aether.derived-data.v1",
+  "result_id": "0190aee6-22ac-72da-b214-629a31ccb99c",
+  "request_id": "0190aee6-2139-7a87-8448-806f1b843201",
+  "task": {
+    "id": "example.signal-forecast",
+    "revision": 1,
+    "kind": "forecast"
+  },
+  "binding": {
+    "id": "example.edge-asset",
+    "revision": 1
+  },
+  "accepted_at": "2026-07-11T12:00:03Z",
+  "expires_at": "2026-07-11T13:00:00Z",
+  "input_digest": "sha256:66aade139532bcd80b8ae85f5e6b120332e8b29128df82546440f209064193dc",
+  "processing_status": "produced",
+  "processor": {
+    "id": "example-forecast-processor",
+    "version": "0.1.0",
+    "contract": "aether.data-processing.forecast.v1"
+  },
+  "artifact": {
+    "kind": "model",
+    "family": "example-signal",
+    "version": "v3",
+    "artifact_digest": "sha256:ef62e1a3a0ce324b21774617c1424e1fa113270e30ccc01e7f6b8766d80ce7cc"
+  },
+  "quality": {
+    "input_watermark": "2026-07-11T12:00:00Z",
+    "missing_ratio": 0.0,
+    "max_gap_seconds": 900,
+    "live_tail_included": false,
+    "substituted_samples": 0,
+    "fallback_used": false
+  },
+  "warnings": [],
+  "data": {
+    "schema": "aether.data-processing.output.forecast.v1",
+    "kind": "forecast",
+    "target": "signal",
+    "unit": "1",
+    "sign_convention": "positive_increase",
+    "cadence_seconds": 900,
+    "timestamp_semantics": "interval_end",
+    "points": [
+      {
+        "timestamp": "2026-07-11T12:15:00Z",
+        "value": 846.2
+      },
+      {
+        "timestamp": "2026-07-11T12:30:00Z",
+        "value": 852.7
+      }
+    ]
+  }
+}

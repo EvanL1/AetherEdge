@@ -17,39 +17,71 @@
 //!     3. ArcSwap::store() — old layout drops when last Guard releases
 //! ```
 
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 use crate::channel_points::ChannelPointCounts;
-use crate::core::config::{commit_generation_swap, generation_file_path};
+use crate::core::config::{commit_generation_swap_locked, generation_file_path};
 use crate::reverse_index::ReverseSlotIndex;
 use crate::shared_config::{ChannelToSlotIndex, SharedConfig};
 use crate::unified_shm::UnifiedWriter;
+use aether_dataplane::AuthorityWriteGuard;
+use aether_shm_bridge::{ChannelPointManifest, ShmAcquisitionStateWriter};
 use arc_swap::{ArcSwapOption, Guard};
 use tracing::info;
 
 #[cfg(unix)]
 use crate::point_watch::PointWatchSignaler;
+#[cfg(unix)]
+use aether_shm_bridge::AcquisitionCommitObserver;
 
 /// Coherent SHM layout snapshot used by hot paths.
 ///
 /// All fields are built from the same `UnifiedWriter` layout and are swapped as
 /// one `Arc`, preventing writer/index/reverse_index version skew during rebuild.
 pub struct ShmLayout {
+    /// Typed acquisition writer for this exact physical generation.
+    pub acquisition_writer: Arc<ShmAcquisitionStateWriter>,
+    /// Formal manifest compiled with this exact physical generation.
+    pub manifest: Arc<ChannelPointManifest>,
+    /// Legacy writer retained while non-acquisition callers migrate.
     pub writer: Arc<UnifiedWriter>,
     pub index: Arc<ChannelToSlotIndex>,
     pub reverse_index: Arc<ReverseSlotIndex>,
 }
 
 impl ShmLayout {
-    fn new(writer: UnifiedWriter, index: ChannelToSlotIndex) -> Self {
+    fn new(
+        writer: UnifiedWriter,
+        index: ChannelToSlotIndex,
+        authority_gate: Arc<RwLock<()>>,
+    ) -> anyhow::Result<Self> {
         let slot_count = writer.slot_count();
         let reverse_index = ReverseSlotIndex::from_forward(&index, slot_count);
+        let manifest = Arc::new(
+            index
+                .formal_manifest()
+                .ok_or_else(|| anyhow::anyhow!("channel index has no formal manifest"))?
+                .clone(),
+        );
+        let mut acquisition_writer =
+            ShmAcquisitionStateWriter::new(writer.acquisition_slot_writer(), Arc::clone(&manifest))
+                .with_local_authority_gate(authority_gate);
+        #[cfg(unix)]
+        if let Some(point_watcher) = writer.point_watcher().cloned() {
+            let observer: Arc<dyn AcquisitionCommitObserver> = point_watcher;
+            acquisition_writer = acquisition_writer.with_observer(observer);
+        }
+        acquisition_writer
+            .validate_generation()
+            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
 
-        Self {
+        Ok(Self {
+            acquisition_writer: Arc::new(acquisition_writer),
+            manifest,
             writer: Arc::new(writer),
             index: Arc::new(index),
             reverse_index: Arc::new(reverse_index),
-        }
+        })
     }
 }
 
@@ -60,6 +92,7 @@ impl ShmLayout {
 pub struct ShmHandle {
     layout: ArcSwapOption<ShmLayout>,
     config: SharedConfig,
+    authority_gate: Arc<RwLock<()>>,
     /// PointWatch signaler stored so `rebuild_via_swap` can re-attach it to
     /// each new `UnifiedWriter` produced during rebuild. `None` until
     /// `set_point_watcher` is called.
@@ -69,13 +102,20 @@ pub struct ShmHandle {
 
 impl ShmHandle {
     /// Create a new ShmHandle with initial writer and index.
-    pub fn new(config: SharedConfig, writer: UnifiedWriter, index: ChannelToSlotIndex) -> Self {
-        Self {
-            layout: ArcSwapOption::new(Some(Arc::new(ShmLayout::new(writer, index)))),
+    pub fn new(
+        config: SharedConfig,
+        writer: UnifiedWriter,
+        index: ChannelToSlotIndex,
+    ) -> anyhow::Result<Self> {
+        let authority_gate = Arc::new(RwLock::new(()));
+        let layout = ShmLayout::new(writer, index, Arc::clone(&authority_gate))?;
+        Ok(Self {
+            layout: ArcSwapOption::new(Some(Arc::new(layout))),
             config,
+            authority_gate,
             #[cfg(unix)]
             point_watcher: ArcSwapOption::empty(),
-        }
+        })
     }
 
     /// Create an empty ShmHandle (SHM not available).
@@ -83,6 +123,7 @@ impl ShmHandle {
         Self {
             layout: ArcSwapOption::empty(),
             config,
+            authority_gate: Arc::new(RwLock::new(())),
             #[cfg(unix)]
             point_watcher: ArcSwapOption::empty(),
         }
@@ -109,10 +150,10 @@ impl ShmHandle {
     /// NaN-sentinel, then a POSIX `rename(2)` atomically replaces the
     /// canonical path. Existing readers in other processes that mmap'd
     /// the old canonical file keep operating on the now-unlinked inode
-    /// (kept live by their mmap reference) until they re-open. automation
-    /// learns of the swap via its inode-watcher task in
-    /// `services/automation/src/main.rs`, which fires the existing
-    /// `rebuild_trigger` when it observes a canonical-path inode change.
+    /// (kept live by their mmap reference) until they re-open. Automation
+    /// commands validate the mapped file identity synchronously and trigger a
+    /// reopen on mismatch; its inode watcher only accelerates recovery when no
+    /// command is arriving.
     ///
     /// Compared to the legacy `reconfigure_existing` (now removed from
     /// this path), no live mmap is ever mutated mid-flight — there is
@@ -126,31 +167,42 @@ impl ShmHandle {
     /// alternative to `rebuild()`'s in-place `reconfigure_existing` path.
     ///
     /// Flow:
-    /// 1. Compute a unique staging path under the same directory using a
+    /// 1. Acquire the local write gate and the stable cross-process exclusive
+    ///    authority lease. No acquisition batch or automation command can
+    ///    enter until publication completes.
+    /// 2. Compute a unique staging path under the same directory using a
     ///    nanosecond-based generation seed. Wall-clock nanoseconds make
     ///    collisions effectively impossible in practice and, since
     ///    `commit_generation_swap` does an unconditional rename, even a
     ///    collision would only overwrite a stale file (never current).
-    /// 2. Create a fresh `UnifiedWriter` at the staging path — this is a
+    /// 3. Create a fresh `UnifiedWriter` at the staging path — this is a
     ///    brand-new file with all slots already initialized to the
     ///    unwritten-NaN sentinel; no in-place mutation of any live mmap.
-    /// 3. Flush the new mmap to its backing file so the data is durable
+    /// 4. Flush the new mmap to its backing file so the data is durable
     ///    before we publish the file.
-    /// 4. `commit_generation_swap(staging → canonical)`: POSIX `rename(2)`
+    /// 5. `commit_generation_swap(staging → canonical)`: POSIX `rename(2)`
     ///    atomically replaces the canonical path. Any reader still
     ///    holding a mmap of the previous canonical file keeps reading
     ///    its data (kernel-managed inode lifetime).
-    /// 5. ArcSwap the local layout to the new writer.
+    /// 6. ArcSwap the local layout to the new writer, then release both gates.
     ///
-    /// **Note**: this updates the *local* layout immediately. Other
-    /// processes that have already mmap'd the canonical path will not
-    /// learn about the new file until they re-open. PR 3 of Step 3 will
-    /// add the cross-service prepare/commit protocol that triggers
-    /// automation to re-open. Until then, callers using `rebuild_via_swap`
-    /// must arrange their own automation notification (e.g. via the existing
-    /// `ChannelManager` rebuild_trigger, or by explicit HTTP signal).
+    /// Other processes reopen after their synchronous identity check or
+    /// background watcher detects the replacement. A command that selected an
+    /// old mmap before the exclusive lease was requested either linearizes
+    /// fully before this method or resumes afterward and fails its identity
+    /// check; it cannot report acceptance against the unlinked inode.
     pub fn rebuild_via_swap(&self, channel_points: &ChannelPointCounts) -> anyhow::Result<()> {
         let canonical = self.config.path().to_path_buf();
+        // Lock order is always local gate first, stable cross-process sidecar
+        // second. Acquisition uses the same order with shared leases. Once
+        // both write leases are held, no io commit or automation command can
+        // linearize against the generation being replaced.
+        let _local_authority = self
+            .authority_gate
+            .write()
+            .map_err(|_| anyhow::anyhow!("local SHM authority gate was poisoned"))?;
+        let _cross_process_authority = AuthorityWriteGuard::acquire(&canonical)
+            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
 
         let staging_seq = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -174,7 +226,7 @@ impl ShmHandle {
         // Step 4: atomic rename. After this point, fresh opens of
         // `canonical` see the new file; existing mmaps of the old
         // canonical keep working on the previous inode.
-        commit_generation_swap(&staging_path, &canonical)?;
+        commit_generation_swap_locked(&staging_path, &canonical, &_cross_process_authority)?;
 
         // Step 5: rebuild the local layout pointing at the new writer.
         // We need to re-derive the writer from the canonical path so the
@@ -196,7 +248,11 @@ impl ShmHandle {
         let slot_count = writer.slot_count();
         let index = ChannelToSlotIndex::from_unified_writer(&writer);
         let index_len = index.len();
-        let layout = Arc::new(ShmLayout::new(writer, index));
+        let layout = Arc::new(ShmLayout::new(
+            writer,
+            index,
+            Arc::clone(&self.authority_gate),
+        )?);
         let reverse_len = layout.reverse_index.mapped_count();
 
         self.layout.store(Some(layout));
@@ -243,6 +299,13 @@ impl std::fmt::Debug for ShmHandle {
 #[allow(clippy::disallowed_methods)]
 mod tests {
     use super::*;
+    use crate::SlotIo;
+    #[cfg(unix)]
+    use crate::SubscriptionBitmap;
+    use aether_domain::{
+        AcquiredPointSample, ChannelId, ChannelPointAddress, PointId, PointKind, PointQuality,
+        TimestampMs,
+    };
     use aether_model::PointType;
     use std::collections::BTreeMap;
 
@@ -252,6 +315,99 @@ mod tests {
 
     fn test_config(path: std::path::PathBuf) -> SharedConfig {
         SharedConfig::default().with_path(path).with_max_slots(8)
+    }
+
+    fn acquired_sample(channel_id: u32, value: f64, timestamp_ms: u64) -> AcquiredPointSample {
+        let address = ChannelPointAddress::new(
+            ChannelId::new(channel_id),
+            PointKind::Telemetry,
+            PointId::new(0),
+        )
+        .unwrap();
+        AcquiredPointSample::new(
+            address,
+            value,
+            value,
+            TimestampMs::new(timestamp_ms),
+            PointQuality::Good,
+        )
+        .unwrap()
+    }
+
+    fn assert_typed_generation_is_coherent(layout: &ShmLayout) {
+        let header = crate::SlotIo::header(layout.writer.as_ref());
+        assert_eq!(
+            layout.acquisition_writer.generation(),
+            header.writer_generation
+        );
+        assert_eq!(layout.manifest.layout_hash(), header.routing_hash);
+        assert_eq!(layout.manifest.slot_count(), header.slot_count as usize);
+    }
+
+    #[test]
+    fn rebuild_publishes_typed_writer_and_manifest_from_the_same_generation() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = test_config(dir.path().join("typed-generation.shm"));
+        let initial_counts = counts(1001);
+        let writer = UnifiedWriter::create(&config, &initial_counts).unwrap();
+        let index = ChannelToSlotIndex::from_unified_writer(&writer);
+        let handle = ShmHandle::new(config, writer, index).unwrap();
+
+        assert_typed_generation_is_coherent(&handle.layout_arc().unwrap());
+        handle.rebuild(&counts(2002)).unwrap();
+
+        let layout = handle.layout_arc().unwrap();
+        assert_typed_generation_is_coherent(&layout);
+        layout
+            .acquisition_writer
+            .commit_batch(&[acquired_sample(2002, 42.5, 7_001)])
+            .unwrap();
+        assert_eq!(layout.writer.read_slot(0).unwrap().value, 42.5);
+        assert_eq!(
+            layout.writer.take_dirty_slots(),
+            vec![0],
+            "typed and compatibility views must share one SlotWriter"
+        );
+        assert!(
+            layout
+                .acquisition_writer
+                .commit_batch(&[acquired_sample(1001, 99.0, 7_002)])
+                .is_err(),
+            "the rebuilt writer must not retain the previous manifest"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn typed_acquisition_write_keeps_point_watch_after_rebuild() {
+        use tokio::sync::mpsc;
+
+        let dir = tempfile::tempdir().unwrap();
+        let config = test_config(dir.path().join("typed-point-watch.shm"));
+        let channel_points = counts(1001);
+        let mut writer = UnifiedWriter::create(&config, &channel_points).unwrap();
+        let index = ChannelToSlotIndex::from_unified_writer(&writer);
+        let reverse = Arc::new(ReverseSlotIndex::from_forward(&index, writer.slot_count()));
+        let subscriptions = Arc::new(SubscriptionBitmap::new_in_memory().unwrap());
+        subscriptions.set_watched(0);
+        let (tx, mut rx) = mpsc::channel(4);
+        let signaler = Arc::new(PointWatchSignaler::new_for_test(subscriptions, reverse, tx));
+        writer.set_point_watcher(Some(Arc::clone(&signaler)));
+        let handle = ShmHandle::new(config, writer, index).unwrap();
+        handle.store_point_watcher(signaler);
+
+        handle.rebuild(&counts(2002)).unwrap();
+        let layout = handle.layout_arc().unwrap();
+        layout
+            .acquisition_writer
+            .commit_batch(&[acquired_sample(2002, 17.5, 8_001)])
+            .unwrap();
+
+        let event = rx.try_recv().expect("typed write must emit PointWatch");
+        assert_eq!(event.channel_id, 2002);
+        assert_eq!(event.point_id, 0);
+        assert_eq!(event.value(), 17.5);
+        assert_eq!(event.timestamp_ms, 8_001);
     }
 
     #[test]
@@ -265,7 +421,7 @@ mod tests {
         let initial_inode = std::fs::metadata(&canonical).unwrap().len(); // proxy for "file exists"
         assert!(initial_inode > 0);
         let index = ChannelToSlotIndex::from_unified_writer(&writer);
-        let handle = ShmHandle::new(config, writer, index);
+        let handle = ShmHandle::new(config, writer, index).unwrap();
 
         // Sanity: layout starts on channel 1001.
         let layout = handle.layout_arc().unwrap();
@@ -301,6 +457,47 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn stale_layout_arc_cannot_commit_after_canonical_swap() {
+        let dir = tempfile::tempdir().unwrap();
+        let canonical = dir.path().join("stale-layout.shm");
+        let config = test_config(canonical);
+        let initial_counts = counts(1001);
+        let writer = UnifiedWriter::create(&config, &initial_counts).unwrap();
+        let index = ChannelToSlotIndex::from_unified_writer(&writer);
+        let handle = ShmHandle::new(config, writer, index).unwrap();
+        let stale_layout = handle.layout_arc().unwrap();
+
+        handle.rebuild_via_swap(&counts(2002)).unwrap();
+        let error = stale_layout
+            .acquisition_writer
+            .commit_batch(&[acquired_sample(1001, 73.0, 9_001)])
+            .expect_err("an Arc retained across rename must no longer be authoritative");
+
+        assert!(error.is_retryable());
+        assert!(
+            error
+                .message()
+                .contains("no longer the authoritative path target")
+        );
+        assert!(
+            stale_layout.writer.read_slot(0).unwrap().value.is_nan(),
+            "the pre-write identity check must leave the unlinked inode untouched"
+        );
+        assert!(
+            handle
+                .layout_arc()
+                .unwrap()
+                .writer
+                .read_slot(0)
+                .unwrap()
+                .value
+                .is_nan(),
+            "a stale Arc must never mutate the replacement authority"
+        );
+    }
+
     #[test]
     fn rebuild_replaces_reverse_index_with_layout() {
         let dir = tempfile::tempdir().unwrap();
@@ -309,7 +506,7 @@ mod tests {
         let initial_counts = counts(1001);
         let writer = UnifiedWriter::create(&config, &initial_counts).unwrap();
         let index = ChannelToSlotIndex::from_unified_writer(&writer);
-        let handle = ShmHandle::new(config, writer, index);
+        let handle = ShmHandle::new(config, writer, index).unwrap();
 
         let layout = handle.layout_arc().unwrap();
         let origin = layout.reverse_index.get(0).unwrap();

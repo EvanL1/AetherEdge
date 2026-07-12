@@ -19,7 +19,7 @@ aether-data-processing = { path = "../../crates/aether-data-processing" }
 aether-shm-bridge = { path = "../../extensions/shm-bridge" }
 aether-http-data-processor = { path = "../../extensions/http-data-processor" }
 aether-sqlite-history-query = { path = "../../extensions/sqlite-history-query" }
-aether-store-local = { path = "../../extensions/store-local", features = ["sqlite-audit"] }
+aether-store-local = { path = "../../extensions/store-local", features = ["sqlite-audit", "sqlite-topology"] }
 
 # Async runtime
 tokio = { workspace = true }
@@ -66,7 +66,7 @@ utoipa = { workspace = true }
 utoipa-swagger-ui = { workspace = true, optional = true }
 
 [features]
-swagger-ui = ["utoipa-swagger-ui"]
+swagger-ui = ["utoipa-swagger-ui", "common/openapi"]
 
 [lints]
 workspace = true

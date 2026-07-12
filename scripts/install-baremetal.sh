@@ -914,6 +914,16 @@ if ! command -v systemctl >/dev/null 2>&1; then
     exit 1
 fi
 validate_bare_metal_bundle . "$FRONTEND_INCLUDED" "$REDIS_INCLUDED"
+if [[ ! -f config.template/runtime-manifest.json \
+    || -L config.template/runtime-manifest.json ]]; then
+    echo "ERROR: bare-metal package is missing a regular runtime manifest" >&2
+    exit 1
+fi
+if ! bin/aether --json runtime-manifest \
+    --path config.template/runtime-manifest.json >/dev/null; then
+    echo "ERROR: bare-metal runtime manifest failed verification" >&2
+    exit 1
+fi
 reject_existing_bare_metal_footprint
 validate_bare_metal_host_layout
 if [[ "$FRONTEND_INCLUDED" == true ]]; then

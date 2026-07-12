@@ -1,18 +1,17 @@
 //! Product API Integration Tests
 //!
-//! Tests the product management functionality with compile-time built-in products:
+//! Tests product management with an explicitly loaded Energy Pack fixture:
 //! - Lightweight product name listing
 //! - Detailed product information with measurements/actions/properties
 //!
-//! Products are now embedded at compile time from aether-model crate.
+//! Production selects these models only through validated active Pack roots.
 
 #![allow(clippy::disallowed_methods)] // Integration test - unwrap is acceptable
 
 mod common;
 
-use aether_automation::product_loader::ProductLoader;
 use anyhow::Result;
-use common::TestEnv;
+use common::{TestEnv, energy_product_loader};
 
 #[tokio::test]
 async fn test_product_list_lightweight() -> Result<()> {
@@ -20,13 +19,13 @@ async fn test_product_list_lightweight() -> Result<()> {
     let env = TestEnv::create().await?;
 
     // 2. Create product loader (products are compile-time constants)
-    let product_loader = ProductLoader::new(env.pool().clone());
+    let product_loader = energy_product_loader(env.pool().clone());
 
     // 3. Call get_all_product_names (lightweight method)
-    // Products are now compile-time constants from aether-model crate
+    // The fixture explicitly selected the Energy Pack model directory.
     let product_names = product_loader.get_all_product_names();
 
-    // 4. Verify specific built-in products exist
+    // 4. Verify specific selected products exist
     let battery = product_names
         .iter()
         .find(|(name, _)| name == "Battery")
@@ -57,7 +56,7 @@ async fn test_product_detail_complete() -> Result<()> {
     let env = TestEnv::create().await?;
 
     // 2. Create product loader
-    let product_loader = ProductLoader::new(env.pool().clone());
+    let product_loader = energy_product_loader(env.pool().clone());
 
     // 3. Call get_product for Battery (detailed method)
     let product = product_loader
@@ -89,7 +88,7 @@ async fn test_product_closed_loop() -> Result<()> {
     let env = TestEnv::create().await?;
 
     // 2. Create product loader
-    let product_loader = ProductLoader::new(env.pool().clone());
+    let product_loader = energy_product_loader(env.pool().clone());
 
     // 3. STEP 1: Get product list (lightweight)
     let product_names = product_loader.get_all_product_names();
@@ -134,7 +133,7 @@ async fn test_product_not_found() -> Result<()> {
     let env = TestEnv::create().await?;
 
     // 2. Create product loader
-    let product_loader = ProductLoader::new(env.pool().clone());
+    let product_loader = energy_product_loader(env.pool().clone());
 
     // 3. Try to get a non-existent product
     let result = product_loader.get_product("nonexistent_product");
@@ -163,12 +162,12 @@ async fn test_product_hierarchy() -> Result<()> {
     let env = TestEnv::create().await?;
 
     // 2. Create product loader
-    let product_loader = ProductLoader::new(env.pool().clone());
+    let product_loader = energy_product_loader(env.pool().clone());
 
     // 3. Get product list
     let product_names = product_loader.get_all_product_names();
 
-    // 4. Verify hierarchy relationships for built-in products
+    // 4. Verify hierarchy relationships for selected products
     // Station is root
     let station = product_names
         .iter()
@@ -209,9 +208,9 @@ async fn test_product_exists() -> Result<()> {
     let env = TestEnv::create().await?;
 
     // 2. Create product loader
-    let product_loader = ProductLoader::new(env.pool().clone());
+    let product_loader = energy_product_loader(env.pool().clone());
 
-    // 3. Verify built-in products exist
+    // 3. Verify selected products exist
     assert!(product_loader.product_exists("Battery"));
     assert!(product_loader.product_exists("PCS"));
     assert!(product_loader.product_exists("Station"));

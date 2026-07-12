@@ -38,6 +38,80 @@ pub(crate) enum FourRemote {
     A,
 }
 
+/// Physical point types valid as action-command destinations.
+#[derive(Clone, ValueEnum, serde::Serialize)]
+pub(crate) enum ActionFourRemote {
+    /// Binary control point
+    C,
+    /// Analog adjustment point
+    A,
+}
+
+impl std::fmt::Display for ActionFourRemote {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::C => write!(f, "C"),
+            Self::A => write!(f, "A"),
+        }
+    }
+}
+
+#[derive(Subcommand)]
+pub enum ActionRoutingCommands {
+    /// Create or replace one physical action route
+    Upsert {
+        /// Instance ID
+        instance_id: u32,
+        /// Logical action-point ID
+        action_point_id: u32,
+        /// Physical destination channel
+        #[arg(long)]
+        channel_id: u32,
+        /// Physical destination type: C (control) or A (adjustment)
+        #[arg(long, value_enum)]
+        channel_type: ActionFourRemote,
+        /// Physical destination point ID
+        #[arg(long)]
+        channel_point_id: u32,
+        /// Create the route disabled
+        #[arg(long)]
+        disabled: bool,
+        /// Explicitly confirm this physical command-topology change
+        #[arg(long)]
+        confirmed: bool,
+    },
+    /// Delete one physical action route
+    Delete {
+        /// Instance ID
+        instance_id: u32,
+        /// Logical action-point ID
+        action_point_id: u32,
+        /// Explicitly confirm this physical command-topology change
+        #[arg(long)]
+        confirmed: bool,
+    },
+    /// Enable one physical action route
+    Enable {
+        /// Instance ID
+        instance_id: u32,
+        /// Logical action-point ID
+        action_point_id: u32,
+        /// Explicitly confirm this physical command-topology change
+        #[arg(long)]
+        confirmed: bool,
+    },
+    /// Disable one physical action route
+    Disable {
+        /// Instance ID
+        instance_id: u32,
+        /// Logical action-point ID
+        action_point_id: u32,
+        /// Explicitly confirm this physical command-topology change
+        #[arg(long)]
+        confirmed: bool,
+    },
+}
+
 impl std::fmt::Display for FourRemote {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -61,6 +135,12 @@ pub enum RoutingCommands {
         channel: Option<u32>,
     },
 
+    /// Manage governed physical action routes
+    Action {
+        #[command(subcommand)]
+        command: ActionRoutingCommands,
+    },
+
     /// Create a single routing entry for an instance
     Create {
         /// Instance ID
@@ -80,6 +160,9 @@ pub enum RoutingCommands {
         /// Channel point ID
         #[arg(short = 'P', long = "channel-point-id")]
         channel_point_id: u32,
+        /// Explicitly confirm a physical command-topology change (required for A routes)
+        #[arg(long)]
+        confirmed: bool,
     },
 
     /// Batch upsert routing from JSON file or stdin
@@ -98,6 +181,9 @@ pub enum RoutingCommands {
         /// Skip confirmation
         #[arg(short, long)]
         force: bool,
+        /// Explicitly confirm deletion of physical action routes
+        #[arg(long)]
+        confirmed: bool,
     },
 
     /// Delete all routing for a channel
@@ -107,6 +193,9 @@ pub enum RoutingCommands {
         /// Skip confirmation
         #[arg(short, long)]
         force: bool,
+        /// Explicitly confirm deletion of physical action routes
+        #[arg(long)]
+        confirmed: bool,
     },
 }
 
@@ -151,6 +240,63 @@ pub async fn handle_command(cmd: RoutingCommands, base_url: &str, json: bool) ->
                 }
             },
         },
+        RoutingCommands::Action { command } => {
+            let result = match command {
+                ActionRoutingCommands::Upsert {
+                    instance_id,
+                    action_point_id,
+                    channel_id,
+                    channel_type,
+                    channel_point_id,
+                    disabled,
+                    confirmed,
+                } => {
+                    client
+                        .upsert_action_route(
+                            instance_id,
+                            action_point_id,
+                            channel_id,
+                            &channel_type.to_string(),
+                            channel_point_id,
+                            !disabled,
+                            confirmed,
+                        )
+                        .await?
+                },
+                ActionRoutingCommands::Delete {
+                    instance_id,
+                    action_point_id,
+                    confirmed,
+                } => {
+                    client
+                        .delete_action_route(instance_id, action_point_id, confirmed)
+                        .await?
+                },
+                ActionRoutingCommands::Enable {
+                    instance_id,
+                    action_point_id,
+                    confirmed,
+                } => {
+                    client
+                        .set_action_route_enabled(instance_id, action_point_id, true, confirmed)
+                        .await?
+                },
+                ActionRoutingCommands::Disable {
+                    instance_id,
+                    action_point_id,
+                    confirmed,
+                } => {
+                    client
+                        .set_action_route_enabled(instance_id, action_point_id, false, confirmed)
+                        .await?
+                },
+            };
+            if json {
+                crate::output::print_success(&result);
+            } else {
+                println!("Action routing: {}", serde_json::to_string_pretty(&result)?);
+            }
+        },
         RoutingCommands::Create {
             instance_id,
             point_type,
@@ -158,15 +304,33 @@ pub async fn handle_command(cmd: RoutingCommands, base_url: &str, json: bool) ->
             channel_id,
             four_remote,
             channel_point_id,
+            confirmed,
         } => {
-            let entry = serde_json::json!({
-                "point_type": point_type,
-                "point_id": point_id,
-                "channel_id": channel_id,
-                "four_remote": four_remote,
-                "channel_point_id": channel_point_id,
-            });
-            let result = client.create_routing(instance_id, entry).await?;
+            let result = match point_type {
+                PointType::A => {
+                    client
+                        .upsert_action_route(
+                            instance_id,
+                            point_id,
+                            channel_id,
+                            &four_remote.to_string(),
+                            channel_point_id,
+                            true,
+                            confirmed,
+                        )
+                        .await?
+                },
+                PointType::M => {
+                    let entry = serde_json::json!({
+                        "point_type": "M",
+                        "point_id": point_id,
+                        "channel_id": channel_id,
+                        "four_remote": four_remote,
+                        "channel_point_id": channel_point_id,
+                    });
+                    client.create_routing(instance_id, entry).await?
+                },
+            };
             if json {
                 crate::output::print_success(&result);
             } else {
@@ -188,6 +352,14 @@ pub async fn handle_command(cmd: RoutingCommands, base_url: &str, json: bool) ->
             };
             let entries: Value = serde_json::from_str(&content)
                 .map_err(|e| anyhow::anyhow!("Invalid JSON in routing file: {}", e))?;
+            if entries
+                .as_array()
+                .is_some_and(|items| items.iter().any(is_action_routing_entry))
+            {
+                anyhow::bail!(
+                    "action-routing batch writes are disabled until the governed batch command is available; use `aether routing create ... --point-type a --confirmed`"
+                );
+            }
             let result = client.batch_routing(instance_id, entries).await?;
             if json {
                 crate::output::print_success(&result);
@@ -199,7 +371,9 @@ pub async fn handle_command(cmd: RoutingCommands, base_url: &str, json: bool) ->
         RoutingCommands::DeleteInstance {
             instance_name,
             force,
+            confirmed,
         } => {
+            let mut confirmed = confirmed;
             if !force && !json {
                 println!("Delete all routing for instance '{}'? [y/N]", instance_name);
                 let mut input = String::new();
@@ -208,15 +382,23 @@ pub async fn handle_command(cmd: RoutingCommands, base_url: &str, json: bool) ->
                     println!("Cancelled");
                     return Ok(());
                 }
+                confirmed = true;
             }
-            client.delete_instance_routing(&instance_name).await?;
+            client
+                .delete_instance_routing(&instance_name, confirmed)
+                .await?;
             if json {
                 crate::output::print_ok();
             } else {
                 println!("Routing deleted for instance '{}'", instance_name);
             }
         },
-        RoutingCommands::DeleteChannel { channel_id, force } => {
+        RoutingCommands::DeleteChannel {
+            channel_id,
+            force,
+            confirmed,
+        } => {
+            let mut confirmed = confirmed;
             if !force && !json {
                 println!("Delete all routing for channel {}? [y/N]", channel_id);
                 let mut input = String::new();
@@ -225,8 +407,9 @@ pub async fn handle_command(cmd: RoutingCommands, base_url: &str, json: bool) ->
                     println!("Cancelled");
                     return Ok(());
                 }
+                confirmed = true;
             }
-            client.delete_channel_routing(channel_id).await?;
+            client.delete_channel_routing(channel_id, confirmed).await?;
             if json {
                 crate::output::print_ok();
             } else {
@@ -238,10 +421,18 @@ pub async fn handle_command(cmd: RoutingCommands, base_url: &str, json: bool) ->
     Ok(())
 }
 
+fn is_action_routing_entry(value: &Value) -> bool {
+    value
+        .get("point_type")
+        .and_then(Value::as_str)
+        .is_some_and(|point_type| point_type.eq_ignore_ascii_case("A"))
+}
+
 // HTTP client for routing management
 pub(crate) struct RoutingClient {
     client: Client,
     base_url: String,
+    access_token: Option<String>,
 }
 
 impl RoutingClient {
@@ -249,6 +440,18 @@ impl RoutingClient {
         Ok(Self {
             client: Client::new(),
             base_url: base_url.to_string(),
+            access_token: std::env::var("AETHER_ACCESS_TOKEN")
+                .ok()
+                .filter(|value| !value.trim().is_empty() && value.trim() == value),
+        })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_access_token(base_url: &str, access_token: &str) -> Result<Self> {
+        Ok(Self {
+            client: Client::new(),
+            base_url: base_url.to_string(),
+            access_token: Some(access_token.to_string()),
         })
     }
 
@@ -364,10 +567,111 @@ impl RoutingClient {
         }
     }
 
-    async fn delete_instance_routing(&self, name: &str) -> Result<()> {
+    pub(crate) async fn upsert_action_route(
+        &self,
+        instance_id: u32,
+        action_id: u32,
+        channel_id: u32,
+        channel_type: &str,
+        channel_point_id: u32,
+        enabled: bool,
+        confirmed: bool,
+    ) -> Result<Value> {
+        if !matches!(channel_type, "C" | "A") {
+            anyhow::bail!("action routing channel type must be C or A");
+        }
+        let access_token = self.routing_management_token(confirmed)?;
         let response = self
             .client
-            .delete(format!("{}/api/routing/instances/{}", self.base_url, name))
+            .put(format!(
+                "{}/api/instances/{instance_id}/actions/{action_id}/routing",
+                self.base_url
+            ))
+            .bearer_auth(access_token)
+            .header("x-request-id", uuid::Uuid::new_v4().to_string())
+            .json(&serde_json::json!({
+                "channel_id": channel_id,
+                "four_remote": channel_type,
+                "channel_point_id": channel_point_id,
+                "enabled": enabled,
+                "confirmed": true
+            }))
+            .send()
+            .await?;
+        if response.status().is_success() {
+            Ok(response.json().await?)
+        } else {
+            Err(crate::output::parse_error_body("Failed to upsert action routing", response).await)
+        }
+    }
+
+    pub(crate) async fn delete_action_route(
+        &self,
+        instance_id: u32,
+        action_id: u32,
+        confirmed: bool,
+    ) -> Result<Value> {
+        let access_token = self.routing_management_token(confirmed)?;
+        let response = self
+            .client
+            .delete(format!(
+                "{}/api/instances/{instance_id}/actions/{action_id}/routing",
+                self.base_url
+            ))
+            .bearer_auth(access_token)
+            .header("x-request-id", uuid::Uuid::new_v4().to_string())
+            .json(&serde_json::json!({ "confirmed": true }))
+            .send()
+            .await?;
+        if response.status().is_success() {
+            Ok(response.json().await?)
+        } else {
+            Err(crate::output::parse_error_body("Failed to delete action routing", response).await)
+        }
+    }
+
+    pub(crate) async fn set_action_route_enabled(
+        &self,
+        instance_id: u32,
+        action_id: u32,
+        enabled: bool,
+        confirmed: bool,
+    ) -> Result<Value> {
+        let access_token = self.routing_management_token(confirmed)?;
+        let response = self
+            .client
+            .patch(format!(
+                "{}/api/instances/{instance_id}/actions/{action_id}/routing",
+                self.base_url
+            ))
+            .bearer_auth(access_token)
+            .header("x-request-id", uuid::Uuid::new_v4().to_string())
+            .json(&serde_json::json!({
+                "enabled": enabled,
+                "confirmed": true
+            }))
+            .send()
+            .await?;
+        if response.status().is_success() {
+            Ok(response.json().await?)
+        } else {
+            Err(
+                crate::output::parse_error_body("Failed to change action-routing state", response)
+                    .await,
+            )
+        }
+    }
+
+    async fn delete_instance_routing(&self, name: &str, confirmed: bool) -> Result<()> {
+        let access_token = self.routing_management_token(confirmed)?;
+        let response = self
+            .client
+            .delete(format!(
+                "{}/api/routing/instances/{}?confirm=true",
+                self.base_url, name
+            ))
+            .bearer_auth(access_token)
+            .header("x-request-id", uuid::Uuid::new_v4().to_string())
             .send()
             .await?;
 
@@ -385,10 +689,16 @@ impl RoutingClient {
         }
     }
 
-    async fn delete_channel_routing(&self, id: u32) -> Result<()> {
+    async fn delete_channel_routing(&self, id: u32, confirmed: bool) -> Result<()> {
+        let access_token = self.routing_management_token(confirmed)?;
         let response = self
             .client
-            .delete(format!("{}/api/routing/channels/{}", self.base_url, id))
+            .delete(format!(
+                "{}/api/routing/channels/{}?confirm=true",
+                self.base_url, id
+            ))
+            .bearer_auth(access_token)
+            .header("x-request-id", uuid::Uuid::new_v4().to_string())
             .send()
             .await?;
 
@@ -404,5 +714,131 @@ impl RoutingClient {
                 text
             ))
         }
+    }
+
+    fn routing_management_token(&self, confirmed: bool) -> Result<&str> {
+        if !confirmed {
+            anyhow::bail!("action routing requires explicit confirmation (--confirmed)");
+        }
+        crate::transport_security::require_secure_bearer_transport(&self.base_url)?;
+        self.access_token.as_deref().ok_or_else(|| {
+            anyhow::anyhow!(
+                "action routing requires AETHER_ACCESS_TOKEN from an authenticated Admin or Engineer session"
+            )
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ActionRoutingCommands, RoutingClient, RoutingCommands};
+    use clap::Parser;
+    use wiremock::matchers::{body_json, header, header_exists, method, path, query_param};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    #[test]
+    fn bearer_writes_reject_remote_plaintext_before_token_access() {
+        let client = RoutingClient {
+            client: reqwest::Client::new(),
+            base_url: "http://192.0.2.10:6002".to_string(),
+            access_token: None,
+        };
+
+        let error = client
+            .routing_management_token(true)
+            .expect_err("remote plaintext must fail closed");
+        assert!(error.to_string().contains("refusing to send"), "{error:#}");
+    }
+
+    #[derive(Parser)]
+    struct RoutingCli {
+        #[command(subcommand)]
+        command: RoutingCommands,
+    }
+
+    #[test]
+    fn action_subcommands_expose_explicit_confirmation() {
+        let cli =
+            RoutingCli::try_parse_from(["routing", "action", "disable", "7", "1", "--confirmed"])
+                .expect("governed action-routing CLI");
+
+        assert!(matches!(
+            cli.command,
+            RoutingCommands::Action {
+                command: ActionRoutingCommands::Disable {
+                    instance_id: 7,
+                    action_point_id: 1,
+                    confirmed: true,
+                }
+            }
+        ));
+    }
+
+    #[tokio::test]
+    async fn action_route_upsert_uses_the_governed_http_contract() {
+        let server = MockServer::start().await;
+        Mock::given(method("PUT"))
+            .and(path("/api/instances/7/actions/1/routing"))
+            .and(header("authorization", "Bearer signed-access-token"))
+            .and(header_exists("x-request-id"))
+            .and(body_json(serde_json::json!({
+                "channel_id": 3,
+                "four_remote": "A",
+                "channel_point_id": 5,
+                "enabled": true,
+                "confirmed": true
+            })))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let client = RoutingClient::with_access_token(&server.uri(), "signed-access-token")
+            .expect("routing client");
+        client
+            .upsert_action_route(7, 1, 3, "A", 5, true, true)
+            .await
+            .expect("governed upsert");
+    }
+
+    #[tokio::test]
+    async fn action_route_mutation_rejects_unconfirmed_before_http() {
+        let server = MockServer::start().await;
+        let client = RoutingClient::with_access_token(&server.uri(), "signed-access-token")
+            .expect("routing client");
+
+        let error = client
+            .delete_action_route(7, 1, false)
+            .await
+            .expect_err("unconfirmed routing mutation must fail");
+        assert!(error.to_string().contains("explicit confirmation"));
+        assert!(
+            server
+                .received_requests()
+                .await
+                .expect("received requests")
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn scoped_delete_uses_bearer_confirmation_and_correlation() {
+        let server = MockServer::start().await;
+        Mock::given(method("DELETE"))
+            .and(path("/api/routing/channels/3"))
+            .and(query_param("confirm", "true"))
+            .and(header("authorization", "Bearer signed-access-token"))
+            .and(header_exists("x-request-id"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let client = RoutingClient::with_access_token(&server.uri(), "signed-access-token")
+            .expect("routing client");
+        client
+            .delete_channel_routing(3, true)
+            .await
+            .expect("governed channel delete");
     }
 }

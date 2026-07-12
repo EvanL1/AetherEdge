@@ -1638,6 +1638,16 @@ if ! ./tools/aether --version >/dev/null 2>&1; then
     echo -e "${RED}Error: packaged Aether CLI cannot execute on this host${NC}" >&2
     exit 1
 fi
+if [[ ! -f config.template/runtime-manifest.json \
+    || -L config.template/runtime-manifest.json ]]; then
+    echo -e "${RED}Error: package is missing a regular runtime manifest${NC}" >&2
+    exit 1
+fi
+if ! ./tools/aether --json runtime-manifest \
+    --path config.template/runtime-manifest.json >/dev/null; then
+    echo -e "${RED}Error: packaged runtime manifest failed verification${NC}" >&2
+    exit 1
+fi
 if [[ ! -f docker-compose.yml || -L docker-compose.yml ]]; then
     echo -e "${RED}Error: package is missing a regular docker-compose.yml${NC}" >&2
     exit 1

@@ -1,7 +1,7 @@
 instance:
   id: 1
   name: "diesel_gen_01"
-  product_name: diesel_generator
+  product_name: Diesel
   description: "柴油发电机组 #1"
   enabled: false
 

@@ -77,8 +77,9 @@ pub enum AutomationError {
     #[error("Authorization denied: {0}")]
     AuthorizationDenied(String),
 
-    /// Mandatory command audit could not be persisted. Commands fail closed
-    /// when this occurs.
+    /// A mandatory pre-execution audit could not be persisted, so execution did
+    /// not begin. Terminal-audit degradation after an accepted operation is an
+    /// explicit non-retryable acceptance outcome instead of this error.
     #[error("Command audit unavailable: {0}")]
     AuditUnavailable(String),
 
@@ -230,7 +231,7 @@ impl errors::AetherErrorTrait for AutomationError {
                 "Use a signed Admin/Engineer session or the local aether CLI to issue device commands".to_string()
             ),
             Self::AuditUnavailable(_) => Some(
-                "Check the local automation SQLite database; device commands remain disabled until audit persistence recovers".to_string()
+                "Check the local automation SQLite database; this request was not executed and may be submitted after audit persistence recovers".to_string()
             ),
             Self::ExecutionError(_) => Some(
                 "Check rule conditions and actions. Use 'aether rules execute <id>' and inspect \
@@ -254,9 +255,9 @@ impl From<aether_application::ApplicationError> for AutomationError {
             ApplicationError::PermissionDenied { .. } => {
                 Self::AuthorizationDenied(error.to_string())
             },
-            ApplicationError::ConfirmationRequired { .. } | ApplicationError::InvalidCommand(_) => {
-                Self::InvalidData(error.to_string())
-            },
+            ApplicationError::ConfirmationRequired { .. }
+            | ApplicationError::InvalidCommand(_)
+            | ApplicationError::InvalidChannelMutation(_) => Self::InvalidData(error.to_string()),
             ApplicationError::InvalidProcessingRequest(_)
             | ApplicationError::InputQualityRejected(_)
             | ApplicationError::ProcessingRequestTooLarge { .. } => {
@@ -278,9 +279,10 @@ impl From<aether_application::ApplicationError> for AutomationError {
                 PortErrorKind::Rejected | PortErrorKind::InvalidData => {
                     Self::InvalidData(port_error.to_string())
                 },
-                PortErrorKind::Unavailable | PortErrorKind::Timeout | PortErrorKind::Conflict => {
-                    Self::DispatchDegraded(port_error.to_string())
-                },
+                PortErrorKind::NotFound
+                | PortErrorKind::Unavailable
+                | PortErrorKind::Timeout
+                | PortErrorKind::Conflict => Self::DispatchDegraded(port_error.to_string()),
                 PortErrorKind::Permanent => Self::InternalError(port_error.to_string()),
             },
         }

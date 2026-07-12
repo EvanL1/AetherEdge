@@ -2,32 +2,33 @@
 
 use std::sync::Arc;
 
-use aether_application::{Actor, RequestContext};
-use aether_domain::{CommandId, ControlCommand, PointKind, TimestampMs};
-use aether_ports::{CommandDispatcher, CommandReceipt, PortError, PortErrorKind, PortResult};
+use aether_application::{
+    Actor, ApplicationError, CompletionAuditStatus, ControlApplication, RequestContext,
+};
+use aether_auth_jwt::{
+    AccessTokenAuthenticator, AuthenticationError as AccessTokenAuthenticationError,
+};
+use aether_domain::{
+    ChannelCommandAddress, ChannelId, CommandConstraints, CommandId, ControlCommand,
+    PhysicalDeviceCommand, PointId, PointKind, TimestampMs,
+};
+use aether_ports::{
+    CommandDispatcher, CommandReceipt, DeviceCommandSink, PortError, PortErrorKind, PortResult,
+};
+use aether_rules::{RuleActionCommand, RuleActionCommandFacade};
 use async_trait::async_trait;
 use axum::http::HeaderMap;
-use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode};
-use serde::Deserialize;
 use subtle::ConstantTimeEq;
 use thiserror::Error;
 
-use crate::error::AutomationError;
 use crate::instance_manager::InstanceManager;
 
 const AUTHORIZATION_HEADER: &str = "authorization";
 const REQUEST_ID_HEADER: &str = "x-request-id";
-const MIN_SECRET_BYTES: usize = 32;
+const MIN_SERVICE_TOKEN_BYTES: usize = 32;
 
-#[derive(Debug, Deserialize)]
-struct AccessClaims {
-    user_id: i64,
-    role: Option<String>,
-    #[serde(rename = "type")]
-    token_type: String,
-    exp: usize,
-    iat: usize,
-}
+/// Fixed identity commissioned for deterministic rule-engine device actions.
+pub const COMMISSIONED_RULE_ACTOR_ID: &str = "local:aether-automation-rule-engine";
 
 /// Verifies control callers at automation's HTTP trust boundary.
 ///
@@ -36,19 +37,20 @@ struct AccessClaims {
 /// identity. Caller-provided actor or role headers are never consulted.
 #[derive(Clone)]
 pub struct ControlAuthenticator {
-    jwt_secret: Arc<str>,
+    access_tokens: AccessTokenAuthenticator,
     uplink_token: Option<Arc<str>>,
 }
 
 impl ControlAuthenticator {
     /// Creates an authenticator from already-resolved secrets.
     pub fn new(jwt_secret: &str, uplink_token: Option<&str>) -> Result<Self, AuthenticationError> {
-        validate_secret("JWT_SECRET_KEY", jwt_secret)?;
+        let access_tokens =
+            AccessTokenAuthenticator::new(jwt_secret).map_err(map_access_token_error)?;
         if let Some(token) = uplink_token {
-            validate_secret("AETHER_UPLINK_CONTROL_TOKEN", token)?;
+            validate_uplink_token(token)?;
         }
         Ok(Self {
-            jwt_secret: Arc::from(jwt_secret),
+            access_tokens,
             uplink_token: uplink_token.map(Arc::from),
         })
     }
@@ -74,33 +76,15 @@ impl ControlAuthenticator {
         }
 
         if scheme.eq_ignore_ascii_case("Bearer") {
-            return self.authenticate_access_token(credential);
+            return self
+                .access_tokens
+                .authenticate(authorization)
+                .map_err(map_access_token_error);
         }
         if scheme.eq_ignore_ascii_case("AetherService") {
             return self.authenticate_uplink(credential);
         }
         Err(AuthenticationError::InvalidCredentials)
-    }
-
-    fn authenticate_access_token(&self, token: &str) -> Result<Actor, AuthenticationError> {
-        let mut validation = Validation::new(Algorithm::HS256);
-        validation.validate_exp = true;
-        validation.set_required_spec_claims(&["exp", "iat", "type", "user_id"]);
-        let claims = decode::<AccessClaims>(
-            token,
-            &DecodingKey::from_secret(self.jwt_secret.as_bytes()),
-            &validation,
-        )
-        .map_err(|_| AuthenticationError::InvalidCredentials)?
-        .claims;
-        if claims.token_type != "access" || claims.user_id <= 0 || claims.iat > claims.exp {
-            return Err(AuthenticationError::InvalidCredentials);
-        }
-
-        Ok(actor_for_role(
-            &format!("user:{}", claims.user_id),
-            claims.role.as_deref(),
-        ))
     }
 
     fn authenticate_uplink(&self, token: &str) -> Result<Actor, AuthenticationError> {
@@ -127,18 +111,24 @@ pub enum AuthenticationError {
     Configuration(&'static str),
 }
 
-fn validate_secret(name: &'static str, secret: &str) -> Result<(), AuthenticationError> {
-    if secret.len() < MIN_SECRET_BYTES || secret.trim() != secret {
-        return Err(AuthenticationError::Configuration(match name {
-            "JWT_SECRET_KEY" => {
-                "JWT_SECRET_KEY must contain at least 32 bytes without surrounding whitespace"
-            },
-            _ => {
-                "AETHER_UPLINK_CONTROL_TOKEN must contain at least 32 bytes without surrounding whitespace"
-            },
-        }));
+fn validate_uplink_token(token: &str) -> Result<(), AuthenticationError> {
+    if token.len() < MIN_SERVICE_TOKEN_BYTES || token.trim() != token {
+        return Err(AuthenticationError::Configuration(
+            "AETHER_UPLINK_CONTROL_TOKEN must contain at least 32 bytes without surrounding whitespace",
+        ));
     }
     Ok(())
+}
+
+fn map_access_token_error(error: AccessTokenAuthenticationError) -> AuthenticationError {
+    match error {
+        AccessTokenAuthenticationError::InvalidCredentials => {
+            AuthenticationError::InvalidCredentials
+        },
+        AccessTokenAuthenticationError::Configuration(message) => {
+            AuthenticationError::Configuration(message)
+        },
+    }
 }
 
 /// Authenticated application invocation plus its binary command identifier.
@@ -190,64 +180,242 @@ fn header_text<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
     headers.get(name)?.to_str().ok().map(str::trim)
 }
 
-fn actor_for_role(actor_id: &str, role: Option<&str>) -> Actor {
-    let actor = Actor::new(actor_id);
-    if matches!(role, Some("Admin" | "Engineer")) {
-        actor.with_permission("device.control")
-    } else {
-        actor
+/// Routes deterministic rule actions through the same governed application
+/// use case as HTTP, CLI, and MCP device commands.
+pub struct RuleActionApplication {
+    application: Arc<ControlApplication>,
+}
+
+impl RuleActionApplication {
+    /// Creates a facade over automation's shared control application.
+    #[must_use]
+    pub fn new(application: Arc<ControlApplication>) -> Self {
+        Self { application }
     }
 }
 
-/// Bridges validated application commands into automation's SHM dispatcher.
+#[async_trait]
+impl RuleActionCommandFacade for RuleActionApplication {
+    async fn write_action(&self, command: RuleActionCommand) -> PortResult<CommandReceipt> {
+        let request_uuid = uuid::Uuid::new_v4();
+        let timestamp = TimestampMs::new(chrono::Utc::now().timestamp_millis().max(0) as u64);
+        let actor = Actor::new(COMMISSIONED_RULE_ACTOR_ID).with_permission("device.control");
+        let context = RequestContext::new(request_uuid.to_string(), actor, true, timestamp);
+
+        let acceptance = self
+            .application
+            .write_point(
+                &context,
+                CommandId::new(request_uuid.as_u128()),
+                command.target(),
+                command.value(),
+            )
+            .await
+            .map_err(rule_action_port_error)?;
+        if let Some(failure) = acceptance.completion_audit().failure() {
+            tracing::error!(
+                request_id = acceptance.request_id(),
+                command_id = %format_args!("{:032x}", acceptance.command_id().get()),
+                error = %failure,
+                "rule command was accepted but its terminal audit is incomplete; do not retry"
+            );
+        }
+        Ok(acceptance.into_receipt())
+    }
+}
+
+/// Public HTTP representation of an accepted operation's terminal audit state.
+///
+/// The persistence error itself remains in server logs. Clients receive only a
+/// stable non-retryable status so they cannot mistake an accepted command for a
+/// safe retry opportunity.
+pub(crate) fn completion_audit_response(status: &CompletionAuditStatus) -> serde_json::Value {
+    match status {
+        CompletionAuditStatus::Recorded => serde_json::json!({
+            "status": "recorded",
+            "retryable": false
+        }),
+        CompletionAuditStatus::Incomplete { .. } => serde_json::json!({
+            "status": "incomplete",
+            "retryable": false,
+            "message": "operation was accepted but its terminal audit is incomplete; do not retry"
+        }),
+    }
+}
+
+fn rule_action_port_error(error: ApplicationError) -> PortError {
+    match error {
+        ApplicationError::AuditUnavailable(error) | ApplicationError::Port(error) => error,
+        ApplicationError::InvalidCommand(error) => {
+            PortError::new(PortErrorKind::InvalidData, error.to_string())
+        },
+        ApplicationError::PermissionDenied { .. }
+        | ApplicationError::ConfirmationRequired { .. } => {
+            PortError::new(PortErrorKind::Rejected, error.to_string())
+        },
+        _ => PortError::new(PortErrorKind::Permanent, error.to_string()),
+    }
+}
+
+/// Resolves logical instance commands and delegates one typed physical command
+/// to the configured device sink.
 pub struct AutomationCommandDispatcher {
     manager: Arc<InstanceManager>,
+    sink: Arc<dyn DeviceCommandSink>,
 }
 
 impl AutomationCommandDispatcher {
-    /// Creates a dispatcher over the existing instance manager.
+    /// Creates a logical dispatcher over routing/configuration and a physical
+    /// command sink.
     #[must_use]
-    pub fn new(manager: Arc<InstanceManager>) -> Self {
-        Self { manager }
+    pub fn new(manager: Arc<InstanceManager>, sink: Arc<dyn DeviceCommandSink>) -> Self {
+        Self { manager, sink }
     }
 }
 
 #[async_trait]
 impl CommandDispatcher for AutomationCommandDispatcher {
     async fn dispatch(&self, command: ControlCommand) -> PortResult<CommandReceipt> {
-        let target = command.target();
-        if target.kind() != PointKind::Action {
-            return Err(PortError::new(
-                PortErrorKind::Rejected,
-                "automation dispatcher accepts only instance action points",
-            ));
-        }
-        self.manager
-            .execute_action(
-                target.instance_id().get(),
-                &target.point_id().get().to_string(),
-                command.value(),
+        let logical = command.target();
+        let source_type = match logical.kind() {
+            PointKind::Command => aether_model::PointType::Control,
+            PointKind::Action => aether_model::PointType::Adjustment,
+            PointKind::Telemetry | PointKind::Status => {
+                return Err(PortError::new(
+                    PortErrorKind::Rejected,
+                    "automation dispatcher accepts only writable instance points",
+                ));
+            },
+        };
+        let routed = self
+            .manager
+            .routing_cache
+            .lookup_m2c_by_parts(
+                logical.instance_id().get(),
+                source_type,
+                logical.point_id().get(),
             )
-            .await
-            .map_err(automation_port_error)?;
-        let completed_at = chrono::Utc::now().timestamp_millis().max(0) as u64;
-        Ok(CommandReceipt::new(
+            .ok_or_else(|| {
+                PortError::new(
+                    PortErrorKind::Rejected,
+                    format!("no enabled physical route for logical target {logical:?}"),
+                )
+            })?;
+
+        let (physical_kind, constraints) = match routed.point_type {
+            aether_model::PointType::Control => {
+                let exists = sqlx::query_scalar::<_, i64>(
+                    "SELECT 1 FROM control_points WHERE channel_id = ? AND point_id = ?",
+                )
+                .bind(i64::from(routed.channel_id))
+                .bind(i64::from(routed.point_id))
+                .fetch_optional(&self.manager.pool)
+                .await
+                .map_err(database_port_error)?;
+                if exists.is_none() {
+                    return Err(PortError::new(
+                        PortErrorKind::Rejected,
+                        format!(
+                            "route target C:{}:{} has no configured command point",
+                            routed.channel_id, routed.point_id
+                        ),
+                    ));
+                }
+                (PointKind::Command, CommandConstraints::unbounded())
+            },
+            aether_model::PointType::Adjustment => {
+                let limits = sqlx::query_as::<_, (Option<f64>, Option<f64>, f64)>(
+                    "SELECT min_value, max_value, step FROM adjustment_points
+                     WHERE channel_id = ? AND point_id = ?",
+                )
+                .bind(i64::from(routed.channel_id))
+                .bind(i64::from(routed.point_id))
+                .fetch_optional(&self.manager.pool)
+                .await
+                .map_err(database_port_error)?
+                .ok_or_else(|| {
+                    PortError::new(
+                        PortErrorKind::Rejected,
+                        format!(
+                            "route target A:{}:{} has no configured action point",
+                            routed.channel_id, routed.point_id
+                        ),
+                    )
+                })?;
+                let constraints = CommandConstraints::new(limits.0, limits.1, Some(limits.2))
+                    .map_err(|error| {
+                        PortError::new(
+                            PortErrorKind::Rejected,
+                            format!(
+                                "invalid limits for A:{}:{}: {error}",
+                                routed.channel_id, routed.point_id
+                            ),
+                        )
+                    })?;
+                (PointKind::Action, constraints)
+            },
+            aether_model::PointType::Telemetry | aether_model::PointType::Signal => {
+                return Err(PortError::new(
+                    PortErrorKind::Rejected,
+                    format!("logical command route resolved to read-only target {routed}"),
+                ));
+            },
+        };
+
+        let now = TimestampMs::new(chrono::Utc::now().timestamp_millis().max(0) as u64);
+        command
+            .validate_at(now, constraints)
+            .map_err(|error| PortError::new(PortErrorKind::Rejected, error.to_string()))?;
+
+        let health_reader = self
+            .manager
+            .channel_health_reader
+            .load_full()
+            .ok_or_else(|| {
+                PortError::new(
+                    PortErrorKind::Unavailable,
+                    "channel-health SHM reader is not configured",
+                )
+            })?;
+        match health_reader.read_channel(routed.channel_id) {
+            Ok(Some(sample)) if sample.online() => {},
+            Ok(Some(_)) => {
+                return Err(PortError::new(
+                    PortErrorKind::Unavailable,
+                    format!("channel {} is offline", routed.channel_id),
+                ));
+            },
+            Ok(None) => {
+                return Err(PortError::new(
+                    PortErrorKind::Unavailable,
+                    format!("channel {} has no health sample", routed.channel_id),
+                ));
+            },
+            Err(error) => return Err(error),
+        }
+
+        let physical_target = ChannelCommandAddress::new(
+            ChannelId::new(routed.channel_id),
+            physical_kind,
+            PointId::new(routed.point_id),
+        )
+        .map_err(|error| PortError::new(PortErrorKind::Rejected, error.to_string()))?;
+        let physical = PhysicalDeviceCommand::new(
             command.id(),
-            TimestampMs::new(completed_at),
-        ))
+            physical_target,
+            command.value(),
+            command.issued_at(),
+            command.expires_at(),
+        )
+        .map_err(|error| PortError::new(PortErrorKind::Rejected, error.to_string()))?;
+
+        self.sink.send(physical).await
     }
 }
 
-fn automation_port_error(error: AutomationError) -> PortError {
-    let kind = match &error {
-        AutomationError::InvalidData(_) | AutomationError::InvalidRouting(_) => {
-            PortErrorKind::Rejected
-        },
-        AutomationError::ChannelUnreachable { .. } | AutomationError::DispatchDegraded(_) => {
-            PortErrorKind::Unavailable
-        },
-        AutomationError::DatabaseError(_) => PortErrorKind::Unavailable,
-        _ => PortErrorKind::Permanent,
-    };
-    PortError::new(kind, error.to_string())
+fn database_port_error(error: sqlx::Error) -> PortError {
+    PortError::new(
+        PortErrorKind::Unavailable,
+        format!("command configuration database unavailable: {error}"),
+    )
 }

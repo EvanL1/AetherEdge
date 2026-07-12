@@ -35,6 +35,14 @@ pub enum DomainError {
     InvalidProcessingState,
     /// A control command targeted a read-only point.
     PointNotWritable(PointKind),
+    /// An acquisition sample targeted a command-owned point.
+    PointNotAcquisitionOwned(PointKind),
+    /// A physical command targeted an acquisition-owned point.
+    PointNotCommandOwned(PointKind),
+    /// An acquired engineering value was NaN or infinite.
+    NonFiniteAcquiredValue,
+    /// An acquired raw value was NaN or infinite.
+    NonFiniteAcquiredRawValue,
     /// A command value was NaN or infinite.
     NonFiniteCommandValue,
     /// The command deadline was not later than its issue time.
@@ -47,6 +55,16 @@ pub enum DomainError {
     CommandValueOutOfRange,
     /// A command value is not aligned to the point's configured step.
     CommandValueOffStep,
+    /// Alarm severity was outside the stable range 1 through 3.
+    InvalidAlarmSeverity,
+    /// Alarm comparison operator was not supported.
+    InvalidAlarmComparator,
+    /// Alarm target omitted a required namespace.
+    InvalidAlarmTarget,
+    /// Alarm rule name was empty.
+    InvalidAlarmRuleName,
+    /// Alarm comparison threshold was NaN or infinite.
+    NonFiniteAlarmThreshold,
 }
 
 impl fmt::Display for DomainError {
@@ -82,6 +100,18 @@ impl fmt::Display for DomainError {
             Self::PointNotWritable(kind) => {
                 write!(formatter, "point kind {kind:?} is not writable")
             },
+            Self::PointNotAcquisitionOwned(kind) => {
+                write!(formatter, "point kind {kind:?} is not acquisition-owned")
+            },
+            Self::PointNotCommandOwned(kind) => {
+                write!(formatter, "point kind {kind:?} is not command-owned")
+            },
+            Self::NonFiniteAcquiredValue => {
+                formatter.write_str("acquired engineering value must be finite")
+            },
+            Self::NonFiniteAcquiredRawValue => {
+                formatter.write_str("acquired raw value must be finite")
+            },
             Self::NonFiniteCommandValue => formatter.write_str("command value must be finite"),
             Self::InvalidCommandWindow => {
                 formatter.write_str("command expiry must be later than its issue time")
@@ -96,6 +126,15 @@ impl fmt::Display for DomainError {
             Self::CommandValueOffStep => {
                 formatter.write_str("command value is not aligned to the allowed step")
             },
+            Self::InvalidAlarmSeverity => {
+                formatter.write_str("alarm severity must be between 1 and 3")
+            },
+            Self::InvalidAlarmComparator => {
+                formatter.write_str("alarm comparison operator is invalid")
+            },
+            Self::InvalidAlarmTarget => formatter.write_str("alarm target is invalid"),
+            Self::InvalidAlarmRuleName => formatter.write_str("alarm rule name must not be empty"),
+            Self::NonFiniteAlarmThreshold => formatter.write_str("alarm threshold must be finite"),
         }
     }
 }

@@ -31,6 +31,7 @@ readonly PUBLIC_PACKAGES=(
     "aether-dataplane:crates/aether-dataplane"
     "aether-ports:crates/aether-ports"
     "aether-application:crates/aether-application"
+    "aether-pack:crates/aether-pack"
     "aether-data-processing:crates/aether-data-processing"
     "aether-edge-sdk:crates/aether-sdk"
     "aether-testkit:crates/aether-testkit"

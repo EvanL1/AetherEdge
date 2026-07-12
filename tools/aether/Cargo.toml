@@ -6,10 +6,15 @@ edition = "2024"
 license.workspace = true
 
 [dependencies]
-aether-rtdb-shm = { path = "../../libs/aether-rtdb-shm" }
+aether-dataplane = { path = "../../crates/aether-dataplane" }
+aether-domain = { path = "../../crates/aether-domain" }
+aether-shm-bridge = { path = "../../extensions/shm-bridge" }
 aether-routing = { path = "../../libs/aether-routing" }
 aether-model = { path = "../../libs/aether-model" }
 aether-rules = { path = "../../libs/aether-rules" }
+aether-pack = { path = "../../crates/aether-pack" }
+aether-application = { path = "../../crates/aether-application" }
+aether-runtime-catalog = { path = "../../libs/aether-runtime-catalog" }
 common = { path = "../../libs/common" }
 
 # Cross-platform config schema. Replaces the previous io/automation service
@@ -42,6 +47,7 @@ uuid = { workspace = true }
 
 # Error handling
 anyhow = { workspace = true }
+thiserror = { workspace = true }
 
 # Logging
 tracing = { workspace = true }

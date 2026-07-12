@@ -65,7 +65,10 @@ impl RequestContext {
         }
     }
 
-    /// Returns the request identifier used for tracing and idempotency.
+    /// Returns the correlation identifier used for tracing and audit.
+    ///
+    /// It is not an idempotency key unless the selected capability explicitly
+    /// declares and implements replay semantics.
     #[must_use]
     pub fn request_id(&self) -> &str {
         &self.request_id

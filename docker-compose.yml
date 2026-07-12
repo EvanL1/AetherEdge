@@ -131,6 +131,7 @@ services:
     environment:
       - SERVICE_NAME=aether-io
       - SERVICE_PORT=6001
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:?JWT_SECRET_KEY must be set; generate at least 32 random bytes}
       - RUST_LOG=${RUST_LOG:-info}
       - AETHER_DB_PATH=/app/data/aether.db
       - CSV_BASE_PATH=/app/config/io

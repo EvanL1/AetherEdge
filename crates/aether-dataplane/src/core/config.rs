@@ -6,6 +6,7 @@
 
 use std::path::{Path, PathBuf};
 
+use crate::core::authority::AuthorityWriteGuard;
 use crate::{DataplaneError, DataplaneResult};
 
 /// Magic number for validation: "AETHER_" in ASCII.
@@ -188,6 +189,23 @@ pub fn cleanup_orphan_generation_files(canonical: &Path) -> DataplaneResult<usiz
 /// and the canonical "current" file should live in the same SHM mount
 /// (typically `/dev/shm` or `/shm/rtdb`).
 pub fn commit_generation_swap(staging_path: &Path, canonical_path: &Path) -> DataplaneResult<()> {
+    let authority = AuthorityWriteGuard::acquire(canonical_path)?;
+    commit_generation_swap_locked(staging_path, canonical_path, &authority)
+}
+
+/// Commits a generation while the caller retains an exclusive authority lease
+/// acquired before it began staging the replacement.
+///
+/// This is the linearizable publication path. The guard is tied to the exact
+/// canonical path so a lease for another segment cannot authorize the rename.
+pub fn commit_generation_swap_locked(
+    staging_path: &Path,
+    canonical_path: &Path,
+    authority: &AuthorityWriteGuard,
+) -> DataplaneResult<()> {
+    if !authority.guards(canonical_path) {
+        return Err(DataplaneError::InvalidPath(canonical_path.to_path_buf()));
+    }
     std::fs::rename(staging_path, canonical_path).map_err(|source| {
         DataplaneError::io(
             format!("rename SHM generation {staging_path:?} to {canonical_path:?}"),

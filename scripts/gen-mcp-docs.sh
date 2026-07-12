@@ -5,16 +5,31 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 cargo build -p aether --quiet
+TARGET_DIR=${CARGO_TARGET_DIR:-target}
+if [[ "$TARGET_DIR" != /* ]]; then
+    TARGET_DIR="$PWD/$TARGET_DIR"
+fi
+AETHER_BIN="$TARGET_DIR/debug/aether"
+
+# Documentation generation must be reproducible from a fresh checkout and
+# must never inherit the operator's active Packs. Both MCP invocations use the
+# same isolated, explicitly empty Pack configuration.
+TMP_CONFIG=$(mktemp -d "${TMPDIR:-/tmp}/aether-mcp-docs.XXXXXX")
+trap 'rm -rf "$TMP_CONFIG"' EXIT
+printf 'packs: []\n' > "$TMP_CONFIG/global.yaml"
+HOST_TARGET=$(rustc -vV | sed -n 's/^host: //p')
+cargo run --quiet -p aether-runtime-catalog --bin aether-runtime-manifest -- \
+    generate "$HOST_TARGET" "$TMP_CONFIG" >/dev/null
 
 REQ='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"gen-mcp-docs","version":"0"}}}
 {"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}'
 
 # The server exits on stdin EOF, which the pipe provides. timeout(1) is a
 # belt-and-braces guard where available (GNU coreutils); absent on stock macOS.
-if command -v timeout >/dev/null 2>&1; then T="timeout 10"; else T=""; fi
+if command -v timeout >/dev/null 2>&1; then MCP_RUN=(timeout 10); else MCP_RUN=(); fi
 
-RO_JSON=$(printf '%s\n' "$REQ" | $T ./target/debug/aether mcp 2>/dev/null | tail -1)
-ALL_JSON=$(printf '%s\n' "$REQ" | $T ./target/debug/aether mcp --allow-write 2>/dev/null | tail -1)
+RO_JSON=$(printf '%s\n' "$REQ" | AETHER_CONFIG_PATH="$TMP_CONFIG" "${MCP_RUN[@]}" "$AETHER_BIN" mcp 2>/dev/null | tail -1)
+ALL_JSON=$(printf '%s\n' "$REQ" | AETHER_CONFIG_PATH="$TMP_CONFIG" "${MCP_RUN[@]}" "$AETHER_BIN" mcp --allow-write 2>/dev/null | tail -1)
 
 RO_JSON="$RO_JSON" ALL_JSON="$ALL_JSON" python3 > docs/reference/mcp-tools.md <<'PY'
 import json, os, datetime

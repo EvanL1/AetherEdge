@@ -167,7 +167,7 @@ impl SnapshotManager {
             .layout_arc()
             .context("SHM writer not available for snapshot")?;
         layout
-            .writer
+            .acquisition_writer
             .save_snapshot(&self.config.path)
             .context("Failed to save snapshot")
     }

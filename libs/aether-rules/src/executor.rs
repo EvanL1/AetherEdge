@@ -12,10 +12,11 @@ use crate::types::{
     CalculationRule, FlowCondition, Rule, RuleNode, RuleSwitchBranch, RuleValueAssignment,
     RuleVariable, RuleWires,
 };
+use crate::{RuleActionCommand, RuleActionCommandFacade};
 use aether_calc::{CalcEngine, MemoryStateStore, StateStore};
-use aether_model::{PointType, ValidationConfig, validate_value};
-use aether_routing::{RoutingCache, route_context_from_target, validate_action_value};
-use aether_rtdb_shm::{ActionDispatch, DispatchOutcome};
+use aether_domain::{InstanceId, PointId};
+use aether_model::{ValidationConfig, validate_value};
+use aether_routing::RoutingCache;
 use serde::Serialize;
 use std::borrow::Cow;
 use std::collections::HashMap;
@@ -269,27 +270,22 @@ pub struct ConditionResult {
 /// there is no network-store fallback.
 pub struct RuleExecutor<S: StateStore = MemoryStateStore> {
     live_state: Arc<dyn RuleLiveState>,
-    routing_cache: Arc<RoutingCache>,
     /// State store for stateful calculation functions (integrate, moving_avg, etc.)
     state_store: Arc<S>,
-    /// Optional shared ActionDispatch for M2C SHM+UDS writes. Reusing the
-    /// same dispatch instance as automation guarantees the writer_generation
-    /// check trips uniformly — without this, rule-engine actions after a
-    /// io restart silently target wrong slots.
-    action_dispatch: Option<Arc<dyn ActionDispatch>>,
+    /// Governed logical-action facade installed by the composition root.
+    action_commands: Option<Arc<dyn RuleActionCommandFacade>>,
 }
 
 impl RuleExecutor<MemoryStateStore> {
     /// Create with default MemoryStateStore
-    pub fn new<L>(live_state: Arc<L>, routing_cache: Arc<RoutingCache>) -> Self
+    pub fn new<L>(live_state: Arc<L>, _routing_cache: Arc<RoutingCache>) -> Self
     where
         L: RuleLiveState + 'static,
     {
         Self {
             live_state,
-            routing_cache,
             state_store: Arc::new(MemoryStateStore::new()),
-            action_dispatch: None,
+            action_commands: None,
         }
     }
 }
@@ -298,7 +294,7 @@ impl<S: StateStore> RuleExecutor<S> {
     /// Create with custom state store
     pub fn with_state_store<L>(
         live_state: Arc<L>,
-        routing_cache: Arc<RoutingCache>,
+        _routing_cache: Arc<RoutingCache>,
         state_store: Arc<S>,
     ) -> Self
     where
@@ -306,19 +302,18 @@ impl<S: StateStore> RuleExecutor<S> {
     {
         Self {
             live_state,
-            routing_cache,
             state_store,
-            action_dispatch: None,
+            action_commands: None,
         }
     }
 
-    /// Enable shared ActionDispatch for M2C SHM+UDS writes.
-    ///
-    /// The caller must pass the same `Arc<ShmDispatch>` that automation uses
-    /// for its HTTP control path so generation checks and rebuild signals
-    /// stay coherent across both code paths.
-    pub fn with_action_dispatch(mut self, dispatch: Arc<dyn ActionDispatch>) -> Self {
-        self.action_dispatch = Some(dispatch);
+    /// Installs the host-owned, audited device-action command facade.
+    #[must_use]
+    pub fn with_action_command_facade(
+        mut self,
+        commands: Arc<dyn RuleActionCommandFacade>,
+    ) -> Self {
+        self.action_commands = Some(commands);
         self
     }
 
@@ -367,13 +362,29 @@ impl<S: StateStore> RuleExecutor<S> {
 
             match node {
                 RuleNode::End => {
-                    // Save final variable values and mark success (wrap in Arc).
+                    // Save final variable values and aggregate all attempted
+                    // action outcomes. Reaching End means traversal completed,
+                    // but it must not erase a failed device command.
                     // point_values is the executor's authoritative "what we
                     // actually read" view, surfaced to scheduler for OnChange
                     // last_value advancement so deadband matches reality.
                     result.variable_values = Arc::new(std::mem::take(&mut values));
                     result.point_values = Arc::new(std::mem::take(&mut point_values));
-                    result.success = true;
+                    let failed_actions = result
+                        .actions_executed
+                        .iter()
+                        .filter(|action| !action.success)
+                        .count();
+                    if failed_actions == 0 {
+                        result.success = true;
+                    } else {
+                        result.success = false;
+                        result.error = Some(format!(
+                            "{} of {} attempted rule actions failed",
+                            failed_actions,
+                            result.actions_executed.len()
+                        ));
+                    }
                     break;
                 },
                 RuleNode::Start { wires } => {
@@ -1052,8 +1063,7 @@ impl<S: StateStore> RuleExecutor<S> {
                 .await
                 .is_ok(),
             "A" => {
-                let point_string = point.to_string();
-                self.write_action_point(instance_id, point, &point_string, value, context)
+                self.write_action_point(instance_id, point, value, context)
                     .await
             },
             _ => {
@@ -1076,102 +1086,29 @@ impl<S: StateStore> RuleExecutor<S> {
         &self,
         instance_id: u32,
         point: u32,
-        point_str: &str,
         value: f64,
         context: &str,
     ) -> bool {
-        let target =
-            self.routing_cache
-                .lookup_m2c_by_parts(instance_id, PointType::Adjustment, point);
-
-        let Some(target) = target else {
+        let Some(commands) = self.action_commands.as_ref() else {
             tracing::error!(
-                "{} rejected: no SHM action route for instance_id={}, point_id={}",
+                "{} dispatch failed: governed action command facade not configured for instance_id={}, point_id={}",
                 context,
                 instance_id,
                 point
             );
             return false;
         };
-
-        let value = match validate_action_value(instance_id, point_str, value) {
-            Ok(value) => value,
-            Err(e) => {
+        let command =
+            RuleActionCommand::new(InstanceId::new(instance_id), PointId::new(point), value);
+        match commands.write_action(command).await {
+            Ok(_) => true,
+            Err(error) => {
                 tracing::error!(
-                    "{} write rejected (instance_id={}, point_id={}): {}",
+                    "{} governed action failed for instance_id={}, point_id={}: {}",
                     context,
                     instance_id,
                     point,
-                    e
-                );
-                return false;
-            },
-        };
-        let timestamp_ms = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis() as i64;
-        let ctx = route_context_from_target(target, timestamp_ms);
-
-        self.dispatch_action_to_io(&ctx, value, context).await
-    }
-
-    async fn dispatch_action_to_io(
-        &self,
-        ctx: &aether_routing::RouteContext,
-        value: f64,
-        context: &str,
-    ) -> bool {
-        // Reuse the shared ActionDispatch so generation checks, post-write
-        // re-checks, and UDS reconnect signaling stay coherent with automation's
-        // HTTP control path. Any rule firing after a io restart will
-        // trip the generation mismatch and trigger rebuild via the same
-        // Notify that automation listens to.
-        let Some(dispatch) = self.action_dispatch.as_ref() else {
-            tracing::error!(
-                "{} dispatch failed: ActionDispatch not configured for ch={} pt={} point={}",
-                context,
-                ctx.target_channel_id,
-                ctx.target_point_type,
-                ctx.target_point_id
-            );
-            return false;
-        };
-
-        match dispatch.dispatch(ctx, value).await {
-            DispatchOutcome::Delivered | DispatchOutcome::Noop => true,
-            DispatchOutcome::NoWriter => {
-                tracing::error!(
-                    "{} dispatch dropped: SHM writer unavailable (likely io restart) for ch={} pt={} point={}",
-                    context,
-                    ctx.target_channel_id,
-                    ctx.target_point_type,
-                    ctx.target_point_id
-                );
-                false
-            },
-            DispatchOutcome::SlotMissing { reason } => {
-                tracing::error!(
-                    "{} dispatch dropped ({}) for ch={} pt={} point={}",
-                    context,
-                    reason,
-                    ctx.target_channel_id,
-                    ctx.target_point_type,
-                    ctx.target_point_id
-                );
-                false
-            },
-            DispatchOutcome::ShmOnly { reason } => {
-                // SHM was written but io likely did not see it (UDS
-                // degraded). Surface as failure so the rule's success flag
-                // reflects reality — the cooldown counter is gated on this.
-                tracing::warn!(
-                    "{} dispatch degraded ({}); UDS not delivered for ch={} pt={} point={}",
-                    context,
-                    reason,
-                    ctx.target_channel_id,
-                    ctx.target_point_type,
-                    ctx.target_point_id
+                    error
                 );
                 false
             },

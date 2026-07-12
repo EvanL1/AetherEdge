@@ -7,10 +7,10 @@ use std::time::Duration;
 use aether_domain::{PointAddress, PointKind};
 use aether_ports::{PortError, PortErrorKind, PortResult};
 use aether_shm_bridge::{
-    ChannelHealthManifest, ChannelHealthSample, ChannelPointManifest, ReconnectingSlotSource,
-    ShmChannelHealthReader, ShmClientConfig, ShmLiveState, SlotSnapshot, SlotSource,
-    StaticSlotResolver,
+    ChannelHealthSample, ChannelPointManifest, ReconnectingSlotSource, ShmChannelHealthReader,
+    ShmClientConfig, ShmLiveState, SlotSnapshot, SlotSource, StaticSlotResolver,
 };
+use aether_store_local::load_sqlite_shm_topology;
 use anyhow::Context;
 use sqlx::SqlitePool;
 
@@ -392,9 +392,13 @@ pub async fn build_gateway_value_source(
     pool: &SqlitePool,
     config: &GatewayConfig,
 ) -> anyhow::Result<Arc<ShmGatewayValueSource>> {
-    let manifest = Arc::new(load_channel_manifest(pool).await?);
+    let (point_manifest, health_manifest) = load_sqlite_shm_topology(pool)
+        .await
+        .context("load canonical SHM topology for api")?
+        .into_manifests();
+    let manifest = Arc::new(point_manifest);
     let routing = Arc::new(load_gateway_routing(pool).await?);
-    let health_manifest = Arc::new(load_channel_health_manifest(pool).await?);
+    let health_manifest = Arc::new(health_manifest);
     let slots = Arc::new(ReconnectingSlotSource::new(
         ShmClientConfig::new(&config.shm_path, manifest.layout_hash())
             .with_writer_stale_after(Duration::from_millis(config.shm_writer_stale_after_ms))
@@ -426,7 +430,11 @@ pub async fn build_data_processing_live_state(
     config: &GatewayConfig,
     addresses: &[PointAddress],
 ) -> anyhow::Result<Arc<ShmLiveState>> {
-    let manifest = Arc::new(load_channel_manifest(pool).await?);
+    let (point_manifest, _health_manifest) = load_sqlite_shm_topology(pool)
+        .await
+        .context("load canonical SHM topology for data processing")?
+        .into_manifests();
+    let manifest = Arc::new(point_manifest);
     let routing = load_gateway_routing(pool).await?;
     let mut entries = Vec::with_capacity(addresses.len());
     let mut commissioned_slots = std::collections::HashSet::new();
@@ -459,39 +467,6 @@ pub async fn build_data_processing_live_state(
         slots,
         Arc::new(StaticSlotResolver::from_entries(entries)),
     )))
-}
-
-async fn load_channel_manifest(pool: &SqlitePool) -> anyhow::Result<ChannelPointManifest> {
-    let mut counts = std::collections::BTreeMap::<u32, [u32; 4]>::new();
-    for (table, type_index, physical_only) in [
-        ("telemetry_points", 0_usize, true),
-        ("signal_points", 1_usize, true),
-        ("control_points", 2_usize, false),
-        ("adjustment_points", 3_usize, false),
-    ] {
-        let query = if physical_only {
-            format!(
-                "SELECT p.channel_id, MAX(p.point_id) + 1 AS count \
-                 FROM {table} p JOIN channels c ON c.channel_id = p.channel_id \
-                 WHERE c.protocol != 'virtual' GROUP BY p.channel_id"
-            )
-        } else {
-            format!(
-                "SELECT channel_id, MAX(point_id) + 1 AS count \
-                 FROM {table} GROUP BY channel_id"
-            )
-        };
-        let rows: Vec<(i64, i64)> = sqlx::query_as(&query)
-            .fetch_all(pool)
-            .await
-            .with_context(|| format!("load SHM point counts from {table}"))?;
-        for (channel_id, count) in rows {
-            counts
-                .entry(config_u32(channel_id, "channel_id")?)
-                .or_insert([0; 4])[type_index] = config_u32(count, "point count")?;
-        }
-    }
-    Ok(ChannelPointManifest::from_map(counts))
 }
 
 async fn load_gateway_routing(pool: &SqlitePool) -> anyhow::Result<GatewayRouting> {
@@ -548,18 +523,6 @@ async fn load_gateway_routing(pool: &SqlitePool) -> anyhow::Result<GatewayRoutin
         ));
     }
     Ok(GatewayRouting::from_entries(measurements, actions))
-}
-
-async fn load_channel_health_manifest(pool: &SqlitePool) -> anyhow::Result<ChannelHealthManifest> {
-    let ids: Vec<i64> = sqlx::query_scalar("SELECT channel_id FROM channels ORDER BY channel_id")
-        .fetch_all(pool)
-        .await
-        .context("load channel ids for gateway health manifest")?;
-    let ids = ids
-        .into_iter()
-        .map(|id| config_u32(id, "health channel_id"))
-        .collect::<anyhow::Result<Vec<_>>>()?;
-    Ok(ChannelHealthManifest::from_channel_ids(ids))
 }
 
 fn config_u32(value: i64, label: &str) -> anyhow::Result<u32> {

@@ -5,11 +5,8 @@
 
 #![allow(clippy::disallowed_methods)] // json! macro used in multiple functions
 
-use crate::error::AutomationError;
-use crate::infra::shm_dispatch::DispatchOutcome;
 use anyhow::{Result, anyhow};
 use std::collections::HashMap;
-use tracing::{debug, error, warn};
 
 use super::instance_manager::InstanceManager;
 
@@ -35,7 +32,13 @@ impl InstanceManager {
             for (point_id, kind) in points {
                 let instance_type = if *kind == "action" { 1 } else { 0 };
                 if let Some((value, timestamp_ms)) =
-                    reader.get_instance(instance_id, instance_type, *point_id, &self.routing_cache)
+                    crate::infra::rule_live_state::read_instance_point(
+                        &reader,
+                        &self.routing_cache,
+                        instance_id,
+                        instance_type,
+                        *point_id,
+                    )
                     && value.is_finite()
                 {
                     values.insert(
@@ -82,7 +85,7 @@ impl InstanceManager {
     ///
     /// Query plan:
     /// 1. Fetch `product_name` from `instances`
-    /// 2. Look up Product template (compile-time constants)
+    /// 2. Look up the product template from the validated active Pack set
     /// 3. Query routing data from `measurement_routing` / `action_routing` (parallel)
     /// 4. Query property values from `instance_properties`
     /// 5. Merge in application layer
@@ -261,7 +264,7 @@ impl InstanceManager {
         Ok((measurements, actions, properties))
     }
 
-    /// Get instance points (built-in product definitions = single source of truth)
+    /// Get instance points from the selected runtime product library.
     pub async fn get_instance_points(
         &self,
         instance_id: u32,
@@ -278,7 +281,7 @@ impl InstanceManager {
             return Err(anyhow!("Instance {} not found", instance_id));
         };
 
-        // Get product from built-in definitions (compile-time constants)
+        // Resolve the product from the validated Pack-backed library.
         let product = self
             .product_loader
             .get_product(&product_name)
@@ -378,146 +381,6 @@ impl InstanceManager {
         }
     }
 
-    /// Execute action on instance
-    pub async fn execute_action(
-        &self,
-        instance_id: u32,
-        action_id: &str,
-        value: f64,
-    ) -> crate::error::Result<()> {
-        // Route via application-layer cache, dispatch via SHM+UDS to io.
-        //
-        // Routing is resolved once and the resulting snapshot is used by both
-        // the health gate and SHM dispatch. This prevents a concurrent routing
-        // reload from changing the target midway through a command.
-        //
-        // Non-numeric action_id can't reach a channel: RoutingCache stores
-        // structured keys (instance_id:point_type:point_id where point_id is
-        // u32), and lookup_m2c() rejects unparseable keys. So an action_id
-        // that doesn't parse resolves to None and is rejected as unroutable.
-        let m2c_target = if let Ok(point_id_u32) = action_id.parse::<u32>() {
-            self.routing_cache.lookup_m2c_by_parts(
-                instance_id,
-                aether_model::PointType::Adjustment,
-                point_id_u32,
-            )
-        } else {
-            None
-        };
-
-        if let Some(target) = m2c_target.as_ref() {
-            let limits = sqlx::query_as::<_, (Option<f64>, Option<f64>, f64)>(
-                "SELECT min_value, max_value, step FROM adjustment_points
-                 WHERE channel_id = ? AND point_id = ?",
-            )
-            .bind(target.channel_id as i64)
-            .bind(target.point_id as i64)
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(|error| AutomationError::DatabaseError(error.to_string()))?
-            .ok_or_else(|| {
-                AutomationError::InvalidRouting(format!(
-                    "route target A:{}:{} has no configured adjustment point",
-                    target.channel_id, target.point_id
-                ))
-            })?;
-            let constraints =
-                aether_domain::CommandConstraints::new(limits.0, limits.1, Some(limits.2))
-                    .map_err(|error| {
-                        AutomationError::InvalidRouting(format!(
-                            "invalid constraints for A:{}:{}: {error}",
-                            target.channel_id, target.point_id
-                        ))
-                    })?;
-            constraints.validate_value(value).map_err(|error| {
-                AutomationError::InvalidData(format!(
-                    "command rejected for A:{}:{}: {error}",
-                    target.channel_id, target.point_id
-                ))
-            })?;
-
-            let health_reader = self.channel_health_reader.load_full().ok_or_else(|| {
-                AutomationError::DispatchDegraded(
-                    "channel-health SHM reader is not configured".to_string(),
-                )
-            })?;
-            match health_reader.read_channel(target.channel_id) {
-                Ok(Some(sample)) if sample.online() => {},
-                Ok(Some(_)) => {
-                    return Err(AutomationError::ChannelUnreachable {
-                        channel_id: target.channel_id,
-                    });
-                },
-                Ok(None) => {
-                    return Err(AutomationError::DispatchDegraded(format!(
-                        "channel {} has no SHM health sample",
-                        target.channel_id
-                    )));
-                },
-                Err(error) => {
-                    return Err(AutomationError::DispatchDegraded(format!(
-                        "channel-health SHM unavailable for channel {}: {error}",
-                        target.channel_id
-                    )));
-                },
-            }
-        }
-
-        if let Some(target) = m2c_target {
-            let value = aether_routing::validate_action_value(instance_id, action_id, value)
-                .map_err(|e| AutomationError::InternalError(e.to_string()))?;
-            let timestamp_ms = chrono::Utc::now().timestamp_millis();
-            let ctx = aether_routing::route_context_from_target(target, timestamp_ms);
-
-            // Dispatch action to io via SHM+UDS (production) or noop (tests)
-            // SCADA safety: dispatch failures propagate to the operator; there
-            // is no secondary state mirror that could report a false success.
-            match self.dispatch.dispatch(&ctx, value).await {
-                DispatchOutcome::Delivered | DispatchOutcome::Noop => {},
-                DispatchOutcome::ShmOnly { reason } => {
-                    warn!(
-                        "Action dispatch degraded: SHM written but UDS failed ({}) for instance {} action {}",
-                        reason, instance_id, action_id
-                    );
-                    return Err(AutomationError::DispatchDegraded(format!(
-                        "UDS notification failed ({}): command may not reach device",
-                        reason
-                    )));
-                },
-                DispatchOutcome::NoWriter => {
-                    error!(
-                        "Action dispatch failed: no SHM writer for instance {} action {}",
-                        instance_id, action_id
-                    );
-                    return Err(AutomationError::DispatchDegraded(
-                        "SHM writer unavailable: io may have restarted".to_string(),
-                    ));
-                },
-                DispatchOutcome::SlotMissing { reason } => {
-                    error!(
-                        "Action dispatch failed: {} for instance {} action {}",
-                        reason, instance_id, action_id
-                    );
-                    return Err(AutomationError::DispatchDegraded(format!(
-                        "{}: routing/SHM layout may be stale",
-                        reason
-                    )));
-                },
-            }
-
-            debug!(
-                "Action {} dispatched to channel {} for instance {}",
-                action_id, ctx.target_channel_id, instance_id
-            );
-        } else {
-            return Err(AutomationError::InvalidRouting(format!(
-                "No enabled SHM route for instance {instance_id} action {action_id}"
-            )));
-        }
-
-        Ok(())
-    }
-
     /// Load a single measurement point with routing configuration
     pub async fn load_single_measurement_point(
         &self,
@@ -540,7 +403,7 @@ impl InstanceManager {
             .get_product(&product_name)
             .map_err(|e| anyhow!("Product '{}' not found: {}", product_name, e))?;
 
-        // 2. Find the measurement point in built-in product
+        // 2. Find the measurement point in the selected product.
         let mp = product
             .measurements
             .iter()
@@ -624,7 +487,7 @@ impl InstanceManager {
             .get_product(&product_name)
             .map_err(|e| anyhow!("Product '{}' not found: {}", product_name, e))?;
 
-        // 2. Find the action point in built-in product
+        // 2. Find the action point in the selected product.
         let ap = product
             .actions
             .iter()

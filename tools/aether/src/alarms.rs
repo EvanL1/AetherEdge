@@ -40,6 +40,16 @@ pub enum AlarmCommands {
         id: i64,
     },
 
+    /// Manually resolve an active alert
+    #[command(about = "Manually resolve an active alert")]
+    Resolve {
+        /// Active alert ID
+        id: i64,
+        /// Confirm that the alert indication may be cleared
+        #[arg(long)]
+        confirmed: bool,
+    },
+
     /// List alarm rules
     #[command(about = "List alarm rules")]
     Rules {
@@ -107,6 +117,9 @@ pub enum AlarmCommands {
         /// Path to a JSON file matching alarm's CreateRuleRequest
         #[arg(long)]
         file: String,
+        /// Confirm this high-risk alarm-policy mutation
+        #[arg(long)]
+        confirmed: bool,
     },
 
     /// Update an alarm rule from a JSON file (partial update)
@@ -117,6 +130,9 @@ pub enum AlarmCommands {
         /// Path to a JSON file matching alarm's UpdateRuleRequest
         #[arg(long)]
         file: String,
+        /// Confirm this high-risk alarm-policy mutation
+        #[arg(long)]
+        confirmed: bool,
     },
 
     /// Delete an alarm rule
@@ -124,6 +140,9 @@ pub enum AlarmCommands {
     RuleDelete {
         /// Rule ID
         id: i64,
+        /// Confirm this high-risk alarm-policy mutation
+        #[arg(long)]
+        confirmed: bool,
     },
 
     /// Enable an alarm rule
@@ -131,6 +150,9 @@ pub enum AlarmCommands {
     RuleEnable {
         /// Rule ID
         id: i64,
+        /// Confirm this high-risk alarm-policy mutation
+        #[arg(long)]
+        confirmed: bool,
     },
 
     /// Disable an alarm rule
@@ -138,6 +160,9 @@ pub enum AlarmCommands {
     RuleDisable {
         /// Rule ID
         id: i64,
+        /// Confirm this high-risk alarm-policy mutation
+        #[arg(long)]
+        confirmed: bool,
     },
 }
 
@@ -165,6 +190,11 @@ pub async fn handle_command(cmd: AlarmCommands, base_url: &str, json: bool) -> R
         AlarmCommands::Get { id } => {
             let data = client.get_alert(id).await?;
             crate::output::print_value(&data, json);
+        },
+
+        AlarmCommands::Resolve { id, confirmed } => {
+            let data = client.resolve_alert(id, confirmed).await?;
+            print_action(&data, "Alert resolved", json);
         },
 
         AlarmCommands::Rules {
@@ -233,12 +263,12 @@ pub async fn handle_command(cmd: AlarmCommands, base_url: &str, json: bool) -> R
             crate::output::print_value(&data, json);
         },
 
-        AlarmCommands::RuleCreate { file } => {
+        AlarmCommands::RuleCreate { file, confirmed } => {
             let raw = std::fs::read_to_string(&file)
                 .map_err(|e| anyhow::anyhow!("Failed to read rule file {file}: {e}"))?;
             let body: Value = serde_json::from_str(&raw)
                 .map_err(|e| anyhow::anyhow!("Invalid JSON in rule file {file}: {e}"))?;
-            let data = client.create_rule(&body).await?;
+            let data = client.create_rule(&body, confirmed).await?;
             crate::output::print_value(&data, json);
         },
 
@@ -251,27 +281,31 @@ pub async fn handle_command(cmd: AlarmCommands, base_url: &str, json: bool) -> R
         // omit the id: the server's message carries none, so an id-bearing
         // fallback ("Rule 7 updated") promises a line the user never actually
         // sees — and the operator already typed the id on the command line.
-        AlarmCommands::RuleUpdate { id, file } => {
+        AlarmCommands::RuleUpdate {
+            id,
+            file,
+            confirmed,
+        } => {
             let raw = std::fs::read_to_string(&file)
                 .map_err(|e| anyhow::anyhow!("Failed to read rule file {file}: {e}"))?;
             let body: Value = serde_json::from_str(&raw)
                 .map_err(|e| anyhow::anyhow!("Invalid JSON in rule file {file}: {e}"))?;
-            let data = client.update_rule(id, &body).await?;
+            let data = client.update_rule(id, &body, confirmed).await?;
             print_action(&data, "Rule updated", json);
         },
 
-        AlarmCommands::RuleDelete { id } => {
-            let data = client.delete_rule(id).await?;
+        AlarmCommands::RuleDelete { id, confirmed } => {
+            let data = client.delete_rule(id, confirmed).await?;
             print_action(&data, "Rule deleted", json);
         },
 
-        AlarmCommands::RuleEnable { id } => {
-            let data = client.set_rule_enabled(id, true).await?;
+        AlarmCommands::RuleEnable { id, confirmed } => {
+            let data = client.set_rule_enabled(id, true, confirmed).await?;
             print_action(&data, "Rule enabled", json);
         },
 
-        AlarmCommands::RuleDisable { id } => {
-            let data = client.set_rule_enabled(id, false).await?;
+        AlarmCommands::RuleDisable { id, confirmed } => {
+            let data = client.set_rule_enabled(id, false, confirmed).await?;
             print_action(&data, "Rule disabled", json);
         },
     }
@@ -501,6 +535,7 @@ fn truncate(s: &str, max: usize) -> &str {
 pub(crate) struct AlarmClient {
     client: Client,
     base_url: String,
+    access_token: Option<String>,
 }
 
 impl AlarmClient {
@@ -508,6 +543,18 @@ impl AlarmClient {
         Ok(Self {
             client: Client::new(),
             base_url: base_url.to_string(),
+            access_token: std::env::var("AETHER_ACCESS_TOKEN")
+                .ok()
+                .filter(|value| !value.trim().is_empty() && value.trim() == value),
+        })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_access_token(base_url: &str, access_token: &str) -> Result<Self> {
+        Ok(Self {
+            client: Client::new(),
+            base_url: base_url.to_string(),
+            access_token: Some(access_token.to_string()),
         })
     }
 
@@ -565,6 +612,24 @@ impl AlarmClient {
                 id,
                 resp.status()
             ))
+        }
+    }
+
+    pub(crate) async fn resolve_alert(&self, id: i64, confirmed: bool) -> Result<Value> {
+        let access_token = self.alarm_management_token(confirmed)?;
+        let resp = self
+            .client
+            .patch(format!("{}/alarmApi/alerts/{}/resolve", self.base_url, id))
+            .bearer_auth(access_token)
+            .header("x-request-id", uuid::Uuid::new_v4().to_string())
+            .header("x-aether-confirmed", "true")
+            .send()
+            .await?;
+
+        if resp.status().is_success() {
+            Ok(resp.json().await?)
+        } else {
+            Err(parse_error_body("Failed to resolve active alert", resp).await)
         }
     }
 
@@ -706,10 +771,14 @@ impl AlarmClient {
         }
     }
 
-    pub(crate) async fn create_rule(&self, body: &Value) -> Result<Value> {
+    pub(crate) async fn create_rule(&self, body: &Value, confirmed: bool) -> Result<Value> {
+        let access_token = self.alarm_management_token(confirmed)?;
         let resp = self
             .client
             .post(format!("{}/alarmApi/rules", self.base_url))
+            .bearer_auth(access_token)
+            .header("x-request-id", uuid::Uuid::new_v4().to_string())
+            .header("x-aether-confirmed", "true")
             .json(body)
             .send()
             .await?;
@@ -721,10 +790,19 @@ impl AlarmClient {
         }
     }
 
-    pub(crate) async fn update_rule(&self, id: i64, body: &Value) -> Result<Value> {
+    pub(crate) async fn update_rule(
+        &self,
+        id: i64,
+        body: &Value,
+        confirmed: bool,
+    ) -> Result<Value> {
+        let access_token = self.alarm_management_token(confirmed)?;
         let resp = self
             .client
             .put(format!("{}/alarmApi/rules/{}", self.base_url, id))
+            .bearer_auth(access_token)
+            .header("x-request-id", uuid::Uuid::new_v4().to_string())
+            .header("x-aether-confirmed", "true")
             .json(body)
             .send()
             .await?;
@@ -736,10 +814,14 @@ impl AlarmClient {
         }
     }
 
-    pub(crate) async fn delete_rule(&self, id: i64) -> Result<Value> {
+    pub(crate) async fn delete_rule(&self, id: i64, confirmed: bool) -> Result<Value> {
+        let access_token = self.alarm_management_token(confirmed)?;
         let resp = self
             .client
             .delete(format!("{}/alarmApi/rules/{}", self.base_url, id))
+            .bearer_auth(access_token)
+            .header("x-request-id", uuid::Uuid::new_v4().to_string())
+            .header("x-aether-confirmed", "true")
             .send()
             .await?;
 
@@ -752,7 +834,13 @@ impl AlarmClient {
 
     /// alarm uses PATCH here; automation uses POST for the same semantics on its
     /// own business rules. Do not unify — the services genuinely differ.
-    pub(crate) async fn set_rule_enabled(&self, id: i64, enabled: bool) -> Result<Value> {
+    pub(crate) async fn set_rule_enabled(
+        &self,
+        id: i64,
+        enabled: bool,
+        confirmed: bool,
+    ) -> Result<Value> {
+        let access_token = self.alarm_management_token(confirmed)?;
         let action = if enabled { "enable" } else { "disable" };
         let resp = self
             .client
@@ -760,6 +848,9 @@ impl AlarmClient {
                 "{}/alarmApi/rules/{}/{}",
                 self.base_url, id, action
             ))
+            .bearer_auth(access_token)
+            .header("x-request-id", uuid::Uuid::new_v4().to_string())
+            .header("x-aether-confirmed", "true")
             .send()
             .await?;
 
@@ -769,19 +860,103 @@ impl AlarmClient {
             Err(parse_error_body(&format!("Failed to {action} alarm rule"), resp).await)
         }
     }
+
+    fn alarm_management_token(&self, confirmed: bool) -> Result<&str> {
+        if !confirmed {
+            return Err(anyhow::anyhow!(
+                "alarm policy commands require explicit --confirmed"
+            ));
+        }
+        crate::transport_security::require_secure_bearer_transport(&self.base_url)?;
+        self.access_token.as_deref().ok_or_else(|| {
+            anyhow::anyhow!(
+                "alarm policy commands require AETHER_ACCESS_TOKEN from an authenticated Admin or Engineer session"
+            )
+        })
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::AlarmClient;
-    use wiremock::matchers::{body_json, method, path};
+    use reqwest::Client;
+    use wiremock::matchers::{body_json, header, header_exists, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    #[test]
+    fn bearer_writes_reject_remote_plaintext_before_token_access() {
+        let client = AlarmClient {
+            client: Client::new(),
+            base_url: "http://192.0.2.10:6007".to_string(),
+            access_token: None,
+        };
+
+        let error = client
+            .alarm_management_token(true)
+            .expect_err("remote plaintext must fail closed");
+        assert!(error.to_string().contains("refusing to send"), "{error:#}");
+    }
+
+    #[tokio::test]
+    async fn alarm_rule_mutation_fails_before_http_without_confirmation_or_access_token() {
+        let server = MockServer::start().await;
+        let confirmed_client =
+            AlarmClient::with_access_token(&server.uri(), "signed-access-token").unwrap();
+        let error = confirmed_client
+            .create_rule(&serde_json::json!({}), false)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("--confirmed"), "{error}");
+
+        let unauthenticated_client = AlarmClient {
+            client: Client::new(),
+            base_url: server.uri(),
+            access_token: None,
+        };
+        let error = unauthenticated_client
+            .delete_rule(7, true)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("AETHER_ACCESS_TOKEN"), "{error}");
+    }
+
+    #[tokio::test]
+    async fn resolve_alert_uses_governed_patch_contract() {
+        let server = MockServer::start().await;
+        Mock::given(method("PATCH"))
+            .and(path("/alarmApi/alerts/12/resolve"))
+            .and(header("authorization", "Bearer signed-access-token"))
+            .and(header_exists("x-request-id"))
+            .and(header("x-aether-confirmed", "true"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "success": true,
+                "message": "Alert resolved",
+                "data": {
+                    "alert_id": 12,
+                    "rule_id": 7,
+                    "request_id": "request-1",
+                    "audit": { "status": "recorded", "retryable": false }
+                }
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let client = AlarmClient::with_access_token(&server.uri(), "signed-access-token").unwrap();
+        let response = client.resolve_alert(12, true).await.unwrap();
+        assert_eq!(response["data"]["alert_id"], 12);
+    }
 
     #[tokio::test]
     async fn create_rule_posts_full_body() {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
             .and(path("/alarmApi/rules"))
+            .and(header("authorization", "Bearer signed-access-token"))
+            .and(header_exists("x-request-id"))
+            .and(header("x-aether-confirmed", "true"))
             .and(body_json(serde_json::json!({
                 "service_type": "io",
                 "channel_id": 1001,
@@ -799,7 +974,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = AlarmClient::new(&server.uri()).unwrap();
+        let client = AlarmClient::with_access_token(&server.uri(), "signed-access-token").unwrap();
         let body = serde_json::json!({
             "service_type": "io",
             "channel_id": 1001,
@@ -812,7 +987,7 @@ mod tests {
             "enabled": true,
             "description": "cell temperature"
         });
-        let v = client.create_rule(&body).await.unwrap();
+        let v = client.create_rule(&body, true).await.unwrap();
 
         assert_eq!(v["id"], 7);
     }
@@ -830,9 +1005,9 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = AlarmClient::new(&server.uri()).unwrap();
+        let client = AlarmClient::with_access_token(&server.uri(), "signed-access-token").unwrap();
         client
-            .update_rule(7, &serde_json::json!({ "value": 90.0 }))
+            .update_rule(7, &serde_json::json!({ "value": 90.0 }), true)
             .await
             .unwrap();
     }
@@ -847,8 +1022,8 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = AlarmClient::new(&server.uri()).unwrap();
-        client.delete_rule(7).await.unwrap();
+        let client = AlarmClient::with_access_token(&server.uri(), "signed-access-token").unwrap();
+        client.delete_rule(7, true).await.unwrap();
     }
 
     #[tokio::test]
@@ -863,8 +1038,8 @@ mod tests {
 
         // Only /enable is mounted. If set_rule_enabled(_, true) ever targets
         // /disable, wiremock 404s and this fails — which is the point.
-        let client = AlarmClient::new(&server.uri()).unwrap();
-        client.set_rule_enabled(7, true).await.unwrap();
+        let client = AlarmClient::with_access_token(&server.uri(), "signed-access-token").unwrap();
+        client.set_rule_enabled(7, true, true).await.unwrap();
     }
 
     #[tokio::test]
@@ -877,8 +1052,8 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = AlarmClient::new(&server.uri()).unwrap();
-        client.set_rule_enabled(7, false).await.unwrap();
+        let client = AlarmClient::with_access_token(&server.uri(), "signed-access-token").unwrap();
+        client.set_rule_enabled(7, false, true).await.unwrap();
     }
 
     #[tokio::test]
@@ -892,8 +1067,8 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = AlarmClient::new(&server.uri()).unwrap();
-        let err = client.delete_rule(999).await.unwrap_err().to_string();
+        let client = AlarmClient::with_access_token(&server.uri(), "signed-access-token").unwrap();
+        let err = client.delete_rule(999, true).await.unwrap_err().to_string();
 
         assert!(err.contains("Rule 999 not found"), "{err}");
     }
@@ -911,9 +1086,9 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = AlarmClient::new(&server.uri()).unwrap();
+        let client = AlarmClient::with_access_token(&server.uri(), "signed-access-token").unwrap();
         let err = client
-            .create_rule(&serde_json::json!({ "operator": "?" }))
+            .create_rule(&serde_json::json!({ "operator": "?" }), true)
             .await
             .unwrap_err()
             .to_string();
@@ -932,9 +1107,9 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = AlarmClient::new(&server.uri()).unwrap();
+        let client = AlarmClient::with_access_token(&server.uri(), "signed-access-token").unwrap();
         let err = client
-            .update_rule(7, &serde_json::json!({ "value": 90.0 }))
+            .update_rule(7, &serde_json::json!({ "value": 90.0 }), true)
             .await
             .unwrap_err()
             .to_string();
@@ -953,9 +1128,9 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = AlarmClient::new(&server.uri()).unwrap();
+        let client = AlarmClient::with_access_token(&server.uri(), "signed-access-token").unwrap();
         let err = client
-            .set_rule_enabled(7, true)
+            .set_rule_enabled(7, true, true)
             .await
             .unwrap_err()
             .to_string();
@@ -972,9 +1147,9 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = AlarmClient::new(&server.uri()).unwrap();
+        let client = AlarmClient::with_access_token(&server.uri(), "signed-access-token").unwrap();
         let err = client
-            .set_rule_enabled(7, false)
+            .set_rule_enabled(7, false, true)
             .await
             .unwrap_err()
             .to_string();

@@ -1,6 +1,6 @@
 //! Database schema initialization
 //!
-//! Provides unified database initialization for all AetherEMS tables.
+//! Provides unified database initialization for all Aether tables.
 //! All tables are created in a single `aether.db` file.
 
 use anyhow::{Context, Result, anyhow, bail, ensure};
@@ -10,9 +10,13 @@ use tracing::{info, warn};
 
 // Import DDL constants from common (shared schema definitions)
 use common::test_utils::schema::{
-    ACTION_ROUTING_TABLE, ADJUSTMENT_POINTS_TABLE, CHANNEL_TEMPLATES_TABLE, CHANNELS_TABLE,
-    CONTROL_POINTS_TABLE, INSTANCE_PROPERTIES_TABLE, INSTANCES_TABLE, MEASUREMENT_ROUTING_TABLE,
-    SERVICE_CONFIG_TABLE, SIGNAL_POINTS_TABLE, SYNC_METADATA_TABLE, TELEMETRY_POINTS_TABLE,
+    ACTION_ROUTING_TABLE, ADJUSTMENT_POINTS_TABLE, CHANNEL_REVISION_BUMP_TRIGGER,
+    CHANNEL_REVISION_DELETE_EXHAUSTED_TRIGGER, CHANNEL_REVISION_DELETE_TOMBSTONE_TRIGGER,
+    CHANNEL_REVISION_EXHAUSTED_TRIGGER, CHANNEL_REVISION_INSERT_ADVANCE_TRIGGER,
+    CHANNEL_REVISION_INSERT_GUARD_TRIGGER, CHANNEL_REVISION_TOMBSTONES_TABLE,
+    CHANNEL_TEMPLATES_TABLE, CHANNELS_TABLE, CONTROL_POINTS_TABLE, INSTANCE_PROPERTIES_TABLE,
+    INSTANCES_TABLE, MEASUREMENT_ROUTING_TABLE, SERVICE_CONFIG_TABLE, SIGNAL_POINTS_TABLE,
+    SYNC_METADATA_TABLE, TELEMETRY_POINTS_TABLE,
 };
 
 use super::file_utils;
@@ -98,7 +102,7 @@ const RULE_HISTORY_TABLE: &str = r#"
 //   3. Add `if current < N { migrate_vN(&mut conn).await?; }` in run_migrations()
 
 /// Current schema structure version — increment when adding migrations
-pub(crate) const SCHEMA_VERSION: i32 = 8;
+pub(crate) const SCHEMA_VERSION: i32 = 10;
 
 /// Run pending schema migrations based on `PRAGMA user_version`
 ///
@@ -150,6 +154,16 @@ async fn run_migrations(pool: &SqlitePool) -> Result<()> {
 
     if current < 8 {
         migrate_v8(&mut conn).await.context("Migration v8 failed")?;
+    }
+
+    if current < 9 {
+        migrate_v9(&mut conn).await.context("Migration v9 failed")?;
+    }
+
+    if current < 10 {
+        migrate_v10(&mut conn)
+            .await
+            .context("Migration v10 failed")?;
     }
 
     sqlx::query(&format!("PRAGMA user_version = {SCHEMA_VERSION}"))
@@ -267,52 +281,13 @@ async fn migrate_v1(conn: &mut sqlx::pool::PoolConnection<Sqlite>) -> Result<()>
     Ok(())
 }
 
-/// v2: Rename legacy snake_case product names to match new built-in product library
+/// v2 marker retained for schema-number continuity.
 ///
-/// Old config templates used `battery_pack`, `pcs`, etc. The compile-time product
-/// library uses `Battery`, `PCS`, `PVInverter`, `Diesel`. This migration updates
-/// existing rows so `get_builtin_product()` can find them by exact name match.
-async fn migrate_v2(conn: &mut sqlx::pool::PoolConnection<Sqlite>) -> Result<()> {
-    // On a fresh database, instances table doesn't exist yet (created after migrations).
-    // Only run the rename if the table is already present from a previous schema version.
-    let has_instances: bool =
-        sqlx::query_scalar("SELECT 1 FROM sqlite_master WHERE type='table' AND name='instances'")
-            .fetch_optional(&mut **conn)
-            .await?
-            .unwrap_or(false);
-
-    if !has_instances {
-        info!("Migration v2: skipped (instances table not yet created)");
-        return Ok(());
-    }
-
-    info!("Migration v2: renaming legacy product names");
-
-    let mappings = [
-        ("battery_pack", "Battery"),
-        ("pcs", "PCS"),
-        ("diesel_generator", "Diesel"),
-        ("pv_inverter", "PVInverter"),
-    ];
-
-    for (old, new) in mappings {
-        let result = sqlx::query("UPDATE instances SET product_name = ? WHERE product_name = ?")
-            .bind(new)
-            .bind(old)
-            .execute(&mut **conn)
-            .await?;
-
-        if result.rows_affected() > 0 {
-            info!(
-                "Migration v2: renamed '{}' -> '{}' ({} rows)",
-                old,
-                new,
-                result.rows_affected()
-            );
-        }
-    }
-
-    info!("Migration v2: complete");
+/// Domain product aliases were removed from the generic kernel in 0.5.0.
+/// Distributions that used them must apply their Pack-owned compatibility
+/// mapping before running the kernel schema upgrade.
+async fn migrate_v2(_conn: &mut sqlx::pool::PoolConnection<Sqlite>) -> Result<()> {
+    info!("Migration v2: domain product aliases are Pack-owned (kernel no-op)");
     Ok(())
 }
 
@@ -380,12 +355,9 @@ async fn migrate_v4(conn: &mut sqlx::pool::PoolConnection<Sqlite>) -> Result<()>
 /// and left no schema-level constraint on which keys are valid.
 ///
 /// New shape: one row per (instance_id, property_id) in `instance_properties`
-/// — mirrors `measurement_routing` / `action_routing`. `property_id` is
-/// resolved by looking up each JSON key against the instance's product's
-/// PropertyTemplate (compile-time constants in the `aether-model` crate).
-/// Keys that don't match any template are dropped with a warning — they
-/// were unreachable from the existing `/api/instances/{id}/points` response
-/// anyway, since that endpoint only emits points declared by the product.
+/// — mirrors `measurement_routing` / `action_routing`. Resolving legacy names
+/// to Pack-owned numeric property IDs is a distribution migration. The generic
+/// kernel performs only the structural drop after all legacy maps are empty.
 async fn migrate_v5(conn: &mut sqlx::pool::PoolConnection<Sqlite>) -> Result<()> {
     info!("Migration v5: instance properties JSON column -> instance_properties table");
 
@@ -454,83 +426,25 @@ async fn migrate_v5(conn: &mut sqlx::pool::PoolConnection<Sqlite>) -> Result<()>
         return Ok(());
     }
 
-    // 4) Read every (instance_id, product_name, properties_json) and translate
-    //    each JSON entry to a row in instance_properties. We do this BEFORE
-    //    dropping the column so failure mid-migration leaves data recoverable.
-    let rows: Vec<(i64, String, Option<String>)> =
-        sqlx::query_as("SELECT instance_id, product_name, properties FROM instances")
-            .fetch_all(&mut **conn)
-            .await?;
-
-    let mut migrated_values = 0_usize;
-    let mut dropped_keys = 0_usize;
-
-    for (instance_id, product_name, properties_json) in rows {
-        let Some(json_str) = properties_json else {
-            continue;
-        };
-        let trimmed = json_str.trim();
-        if trimmed.is_empty() || trimmed == "{}" {
-            continue;
-        }
-
-        let map: serde_json::Map<String, serde_json::Value> = match serde_json::from_str(trimmed) {
-            Ok(serde_json::Value::Object(m)) => m,
-            Ok(_other) => {
-                warn!(
-                    "Migration v5: instance {} properties JSON is not an object, skipping",
-                    instance_id
-                );
-                continue;
-            },
-            Err(e) => {
-                warn!(
-                    "Migration v5: instance {} properties JSON unparseable ({}), skipping",
-                    instance_id, e
-                );
-                continue;
-            },
-        };
-
-        let Some(product) = aether_model::product_lib::get_builtin_product(&product_name) else {
-            warn!(
-                "Migration v5: instance {} references unknown product '{}', dropping {} properties",
-                instance_id,
-                product_name,
-                map.len()
-            );
-            dropped_keys += map.len();
-            continue;
-        };
-
-        for (name, value) in map {
-            let Some(tpl) = product.properties.iter().find(|p| p.name == name) else {
-                warn!(
-                    "Migration v5: instance {} key '{}' not in product '{}' PropertyTemplate, dropping",
-                    instance_id, name, product_name
-                );
-                dropped_keys += 1;
-                continue;
-            };
-            let value_json =
-                serde_json::to_string(&value).context("encode property value to JSON")?;
-            sqlx::query(
-                "INSERT OR REPLACE INTO instance_properties \
-                 (instance_id, property_id, value_json) VALUES (?, ?, ?)",
-            )
-            .bind(instance_id)
-            .bind(tpl.id as i64)
-            .bind(value_json)
+    // 4) A generic kernel cannot resolve domain property names to Pack-owned
+    //    numeric templates. Refuse to drop non-empty legacy data. The owning
+    //    distribution must first apply its versioned Pack migration asset.
+    let legacy_property_rows: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM instances \
+         WHERE properties IS NOT NULL AND TRIM(properties) NOT IN ('', '{}')",
+    )
+    .fetch_one(&mut **conn)
+    .await?;
+    if legacy_property_rows > 0 {
+        sqlx::query("ROLLBACK").execute(&mut **conn).await?;
+        sqlx::query("PRAGMA foreign_keys=ON")
             .execute(&mut **conn)
             .await?;
-            migrated_values += 1;
-        }
+        anyhow::bail!(
+            "{legacy_property_rows} instances still contain Pack-owned legacy properties; \
+             apply the distribution's pre-v5 property migration before upgrading"
+        );
     }
-
-    info!(
-        "Migration v5: migrated {} property values, dropped {} unrecognized keys",
-        migrated_values, dropped_keys
-    );
 
     // 5) Rebuild `instances` without the `properties` column. SQLite < 3.35
     //    cannot DROP COLUMN, and even on newer versions table rebuild keeps
@@ -1133,6 +1047,97 @@ async fn migrate_v8(conn: &mut sqlx::pool::PoolConnection<Sqlite>) -> Result<()>
     Ok(())
 }
 
+/// v9: Add optimistic concurrency to authoritative channel configuration.
+///
+/// The trigger keeps legacy sync/import writers safe: an update that leaves
+/// `revision` unchanged receives exactly one automatic increment. Formal CAS
+/// writers set the next revision explicitly, so the trigger does not fire.
+async fn migrate_v9(conn: &mut sqlx::pool::PoolConnection<Sqlite>) -> Result<()> {
+    if !sqlite_table_exists(conn, "channels").await? {
+        info!("Migration v9: channels not yet created, deferring to current DDL");
+        return Ok(());
+    }
+
+    let mut transaction = conn.begin().await?;
+    let revision_exists = sqlx::query_scalar::<_, i64>(
+        "SELECT 1 FROM pragma_table_info('channels') WHERE name = 'revision'",
+    )
+    .fetch_optional(&mut *transaction)
+    .await?
+    .is_some();
+    if !revision_exists {
+        sqlx::query(
+            "ALTER TABLE channels ADD COLUMN revision INTEGER NOT NULL DEFAULT 1 \
+             CHECK (TYPEOF(revision) = 'integer' AND revision >= 1)",
+        )
+        .execute(&mut *transaction)
+        .await?;
+    }
+    sqlx::query(CHANNEL_REVISION_EXHAUSTED_TRIGGER)
+        .execute(&mut *transaction)
+        .await?;
+    sqlx::query(CHANNEL_REVISION_BUMP_TRIGGER)
+        .execute(&mut *transaction)
+        .await?;
+    transaction.commit().await?;
+    info!("Migration v9: channel revision CAS and compatibility trigger installed");
+    Ok(())
+}
+
+/// v10: Retain a revision high-water mark across channel deletion.
+///
+/// This prevents a stale compare-and-set token for a deleted entity from
+/// matching a later entity that uses the same explicit channel identity.
+/// Legacy inserts are advanced beyond the tombstone by a compatibility
+/// trigger; formal writers supply that revision directly.
+async fn migrate_v10(conn: &mut sqlx::pool::PoolConnection<Sqlite>) -> Result<()> {
+    if !sqlite_table_exists(conn, "channels").await? {
+        info!("Migration v10: channels not yet created, deferring to current DDL");
+        return Ok(());
+    }
+
+    let mut transaction = conn.begin().await?;
+    let revision_exists = sqlx::query_scalar::<_, i64>(
+        "SELECT 1 FROM pragma_table_info('channels') WHERE name = 'revision'",
+    )
+    .fetch_optional(&mut *transaction)
+    .await?
+    .is_some();
+    ensure!(
+        revision_exists,
+        "Migration v10 requires the v9 channels.revision column"
+    );
+
+    let has_exhausted_revision: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM channels WHERE revision >= 9223372036854775807)",
+    )
+    .fetch_one(&mut *transaction)
+    .await?;
+    ensure!(
+        !has_exhausted_revision,
+        "Migration v10 cannot invalidate an exhausted channel revision"
+    );
+    // Invalidate every token issued before the tombstone generation existed.
+    // This closes the only recoverable v9 delete/recreate ABA case for live
+    // rows; deleted identities absent from the v9 schema had no durable fact.
+    sqlx::query("UPDATE channels SET revision = revision + 1")
+        .execute(&mut *transaction)
+        .await?;
+
+    for statement in [
+        CHANNEL_REVISION_TOMBSTONES_TABLE,
+        CHANNEL_REVISION_INSERT_GUARD_TRIGGER,
+        CHANNEL_REVISION_INSERT_ADVANCE_TRIGGER,
+        CHANNEL_REVISION_DELETE_EXHAUSTED_TRIGGER,
+        CHANNEL_REVISION_DELETE_TOMBSTONE_TRIGGER,
+    ] {
+        sqlx::query(statement).execute(&mut *transaction).await?;
+    }
+    transaction.commit().await?;
+    info!("Migration v10: channel revision tombstone and ABA guards installed");
+    Ok(())
+}
+
 async fn sqlite_table_exists(conn: &mut SqliteConnection, table: &str) -> Result<bool> {
     Ok(
         sqlx::query_scalar("SELECT COUNT(*) > 0 FROM sqlite_master WHERE type='table' AND name=?")
@@ -1248,7 +1253,7 @@ async fn ensure_no_legacy_point_backups(conn: &mut SqliteConnection) -> Result<(
 
 /// Initialize all database tables in aether.db
 ///
-/// Creates all tables, indexes, and triggers needed by AetherEMS services.
+/// Creates all tables, indexes, and triggers needed by Aether services.
 /// This is a unified initialization that replaces the old per-service approach.
 ///
 /// @input db_path: `impl AsRef<Path>` - Path to SQLite database file
@@ -1285,6 +1290,9 @@ pub async fn init_database(db_path: impl AsRef<Path>) -> Result<()> {
 
     // === Channel & Point tables ===
     sqlx::query(CHANNELS_TABLE).execute(&pool).await?;
+    sqlx::query(CHANNEL_REVISION_TOMBSTONES_TABLE)
+        .execute(&pool)
+        .await?;
     sqlx::query(TELEMETRY_POINTS_TABLE).execute(&pool).await?;
     sqlx::query(SIGNAL_POINTS_TABLE).execute(&pool).await?;
     sqlx::query(CONTROL_POINTS_TABLE).execute(&pool).await?;
@@ -1386,8 +1394,34 @@ async fn create_indexes(pool: &SqlitePool) -> Result<()> {
     Ok(())
 }
 
-/// Create all database triggers for automatic cleanup
+/// Create routing cleanup and governance triggers.
 async fn create_triggers(pool: &SqlitePool) -> Result<()> {
+    // Keep this helper self-contained: SQLite accepts a trigger that names a
+    // missing table, but later schema rebuilds can then fail while reparsing
+    // that invalid trigger. This also makes legacy migration fixtures safe
+    // when they install the current trigger set before running migrations.
+    sqlx::query(CHANNEL_REVISION_TOMBSTONES_TABLE)
+        .execute(pool)
+        .await?;
+    sqlx::query(CHANNEL_REVISION_EXHAUSTED_TRIGGER)
+        .execute(pool)
+        .await?;
+    sqlx::query(CHANNEL_REVISION_BUMP_TRIGGER)
+        .execute(pool)
+        .await?;
+    sqlx::query(CHANNEL_REVISION_INSERT_GUARD_TRIGGER)
+        .execute(pool)
+        .await?;
+    sqlx::query(CHANNEL_REVISION_INSERT_ADVANCE_TRIGGER)
+        .execute(pool)
+        .await?;
+    sqlx::query(CHANNEL_REVISION_DELETE_EXHAUSTED_TRIGGER)
+        .execute(pool)
+        .await?;
+    sqlx::query(CHANNEL_REVISION_DELETE_TOMBSTONE_TRIGGER)
+        .execute(pool)
+        .await?;
+
     // When a telemetry point is deleted, remove corresponding measurement_routing records
     sqlx::query(
         "CREATE TRIGGER IF NOT EXISTS cleanup_routing_on_telemetry_delete
@@ -1418,31 +1452,77 @@ async fn create_triggers(pool: &SqlitePool) -> Result<()> {
     .execute(pool)
     .await?;
 
-    // When a control point is deleted, remove corresponding action_routing records
+    // Legacy action cleanup triggers changed governed command state as a side
+    // effect of deleting a target. Replace them even on an already initialized
+    // database; measurement cleanup remains configuration-owned.
+    for trigger in [
+        "cleanup_routing_on_control_delete",
+        "cleanup_routing_on_adjustment_delete",
+        "protect_action_routing_on_control_delete",
+        "protect_action_routing_on_adjustment_delete",
+        "protect_action_routing_on_channel_delete",
+        "protect_action_routing_on_instance_delete",
+    ] {
+        sqlx::query(&format!("DROP TRIGGER IF EXISTS {trigger}"))
+            .execute(pool)
+            .await?;
+    }
+
+    // Action routes are command state. Parent deletion must fail until the
+    // governed application command has removed or changed every affected route.
     sqlx::query(
-        "CREATE TRIGGER IF NOT EXISTS cleanup_routing_on_control_delete
-         AFTER DELETE ON control_points
+        "CREATE TRIGGER protect_action_routing_on_control_delete
+         BEFORE DELETE ON control_points
          FOR EACH ROW
-         BEGIN
-             DELETE FROM action_routing
+         WHEN EXISTS (
+             SELECT 1 FROM action_routing
              WHERE channel_id = OLD.channel_id
                AND channel_type = 'C'
-               AND channel_point_id = OLD.point_id;
+               AND channel_point_id = OLD.point_id
+         )
+         BEGIN
+             SELECT RAISE(ABORT, 'use the governed action-routing command before deleting an action target');
          END",
     )
     .execute(pool)
     .await?;
 
-    // When an adjustment point is deleted, remove corresponding action_routing records
     sqlx::query(
-        "CREATE TRIGGER IF NOT EXISTS cleanup_routing_on_adjustment_delete
-         AFTER DELETE ON adjustment_points
+        "CREATE TRIGGER protect_action_routing_on_adjustment_delete
+         BEFORE DELETE ON adjustment_points
          FOR EACH ROW
-         BEGIN
-             DELETE FROM action_routing
+         WHEN EXISTS (
+             SELECT 1 FROM action_routing
              WHERE channel_id = OLD.channel_id
                AND channel_type = 'A'
-               AND channel_point_id = OLD.point_id;
+               AND channel_point_id = OLD.point_id
+         )
+         BEGIN
+             SELECT RAISE(ABORT, 'use the governed action-routing command before deleting an action target');
+         END",
+    )
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
+        "CREATE TRIGGER protect_action_routing_on_channel_delete
+         BEFORE DELETE ON channels
+         FOR EACH ROW
+         WHEN EXISTS (SELECT 1 FROM action_routing WHERE channel_id = OLD.channel_id)
+         BEGIN
+             SELECT RAISE(ABORT, 'use the governed action-routing command before deleting an action channel');
+         END",
+    )
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
+        "CREATE TRIGGER protect_action_routing_on_instance_delete
+         BEFORE DELETE ON instances
+         FOR EACH ROW
+         WHEN EXISTS (SELECT 1 FROM action_routing WHERE instance_id = OLD.instance_id)
+         BEGIN
+             SELECT RAISE(ABORT, 'use the governed action-routing command before deleting an action instance');
          END",
     )
     .execute(pool)
@@ -1457,6 +1537,7 @@ mod tests {
 
     use anyhow::Context as _;
     use sqlx::sqlite::SqlitePoolOptions;
+    use tempfile::TempDir;
 
     use super::*;
 
@@ -1523,6 +1604,238 @@ mod tests {
             ],
         ),
     ];
+
+    #[tokio::test]
+    async fn fresh_v10_database_installs_channel_revision_contract() -> Result<()> {
+        let workspace = TempDir::new()?;
+        let database_file = workspace.path().join("aether.db");
+        init_database(&database_file).await?;
+        let pool = SqlitePoolOptions::new()
+            .connect_with(common::bootstrap_database::sqlite_connect_options(
+                database_file.to_str().unwrap_or_default(),
+            ))
+            .await?;
+
+        sqlx::query(
+            "INSERT INTO channels (channel_id, name, protocol, enabled, config) \
+             VALUES (7, 'fresh-v10', 'virtual', 0, '{}')",
+        )
+        .execute(&pool)
+        .await?;
+        sqlx::query("UPDATE channels SET name = 'legacy-write' WHERE channel_id = 7")
+            .execute(&pool)
+            .await?;
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT revision FROM channels WHERE channel_id = 7")
+                .fetch_one(&pool)
+                .await?,
+            2
+        );
+
+        sqlx::query(
+            "UPDATE channels SET protocol = 'virtual', revision = revision + 1 \
+             WHERE channel_id = 7 AND revision = 2",
+        )
+        .execute(&pool)
+        .await?;
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT revision FROM channels WHERE channel_id = 7")
+                .fetch_one(&pool)
+                .await?,
+            3,
+            "explicit governed update must not be bumped twice"
+        );
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM sqlite_master \
+                 WHERE type = 'trigger' \
+                   AND name IN (\
+                       'bump_channel_revision',\
+                       'reject_exhausted_channel_revision',\
+                       'reject_exhausted_channel_revision_on_recreate',\
+                       'advance_channel_revision_on_recreate',\
+                       'reject_exhausted_channel_revision_on_delete',\
+                       'tombstone_channel_revision_on_delete'\
+                   )",
+            )
+            .fetch_one(&pool)
+            .await?,
+            6
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn deleting_an_action_target_fails_closed_instead_of_deleting_its_route() -> Result<()> {
+        let workspace = TempDir::new()?;
+        let database_file = workspace.path().join("aether.db");
+        init_database(&database_file).await?;
+        let pool = SqlitePoolOptions::new()
+            .connect_with(common::bootstrap_database::sqlite_connect_options(
+                database_file.to_str().unwrap_or_default(),
+            ))
+            .await?;
+
+        sqlx::query(
+            "INSERT INTO channels (channel_id, name, protocol, enabled, config) \
+             VALUES (7, 'governed-channel', 'virtual', 0, '{}')",
+        )
+        .execute(&pool)
+        .await?;
+        sqlx::query(
+            "INSERT INTO instances (instance_id, instance_name, product_name) \
+             VALUES (1, 'governed-instance', 'ExampleDevice')",
+        )
+        .execute(&pool)
+        .await?;
+
+        for (point_table, channel_type, point_id, action_id) in [
+            ("control_points", "C", 103_i64, 1_i64),
+            ("adjustment_points", "A", 104_i64, 2_i64),
+        ] {
+            sqlx::query(&format!(
+                "INSERT INTO {point_table} \
+                 (point_id, channel_id, signal_name, reverse, data_type) \
+                 VALUES (?, 7, 'target', 0, 'bool')"
+            ))
+            .bind(point_id)
+            .execute(&pool)
+            .await?;
+            sqlx::query(
+                "INSERT INTO action_routing \
+                 (instance_id, instance_name, action_id, channel_id, channel_type, channel_point_id) \
+                 VALUES (1, 'governed-instance', ?, 7, ?, ?)",
+            )
+            .bind(action_id)
+            .bind(channel_type)
+            .bind(point_id)
+            .execute(&pool)
+            .await?;
+
+            let error = sqlx::query(&format!(
+                "DELETE FROM {point_table} WHERE channel_id = 7 AND point_id = ?"
+            ))
+            .bind(point_id)
+            .execute(&pool)
+            .await
+            .err()
+            .context("action target deletion unexpectedly bypassed governance")?;
+            assert!(
+                error
+                    .to_string()
+                    .contains("governed action-routing command"),
+                "unexpected error: {error}"
+            );
+
+            let route_count: i64 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM action_routing \
+                 WHERE instance_id = 1 AND action_id = ?",
+            )
+            .bind(action_id)
+            .fetch_one(&pool)
+            .await?;
+            assert_eq!(route_count, 1);
+        }
+
+        for (statement, context) in [
+            (
+                "DELETE FROM channels WHERE channel_id = 7",
+                "channel deletion unexpectedly mutated action routing",
+            ),
+            (
+                "DELETE FROM instances WHERE instance_id = 1",
+                "instance deletion unexpectedly cascaded into action routing",
+            ),
+        ] {
+            let error = sqlx::query(statement)
+                .execute(&pool)
+                .await
+                .err()
+                .with_context(|| context)?;
+            assert!(
+                error
+                    .to_string()
+                    .contains("governed action-routing command"),
+                "unexpected error: {error}"
+            );
+        }
+
+        let route_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM action_routing")
+            .fetch_one(&pool)
+            .await?;
+        assert_eq!(route_count, 2);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn generic_schema_refuses_to_drop_pack_owned_legacy_properties() -> Result<()> {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await?;
+        sqlx::query(
+            "CREATE TABLE instances (\
+                 instance_id INTEGER PRIMARY KEY,\
+                 instance_name TEXT NOT NULL UNIQUE,\
+                 product_name TEXT NOT NULL,\
+                 properties TEXT,\
+                 parent_id INTEGER,\
+                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,\
+                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP\
+             )",
+        )
+        .execute(&pool)
+        .await?;
+        sqlx::query(
+            "INSERT INTO instances (instance_id, instance_name, product_name, properties) \
+             VALUES (1, 'legacy', 'DistributionDevice', '{\"domain_key\":42}')",
+        )
+        .execute(&pool)
+        .await?;
+        let mut connection = pool.acquire().await?;
+
+        let error = migrate_v5(&mut connection)
+            .await
+            .err()
+            .context("generic v5 migration unexpectedly consumed Pack-owned properties")?;
+
+        assert!(format!("{error:#}").contains("Pack-owned legacy properties"));
+        let properties: String =
+            sqlx::query_scalar("SELECT properties FROM instances WHERE instance_id = 1")
+                .fetch_one(&mut *connection)
+                .await?;
+        assert_eq!(properties, r#"{"domain_key":42}"#);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn generic_v2_marker_does_not_rewrite_distribution_product_names() -> Result<()> {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await?;
+        sqlx::query(
+            "CREATE TABLE instances (instance_id INTEGER PRIMARY KEY, product_name TEXT NOT NULL)",
+        )
+        .execute(&pool)
+        .await?;
+        sqlx::query(
+            "INSERT INTO instances (instance_id, product_name) VALUES (1, 'distribution_alias')",
+        )
+        .execute(&pool)
+        .await?;
+        let mut connection = pool.acquire().await?;
+
+        migrate_v2(&mut connection).await?;
+
+        let product: String =
+            sqlx::query_scalar("SELECT product_name FROM instances WHERE instance_id = 1")
+                .fetch_one(&mut *connection)
+                .await?;
+        assert_eq!(product, "distribution_alias");
+        Ok(())
+    }
 
     async fn legacy_point_pool() -> Result<SqlitePool> {
         let pool = SqlitePoolOptions::new()
@@ -1613,7 +1926,7 @@ mod tests {
         sqlx::query(ACTION_ROUTING_TABLE).execute(&pool).await?;
         sqlx::query(
             "INSERT INTO instances (instance_id, instance_name, product_name) \
-             VALUES (1, 'migration-instance', 'Battery')",
+             VALUES (1, 'migration-instance', 'ExampleDevice')",
         )
         .execute(&pool)
         .await?;
@@ -1795,6 +2108,11 @@ mod tests {
             assert_eq!(point_fk_delete_action(&pool, table).await?, "CASCADE");
         }
 
+        // Simulate the governed route-removal command before deleting its
+        // channel; v7's assertion here concerns point-table FK behavior.
+        sqlx::query("DELETE FROM action_routing")
+            .execute(&pool)
+            .await?;
         sqlx::query("DELETE FROM channels WHERE channel_id = 7")
             .execute(&pool)
             .await?;
@@ -1804,6 +2122,188 @@ mod tests {
                 .await?;
             assert_eq!(count, 0, "channel delete must cascade into {table}");
         }
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn migrate_v9_and_v10_add_revision_and_aba_guards() -> Result<()> {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await?;
+        sqlx::query(
+            "CREATE TABLE channels (\
+                 channel_id INTEGER NOT NULL PRIMARY KEY,\
+                 name TEXT NOT NULL UNIQUE,\
+                 protocol TEXT,\
+                 enabled INTEGER NOT NULL DEFAULT 1,\
+                 config TEXT,\
+                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,\
+                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP\
+             )",
+        )
+        .execute(&pool)
+        .await?;
+        sqlx::query(
+            "INSERT INTO channels (channel_id, name, protocol, enabled, config) \
+             VALUES (7, 'pre-v9', 'virtual', 0, '{}')",
+        )
+        .execute(&pool)
+        .await?;
+        sqlx::query("PRAGMA user_version = 8")
+            .execute(&pool)
+            .await?;
+
+        run_migrations(&pool).await?;
+
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("PRAGMA user_version")
+                .fetch_one(&pool)
+                .await?,
+            10
+        );
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT revision FROM channels WHERE channel_id = 7")
+                .fetch_one(&pool)
+                .await?,
+            2,
+            "v10 must invalidate every token issued before tombstones existed"
+        );
+        sqlx::query("UPDATE channels SET config = '{\"legacy\":true}' WHERE channel_id = 7")
+            .execute(&pool)
+            .await?;
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT revision FROM channels WHERE channel_id = 7")
+                .fetch_one(&pool)
+                .await?,
+            3
+        );
+        sqlx::query(
+            "UPDATE channels SET protocol = 'virtual', revision = 4 \
+             WHERE channel_id = 7 AND revision = 3",
+        )
+        .execute(&pool)
+        .await?;
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT revision FROM channels WHERE channel_id = 7")
+                .fetch_one(&pool)
+                .await?,
+            4,
+            "explicit CAS revision must not be incremented twice"
+        );
+
+        sqlx::query("DELETE FROM channels WHERE channel_id = 7")
+            .execute(&pool)
+            .await?;
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>(
+                "SELECT last_revision FROM channel_revision_tombstones WHERE channel_id = 7",
+            )
+            .fetch_one(&pool)
+            .await?,
+            5
+        );
+        sqlx::query(
+            "INSERT INTO channels (channel_id, name, protocol, enabled, config) \
+             VALUES (7, 'legacy-recreate', 'virtual', 0, '{}')",
+        )
+        .execute(&pool)
+        .await?;
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT revision FROM channels WHERE channel_id = 7")
+                .fetch_one(&pool)
+                .await?,
+            6,
+            "legacy recreation must advance beyond the delete tombstone"
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn migrate_v10_upgrades_an_existing_v9_database() -> Result<()> {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await?;
+        sqlx::query(CHANNELS_TABLE).execute(&pool).await?;
+        sqlx::query(CHANNEL_REVISION_EXHAUSTED_TRIGGER)
+            .execute(&pool)
+            .await?;
+        sqlx::query(CHANNEL_REVISION_BUMP_TRIGGER)
+            .execute(&pool)
+            .await?;
+        sqlx::query(
+            "INSERT INTO channels \
+             (channel_id, name, protocol, enabled, config, revision) \
+             VALUES (7, 'original-v9-entity', 'virtual', 0, '{}', 1)",
+        )
+        .execute(&pool)
+        .await?;
+        sqlx::query("DELETE FROM channels WHERE channel_id = 7")
+            .execute(&pool)
+            .await?;
+        sqlx::query(
+            "INSERT INTO channels \
+             (channel_id, name, protocol, enabled, config, revision) \
+             VALUES (7, 'replacement-v9-entity', 'virtual', 0, '{}', 1)",
+        )
+        .execute(&pool)
+        .await?;
+        sqlx::query("PRAGMA user_version = 9")
+            .execute(&pool)
+            .await?;
+
+        run_migrations(&pool).await?;
+
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("PRAGMA user_version")
+                .fetch_one(&pool)
+                .await?,
+            10
+        );
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT revision FROM channels WHERE channel_id = 7")
+                .fetch_one(&pool)
+                .await?,
+            2,
+            "v10 must invalidate a token reused by a v9 delete/recreate cycle"
+        );
+        sqlx::query("DELETE FROM channels WHERE channel_id = 7")
+            .execute(&pool)
+            .await?;
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>(
+                "SELECT last_revision FROM channel_revision_tombstones WHERE channel_id = 7",
+            )
+            .fetch_one(&pool)
+            .await?,
+            3
+        );
+        sqlx::query(
+            "INSERT INTO channels (channel_id, name, protocol, enabled, config) \
+             VALUES (7, 'legacy-recreate', 'virtual', 0, '{}')",
+        )
+        .execute(&pool)
+        .await?;
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT revision FROM channels WHERE channel_id = 7")
+                .fetch_one(&pool)
+                .await?,
+            4,
+            "legacy recreation must advance beyond the v10 tombstone"
+        );
+        assert_eq!(
+            sqlx::query(
+                "UPDATE channels SET name = 'stale-cas' WHERE channel_id = 7 AND revision = 1"
+            )
+            .execute(&pool)
+            .await?
+            .rows_affected(),
+            0,
+            "a stale v9 CAS token must not match the recreated entity"
+        );
 
         Ok(())
     }

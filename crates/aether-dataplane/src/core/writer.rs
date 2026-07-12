@@ -10,12 +10,13 @@
 //! `&SlotWriter` or `&dyn SlotIo`; the channel adapters are not
 //! reachable that way by design.
 
-use std::fs::OpenOptions;
+use std::fs::{File, Metadata, OpenOptions};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
 use memmap2::{MmapMut, MmapOptions};
 
+use crate::core::authority::AuthorityReadGuard;
 use crate::core::header::{
     HeaderSnapshot, UNIFIED_MAGIC, UNIFIED_VERSION, UnifiedHeader, calculate_file_size,
     slot_offset, validate_mapping_layout,
@@ -23,6 +24,39 @@ use crate::core::header::{
 use crate::core::slot::PointSlot;
 use crate::core::slot_io::{SlotIo, SlotIoWrite, SlotRead};
 use crate::{DataplaneError, DataplaneResult};
+
+#[cfg(unix)]
+use std::os::unix::fs::MetadataExt;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct BackingFileIdentity {
+    primary: u64,
+    secondary: u64,
+}
+
+impl BackingFileIdentity {
+    #[cfg(unix)]
+    fn from_metadata(metadata: &Metadata) -> Self {
+        Self {
+            primary: metadata.dev(),
+            secondary: metadata.ino(),
+        }
+    }
+
+    #[cfg(not(unix))]
+    fn from_metadata(metadata: &Metadata) -> Self {
+        let modified = metadata
+            .modified()
+            .ok()
+            .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|duration| duration.as_nanos() as u64)
+            .unwrap_or_default();
+        Self {
+            primary: metadata.len(),
+            secondary: modified,
+        }
+    }
+}
 
 // ========== Dirty bitmap helpers ==========
 
@@ -49,6 +83,7 @@ pub struct SlotWriter {
     pub(crate) path: PathBuf,
     pub(crate) max_slots: u32,
     pub(crate) slot_count: usize,
+    backing_identity: BackingFileIdentity,
     /// Process-local dirty slot bitmap for fast SHM→Redis sync.
     ///
     /// PointSlot.dirty is shared across processes, but scanning it still
@@ -119,12 +154,93 @@ impl SlotWriter {
         // or reader exists.
         unsafe { (mmap.as_mut_ptr() as *mut UnifiedHeader).write(header) };
 
-        let writer = Self::from_mmap(mmap, path.to_path_buf(), max_slots, slot_count)?;
+        let writer =
+            Self::from_mmap_with_file(mmap, path.to_path_buf(), max_slots, slot_count, &file)?;
         for index in 0..slot_count {
             writer.slot_at(index).init_unwritten();
         }
         writer.flush()?;
         Ok(writer)
+    }
+
+    /// Opens an existing writer-owned segment after validating its physical
+    /// header against a composition-provided manifest snapshot.
+    ///
+    /// This operation is business-neutral: callers provide only the expected
+    /// live slot count and opaque layout fingerprint. It never creates,
+    /// truncates, or reconfigures the canonical segment.
+    pub fn open_existing(
+        path: impl AsRef<Path>,
+        expected_slot_count: usize,
+        expected_layout_hash: u64,
+    ) -> DataplaneResult<Self> {
+        let path = path.as_ref();
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(path)
+            .map_err(|source| {
+                DataplaneError::io(format!("open existing SHM file {path:?}"), source)
+            })?;
+        let file_len = file
+            .metadata()
+            .map_err(|source| DataplaneError::io(format!("stat SHM file {path:?}"), source))?
+            .len() as usize;
+        if file_len < std::mem::size_of::<UnifiedHeader>() {
+            return Err(DataplaneError::InvalidLayout(format!(
+                "SHM file {path:?} is shorter than its header"
+            )));
+        }
+
+        // SAFETY: the file is open read/write, its non-zero header length was
+        // checked above, and it remains alive while the OS creates the map.
+        let mmap = unsafe { MmapOptions::new().map_mut(&file) }
+            .map_err(|source| DataplaneError::io(format!("mmap SHM file {path:?}"), source))?;
+        // SAFETY: mmap bases are page-aligned and the checked mapping contains
+        // a complete `UnifiedHeader`. No slot pointer is formed until all
+        // header-derived bounds have been validated below.
+        let header = unsafe { &*(mmap.as_ptr() as *const UnifiedHeader) };
+        if header.magic != UNIFIED_MAGIC {
+            return Err(DataplaneError::InvalidLayout(format!(
+                "SHM magic mismatch: expected {UNIFIED_MAGIC:#x}, got {:#x}",
+                header.magic
+            )));
+        }
+        if header.version != UNIFIED_VERSION {
+            return Err(DataplaneError::InvalidLayout(format!(
+                "SHM version mismatch: expected {UNIFIED_VERSION}, got {}",
+                header.version
+            )));
+        }
+
+        let snapshot = header.snapshot();
+        let slot_count = snapshot.slot_count as usize;
+        validate_mapping_layout(mmap.len(), snapshot.max_slots, slot_count)?;
+        if slot_count != expected_slot_count {
+            return Err(DataplaneError::InvalidLayout(format!(
+                "SHM slot_count mismatch: expected {expected_slot_count}, got {slot_count}"
+            )));
+        }
+        if snapshot.routing_hash != expected_layout_hash {
+            return Err(DataplaneError::InvalidLayout(format!(
+                "SHM layout hash mismatch: expected {expected_layout_hash:#018x}, got {:#018x}",
+                snapshot.routing_hash
+            )));
+        }
+        if snapshot.writer_generation == 0 || snapshot.writer_generation & 1 != 0 {
+            return Err(DataplaneError::InvalidLayout(format!(
+                "SHM writer generation {} is not a stable published generation",
+                snapshot.writer_generation
+            )));
+        }
+
+        Self::from_mmap_with_file(
+            mmap,
+            path.to_path_buf(),
+            snapshot.max_slots,
+            slot_count,
+            &file,
+        )
     }
 
     /// Wraps an already-initialized mmap region after validating its bounds.
@@ -140,6 +256,51 @@ impl SlotWriter {
         max_slots: u32,
         slot_count: usize,
     ) -> DataplaneResult<Self> {
+        let metadata = std::fs::metadata(&path).map_err(|source| {
+            DataplaneError::io(format!("stat SHM backing path {path:?}"), source)
+        })?;
+        Self::from_mmap_with_identity(
+            mmap,
+            path,
+            max_slots,
+            slot_count,
+            BackingFileIdentity::from_metadata(&metadata),
+        )
+    }
+
+    /// Wraps an mmap and records the identity of the exact file descriptor
+    /// used to create it.
+    ///
+    /// This is the race-free constructor for composition crates that build
+    /// their own mappings. Capturing identity from the open descriptor avoids
+    /// confusing a concurrently renamed canonical path with the mapped inode.
+    #[doc(hidden)]
+    pub fn from_mmap_with_file(
+        mmap: MmapMut,
+        path: PathBuf,
+        max_slots: u32,
+        slot_count: usize,
+        file: &File,
+    ) -> DataplaneResult<Self> {
+        let metadata = file.metadata().map_err(|source| {
+            DataplaneError::io(format!("stat mapped SHM file for {path:?}"), source)
+        })?;
+        Self::from_mmap_with_identity(
+            mmap,
+            path,
+            max_slots,
+            slot_count,
+            BackingFileIdentity::from_metadata(&metadata),
+        )
+    }
+
+    fn from_mmap_with_identity(
+        mmap: MmapMut,
+        path: PathBuf,
+        max_slots: u32,
+        slot_count: usize,
+        backing_identity: BackingFileIdentity,
+    ) -> DataplaneResult<Self> {
         validate_mapping_layout(mmap.len(), max_slots, slot_count)?;
         Ok(Self {
             dirty_words: new_dirty_words(slot_count),
@@ -147,6 +308,7 @@ impl SlotWriter {
             path,
             max_slots,
             slot_count,
+            backing_identity,
         })
     }
 
@@ -198,6 +360,41 @@ impl SlotWriter {
     /// Returns the canonical path backing this writer.
     pub fn path(&self) -> &PathBuf {
         &self.path
+    }
+
+    /// Confirms that this mapping still backs the file named by its published
+    /// path.
+    ///
+    /// An atomic rename leaves old mmaps usable and their in-mmap generation
+    /// unchanged. Comparing the mapped descriptor identity captured at open
+    /// time with a fresh `stat(2)` of the path closes that blind spot. Callers
+    /// must check both before and after a write transaction.
+    pub fn validate_authoritative_path(&self) -> DataplaneResult<()> {
+        let metadata = std::fs::metadata(&self.path).map_err(|source| {
+            DataplaneError::io(
+                format!("stat authoritative SHM path {:?}", self.path),
+                source,
+            )
+        })?;
+        let current = BackingFileIdentity::from_metadata(&metadata);
+        if current == self.backing_identity {
+            return Ok(());
+        }
+        Err(DataplaneError::InvalidLayout(format!(
+            "mapped SHM file at {:?} is no longer the authoritative path target",
+            self.path
+        )))
+    }
+
+    /// Acquires a shared transaction lease for this writer's canonical path.
+    /// Canonical replacement cannot begin until the returned guard is dropped.
+    pub fn acquire_authority_read(&self) -> DataplaneResult<AuthorityReadGuard> {
+        AuthorityReadGuard::acquire(&self.path)
+    }
+
+    /// Attempts to acquire a shared transaction lease without blocking.
+    pub fn try_acquire_authority_read(&self) -> DataplaneResult<Option<AuthorityReadGuard>> {
+        AuthorityReadGuard::try_acquire(&self.path)
     }
 
     /// Flush mmap-backed file changes to disk.

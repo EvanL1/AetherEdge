@@ -69,7 +69,7 @@ impl Default for AutomationConfig {
         Self {
             service,
             api,
-            products_path: Some("config/automation/products".to_string()),
+            products_path: None,
             instances_path: Some("config/automation/instances.yaml".to_string()),
             auto_load_instances: true,
         }

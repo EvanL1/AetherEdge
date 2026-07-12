@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aether.dev/schemas/pack-data-processing-task.v1.json",
+  "title": "Aether Pack Data Processing Task v1",
+  "type": "object",
+  "required": [
+    "schema",
+    "id",
+    "revision",
+    "enabled",
+    "kind",
+    "processor_contract",
+    "description",
+    "target",
+    "frame",
+    "inputs",
+    "alignment",
+    "quality",
+    "artifact_policy",
+    "fallback",
+    "execution",
+    "governance",
+    "output"
+  ],
+  "properties": {
+    "schema": { "const": "aether.data-processing-task.v1" },
+    "id": { "$ref": "#/$defs/identifier" },
+    "revision": { "type": "integer", "minimum": 1 },
+    "enabled": { "const": false },
+    "kind": { "const": "forecast" },
+    "processor_contract": { "const": "aether.data-processing.forecast.v1" },
+    "description": { "type": "string", "minLength": 1 },
+    "target": { "type": "object", "minProperties": 1 },
+    "frame": { "type": "object", "minProperties": 1 },
+    "inputs": {
+      "type": "object",
+      "required": ["history", "future_covariates", "static_features"],
+      "properties": {
+        "history": { "type": "array", "minItems": 1 },
+        "future_covariates": { "type": "array", "minItems": 1 },
+        "static_features": { "type": "array" }
+      }
+    },
+    "alignment": { "type": "object", "minProperties": 1 },
+    "quality": { "type": "object", "minProperties": 1 },
+    "artifact_policy": { "type": "object", "minProperties": 1 },
+    "fallback": { "type": "object", "minProperties": 1 },
+    "execution": { "type": "object", "minProperties": 1 },
+    "governance": { "type": "object", "minProperties": 1 },
+    "output": { "type": "object", "minProperties": 1 }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "identifier": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+    }
+  }
+}

@@ -236,7 +236,7 @@ pub async fn get_channel_mappings_handler(
     path = "/api/channels/{id}/mappings",
     params(
         ("id" = u16, Path, description = "Channel identifier"),
-        ("auto_reload" = bool, Query, description = "Auto-reload channel after mappings update (default: true)")
+        ("auto_reload" = bool, Query, description = "Reconcile the channel through the governed application boundary after mappings update (default: false)")
     ),
     request_body(
         content = crate::dto::MappingBatchUpdateRequest,
@@ -723,7 +723,7 @@ pub async fn update_channel_mappings_handler(
         .map_err(|e| AppError::internal_error(format!("Commit failed: {}", e)))?;
 
     // Trigger auto-reload if enabled (after mappings are updated)
-    crate::api::handlers::point_handlers::trigger_channel_reload_if_needed(
+    let channel_reloaded = crate::api::handlers::point_handlers::trigger_channel_reload_if_needed(
         channel_id,
         &state,
         reload_query.auto_reload,
@@ -734,8 +734,10 @@ pub async fn update_channel_mappings_handler(
         MappingUpdateMode::Replace => "replace",
         MappingUpdateMode::Merge => "merge",
     };
-    let reload_suffix = if reload_query.auto_reload {
-        "and triggered channel reload"
+    let reload_suffix = if channel_reloaded {
+        "and reconciled the channel runtime"
+    } else if reload_query.auto_reload {
+        "(runtime reconciliation remains pending)"
     } else {
         "(reload disabled)"
     };
@@ -746,7 +748,7 @@ pub async fn update_channel_mappings_handler(
 
     Ok(Json(SuccessResponse::new(MappingBatchUpdateResult {
         updated_count: updated,
-        channel_reloaded: reload_query.auto_reload,
+        channel_reloaded,
         validation_errors: vec![],
         message,
     })))

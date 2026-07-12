@@ -192,25 +192,22 @@ impl ModelClient {
 
     /// automation's `ActionRequest` takes a numeric point ID encoded as a string.
     ///
-    /// This writes to a real device. A failure (e.g. the channel is offline)
-    /// comes back as a non-2xx with a reason, per CLAUDE.md — it is never
-    /// swallowed or persisted onto the instance.
+    /// A successful response means the local command plane accepted the
+    /// request. It does not prove that the physical device executed it or
+    /// reached the requested state.
     pub async fn execute_action(
         &self,
         instance_id: u32,
         point_id: &str,
         value: f64,
+        confirmed: bool,
     ) -> Result<Value> {
+        let access_token = self.device_control_token(confirmed)?;
         let body = serde_json::json!({
             "point_id": point_id,
             "value": value,
-            "confirmed": true
+            "confirmed": confirmed
         });
-        let access_token = self.access_token.as_deref().ok_or_else(|| {
-            anyhow::anyhow!(
-                "device control requires AETHER_ACCESS_TOKEN from an authenticated Admin or Engineer session"
-            )
-        })?;
         let resp = self
             .client
             .post(format!(
@@ -230,28 +227,16 @@ impl ModelClient {
         }
     }
 
-    pub async fn set_measurement(
-        &self,
-        instance_id: u32,
-        point_id: &str,
-        value: f64,
-    ) -> Result<Value> {
-        let body = serde_json::json!({ "point_id": point_id, "value": value });
-        let resp = self
-            .client
-            .post(format!(
-                "{}/api/instances/{}/measurement",
-                self.base_url, instance_id
-            ))
-            .json(&body)
-            .send()
-            .await?;
-
-        if resp.status().is_success() {
-            Ok(resp.json().await?)
-        } else {
-            Err(crate::output::parse_error_body("Failed to set instance measurement", resp).await)
+    fn device_control_token(&self, confirmed: bool) -> Result<&str> {
+        if !confirmed {
+            anyhow::bail!("device control requires explicit confirmation (--confirmed)");
         }
+        crate::transport_security::require_secure_bearer_transport(&self.base_url)?;
+        self.access_token.as_deref().ok_or_else(|| {
+            anyhow::anyhow!(
+                "device control requires AETHER_ACCESS_TOKEN from an authenticated Admin or Engineer session"
+            )
+        })
     }
 }
 
@@ -260,6 +245,20 @@ mod tests {
     use super::ModelClient;
     use wiremock::matchers::{body_json, header, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    #[test]
+    fn bearer_writes_reject_remote_plaintext_before_token_access() {
+        let client = ModelClient {
+            client: reqwest::Client::new(),
+            base_url: "http://192.0.2.10:6002".to_string(),
+            access_token: None,
+        };
+
+        let error = client
+            .device_control_token(true)
+            .expect_err("remote plaintext must fail closed");
+        assert!(error.to_string().contains("refusing to send"), "{error:#}");
+    }
 
     #[tokio::test]
     async fn execute_action_posts_numeric_string_point_id() {
@@ -278,7 +277,24 @@ mod tests {
             .await;
 
         let client = ModelClient::with_access_token(&server.uri(), "signed-access-token").unwrap();
-        client.execute_action(3, "1", 4500.0).await.unwrap();
+        client.execute_action(3, "1", 4500.0, true).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn execute_action_rejects_unconfirmed_before_http() {
+        let server = MockServer::start().await;
+        let client = ModelClient::with_access_token(&server.uri(), "signed-access-token").unwrap();
+
+        let error = client
+            .execute_action(3, "1", 4500.0, false)
+            .await
+            .expect_err("unconfirmed device control must fail closed");
+
+        assert!(error.to_string().contains("explicit confirmation"));
+        assert!(
+            server.received_requests().await.unwrap().is_empty(),
+            "unconfirmed command must not make an HTTP request"
+        );
     }
 
     #[tokio::test]
@@ -290,28 +306,11 @@ mod tests {
         };
 
         let error = client
-            .execute_action(3, "1", 4500.0)
+            .execute_action(3, "1", 4500.0, true)
             .await
             .expect_err("missing token must fail closed");
 
         assert!(error.to_string().contains("AETHER_ACCESS_TOKEN"));
-    }
-
-    #[tokio::test]
-    async fn set_measurement_posts_to_measurement_endpoint() {
-        let server = MockServer::start().await;
-        Mock::given(method("POST"))
-            .and(path("/api/instances/3/measurement"))
-            .and(body_json(
-                serde_json::json!({ "point_id": "101", "value": 650.5 }),
-            ))
-            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
-            .expect(1)
-            .mount(&server)
-            .await;
-
-        let client = ModelClient::new(&server.uri()).unwrap();
-        client.set_measurement(3, "101", 650.5).await.unwrap();
     }
 
     #[tokio::test]
@@ -328,35 +327,12 @@ mod tests {
 
         let client = ModelClient::with_access_token(&server.uri(), "signed-access-token").unwrap();
         let err = client
-            .execute_action(3, "1", 1.0)
+            .execute_action(3, "1", 1.0, true)
             .await
             .unwrap_err()
             .to_string();
 
         assert!(err.contains("channel 1001 offline"), "{err}");
-    }
-
-    #[tokio::test]
-    async fn set_measurement_surfaces_automation_typed_error() {
-        let server = MockServer::start().await;
-        Mock::given(method("POST"))
-            .and(path("/api/instances/3/measurement"))
-            .respond_with(ResponseTemplate::new(404).set_body_json(serde_json::json!({
-                "success": false,
-                "error": { "code": "POINT_NOT_FOUND", "message": "point 999 not found", "suggestion": "run aether sync" }
-            })))
-            .mount(&server)
-            .await;
-
-        let client = ModelClient::new(&server.uri()).unwrap();
-        let err = client
-            .set_measurement(3, "999", 1.0)
-            .await
-            .unwrap_err()
-            .to_string();
-
-        assert!(err.contains("point 999 not found"), "{err}");
-        assert!(err.contains("run aether sync"), "{err}");
     }
 
     #[tokio::test]

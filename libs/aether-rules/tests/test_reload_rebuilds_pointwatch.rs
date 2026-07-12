@@ -12,9 +12,12 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
+use aether_dataplane::SlotWriter;
 use aether_routing::RoutingCache;
-use aether_rtdb_shm::{ChannelToSlotIndex, SubscriptionBitmap};
 use aether_rules::{MemoryRuleLiveState, PointWatchDispatcher, RuleScheduler};
+use aether_shm_bridge::{
+    ChannelPointManifest, ChannelPointManifestSource, ShmDeviceCommandSink, SubscriptionBitmap,
+};
 use sqlx::SqlitePool;
 
 async fn setup_pool() -> SqlitePool {
@@ -77,6 +80,24 @@ fn make_routing() -> Arc<RoutingCache> {
     Arc::new(RoutingCache::from_maps(c2m, HashMap::new(), HashMap::new()))
 }
 
+fn make_manifest_source() -> ChannelPointManifestSource {
+    let directory = tempfile::tempdir().expect("manifest directory");
+    let manifest = Arc::new(ChannelPointManifest::from_entries([(1001, [1, 0, 0, 0])]));
+    let writer = Arc::new(
+        SlotWriter::create(
+            directory.path().join("point-watch.shm"),
+            4,
+            manifest.slot_count(),
+            manifest.layout_hash(),
+        )
+        .expect("point-watch writer"),
+    );
+    let sink = ShmDeviceCommandSink::new();
+    sink.publish_generation(writer, manifest)
+        .expect("publish point-watch manifest");
+    sink.manifest_source()
+}
+
 #[tokio::test]
 async fn reload_rules_rebuilds_subscription_index_when_handles_set() {
     let pool = setup_pool().await;
@@ -95,13 +116,13 @@ async fn reload_rules_rebuilds_subscription_index_when_handles_set() {
 
     let (dispatcher, _watch_rx) = PointWatchDispatcher::new();
     let dispatcher = Arc::new(Mutex::new(dispatcher));
-    let slot_idx = Arc::new(ChannelToSlotIndex::empty_for_test());
+    let manifest_source = make_manifest_source();
     let bitmap = Arc::new(SubscriptionBitmap::new_in_memory().expect("bitmap"));
 
     scheduler.set_point_watch_rebuild_handles(
         Arc::clone(&dispatcher),
         Arc::clone(&routing),
-        Arc::clone(&slot_idx),
+        manifest_source,
         Arc::clone(&bitmap),
     );
 
@@ -159,12 +180,12 @@ async fn reload_rules_after_rule_added_picks_up_new_subscription() {
 
     let (dispatcher, _watch_rx) = PointWatchDispatcher::new();
     let dispatcher = Arc::new(Mutex::new(dispatcher));
-    let slot_idx = Arc::new(ChannelToSlotIndex::empty_for_test());
+    let manifest_source = make_manifest_source();
     let bitmap = Arc::new(SubscriptionBitmap::new_in_memory().expect("bitmap"));
     scheduler.set_point_watch_rebuild_handles(
         Arc::clone(&dispatcher),
         Arc::clone(&routing),
-        Arc::clone(&slot_idx),
+        manifest_source,
         Arc::clone(&bitmap),
     );
 

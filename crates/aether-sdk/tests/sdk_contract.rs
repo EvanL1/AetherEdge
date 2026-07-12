@@ -33,6 +33,15 @@ fn builder_reports_missing_ports_without_connecting_to_external_services() {
     assert_eq!(error, BuildError::MissingPort("live_state"));
 }
 
+#[test]
+fn sdk_exposes_the_versioned_pack_contract() {
+    let runtime = aether_sdk::pack::PackRuntime::new("0.5.0")
+        .with_capabilities(["point.read"])
+        .with_protocols(["modbus_tcp"]);
+
+    assert!(format!("{runtime:?}").contains("point.read"));
+}
+
 #[tokio::test]
 async fn sdk_composes_user_selected_adapters_and_exposes_the_application_api() {
     let state = Arc::new(MemoryLiveState::new());

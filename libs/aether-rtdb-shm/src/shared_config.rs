@@ -10,8 +10,11 @@
 //! remain available at this module's path for backward compatibility — they
 //! now forward to `crate::core::config`.
 
+use aether_domain::PointKind;
 use aether_model::PointType;
+use aether_shm_bridge::ChannelPointManifest;
 use rustc_hash::FxHashMap;
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use tracing::info;
 
@@ -204,7 +207,7 @@ impl SharedConfig {
 
 // ========== ChannelToSlotIndex ==========
 
-/// Direct mapping from channel points to shared memory slots
+/// Legacy direct-index projection of [`ChannelPointManifest`].
 ///
 /// Pre-computed at startup to eliminate runtime C2M routing lookup.
 /// Provides O(1) channel-to-slot mapping for the hottest path.
@@ -221,12 +224,19 @@ impl SharedConfig {
 /// # Performance
 /// - Before: ~90ns (two hash lookups)
 /// - After: ~50ns (single hash lookup)
+///
+/// Removal criterion: replace raw `PointType` lookups in production callers
+/// with typed manifest addresses, then delete this projection and its
+/// arbitrary-insert test compatibility path.
 #[derive(Debug)]
 pub struct ChannelToSlotIndex {
     /// (channel_id, point_type, point_id) → slot index (0-based)
     index: FxHashMap<(u32, PointType, u32), usize>,
     /// Statistics
     mapped_count: usize,
+    /// Formal typed manifest behind production indexes. `None` is reserved for
+    /// the legacy arbitrary-insert test helper.
+    formal: Option<ChannelPointManifest>,
 }
 
 impl ChannelToSlotIndex {
@@ -265,6 +275,7 @@ impl ChannelToSlotIndex {
         Self {
             index: FxHashMap::default(),
             mapped_count: 0,
+            formal: Some(ChannelPointManifest::default()),
         }
     }
 
@@ -280,6 +291,7 @@ impl ChannelToSlotIndex {
         Self {
             index: FxHashMap::default(),
             mapped_count: 0,
+            formal: Some(ChannelPointManifest::default()),
         }
     }
 
@@ -288,6 +300,7 @@ impl ChannelToSlotIndex {
     pub fn insert(&mut self, channel_id: u32, point_type: PointType, point_id: u32, slot: usize) {
         self.index.insert((channel_id, point_type, point_id), slot);
         self.mapped_count = self.index.len();
+        self.formal = None;
     }
 
     /// Build from UnifiedWriter's channel_layouts
@@ -301,45 +314,57 @@ impl ChannelToSlotIndex {
     /// # Returns
     /// ChannelToSlotIndex with pre-computed mappings
     pub fn from_unified_writer(writer: &crate::unified_shm::UnifiedWriter) -> Self {
-        let mut index = FxHashMap::default();
-        let layouts = writer.channel_layouts();
+        let counts = writer
+            .channel_layouts()
+            .iter()
+            .enumerate()
+            .filter(|(_, layout)| layout.total_points > 0)
+            .map(|(channel_id, layout)| (channel_id as u32, layout.type_counts))
+            .collect::<BTreeMap<_, _>>();
+        Self::from_manifest(ChannelPointManifest::from_map(counts))
+    }
 
-        // Iterate through all channels and their layouts
-        for (channel_id, layout) in layouts.iter().enumerate() {
-            if layout.total_points == 0 {
-                continue; // Skip unused channel slots
-            }
-
-            // For each point type (T=0, S=1, C=2, A=3)
-            for type_idx in 0..4u8 {
-                let point_type = match type_idx {
-                    0 => PointType::Telemetry,
-                    1 => PointType::Signal,
-                    2 => PointType::Control,
-                    3 => PointType::Adjustment,
-                    _ => continue,
-                };
-
-                let count = layout.type_counts[type_idx as usize];
-                for point_id in 0..count {
-                    if let Some(slot) = layout.slot(type_idx, point_id) {
-                        // Store slot index directly (used by set_direct)
-                        index.insert((channel_id as u32, point_type, point_id), slot);
-                    }
-                }
-            }
-        }
-
-        let mapped_count = index.len();
+    /// Projects a formal manifest into the raw legacy lookup shape.
+    pub(crate) fn from_manifest(formal: ChannelPointManifest) -> Self {
+        let index = formal
+            .iter_physical_points()
+            .map(|(slot, address)| {
+                (
+                    (
+                        address.channel_id().get(),
+                        legacy_point_type(address.kind()),
+                        address.point_id().get(),
+                    ),
+                    slot,
+                )
+            })
+            .collect::<FxHashMap<_, _>>();
+        let mapped_count = formal.point_count();
         info!(
-            "ChannelToSlotIndex built from UnifiedWriter: {} direct mappings",
+            "ChannelToSlotIndex compatibility projection: {} direct mappings",
             mapped_count
         );
 
         Self {
             index,
             mapped_count,
+            formal: Some(formal),
         }
+    }
+
+    /// Returns the formal manifest when this index came from a production
+    /// writer. Arbitrary legacy test inserts deliberately return `None`.
+    pub(crate) const fn formal_manifest(&self) -> Option<&ChannelPointManifest> {
+        self.formal.as_ref()
+    }
+}
+
+pub(crate) const fn legacy_point_type(kind: PointKind) -> PointType {
+    match kind {
+        PointKind::Telemetry => PointType::Telemetry,
+        PointKind::Status => PointType::Signal,
+        PointKind::Command => PointType::Control,
+        PointKind::Action => PointType::Adjustment,
     }
 }
 

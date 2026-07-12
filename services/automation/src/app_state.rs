@@ -4,13 +4,13 @@
 
 use std::sync::Arc;
 
-use aether_application::ControlApplication;
+use aether_application::{ActionRoutingApplication, ControlApplication};
 
 use crate::config::AutomationConfig;
 use crate::error::AutomationError;
 use crate::infra::application_control::ControlAuthenticator;
-use crate::infra::shm_dispatch::ShmDispatch;
 use crate::instance_manager::InstanceManager;
+use aether_shm_bridge::ShmDeviceCommandSink;
 
 /// Application state containing shared resources
 pub struct AppState {
@@ -23,11 +23,14 @@ pub struct AppState {
     /// Shared authenticated and audited device-control use case.
     pub control_application: Arc<ControlApplication>,
 
+    /// Shared authenticated and audited physical action-routing use case.
+    pub action_routing_application: Arc<ActionRoutingApplication>,
+
     /// Verifies JWT and service credentials before constructing command actors.
     pub control_authenticator: Arc<ControlAuthenticator>,
 
-    /// SHM dispatch (concrete type for delayed configuration in main.rs)
-    pub shm_dispatch: Arc<ShmDispatch>,
+    /// Typed C/A command sink (concrete type for delayed configuration in main.rs).
+    pub shm_dispatch: Arc<ShmDeviceCommandSink>,
 }
 
 impl AppState {
@@ -36,13 +39,15 @@ impl AppState {
         config: Arc<AutomationConfig>,
         instance_manager: Arc<InstanceManager>,
         control_application: Arc<ControlApplication>,
+        action_routing_application: Arc<ActionRoutingApplication>,
         control_authenticator: Arc<ControlAuthenticator>,
-        shm_dispatch: Arc<ShmDispatch>,
+        shm_dispatch: Arc<ShmDeviceCommandSink>,
     ) -> Self {
         Self {
             config,
             instance_manager,
             control_application,
+            action_routing_application,
             control_authenticator,
             shm_dispatch,
         }

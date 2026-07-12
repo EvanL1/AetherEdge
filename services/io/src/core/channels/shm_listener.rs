@@ -15,7 +15,7 @@
 //! and event-triggered CPU usage instead of continuous polling.
 
 use aether_model::{PointType, ValidationConfig, validate_value};
-use aether_rtdb_shm::{DEFAULT_UDS_PATH, ShmNotification};
+use aether_shm_bridge::{DEFAULT_COMMAND_UDS_PATH, DeviceCommandFrame};
 use dashmap::DashMap;
 use dashmap::mapref::entry::Entry;
 use std::sync::Arc;
@@ -42,7 +42,7 @@ pub struct ShmCommandListener {
 impl ShmCommandListener {
     /// Create a new listener
     pub fn new(uds_path: Option<&str>, shutdown: tokio::sync::watch::Receiver<bool>) -> Self {
-        let path = uds_path.unwrap_or(DEFAULT_UDS_PATH).to_string();
+        let path = uds_path.unwrap_or(DEFAULT_COMMAND_UDS_PATH).to_string();
         info!("ShmCommandListener: UDS path = {}", path);
 
         Self {
@@ -169,14 +169,14 @@ impl ShmCommandListener {
         dropped_count: Arc<AtomicU64>,
     ) {
         debug!("ShmListener: new connection");
-        let mut buf = [0u8; ShmNotification::SIZE];
+        let mut buf = [0u8; DeviceCommandFrame::SIZE];
 
         loop {
             tokio::select! {
                 result = stream.read_exact(&mut buf) => {
                     match result {
                         Ok(_) => {
-                            let notif = ShmNotification::from_bytes(&buf);
+                            let notif = DeviceCommandFrame::from_bytes(&buf);
                             Self::handle_notification(&notif, &senders, &last_sequences, &dropped_count).await;
                         }
                         Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
@@ -199,21 +199,28 @@ impl ShmCommandListener {
     }
 
     async fn handle_notification(
-        notif: &ShmNotification,
+        notif: &DeviceCommandFrame,
         senders: &DashMap<u32, mpsc::Sender<ChannelCommand>>,
         last_sequences: &DashMap<(u32, u8, u32), (u64, u64)>,
         dropped_count: &AtomicU64,
     ) {
-        let channel_id = notif.channel_id;
-        let point_type = match notif.get_point_type() {
-            Some(pt) => pt,
+        let channel_id = notif.channel_id();
+        let point_type = match notif.point_kind() {
+            Some(aether_domain::PointKind::Command) => PointType::Control,
+            Some(aether_domain::PointKind::Action) => PointType::Adjustment,
             None => {
-                warn!("Invalid point type in notification: {}", notif.point_type);
+                warn!(
+                    "Invalid point type in notification: {}",
+                    notif.point_kind_code()
+                );
+                return;
+            },
+            Some(aether_domain::PointKind::Telemetry | aether_domain::PointKind::Status) => {
                 return;
             },
         };
-        let point_id = notif.point_id;
-        let seq_key = (channel_id, notif.point_type, point_id);
+        let point_id = notif.point_id();
+        let seq_key = (channel_id, notif.point_kind_code(), point_id);
 
         let now_ms = match std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
             Ok(duration) => duration.as_millis().min(u64::MAX as u128) as u64,
@@ -222,14 +229,14 @@ impl ShmCommandListener {
                 return;
             },
         };
-        if notif.expires_at_ms <= notif.timestamp_ms || now_ms >= notif.expires_at_ms {
+        if notif.expires_at_ms() <= notif.timestamp_ms() || now_ms >= notif.expires_at_ms() {
             warn!(
                 "ShmListener: invalid or expired command discarded ch={}:{}:{} issued={} expires={} now={}",
                 channel_id,
                 point_type.as_str(),
                 point_id,
-                notif.timestamp_ms,
-                notif.expires_at_ms,
+                notif.timestamp_ms(),
+                notif.expires_at_ms(),
                 now_ms
             );
             return;
@@ -244,31 +251,41 @@ impl ShmCommandListener {
                 // less than half the range. After 2^64 increments seq wraps,
                 // and `notif.seq <= last_seq` would misclassify the first
                 // wrapped value as stale.
-                let same_producer = last_producer == notif.producer_id;
-                let is_stale = same_producer && notif.seq.wrapping_sub(last_seq) > u64::MAX / 2;
+                let same_producer = last_producer == notif.producer_id();
+                let is_stale =
+                    same_producer && notif.sequence().wrapping_sub(last_seq) > u64::MAX / 2;
                 if is_stale {
                     trace!(
                         "ShmListener: stale event dropped ch={} {:?}:{} producer={} seq={} (last {})",
-                        channel_id, point_type, point_id, notif.producer_id, notif.seq, last_seq
+                        channel_id,
+                        point_type,
+                        point_id,
+                        notif.producer_id(),
+                        notif.sequence(),
+                        last_seq
                     );
                     return;
                 }
-                if same_producer && notif.seq == last_seq {
+                if same_producer && notif.sequence() == last_seq {
                     trace!(
                         "ShmListener: duplicate event dropped ch={} {:?}:{} producer={} seq={}",
-                        channel_id, point_type, point_id, notif.producer_id, notif.seq
+                        channel_id,
+                        point_type,
+                        point_id,
+                        notif.producer_id(),
+                        notif.sequence()
                     );
                     return;
                 }
-                entry.insert((notif.producer_id, notif.seq));
+                entry.insert((notif.producer_id(), notif.sequence()));
             },
             Entry::Vacant(entry) => {
-                entry.insert((notif.producer_id, notif.seq));
+                entry.insert((notif.producer_id(), notif.sequence()));
             },
         }
 
         let value = notif.value();
-        let timestamp = notif.timestamp_ms;
+        let timestamp = notif.timestamp_ms();
 
         // Validate value before sending to device (prevents NaN/Infinity from reaching hardware)
         let config = ValidationConfig::default();
@@ -285,7 +302,13 @@ impl ShmCommandListener {
 
         trace!(
             "ShmListener: ch={} {:?}:{} val={} ts={} producer={} seq={}",
-            channel_id, point_type, point_id, value, timestamp, notif.producer_id, notif.seq
+            channel_id,
+            point_type,
+            point_id,
+            value,
+            timestamp,
+            notif.producer_id(),
+            notif.sequence()
         );
 
         // Build and send command
@@ -294,9 +317,9 @@ impl ShmCommandListener {
             point_id,
             value,
             timestamp as i64,
-            notif.expires_at_ms.min(i64::MAX as u64) as i64,
-            notif.producer_id,
-            notif.seq,
+            notif.expires_at_ms().min(i64::MAX as u64) as i64,
+            notif.producer_id(),
+            notif.sequence(),
         );
 
         match senders.get(&channel_id) {

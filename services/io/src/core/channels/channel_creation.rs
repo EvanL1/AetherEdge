@@ -4,6 +4,9 @@
 //! SHM store initialization for the ChannelManager.
 
 use std::sync::Arc;
+
+use aether_config::io::MAX_CHANNEL_TIMING_MS;
+use common::{ValidationLevel, ValidationResult};
 use tracing::{debug, info, warn};
 
 use crate::core::channels::channel_entry::ChannelEntry;
@@ -18,6 +21,95 @@ use crate::protocols::core::log_handlers::{CompositeLogHandler, TracingLogHandle
 use crate::protocols::core::logging::{ChannelLogConfig, ChannelLogHandler, LogEventType};
 use crate::protocols::gateway::ChannelRuntime;
 use crate::store::ShmDataStore;
+
+fn validate_channel_config_for_runtime(config: &ChannelConfig) -> Result<()> {
+    let mut validation = ValidationResult::new(ValidationLevel::Schema);
+    config.validate(&mut validation, 0);
+    if validation.is_valid {
+        Ok(())
+    } else {
+        Err(IoError::config(
+            "channel parameters do not satisfy the runtime protocol schema",
+        ))
+    }
+}
+
+#[cfg(feature = "modbus")]
+fn required_string_parameter<'a>(
+    parameters: &'a std::collections::HashMap<String, serde_json::Value>,
+    parameter: &str,
+) -> Result<&'a str> {
+    parameters
+        .get(parameter)
+        .and_then(serde_json::Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| IoError::config(format!("'{parameter}' must be a non-empty string")))
+}
+
+#[cfg(feature = "modbus")]
+fn required_u16_parameter(
+    parameters: &std::collections::HashMap<String, serde_json::Value>,
+    parameter: &str,
+) -> Result<u16> {
+    let value = parameters
+        .get(parameter)
+        .and_then(serde_json::Value::as_u64)
+        .ok_or_else(|| IoError::config(format!("'{parameter}' must be a positive integer")))?;
+    let value = u16::try_from(value)
+        .map_err(|_| IoError::config(format!("'{parameter}' exceeds the u16 range")))?;
+    if value == 0 {
+        return Err(IoError::config(format!(
+            "'{parameter}' must be greater than zero"
+        )));
+    }
+    Ok(value)
+}
+
+#[cfg(feature = "modbus")]
+fn required_u32_parameter(
+    parameters: &std::collections::HashMap<String, serde_json::Value>,
+    parameter: &str,
+) -> Result<u32> {
+    let value = parameters
+        .get(parameter)
+        .and_then(serde_json::Value::as_u64)
+        .ok_or_else(|| IoError::config(format!("'{parameter}' must be a positive integer")))?;
+    let value = u32::try_from(value)
+        .map_err(|_| IoError::config(format!("'{parameter}' exceeds the u32 range")))?;
+    if value == 0 {
+        return Err(IoError::config(format!(
+            "'{parameter}' must be greater than zero"
+        )));
+    }
+    Ok(value)
+}
+
+fn timing_parameter(
+    parameters: &std::collections::HashMap<String, serde_json::Value>,
+    parameter: &str,
+) -> Result<Option<u64>> {
+    let Some(value) = parameters.get(parameter) else {
+        return Ok(None);
+    };
+    let value = value.as_u64().ok_or_else(|| {
+        IoError::config(format!(
+            "'{parameter}' must be a positive integer number of milliseconds"
+        ))
+    })?;
+    if !(1..=MAX_CHANNEL_TIMING_MS).contains(&value) {
+        return Err(IoError::config(format!(
+            "'{parameter}' must be between 1 and {MAX_CHANNEL_TIMING_MS} milliseconds"
+        )));
+    }
+    Ok(Some(value))
+}
+
+fn poll_interval_ms(
+    parameters: &std::collections::HashMap<String, serde_json::Value>,
+    default: u64,
+) -> Result<u64> {
+    Ok(timing_parameter(parameters, "poll_interval_ms")?.unwrap_or(default))
+}
 
 fn command_guard(config: &RuntimeChannelConfig) -> Result<CommandGuard> {
     CommandGuard::from_runtime(config).map_err(|error| IoError::config(error.to_string()))
@@ -249,6 +341,10 @@ impl ChannelManager {
             return Err(IoError::channel_exists(channel_id));
         }
 
+        // Validate before loading points or constructing a protocol client so
+        // direct startup/reload paths cannot bypass the governed mutator.
+        validate_channel_config_for_runtime(&channel_config)?;
+
         // Convert to RuntimeChannelConfig and load configuration from SQLite
         let mut runtime_config = RuntimeChannelConfig::from_base_arc(Arc::clone(&channel_config));
         self.load_channel_configuration(&mut runtime_config).await?;
@@ -394,7 +490,7 @@ impl ChannelManager {
         channel_id: u32,
         slot: &arc_swap::ArcSwapOption<ChannelEntry>,
         entry: &Arc<ChannelEntry>,
-        runtime_config: &Arc<RuntimeChannelConfig>,
+        _runtime_config: &Arc<RuntimeChannelConfig>,
     ) {
         // 1. Atomic store (publish channel to be visible)
         slot.store(Some(Arc::clone(entry)));
@@ -415,31 +511,6 @@ impl ChannelManager {
 
         // 4. Register in active channel index for O(1) iteration
         self.active_channel_ids.insert(channel_id);
-
-        // 5. Dynamic Slot Allocation: Add channel to ChannelIndex
-        if let (Some(index), Some(bitmap)) = (&self.dynamic_channel_index, &self.slot_bitmap) {
-            let type_counts = [
-                runtime_config.telemetry_points.len() as u32,
-                runtime_config.signal_points.len() as u32,
-                runtime_config.control_points.len() as u32,
-                runtime_config.adjustment_points.len() as u32,
-            ];
-            let total: u32 = type_counts.iter().sum();
-            if total > 0 {
-                let mut bitmap_guard = bitmap.write();
-                match index.add_channel(channel_id, type_counts, &mut bitmap_guard) {
-                    Ok(layout) => {
-                        debug!(
-                            "Ch{} slot allocated: base={}, total={}",
-                            channel_id, layout.base_slot, layout.total_points
-                        );
-                    },
-                    Err(e) => {
-                        warn!("Ch{} slot allocation failed: {}", channel_id, e);
-                    },
-                }
-            }
-        }
     }
 
     /// Create virtual channel entry.
@@ -463,14 +534,9 @@ impl ChannelManager {
             &base_config.logging,
         );
 
-        let poll_interval_ms = runtime_config
-            .base
-            .parameters
-            .get("poll_interval_ms")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(1000);
+        let poll_interval_ms = poll_interval_ms(&runtime_config.base.parameters, 1000)?;
 
-        Ok(ChannelEntry::new(
+        ChannelEntry::new(
             protocol,
             store,
             base_config,
@@ -478,7 +544,7 @@ impl ChannelManager {
             poll_interval_ms,
             log_handler,
             command_guard(runtime_config)?,
-        ))
+        )
     }
 
     /// Create an optional protocol adapter through the shared gateway factory.
@@ -504,11 +570,7 @@ impl ChannelManager {
         #[cfg(not(any(feature = "iec104", feature = "opcua")))]
         let points = Vec::new();
 
-        let poll_interval_ms = base_config
-            .parameters
-            .get("poll_interval_ms")
-            .and_then(serde_json::Value::as_u64)
-            .unwrap_or(default_poll_interval_ms);
+        let poll_interval_ms = poll_interval_ms(&base_config.parameters, default_poll_interval_ms)?;
         let factory_config = GatewayChannelConfig {
             id: channel_id,
             name: runtime_config.name().to_string(),
@@ -532,7 +594,7 @@ impl ChannelManager {
             &base_config.logging,
         );
 
-        Ok(ChannelEntry::new(
+        ChannelEntry::new(
             protocol,
             self.create_data_store(),
             base_config,
@@ -540,7 +602,7 @@ impl ChannelManager {
             poll_interval_ms,
             log_handler,
             command_guard(runtime_config)?,
-        ))
+        )
     }
 
     /// Create Modbus TCP channel entry.
@@ -557,26 +619,10 @@ impl ChannelManager {
         let point_configs = convert_to_modbus_point_configs(runtime_config);
 
         let params = &runtime_config.base.parameters;
-        let host = params
-            .get("host")
-            .and_then(|v| v.as_str())
-            .unwrap_or_else(|| {
-                info!(
-                    "Ch{} host not configured, using default: 127.0.0.1",
-                    channel_id
-                );
-                "127.0.0.1"
-            });
-        let port = params
-            .get("port")
-            .and_then(|v| v.as_u64())
-            .map(|n| n as u16)
-            .unwrap_or_else(|| {
-                info!("Ch{} port not configured, using default: 502", channel_id);
-                502
-            });
+        let host = required_string_parameter(params, "host")?;
+        let port = required_u16_parameter(params, "port")?;
 
-        let io_timeout_ms = params.get("read_timeout_ms").and_then(|v| v.as_u64());
+        let io_timeout_ms = timing_parameter(params, "read_timeout_ms")?;
         if let Some(timeout) = io_timeout_ms {
             debug!("Ch{} using read_timeout_ms: {}ms", channel_id, timeout);
         }
@@ -591,14 +637,11 @@ impl ChannelManager {
             &base_config.logging,
         );
 
-        let poll_interval_ms = params
-            .get("poll_interval_ms")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(1000);
+        let poll_interval_ms = poll_interval_ms(params, 1000)?;
 
         let protocol_label = base_config.protocol().to_string();
 
-        Ok(ChannelEntry::new(
+        ChannelEntry::new(
             protocol,
             store,
             base_config,
@@ -606,7 +649,7 @@ impl ChannelManager {
             poll_interval_ms,
             log_handler,
             command_guard(runtime_config)?,
-        ))
+        )
     }
 
     /// Create Modbus RTU (serial) channel entry.
@@ -623,29 +666,10 @@ impl ChannelManager {
         let point_configs = convert_to_modbus_point_configs(runtime_config);
 
         let params = &runtime_config.base.parameters;
-        let device = params
-            .get("device")
-            .and_then(|v| v.as_str())
-            .unwrap_or_else(|| {
-                info!(
-                    "Ch{} device not configured, using default: /dev/ttyUSB0",
-                    channel_id
-                );
-                "/dev/ttyUSB0"
-            });
-        let baud_rate = params
-            .get("baud_rate")
-            .and_then(|v| v.as_u64())
-            .map(|n| n as u32)
-            .unwrap_or_else(|| {
-                info!(
-                    "Ch{} baud_rate not configured, using default: 9600",
-                    channel_id
-                );
-                9600
-            });
+        let device = required_string_parameter(params, "device")?;
+        let baud_rate = required_u32_parameter(params, "baud_rate")?;
 
-        let io_timeout_ms = params.get("read_timeout_ms").and_then(|v| v.as_u64());
+        let io_timeout_ms = timing_parameter(params, "read_timeout_ms")?;
         if let Some(timeout) = io_timeout_ms {
             debug!("Ch{} using read_timeout_ms: {}ms", channel_id, timeout);
         }
@@ -660,14 +684,11 @@ impl ChannelManager {
             &base_config.logging,
         );
 
-        let poll_interval_ms = params
-            .get("poll_interval_ms")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(1000);
+        let poll_interval_ms = poll_interval_ms(params, 1000)?;
 
         let protocol_label = base_config.protocol().to_string();
 
-        Ok(ChannelEntry::new(
+        ChannelEntry::new(
             protocol,
             store,
             base_config,
@@ -675,7 +696,7 @@ impl ChannelManager {
             poll_interval_ms,
             log_handler,
             command_guard(runtime_config)?,
-        ))
+        )
     }
 
     /// Create GPIO channel entry for DI/DO.
@@ -700,14 +721,9 @@ impl ChannelManager {
         );
 
         // GPIO needs faster polling (default 200ms for responsive DI detection)
-        let poll_interval_ms = runtime_config
-            .base
-            .parameters
-            .get("poll_interval_ms")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(200);
+        let poll_interval_ms = poll_interval_ms(&runtime_config.base.parameters, 200)?;
 
-        Ok(ChannelEntry::new(
+        ChannelEntry::new(
             protocol,
             store,
             base_config,
@@ -715,7 +731,7 @@ impl ChannelManager {
             poll_interval_ms,
             log_handler,
             command_guard(runtime_config)?,
-        ))
+        )
     }
 
     /// Create CAN channel entry.
@@ -757,12 +773,9 @@ impl ChannelManager {
         );
 
         // CAN is event-driven, needs faster polling (default 200ms)
-        let poll_interval_ms = params
-            .get("poll_interval_ms")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(200);
+        let poll_interval_ms = poll_interval_ms(params, 200)?;
 
-        Ok(ChannelEntry::new(
+        ChannelEntry::new(
             protocol,
             store,
             base_config,
@@ -770,7 +783,7 @@ impl ChannelManager {
             poll_interval_ms,
             log_handler,
             command_guard(runtime_config)?,
-        ))
+        )
     }
 
     /// Create Aether-485 channel entry.
@@ -796,12 +809,9 @@ impl ChannelManager {
             &base_config.logging,
         );
 
-        let poll_interval_ms = params
-            .get("poll_interval_ms")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(1000);
+        let poll_interval_ms = poll_interval_ms(params, 1000)?;
 
-        Ok(ChannelEntry::new(
+        ChannelEntry::new(
             protocol,
             store,
             base_config,
@@ -809,7 +819,7 @@ impl ChannelManager {
             poll_interval_ms,
             log_handler,
             command_guard(runtime_config)?,
-        ))
+        )
     }
 
     /// Create IEC 61850 MMS channel entry.
@@ -844,10 +854,7 @@ impl ChannelManager {
             .get("request_timeout_ms")
             .and_then(|v| v.as_u64())
             .unwrap_or(5_000);
-        let poll_interval_ms = params
-            .get("poll_interval_ms")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(1_000);
+        let poll_interval_ms = poll_interval_ms(params, 1_000)?;
 
         let reports: Vec<crate::protocols::adapters::iec61850::ReportConfig> = params
             .get("reports")
@@ -976,7 +983,7 @@ impl ChannelManager {
             &base_config.logging,
         );
 
-        Ok(ChannelEntry::new(
+        ChannelEntry::new(
             protocol,
             store,
             base_config,
@@ -984,7 +991,7 @@ impl ChannelManager {
             poll_interval_ms,
             log_handler,
             command_guard(runtime_config)?,
-        ))
+        )
     }
 
     /// Returns the process-wide authoritative SHM store.
@@ -1012,11 +1019,147 @@ impl ChannelManager {
     }
 }
 
-#[cfg(all(test, any(feature = "iec104", feature = "opcua")))]
+#[cfg(test)]
 #[allow(clippy::disallowed_methods)]
 mod tests {
-    use super::protocol_point_address;
+    use std::collections::HashMap;
+    use std::sync::Arc;
 
+    #[cfg(any(feature = "iec104", feature = "opcua"))]
+    use super::protocol_point_address;
+    use super::{poll_interval_ms, timing_parameter, validate_channel_config_for_runtime};
+    #[cfg(feature = "modbus")]
+    use super::{required_string_parameter, required_u16_parameter, required_u32_parameter};
+    use crate::core::config::{ChannelConfig, ChannelCore, ChannelLoggingConfig};
+
+    fn config(
+        id: u32,
+        protocol: &str,
+        parameters: HashMap<String, serde_json::Value>,
+    ) -> ChannelConfig {
+        ChannelConfig {
+            core: ChannelCore {
+                id,
+                name: "runtime-validation".to_owned(),
+                description: None,
+                protocol: protocol.to_owned(),
+                enabled: true,
+            },
+            parameters,
+            logging: ChannelLoggingConfig::default(),
+        }
+    }
+
+    #[test]
+    fn direct_runtime_validation_accepts_historical_zero_id_but_rejects_zero_poll() {
+        assert!(validate_channel_config_for_runtime(&config(0, "virtual", HashMap::new())).is_ok());
+        assert!(
+            validate_channel_config_for_runtime(&config(
+                0,
+                "virtual",
+                HashMap::from([("poll_interval_ms".to_owned(), serde_json::json!(0))]),
+            ))
+            .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn channel_manager_rejects_invalid_config_before_loading_or_spawning_runtime() {
+        let manager = super::ChannelManager::new(
+            crate::test_utils::create_test_shm_handle(),
+            crate::test_utils::create_test_routing_cache(),
+        )
+        .expect("test channel manager");
+
+        for config in [
+            config(
+                1,
+                "virtual",
+                HashMap::from([("poll_interval_ms".to_owned(), serde_json::json!(0))]),
+            ),
+            config(
+                2,
+                "modbus_tcp",
+                HashMap::from([
+                    ("host".to_owned(), serde_json::json!(123)),
+                    ("port".to_owned(), serde_json::json!(502)),
+                ]),
+            ),
+        ] {
+            let channel_id = config.id();
+            let error = manager
+                .create_channel(Arc::new(config))
+                .await
+                .expect_err("invalid direct config must be rejected");
+            assert!(matches!(error, super::IoError::ConfigError(_)));
+            assert!(manager.get_channel(channel_id).is_none());
+        }
+    }
+
+    #[test]
+    fn runtime_timing_parser_never_falls_back_for_present_invalid_values() {
+        for value in [
+            serde_json::json!(0),
+            serde_json::json!("1000"),
+            serde_json::json!(86_400_001),
+        ] {
+            let parameters = HashMap::from([("poll_interval_ms".to_owned(), value)]);
+            assert!(poll_interval_ms(&parameters, 1_000).is_err());
+        }
+        assert_eq!(poll_interval_ms(&HashMap::new(), 1_000).unwrap(), 1_000);
+        assert!(
+            timing_parameter(
+                &HashMap::from([("read_timeout_ms".to_owned(), serde_json::json!(0))]),
+                "read_timeout_ms",
+            )
+            .is_err()
+        );
+    }
+
+    #[cfg(feature = "modbus")]
+    #[test]
+    fn direct_modbus_runtime_parser_rejects_fallback_and_truncation() {
+        assert!(required_string_parameter(&HashMap::new(), "host").is_err());
+        assert!(
+            required_string_parameter(
+                &HashMap::from([("host".to_owned(), serde_json::json!(123))]),
+                "host",
+            )
+            .is_err()
+        );
+        assert!(
+            required_u16_parameter(
+                &HashMap::from([("port".to_owned(), serde_json::json!(65_536))]),
+                "port",
+            )
+            .is_err()
+        );
+        assert!(
+            required_u32_parameter(
+                &HashMap::from([("baud_rate".to_owned(), serde_json::json!(4_294_967_296_u64))]),
+                "baud_rate",
+            )
+            .is_err()
+        );
+        assert_eq!(
+            required_u16_parameter(
+                &HashMap::from([("port".to_owned(), serde_json::json!(65_535))]),
+                "port",
+            )
+            .unwrap(),
+            u16::MAX
+        );
+        assert_eq!(
+            required_u32_parameter(
+                &HashMap::from([("baud_rate".to_owned(), serde_json::json!(4_294_967_295_u64))]),
+                "baud_rate",
+            )
+            .unwrap(),
+            u32::MAX
+        );
+    }
+
+    #[cfg(feature = "iec104")]
     #[test]
     fn structured_iec104_mapping_becomes_gateway_address() {
         let address =
@@ -1025,6 +1168,7 @@ mod tests {
         assert_eq!(address, "1001:13");
     }
 
+    #[cfg(feature = "opcua")]
     #[test]
     fn structured_opcua_mapping_becomes_gateway_address() {
         let address = protocol_point_address(

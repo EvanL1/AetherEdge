@@ -1,5 +1,7 @@
 use aether_domain::{
-    CommandConstraints, CommandId, ControlCommand, DomainError, InstanceId, PointAddress, PointId,
+    AcquiredPointSample, AlarmComparator, AlarmRuleDefinition, AlarmRuleTarget, AlarmSeverity,
+    AlertId, ChannelCommandAddress, ChannelId, ChannelPointAddress, CommandConstraints, CommandId,
+    ControlCommand, DomainError, InstanceId, PhysicalDeviceCommand, PointAddress, PointId,
     PointKind, PointQuality, PointSample, TimestampMs,
 };
 
@@ -12,6 +14,66 @@ fn identifiers_remain_distinct_and_round_trip_their_raw_values() {
     assert_eq!(instance_id.get(), 42);
     assert_eq!(point_id.get(), 7);
     assert_eq!(command_id.get(), 99);
+    assert_eq!(AlertId::new(11).get(), 11);
+}
+
+#[test]
+fn alarm_rule_definition_rejects_invalid_policy_and_supports_channel_health() {
+    assert_eq!(
+        AlarmSeverity::new(0),
+        Err(DomainError::InvalidAlarmSeverity)
+    );
+    assert_eq!(
+        AlarmSeverity::new(4),
+        Err(DomainError::InvalidAlarmSeverity)
+    );
+    assert_eq!(
+        AlarmComparator::try_from("~="),
+        Err(DomainError::InvalidAlarmComparator)
+    );
+    assert!(matches!(
+        AlarmRuleTarget::point("", ChannelId::new(1), "T", PointId::new(2)),
+        Err(DomainError::InvalidAlarmTarget)
+    ));
+
+    let target = AlarmRuleTarget::channel_online(ChannelId::new(7));
+    let definition = AlarmRuleDefinition::new(
+        target.clone(),
+        "gateway offline",
+        AlarmSeverity::new(3).expect("severity"),
+        AlarmComparator::Equal,
+        0.0,
+        false,
+        Some("commission only after site acceptance".to_string()),
+    )
+    .expect("valid channel-health alarm");
+    assert_eq!(definition.target(), &target);
+    assert_eq!(definition.comparator().as_str(), "==");
+
+    assert_eq!(
+        AlarmRuleDefinition::new(
+            target.clone(),
+            " ",
+            AlarmSeverity::new(2).expect("severity"),
+            AlarmComparator::GreaterThan,
+            1.0,
+            false,
+            None,
+        ),
+        Err(DomainError::InvalidAlarmRuleName)
+    );
+    assert_eq!(
+        AlarmRuleDefinition::new(
+            target,
+            "offline",
+            AlarmSeverity::new(2).expect("severity"),
+            AlarmComparator::GreaterThan,
+            f64::NAN,
+            false,
+            None,
+        ),
+        Err(DomainError::NonFiniteAlarmThreshold)
+    );
 }
 
 #[test]
@@ -28,6 +90,138 @@ fn point_sample_preserves_address_value_time_and_quality() {
     assert_eq!(sample.value(), 23.5);
     assert_eq!(sample.timestamp().get(), 1_720_000_000_000);
     assert_eq!(sample.quality(), PointQuality::Good);
+}
+
+#[test]
+fn acquired_samples_use_physical_channel_identity() {
+    let address =
+        ChannelPointAddress::new(ChannelId::new(17), PointKind::Telemetry, PointId::new(3))
+            .expect("telemetry is acquisition-owned");
+    let sample = AcquiredPointSample::new(
+        address,
+        23.5,
+        2_350.0,
+        TimestampMs::new(1_720_000_000_000),
+        PointQuality::Good,
+    )
+    .expect("finite acquisition sample is valid");
+
+    assert_eq!(address.channel_id(), ChannelId::new(17));
+    assert_eq!(address.kind(), PointKind::Telemetry);
+    assert_eq!(address.point_id(), PointId::new(3));
+    assert_eq!(sample.address(), address);
+    assert_eq!(sample.value(), 23.5);
+    assert_eq!(sample.raw(), 2_350.0);
+    assert_eq!(sample.timestamp().get(), 1_720_000_000_000);
+    assert_eq!(sample.quality(), PointQuality::Good);
+}
+
+#[test]
+fn acquisition_addresses_reject_command_owned_point_kinds() {
+    for kind in [PointKind::Command, PointKind::Action] {
+        assert_eq!(
+            ChannelPointAddress::new(ChannelId::new(17), kind, PointId::new(3)),
+            Err(DomainError::PointNotAcquisitionOwned(kind))
+        );
+    }
+}
+
+#[test]
+fn acquired_samples_reject_non_finite_values() {
+    let address = ChannelPointAddress::new(ChannelId::new(17), PointKind::Status, PointId::new(3))
+        .expect("status is acquisition-owned");
+
+    assert_eq!(
+        AcquiredPointSample::new(
+            address,
+            f64::NAN,
+            1.0,
+            TimestampMs::new(1),
+            PointQuality::Bad,
+        ),
+        Err(DomainError::NonFiniteAcquiredValue)
+    );
+    assert_eq!(
+        AcquiredPointSample::new(
+            address,
+            1.0,
+            f64::INFINITY,
+            TimestampMs::new(1),
+            PointQuality::Bad,
+        ),
+        Err(DomainError::NonFiniteAcquiredRawValue)
+    );
+}
+
+#[test]
+fn physical_command_addresses_accept_only_command_owned_points() {
+    for kind in [PointKind::Command, PointKind::Action] {
+        let address = ChannelCommandAddress::new(ChannelId::new(17), kind, PointId::new(3))
+            .expect("C/A is command-owned");
+        assert_eq!(address.channel_id(), ChannelId::new(17));
+        assert_eq!(address.kind(), kind);
+        assert_eq!(address.point_id(), PointId::new(3));
+    }
+
+    for kind in [PointKind::Telemetry, PointKind::Status] {
+        assert_eq!(
+            ChannelCommandAddress::new(ChannelId::new(17), kind, PointId::new(3)),
+            Err(DomainError::PointNotCommandOwned(kind))
+        );
+    }
+}
+
+#[test]
+fn physical_device_commands_preserve_identity_value_and_ttl() {
+    let target = ChannelCommandAddress::new(ChannelId::new(17), PointKind::Action, PointId::new(3))
+        .expect("action target");
+    let command = PhysicalDeviceCommand::new(
+        CommandId::new(9),
+        target,
+        42.5,
+        TimestampMs::new(1_000),
+        TimestampMs::new(1_100),
+    )
+    .expect("valid physical command");
+
+    assert_eq!(command.id(), CommandId::new(9));
+    assert_eq!(command.target(), target);
+    assert_eq!(command.value(), 42.5);
+    assert_eq!(command.issued_at(), TimestampMs::new(1_000));
+    assert_eq!(command.expires_at(), TimestampMs::new(1_100));
+    assert_eq!(command.validate_at(TimestampMs::new(1_099)), Ok(()));
+    assert_eq!(
+        command.validate_at(TimestampMs::new(1_100)),
+        Err(DomainError::CommandExpired)
+    );
+}
+
+#[test]
+fn physical_device_commands_reject_non_finite_values_and_invalid_windows() {
+    let target =
+        ChannelCommandAddress::new(ChannelId::new(17), PointKind::Command, PointId::new(3))
+            .expect("command target");
+
+    assert_eq!(
+        PhysicalDeviceCommand::new(
+            CommandId::new(9),
+            target,
+            f64::INFINITY,
+            TimestampMs::new(1_000),
+            TimestampMs::new(1_100),
+        ),
+        Err(DomainError::NonFiniteCommandValue)
+    );
+    assert_eq!(
+        PhysicalDeviceCommand::new(
+            CommandId::new(9),
+            target,
+            1.0,
+            TimestampMs::new(1_000),
+            TimestampMs::new(1_000),
+        ),
+        Err(DomainError::InvalidCommandWindow)
+    );
 }
 
 #[test]

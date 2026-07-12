@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "composition": "aether-edge-six-service",
+  "aether_version": "0.5.0",
+  "target_triple": "aarch64-unknown-linux-musl",
+  "target_os": "linux",
+  "services": [
+    "aether-alarm",
+    "aether-api",
+    "aether-automation",
+    "aether-history",
+    "aether-io",
+    "aether-uplink"
+  ],
+  "cargo_features": [
+    "aether-io/aether_485",
+    "aether-io/can",
+    "aether-io/gpio",
+    "aether-io/iec61850",
+    "aether-io/modbus"
+  ],
+  "capabilities": [
+    "alarm.alert.resolve",
+    "alarm.rule.manage",
+    "automation.routing.manage",
+    "automation.rule.execute",
+    "automation.rule.manage",
+    "data_processing.process",
+    "data_processing.processors.health",
+    "data_processing.tasks.list",
+    "device.read_point",
+    "device.write_point",
+    "io.channel.manage",
+    "io.channel.reconcile"
+  ],
+  "protocols": [
+    "aether_485",
+    "can",
+    "di_do",
+    "iec61850",
+    "modbus_rtu",
+    "modbus_tcp",
+    "sunspec_rtu",
+    "sunspec_tcp",
+    "virtual"
+  ],
+  "checksum": {
+    "algorithm": "sha256",
+    "digest": "91b47b8462fdf21bcaaa4b2ea4e992daf43a87434fc1f0e29e6df1c47492baeb"
+  }
+}

@@ -1,0 +1,18 @@
+schema: aether.pack.mapping-set.v1
+id: energy.example-instance-channel-bindings
+kind: instance_channel_bindings
+description: Uncommissioned semantic bindings for the Energy example composition.
+commissioned: false
+bindings:
+  - instance_ref: pcs_01
+    product: PCS
+    channel_ref: pcs_modbus_tcp
+    enabled: false
+  - instance_ref: battery_01
+    product: Battery
+    channel_ref: battery_modbus_tcp
+    enabled: false
+  - instance_ref: diesel_gen_01
+    product: Diesel
+    channel_ref: diesel_modbus_rtu
+    enabled: false

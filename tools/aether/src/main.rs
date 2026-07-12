@@ -17,6 +17,7 @@ mod mcp_docs;
 mod models;
 mod net;
 mod output;
+mod pack_artifact;
 mod routing;
 mod rules;
 mod services;
@@ -26,11 +27,12 @@ mod shm_dashboard;
 mod templates;
 mod top;
 mod top_draw;
+mod transport_security;
 mod utils;
 
 // Note: lib-mode (direct service library calls) has been removed in favor of HTTP-only mode.
 // This simplifies the architecture, reduces code duplication (~50%), and aligns with MCP patterns.
-// All commands now use HTTP clients to communicate with running services.
+// Runtime commands use HTTP clients; migration/init/sync are explicit local operations.
 
 use crate::core::{AetherCore, schema};
 use anyhow::{Context, Result};
@@ -45,10 +47,11 @@ use std::path::{Path, PathBuf};
 
 Configuration Management:
   setup       Plan a safe first-run setup (apply requires a plan ID)
-  sync        Sync configuration to SQLite database (use --dry-run to validate only)
+  sync        Apply configuration offline (services stopped; confirmation required)
   status      Show current configuration status
   init        Initialize database schemas
   export      Export configuration from SQLite to YAML/CSV
+  packs       Build or install data-only domain Pack artifacts
 
 Service Operations:
   channels    Manage communication channels and protocols
@@ -60,11 +63,12 @@ Service Operations:
 Examples:
   aether setup                              # Read-only first-run plan
   aether setup apply --plan-id <PLAN_ID>    # Apply an unchanged safe plan
-  aether sync                               # Sync all configurations
+  aether sync --confirmed                   # Apply with runtime owners stopped
   aether sync --dry-run                     # Validate without syncing
   aether channels list                      # List all channels
   aether models products list               # List products
   aether rules enable 1                     # Enable a rule
+  aether packs install --artifact ./x.bundle # Verify and atomically activate a Pack
   aether alarms list                        # List active alerts
   aether alarms events --level 3            # High-level alert history
   aether history latest inst:9:M 101        # Latest value of a point
@@ -118,13 +122,13 @@ enum Commands {
         command: Option<setup::SetupCommand>,
     },
 
-    /// Sync all configuration to SQLite database
+    /// Apply all configuration to SQLite while runtime owners are stopped
     Sync {
         /// Validate only, don't write to database (dry run)
         #[arg(short = 'n', long)]
         dry_run: bool,
 
-        /// Replace managed rows after validation instead of preserving unmatched rows
+        /// Replace sync-managed rows; refused while any governed action route exists
         #[arg(short, long)]
         force: bool,
 
@@ -135,6 +139,10 @@ enum Commands {
         /// Check database consistency (duplicates, references)
         #[arg(long)]
         check: bool,
+
+        /// Confirm the offline desired-state apply
+        #[arg(long)]
+        confirmed: bool,
     },
 
     /// Show current configuration status
@@ -254,11 +262,26 @@ enum Commands {
     #[command(about = "Interactive TUI dashboard for real-time monitoring")]
     Top,
 
+    /// Verify and inspect the feature-exact kernel runtime manifest
+    #[command(about = "Verify and inspect the installed kernel runtime manifest")]
+    RuntimeManifest {
+        /// Explicit manifest file; defaults to <config-path>/runtime-manifest.json
+        #[arg(long)]
+        path: Option<PathBuf>,
+    },
+
+    /// Build or install data-only domain Pack artifacts
+    #[command(about = "Build or install Pack-only artifacts without Kernel binaries")]
+    Packs {
+        #[command(subcommand)]
+        command: pack_artifact::PackCommands,
+    },
+
     /// Run an MCP (Model Context Protocol) server over stdio
     #[command(about = "Run an MCP server exposing aether's capabilities as tools")]
     Mcp {
-        /// Register write tools (channel writes, rule changes, config changes).
-        /// Without this flag, only read-only tools appear in tools/list.
+        /// Register the 22 governed write tools. Each call still requires
+        /// explicit confirmation; the flag is not confirmation.
         #[arg(long)]
         allow_write: bool,
     },
@@ -348,6 +371,7 @@ async fn run(cli: Cli) -> Result<()> {
             force,
             detailed,
             check,
+            confirmed,
         } => {
             if host.is_some() {
                 eprintln!("warning: --host is ignored for 'sync' (local filesystem operation)");
@@ -361,6 +385,11 @@ async fn run(cli: Cli) -> Result<()> {
                 }
                 validate_command(detailed, &config_path, &db_path, check, json).await?;
             } else {
+                if !confirmed {
+                    anyhow::bail!(
+                        "configuration apply requires --confirmed; use --dry-run for validation only"
+                    );
+                }
                 if !json {
                     println!("{}", "Syncing all configuration...".bright_cyan());
                 }
@@ -459,7 +488,7 @@ async fn run(cli: Cli) -> Result<()> {
             if json {
                 eprintln!("warning: --json is not supported for 'shm' command");
             }
-            shm::handle_command(command)?;
+            shm::handle_command(command, &db_path).await?;
         },
         Commands::Doctor { verbose } => {
             let mode = deploy_mode::DeployMode::detect(install_mode.as_deref())?;
@@ -516,6 +545,42 @@ async fn run(cli: Cli) -> Result<()> {
             );
             top::run_top(&io_url, &automation_url).await?;
         },
+        Commands::RuntimeManifest { path } => {
+            if host.is_some() {
+                eprintln!(
+                    "warning: --host is ignored for 'runtime-manifest' (local artifact verification)"
+                );
+            }
+            let manifest = match path {
+                Some(path) => aether_runtime_catalog::load_runtime_manifest_file(
+                    path,
+                    env!("CARGO_PKG_VERSION"),
+                )?,
+                None => aether_runtime_catalog::load_runtime_manifest_for_current_process(
+                    &config_path,
+                    env!("CARGO_PKG_VERSION"),
+                )?,
+            };
+            if json {
+                println!("{}", manifest.to_pretty_json()?);
+            } else {
+                println!("Runtime manifest verified: {}", manifest.composition());
+                println!("Aether version: {}", manifest.aether_version());
+                println!("Target: {}", manifest.target_triple());
+                println!("Checksum: {}", manifest.digest());
+                println!(
+                    "Capabilities: {} | Protocols: {}",
+                    manifest.capabilities().len(),
+                    manifest.protocols().len()
+                );
+            }
+        },
+        Commands::Packs { command } => {
+            if host.is_some() {
+                eprintln!("warning: --host is ignored for 'packs' (local artifact operation)");
+            }
+            pack_artifact::handle(command, &config_path, &db_path, json)?;
+        },
         Commands::Mcp { allow_write } => {
             if json {
                 eprintln!(
@@ -554,7 +619,7 @@ async fn run(cli: Cli) -> Result<()> {
                     host,
                 ),
             };
-            let server = mcp::AetherMcp::new(&urls, allow_write)?;
+            let server = mcp::AetherMcp::from_active_pack_config(&urls, allow_write, &config_path)?;
             use rmcp::ServiceExt;
             let running = server.serve(rmcp::transport::stdio()).await?;
             running.waiting().await?;
@@ -572,6 +637,7 @@ async fn sync_command(
     check: bool,
     json: bool,
 ) -> Result<()> {
+    ensure_configuration_owners_stopped().await?;
     let configs = ["global", "aether-io", "aether-automation"];
     let core = AetherCore::readwrite(db_path, config_path, "all").await?;
 
@@ -640,31 +706,50 @@ async fn sync_command(
         }
     }
 
-    let reload_report = crate::services::reload_config_services().await;
-
-    if !json {
-        println!("\n{} Reloading services...", "-".bright_cyan());
-        crate::services::print_config_reload_report(&reload_report);
-    }
-
-    if reload_report.requires_restart() {
-        anyhow::bail!(
-            "Configuration was committed to SQLite, but the live runtime is stale; restart required for: {}",
-            reload_report.restart_required.join(", ")
+    if json {
+        output::print_success(serde_json::json!({
+            "desired_state_atomic": true,
+            "configs": json_results,
+            "runtime_activation": "on_next_service_start",
+        }));
+    } else {
+        println!(
+            "\n{} Desired configuration synced; start services to activate it.",
+            "DONE".green()
         );
     }
 
-    if json {
-        output::print_success(serde_json::json!({
-            "atomic": true,
-            "configs": json_results,
-            "reload": reload_report,
-        }));
-    } else {
-        println!("\n{} Configuration synced successfully!", "DONE".green());
-    }
-
     Ok(())
+}
+
+async fn ensure_configuration_owners_stopped() -> Result<()> {
+    let mut running = Vec::new();
+    for (service, port) in [
+        ("aether-io", aether_model::service_ports::IO_PORT),
+        (
+            "aether-automation",
+            aether_model::service_ports::AUTOMATION_PORT,
+        ),
+    ] {
+        let address = std::net::SocketAddr::from(([127, 0, 0, 1], port));
+        if tokio::time::timeout(
+            std::time::Duration::from_millis(300),
+            tokio::net::TcpStream::connect(address),
+        )
+        .await
+        .is_ok_and(|result| result.is_ok())
+        {
+            running.push(service);
+        }
+    }
+    if running.is_empty() {
+        Ok(())
+    } else {
+        anyhow::bail!(
+            "offline configuration apply refused while runtime owners are listening: {}; stop them first, then run sync and start them again",
+            running.join(", ")
+        )
+    }
 }
 
 async fn validate_command(

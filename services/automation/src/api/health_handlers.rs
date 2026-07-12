@@ -18,6 +18,15 @@ use crate::app_state::AppState;
 /// Performs actual connectivity checks on dependencies.
 /// Returns 503 if any critical dependency is unhealthy.
 ///
+#[cfg_attr(feature = "swagger-ui", utoipa::path(
+    get,
+    path = "/health",
+    responses(
+        (status = 200, description = "Automation service and critical dependencies are healthy", body = serde_json::Value),
+        (status = 503, description = "A critical dependency is unavailable", body = serde_json::Value)
+    ),
+    tag = "automation"
+))]
 pub async fn health_check(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<SuccessResponse<serde_json::Value>>, AppError> {
@@ -90,7 +99,7 @@ pub async fn health_check(
         },
     }
 
-    // Check product loader (products are compile-time constants, always healthy)
+    // Report the validated active Pack/site product-library size.
     let product_start = Instant::now();
     let products = state.instance_manager.product_loader().get_all_products();
     checks.insert(
@@ -116,19 +125,11 @@ pub async fn health_check(
         errors.push("shm_dispatch: writer unavailable (io may have restarted)".to_string());
         "degraded"
     };
-    let mut shm_value = serde_json::json!({
+    let shm_value = serde_json::json!({
         "status": shm_status,
         "writer_available": shm_writer_available,
         "uds_notifier_configured": uds_notifier_configured
     });
-
-    if let Some(stats) = state.instance_manager.slot_bitmap_stats()
-        && let Some(obj) = shm_value.as_object_mut()
-    {
-        obj.insert("total_slots".to_string(), json!(stats.total_slots));
-        obj.insert("allocated".to_string(), json!(stats.allocated_slots));
-        obj.insert("free".to_string(), json!(stats.free_slots));
-    }
 
     checks.insert("shm_dispatch".to_string(), shm_value);
 

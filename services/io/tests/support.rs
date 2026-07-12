@@ -2,21 +2,17 @@
 
 use std::sync::Arc;
 
-use aether_rtdb_shm::{
-    ChannelPointCounts, ChannelToSlotIndex, SharedConfig, ShmHandle, UnifiedWriter,
-};
+use aether_shm_bridge::{ChannelPointManifest, ShmRuntimeConfig, ShmWriterHandle};
 
-pub fn create_test_shm_handle() -> Arc<ShmHandle> {
+pub fn create_test_shm_handle() -> Arc<ShmWriterHandle> {
     let directory = tempfile::Builder::new()
         .prefix("aether-io-integration-shm-")
         .tempdir()
         .expect("create test SHM directory")
         .keep();
-    let config = SharedConfig::default()
-        .with_path(directory.join("io.shm"))
-        .with_max_slots(65_536);
-    let writer = UnifiedWriter::create(&config, &ChannelPointCounts::new())
-        .expect("create integration-test SHM writer");
-    let index = ChannelToSlotIndex::from_unified_writer(&writer);
-    Arc::new(ShmHandle::new(config, writer, index))
+    let config = ShmRuntimeConfig::new(directory.join("io.shm"), 65_536);
+    Arc::new(
+        ShmWriterHandle::create_published(config, Arc::new(ChannelPointManifest::default()), None)
+            .expect("compose typed SHM layout"),
+    )
 }

@@ -1,22 +1,28 @@
-//! Channel point counts for SHM slot allocation.
+//! Legacy channel-count loader and compatibility view.
 //!
-//! Provides a routing-independent data source for SHM layout.
-//! Slot allocation is based on channel point definitions (from SQLite point tables),
-//! not on routing mappings. This decouples SHM layout from routing changes.
+//! [`ChannelPointManifest`] is the only implementation of layout compilation
+//! and hashing. This module retains the SQLite loader until configuration
+//! loading moves to a composition adapter; all other behavior delegates to
+//! that formal manifest.
 
 use std::collections::BTreeMap;
-use std::hash::{Hash, Hasher};
 
-/// Per-channel point counts: [T, S, C, A].
+use aether_shm_bridge::ChannelPointManifest;
+
+/// Compatibility wrapper around the formal T/S/C/A manifest.
 ///
 /// Each element is `max(point_id) + 1` for that type, representing
 /// the number of slots needed. BTreeMap ensures deterministic iteration order.
+///
+/// Removal criterion: delete this type once the SQLite loader lives in a
+/// composition/configuration adapter and all production callers consume
+/// `ChannelPointManifest` directly.
 #[derive(Debug, Clone, Default)]
-pub struct ChannelPointCounts(pub BTreeMap<u32, [u32; 4]>);
+pub struct ChannelPointCounts(ChannelPointManifest);
 
 impl ChannelPointCounts {
     pub fn new() -> Self {
-        Self(BTreeMap::new())
+        Self::default()
     }
 
     /// Load channel point counts from SQLite point tables.
@@ -50,7 +56,7 @@ impl ChannelPointCounts {
             }
         }
 
-        Ok(Self(counts))
+        Ok(Self::from_map(counts))
     }
 
     /// Compute a deterministic hash of the channel point layout.
@@ -58,22 +64,24 @@ impl ChannelPointCounts {
     /// Same channel points → same hash → same SHM slot allocation.
     /// Used for cross-process SHM header validation.
     pub fn layout_hash(&self) -> u64 {
-        let mut hasher = rustc_hash::FxHasher::default();
-        // BTreeMap iterates in sorted key order — deterministic
-        for (channel_id, counts) in &self.0 {
-            channel_id.hash(&mut hasher);
-            counts.hash(&mut hasher);
-        }
-        hasher.finish()
+        self.0.layout_hash()
     }
 
     /// Build from a raw BTreeMap (for tests and non-async contexts).
     pub fn from_map(map: BTreeMap<u32, [u32; 4]>) -> Self {
-        Self(map)
+        Self(ChannelPointManifest::from_map(map))
     }
 
     /// Get the inner map.
     pub fn inner(&self) -> &BTreeMap<u32, [u32; 4]> {
+        self.0.counts()
+    }
+
+    /// Returns the formal channel manifest used by the compatibility writer.
+    ///
+    /// Removal criterion: delete this wrapper after every production caller
+    /// constructs and consumes `ChannelPointManifest` directly.
+    pub(crate) const fn manifest(&self) -> &ChannelPointManifest {
         &self.0
     }
 }

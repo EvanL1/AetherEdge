@@ -48,7 +48,7 @@ pub struct InstanceTopology {
                 "data": {
                     "version": "1.0.0",
                     "instances": [
-                        {"id": 1, "name": "pv_001", "product": "pv_inverter", "parent_id": null, "properties": {}}
+                        {"id": 1, "name": "pump_001", "product": "pump", "parent_id": null, "properties": {}}
                     ]
                 }
             })

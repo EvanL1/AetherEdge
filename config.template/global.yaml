@@ -1,6 +1,9 @@
 # ============================================================================
-# AetherEMS Global Configuration
+# Aether Global Configuration
 # ============================================================================
+# Domain Packs are deny-by-default. Each active entry has `{ id, root }`; root
+# is absolute or relative to this configuration directory without `..`.
+packs: []
 api:
   # Internal process APIs stay host-local; expose only aether-api publicly.
   host: "127.0.0.1"

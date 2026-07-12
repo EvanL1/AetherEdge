@@ -10,7 +10,6 @@ use anyhow::Result;
 use common::{ComparisonOperator, FourRemote, PointRole};
 use std::fs;
 use std::path::PathBuf;
-use std::process::Command;
 use std::str::FromStr;
 use tempfile::TempDir;
 // Note: ProtocolType moved to io - protocol tests use config values directly
@@ -380,11 +379,10 @@ channels:
     // Run aether sync - should handle invalid enum gracefully
     // Note: The sync might succeed but skip invalid items, or might fail
     // depending on implementation. We test that it doesn't crash.
-    let _sync_result = Command::new("cargo")
-        .args(["run", "--bin", "aether", "--", "sync", "io"])
-        .env("CONFIG_PATH", &env.config_dir)
-        .env("AETHER_IO_DB_PATH", env.data_dir.join("io.db"))
-        .output()?;
+    // Keep this structural fixture consistent with the other tests in this
+    // module. Spawning `cargo run` from inside `cargo test` can deadlock on
+    // Cargo's target-directory lock and is not an integration assertion.
+    env.run_aether(&["sync", "io"])?;
 
     // Skip database verification in this test framework
     // In a real integration test, we would verify:

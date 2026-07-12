@@ -867,11 +867,15 @@ assert_contains "$ROOT_DIR/docker-compose.yml" '"--bind", "127.0.0.1"'
     || fail "uplink control credential must be injected only into automation and uplink"
 assert_contains "$BARE_METAL_INSTALLER" 'AETHER_UPLINK_CONTROL_TOKEN=$UPLINK_CONTROL_TOKEN'
 
-echo "Testing unauthenticated internal APIs keep their commissioned network boundaries..."
+echo "Testing internal APIs keep their commissioned network and credential boundaries..."
 assert_contains "$ROOT_DIR/docker-compose.yml" 'command: ["aether-io", "--bind-address", "127.0.0.1:6001"]'
+io_compose_service=$(sed -n '/^  aether-io:/,/^  aether-automation:/p' "$ROOT_DIR/docker-compose.yml")
+if [[ "$io_compose_service" != *'JWT_SECRET_KEY=${JWT_SECRET_KEY:?'* ]]; then
+    fail "aether-io Compose service must receive the shared access-JWT verification secret"
+fi
 internal_loopback_count=$(grep -Fc -- '- API_HOST=127.0.0.1' "$ROOT_DIR/docker-compose.yml")
 [[ "$internal_loopback_count" == 4 ]] \
-    || fail "the four core unauthenticated internal APIs must bind to loopback"
+    || fail "the four internal service APIs must bind to loopback"
 assert_contains "$ROOT_DIR/docker-compose.yml" 'API_HOST=${AETHER_API_HOST:-0.0.0.0}'
 processor_compose_section=$(awk '
     /^  aether-load-forecasting-processor:/ { in_processor = 1 }
@@ -915,6 +919,15 @@ fi
 assert_contains "$INSTALLER_BUILDER" '! csv_contains "$BUILD_IMAGES" "aetherems:latest"'
 assert_contains "$INSTALLER_BUILDER" 'csv_contains "$BUILD_IMAGES" "redis:8-alpine"'
 assert_contains "$INSTALLER_BUILDER" 'CARGO_FEATURES=""'
+assert_contains "$INSTALLER_BUILDER" 'generate "$TARGET" "$RUNTIME_MANIFEST_DIR"'
+assert_contains "$INSTALLER_BUILDER" '--bin aether-runtime-manifest -- print-default-features'
+assert_contains "$INSTALLER_BUILDER" 'CARGO_FEATURES=$(add_csv_item "$CARGO_FEATURES" "$feature")'
+assert_contains "$INSTALLER_BUILDER" 'cp "$RUNTIME_MANIFEST_PATH" "$BM_PKG_DIR/config.template/runtime-manifest.json"'
+assert_contains "$INSTALLER_BUILDER" 'cp "$RUNTIME_MANIFEST_PATH" "$BUILD_DIR/config.template/runtime-manifest.json"'
+assert_contains "$ROOT_DIR/Dockerfile" 'COPY ${RUNTIME_MANIFEST_PATH} /app/config/runtime-manifest.json'
+assert_contains "$ROOT_DIR/.dockerignore" '!build/installer/runtime/runtime-manifest.json'
+assert_contains "$DOCKER_INSTALLER" './tools/aether --json runtime-manifest'
+assert_contains "$BARE_METAL_INSTALLER" 'bin/aether --json runtime-manifest'
 timescale_feature_guard_line=$(grep -nF 'if csv_contains "$BUILD_IMAGES" "timescale/timescaledb:2.25.2-pg17"; then' "$INSTALLER_BUILDER" | head -1 | cut -d: -f1)
 postgres_feature_line=$(grep -nF '"$CARGO_FEATURES" "aether-history/postgres-storage")' "$INSTALLER_BUILDER" | cut -d: -f1)
 [[ -n "$timescale_feature_guard_line" && -n "$postgres_feature_line" \

@@ -9,7 +9,8 @@ use axum::{
 };
 use serde_json::{Value, json};
 use tracing::{error, info};
-use utoipa::OpenApi;
+#[cfg(feature = "swagger-ui")]
+use utoipa::{OpenApi, ToSchema};
 #[cfg(feature = "swagger-ui")]
 use utoipa_swagger_ui::{Config, SwaggerUi};
 
@@ -17,10 +18,11 @@ use crate::backend_null::NullBackend;
 use crate::backend_sqlite::SqliteHistoryBackend;
 use crate::db_config;
 use crate::models::{
-    BatchQueryRequest, BatchQueryResponse, DataStats, HistoryRecord, LatestParams,
-    QueryRangeParams, QueryResult, SeriesResult, ServiceConfig, StorageConfigRequest,
-    StorageSettings, StorageTestRequest,
+    BatchQueryRequest, BatchQueryResponse, DataStats, LatestParams, QueryRangeParams,
+    ServiceConfig, StorageConfigRequest, StorageSettings, StorageTestRequest,
 };
+#[cfg(feature = "swagger-ui")]
+use crate::models::{HistoryRecord, SeriesResult};
 use crate::state::AppState;
 use crate::storage::StorageBackend;
 
@@ -118,7 +120,70 @@ pub fn build_router(state: Arc<AppState>) -> Router {
 // OpenAPI document (only consumed when swagger-ui feature is enabled)
 // ============================================================================
 
-#[cfg_attr(not(feature = "swagger-ui"), allow(dead_code))]
+/// OpenAPI-only representation of the paginated query wire response.
+#[cfg(feature = "swagger-ui")]
+#[allow(dead_code)]
+#[derive(ToSchema)]
+struct HistoryQueryResponse {
+    success: bool,
+    message: String,
+    data: Vec<HistoryRecord>,
+    total: i64,
+    page: i64,
+    page_size: i64,
+    has_more: bool,
+}
+
+/// OpenAPI-only representation of the latest-value wire envelope.
+#[cfg(feature = "swagger-ui")]
+#[allow(dead_code)]
+#[derive(ToSchema)]
+struct LatestHistoryResponse {
+    success: bool,
+    message: String,
+    data: HistoryRecord,
+}
+
+/// OpenAPI-only representation of the batch-query wire envelope.
+#[cfg(feature = "swagger-ui")]
+#[allow(dead_code)]
+#[derive(ToSchema)]
+struct BatchHistoryResponse {
+    success: bool,
+    message: String,
+    data: BatchQueryResponse,
+}
+
+/// OpenAPI-only representation of the data-range wire envelope.
+#[cfg(feature = "swagger-ui")]
+#[allow(dead_code)]
+#[derive(ToSchema)]
+struct DataRangeResponse {
+    success: bool,
+    message: String,
+    data: DataStats,
+}
+
+/// OpenAPI-only representation of the service-config wire envelope.
+#[cfg(feature = "swagger-ui")]
+#[allow(dead_code)]
+#[derive(ToSchema)]
+struct HistoryConfigResponse {
+    success: bool,
+    message: String,
+    data: ServiceConfig,
+}
+
+/// OpenAPI-only representation of successful mutation responses.
+#[cfg(feature = "swagger-ui")]
+#[allow(dead_code)]
+#[derive(ToSchema)]
+struct HistoryMessageResponse {
+    success: bool,
+    message: String,
+}
+
+#[cfg(feature = "swagger-ui")]
 #[derive(OpenApi)]
 #[openapi(
     paths(
@@ -137,10 +202,19 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         update_storage,
         test_storage,
         reconnect_storage,
+        common::admin_api::get_log_level,
+        common::admin_api::set_log_level,
+        common::admin_api::list_log_files,
+        common::admin_api::view_log_file,
     ),
     components(schemas(
         HistoryRecord,
-        QueryResult,
+        HistoryQueryResponse,
+        LatestHistoryResponse,
+        BatchHistoryResponse,
+        DataRangeResponse,
+        HistoryConfigResponse,
+        HistoryMessageResponse,
         DataStats,
         ServiceConfig,
         StorageConfigRequest,
@@ -148,6 +222,8 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         BatchQueryRequest,
         BatchQueryResponse,
         SeriesResult,
+        common::admin_api::SetLogLevelRequest,
+        common::admin_api::LogLevelResponse,
     )),
     tags(
         (name = "Data",    description = "Historical data queries"),
@@ -155,14 +231,124 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         (name = "Config",  description = "Service configuration"),
         (name = "Storage", description = "Storage backend configuration and control"),
         (name = "Health",  description = "Health checks"),
+        (name = "admin",   description = "Host-local service administration"),
     ),
     info(
-        title = "AetherEMS History Service",
-        version = "1.0.0",
-        description = "SHM historical sampling with embedded SQLite and optional PostgreSQL / TimescaleDB backends"
+        title = "Aether History Service API",
+        version = env!("CARGO_PKG_VERSION"),
+        description = "Internal loopback API for history queries and storage configuration. Embedded SQLite is the default; optional external history adapters are feature-gated. Do not expose this service port remotely."
     )
 )]
 pub struct ApiDoc;
+
+#[cfg(all(test, feature = "swagger-ui"))]
+mod openapi_tests {
+    use super::*;
+
+    fn specification() -> Value {
+        serde_json::to_value(ApiDoc::openapi()).expect("serialize OpenAPI")
+    }
+
+    fn assert_response_schema(specification: &Value, path: &str, method: &str, schema: &str) {
+        assert_eq!(
+            specification["paths"][path][method]["responses"]["200"]["content"]["application/json"]
+                ["schema"]["$ref"],
+            format!("#/components/schemas/{schema}"),
+            "unexpected 200 response schema for {method} {path}"
+        );
+    }
+
+    #[test]
+    fn openapi_metadata_and_admin_routes_match_the_router() {
+        let specification = specification();
+        assert_eq!(specification["info"]["title"], "Aether History Service API");
+        assert_eq!(specification["info"]["version"], env!("CARGO_PKG_VERSION"));
+        for (path, method) in [
+            ("/api/admin/logs/level", "get"),
+            ("/api/admin/logs/level", "post"),
+            ("/api/admin/logs/files", "get"),
+            ("/api/admin/logs/view", "get"),
+        ] {
+            assert!(
+                specification["paths"][path][method].is_object(),
+                "missing {method} {path}"
+            );
+        }
+        let operation_count = specification["paths"]
+            .as_object()
+            .expect("paths object")
+            .values()
+            .map(|item| {
+                item.as_object()
+                    .expect("path item")
+                    .keys()
+                    .filter(|method| {
+                        matches!(
+                            method.as_str(),
+                            "get"
+                                | "put"
+                                | "post"
+                                | "delete"
+                                | "patch"
+                                | "options"
+                                | "head"
+                                | "trace"
+                        )
+                    })
+                    .count()
+            })
+            .sum::<usize>();
+        assert_eq!(operation_count, 19, "Router/OpenAPI operation drift");
+    }
+
+    #[test]
+    fn openapi_success_responses_match_the_wire_envelopes() {
+        let specification = specification();
+
+        for (path, method, schema) in [
+            ("/hisApi/data/query", "get", "HistoryQueryResponse"),
+            ("/hisApi/data/latest", "get", "LatestHistoryResponse"),
+            ("/hisApi/data/batch-query", "post", "BatchHistoryResponse"),
+            ("/hisApi/data/range", "get", "DataRangeResponse"),
+            ("/hisApi/config", "get", "HistoryConfigResponse"),
+            ("/hisApi/config", "put", "HistoryMessageResponse"),
+        ] {
+            assert_response_schema(&specification, path, method, schema);
+        }
+
+        let components = &specification["components"]["schemas"];
+        assert_eq!(
+            components["HistoryQueryResponse"]["properties"]["success"]["type"],
+            "boolean"
+        );
+        assert!(
+            components["HistoryQueryResponse"]["properties"]
+                .get("status")
+                .is_none(),
+            "the wire response uses success: bool, not status: string"
+        );
+        assert_eq!(
+            components["HistoryQueryResponse"]["properties"]["data"]["items"]["$ref"],
+            "#/components/schemas/HistoryRecord"
+        );
+        assert_eq!(
+            components["LatestHistoryResponse"]["properties"]["data"]["$ref"],
+            "#/components/schemas/HistoryRecord"
+        );
+        assert_eq!(
+            components["BatchHistoryResponse"]["properties"]["data"]["$ref"],
+            "#/components/schemas/BatchQueryResponse"
+        );
+        assert_eq!(
+            components["DataRangeResponse"]["properties"]["data"]["$ref"],
+            "#/components/schemas/DataStats"
+        );
+        assert_eq!(
+            components["HistoryConfigResponse"]["properties"]["data"]["$ref"],
+            "#/components/schemas/ServiceConfig"
+        );
+    }
+}
 
 // ============================================================================
 // Public helper – build and initialise a storage backend by type + URL.
@@ -340,12 +526,12 @@ async fn health(State(state): State<Arc<AppState>>) -> Json<Value> {
 /// the backend (TimescaleDB continuous aggregate / InfluxDB group-by); history
 /// itself does not resample. **Returns an empty set when no storage backend
 /// is configured** — this is not an error condition.
-#[utoipa::path(get, path = "/hisApi/data/query", tag = "Data",
+#[cfg_attr(feature = "swagger-ui", utoipa::path(get, path = "/hisApi/data/query", tag = "Data",
     params(QueryRangeParams),
     responses(
-        (status = 200, description = "Paginated historical records", body = QueryResult),
+        (status = 200, description = "Paginated historical records", body = HistoryQueryResponse),
         (status = 500, description = "Query failed"),
-    ))]
+    )))]
 async fn query_range(
     State(state): State<Arc<AppState>>,
     Query(params): Query<QueryRangeParams>,
@@ -401,13 +587,13 @@ async fn query_range(
 /// Note: "latest" means the most recent value in the historical store (subject
 /// to the configured flush interval) — not the real-time SHM value.
 /// For the live reading, use automation / api instead.
-#[utoipa::path(get, path = "/hisApi/data/latest", tag = "Data",
+#[cfg_attr(feature = "swagger-ui", utoipa::path(get, path = "/hisApi/data/latest", tag = "Data",
     params(LatestParams),
     responses(
-        (status = 200, description = "Most recent historical record for the point", body = HistoryRecord),
+        (status = 200, description = "Most recent historical record for the point", body = LatestHistoryResponse),
         (status = 404, description = "No data available yet"),
         (status = 500, description = "Query failed"),
-    ))]
+    )))]
 async fn query_latest(
     State(state): State<Arc<AppState>>,
     Query(params): Query<LatestParams>,
@@ -445,17 +631,17 @@ async fn query_latest(
 /// Limits:
 /// - Maximum 20 series per request
 /// - `limit_per_series` default 1000, max 5000
-#[utoipa::path(
+#[cfg_attr(feature = "swagger-ui", utoipa::path(
     post,
     path = "/hisApi/data/batch-query",
     tag = "Data",
     request_body = BatchQueryRequest,
     responses(
-        (status = 200, description = "批量历史数据", body = BatchQueryResponse),
+        (status = 200, description = "批量历史数据", body = BatchHistoryResponse),
         (status = 400, description = "请求参数错误"),
         (status = 500, description = "查询失败"),
     )
-)]
+))]
 async fn batch_query(
     State(state): State<Arc<AppState>>,
     Json(req): Json<BatchQueryRequest>,
@@ -537,11 +723,11 @@ async fn batch_query(
     }
 }
 
-#[utoipa::path(get, path = "/hisApi/data/range", tag = "Data",
+#[cfg_attr(feature = "swagger-ui", utoipa::path(get, path = "/hisApi/data/range", tag = "Data",
     responses(
-        (status = 200, description = "Data time range and aggregate statistics", body = DataStats),
+        (status = 200, description = "Data time range and aggregate statistics", body = DataRangeResponse),
         (status = 500, description = "Query failed"),
-    ))]
+    )))]
 async fn data_range(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
@@ -644,8 +830,8 @@ async fn metrics(State(state): State<Arc<AppState>>) -> Json<Value> {
 /// Returns collection interval, write batch size, point filter patterns,
 /// retention period, and related settings. Storage backend connection
 /// parameters are **not** included here — manage those via `/hisApi/storage`.
-#[utoipa::path(get, path = "/hisApi/config", tag = "Config",
-    responses((status = 200, description = "Current service configuration", body = ServiceConfig)))]
+#[cfg_attr(feature = "swagger-ui", utoipa::path(get, path = "/hisApi/config", tag = "Config",
+    responses((status = 200, description = "Current service configuration", body = HistoryConfigResponse))))]
 async fn get_config(State(state): State<Arc<AppState>>) -> Json<Value> {
     let cfg = state.config.read().await.clone();
     Json(json!({ "success": true, "message": "OK", "data": cfg }))
@@ -657,12 +843,12 @@ async fn get_config(State(state): State<Arc<AppState>>) -> Json<Value> {
 /// without restarting history. Changes to collection interval, batch size,
 /// and point patterns take effect at once. Storage backend connection
 /// parameters cannot be changed here — use `PUT /hisApi/storage` instead.
-#[utoipa::path(put, path = "/hisApi/config", tag = "Config",
+#[cfg_attr(feature = "swagger-ui", utoipa::path(put, path = "/hisApi/config", tag = "Config",
     request_body = ServiceConfig,
     responses(
-        (status = 200, description = "Configuration updated"),
+        (status = 200, description = "Configuration updated", body = HistoryMessageResponse),
         (status = 500, description = "Failed to persist configuration"),
-    ))]
+    )))]
 async fn update_config(
     State(state): State<Arc<AppState>>,
     Json(mut new_cfg): Json<ServiceConfig>,

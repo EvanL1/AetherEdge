@@ -149,13 +149,13 @@ pub struct LanQuery {
 /// Retrieve the network interface configuration (LAN/WAN).
 ///
 /// Parses the current systemd-networkd configuration and returns a structured
-/// result: interface name, IP address, subnet mask, gateway, DNS servers, and
-/// DHCP mode. Filter by `lan` query parameter to inspect a specific port.
+/// result: IP address, subnet mask, gateway, DNS servers, and DHCP mode. Filter
+/// by `lan` query parameter to inspect a specific port.
 /// **Read-only** — remote mutation is intentionally unavailable.
 #[utoipa::path(get, path = "/api/v1/network", tag = "Network",
     security(("bearer_auth" = [])),
     params(LanQuery),
-    responses((status = 200, description = "Network configuration", body = NetworkConfig), (status = 400, description = "Invalid LAN number")))]
+    responses((status = 200, description = "Network configuration", body = crate::models::GatewayDataResponse<NetworkConfig>), (status = 400, description = "Invalid LAN number")))]
 pub async fn get_network_config(
     State(state): State<Arc<AppState>>,
     Query(q): Query<LanQuery>,
@@ -200,6 +200,7 @@ pub async fn get_network_config(
 #[utoipa::path(put, path = "/api/v1/network", tag = "Network",
     security(("bearer_auth" = [])),
     responses(
+        (status = 401, description = "Missing or invalid access token"),
         (status = 403, description = "Admin privileges required"),
         (status = 501, description = "Remote network mutation is disabled")
     ))]
@@ -223,6 +224,7 @@ pub async fn update_network_config(
 #[utoipa::path(post, path = "/api/v1/network/apply", tag = "Network",
     security(("bearer_auth" = [])),
     responses(
+        (status = 401, description = "Missing or invalid access token"),
         (status = 403, description = "Admin privileges required"),
         (status = 501, description = "Remote network mutation is disabled")
     ))]

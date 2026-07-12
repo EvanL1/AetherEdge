@@ -60,7 +60,7 @@ utoipa = { workspace = true }
 utoipa-swagger-ui = { workspace = true, optional = true }
 
 [features]
-swagger-ui = ["utoipa-swagger-ui"]
+swagger-ui = ["utoipa-swagger-ui", "common/openapi"]
 
 [dev-dependencies]
 tempfile = { workspace = true }

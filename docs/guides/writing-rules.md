@@ -63,6 +63,10 @@ invariant).
 ## Via the HTTP API
 
 automation serves the rule API (`services/automation/src/rule_routes.rs`):
+Swagger UI at `http://localhost:6002/docs` is the per-operation contract source.
+Every mutation below accepts only a Bearer Admin/Engineer actor, requires
+`confirmed: true`, and writes mandatory audit records before changing SQLite
+or reloading the scheduler.
 
 | Method | Path | Purpose |
 |--------|------|---------|
@@ -85,17 +89,22 @@ document, disabled. The flow content only lands via `PUT /api/rules/{id}`:
 ```bash
 # 1. Create the stub; the response carries the assigned id
 curl -X POST http://localhost:6002/api/rules \
+  -H "Authorization: Bearer $AETHER_ACCESS_TOKEN" \
   -H 'Content-Type: application/json' \
-  -d '{"name": "Battery SOC Protection", "description": "Protect battery when SOC is too low"}'
+  -d '{"name": "Battery SOC Protection", "description": "Protect battery when SOC is too low", "confirmed": true}'
 # → {"success": true, "data": {"id": 3, "name": "Battery SOC Protection", "status": "created"}}
 
 # 2. Write the flow and trigger
 curl -X PUT http://localhost:6002/api/rules/3 \
+  -H "Authorization: Bearer $AETHER_ACCESS_TOKEN" \
   -H 'Content-Type: application/json' \
   -d @rule.json
 
 # 3. Enable it
-curl -X POST http://localhost:6002/api/rules/3/enable
+curl -X POST http://localhost:6002/api/rules/3/enable \
+  -H "Authorization: Bearer $AETHER_ACCESS_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"confirmed": true}'
 ```
 
 where `rule.json` supplies the editor document and trigger:
@@ -110,28 +119,31 @@ where `rule.json` supplies the editor document and trigger:
     ],
     "edges": []
   },
-  "trigger_config": {"type": "interval", "interval_ms": 1000}
+  "trigger_config": {"type": "interval", "interval_ms": 1000},
+  "confirmed": true
 }
 ```
 
 That flow is the minimal valid document (it does nothing); for a full
 strategy with input, decision, and action nodes, see the shipped template
-`packs/energy/examples/config/automation/rules/battery_soc_management.json`, which
+`packs/energy/rules/battery_soc_management.json`, which
 [Control Strategies](../domain/control-strategies.md) walks through node by
 node. A malformed flow fails the PUT as a unit — nothing is stored — and a
 malformed `trigger_config` is rejected at the same boundary.
 
-The `aether` CLI wraps the same endpoints: `aether rules create --name …`,
-`aether rules update <id> --flow-json flow.json` (use `-` for stdin),
-`aether rules enable <id>`, `aether rules list`.
+The `aether` CLI wraps the same endpoints. Set `AETHER_ACCESS_TOKEN` and pass
+`--confirmed` to `rules create`, `update`, `enable`, `disable`, and `delete`;
+`delete --force` only skips the interactive prompt. `rules list` remains
+read-only.
 
 ## Testing a rule
 
 **There is no dry-run.** `POST /api/rules/{id}/execute` — and equally the
-`rules_execute` MCP tool and `aether rules execute <id>` (with or without
-its `--force` flag) — performs a real execution: the flow is evaluated
-against live values, and any action that fires is dispatched through shared
-memory to io and on to the device.
+`rules_execute` MCP tool and `aether rules execute <id> --confirmed` — performs
+a real execution through the authenticated, confirmed, and audited application
+command: the flow is evaluated against live values, and any action that fires
+is submitted to the local command plane. Acceptance does not prove that the
+physical device executed the command or reached the target value.
 
 So test against hardware that does not exist yet. The Virtual protocol has
 no feature gate precisely so it is always available for this:
@@ -142,14 +154,15 @@ no feature gate precisely so it is always available for this:
 2. Point the rule's actions at the scratch instance and execute:
 
    ```bash
-   aether rules execute 3
+   AETHER_ACCESS_TOKEN='<signed access JWT>' \
+     aether rules execute 3 --confirmed
    ```
 
-3. Check the result. The execute response itself reports `success`, the
-   `actions_executed` list (each with target, point, value, and its own
-   success flag), and the `execution_path` — the node IDs the evaluation
-   actually visited, which tells you *which branch* fired. The same record is
-   persisted locally in SQLite `rule_history` for API and WebSocket readers.
+3. Check the result. The command response reports `actions_attempted` and
+   `actions_succeeded`, where success means local command-plane acceptance.
+   Read back the corresponding measurements to verify physical behavior. The
+   detailed execution path and action outcomes remain persisted locally in
+   SQLite `rule_history` for API and WebSocket readers.
 
 4. Once the branch selection and written values look right, re-target the
    rule's actions at the production instance and enable it.

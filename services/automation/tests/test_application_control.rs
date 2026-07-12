@@ -133,37 +133,46 @@ fn forged_identity_headers_are_rejected() {
 }
 
 #[test]
-fn signed_engineer_access_token_becomes_control_actor() {
-    let mut headers = HeaderMap::new();
-    let authorization = format!("Bearer {}", access_token("Engineer", 3_600));
-    headers.insert(
-        "authorization",
-        HeaderValue::from_str(&authorization).expect("valid authorization header"),
-    );
-    headers.insert(
-        "x-request-id",
-        HeaderValue::from_static("018f0000-0000-7000-8000-000000000001"),
-    );
+fn signed_admin_and_engineer_tokens_receive_all_shared_command_permissions() {
+    for role in ["Admin", "Engineer"] {
+        let mut headers = HeaderMap::new();
+        let authorization = format!("Bearer {}", access_token(role, 3_600));
+        headers.insert(
+            "authorization",
+            HeaderValue::from_str(&authorization).expect("valid authorization header"),
+        );
+        headers.insert(
+            "x-request-id",
+            HeaderValue::from_static("018f0000-0000-7000-8000-000000000001"),
+        );
 
-    let invocation = command_invocation_from_headers(
-        &authenticator(),
-        &headers,
-        true,
-        TimestampMs::new(2_000_000),
-    );
+        let invocation = command_invocation_from_headers(
+            &authenticator(),
+            &headers,
+            true,
+            TimestampMs::new(2_000_000),
+        );
 
-    assert_eq!(invocation.context().actor().id(), "user:7");
-    assert!(
-        invocation
-            .context()
-            .actor()
-            .has_permission("device.control")
-    );
-    assert!(invocation.context().confirmed());
-    assert_eq!(
-        invocation.context().request_id(),
-        "018f0000-0000-7000-8000-000000000001"
-    );
+        assert_eq!(invocation.context().actor().id(), "user:7");
+        for permission in [
+            "device.control",
+            "automation.rule.execute",
+            "automation.rule.manage",
+            "automation.routing.manage",
+            "alarm.rule.manage",
+            "alarm.alert.resolve",
+        ] {
+            assert!(
+                invocation.context().actor().has_permission(permission),
+                "{role} is missing {permission}"
+            );
+        }
+        assert!(invocation.context().confirmed());
+        assert_eq!(
+            invocation.context().request_id(),
+            "018f0000-0000-7000-8000-000000000001"
+        );
+    }
 }
 
 #[test]
@@ -218,6 +227,18 @@ fn authenticated_uplink_gets_a_fixed_identity() {
             .actor()
             .has_permission("device.control")
     );
+    for permission in [
+        "automation.rule.execute",
+        "automation.rule.manage",
+        "automation.routing.manage",
+        "alarm.rule.manage",
+        "alarm.alert.resolve",
+    ] {
+        assert!(
+            !invocation.context().actor().has_permission(permission),
+            "uplink service credential unexpectedly gained {permission}"
+        );
+    }
     assert!(invocation.context().confirmed());
 
     headers.insert(

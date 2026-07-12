@@ -10,8 +10,8 @@
 //!
 //! ```text
 //! ┌─────────────┐     ┌──────────────┐     ┌─────────────┐
-//! │  Scheduler  │────▶│   Executor   │────▶│ SHM reader  │
-//! │  +PointWatch│     │  (evaluate)  │     │ (read-only) │
+//! │  Scheduler  │────▶│   Executor   │────▶│ Live state  │
+//! │  +PointWatch│     │  (evaluate)  │     │   port      │
 //! └─────────────┘     └──────────────┘     └─────────────┘
 //!        │                   │
 //!        ▼                   ▼
@@ -29,9 +29,11 @@ pub mod parser;
 mod repository;
 pub mod types;
 
-// Rule engine runtime (executor/scheduler/logger) is Linux-only.
-// It depends on aether-rtdb-shm's ShmNotifier which requires POSIX UDS.
+// Rule engine runtime (executor/scheduler/logger) is Unix-only while its
+// PointWatch subscription adapter uses POSIX mmap facilities.
 // Windows builds only need the parser for `aether sync` (remote management CLI).
+#[cfg(unix)]
+mod action_command;
 #[cfg(unix)]
 mod executor;
 #[cfg(unix)]
@@ -50,13 +52,17 @@ pub use repository::{
 };
 
 #[cfg(unix)]
+pub use action_command::{RuleActionCommand, RuleActionCommandFacade};
+#[cfg(unix)]
 pub use executor::{ActionResult, RuleExecutionResult, RuleExecutor};
 #[cfg(unix)]
-pub use live_state::{MemoryRuleLiveState, RuleLiveState, ShmRuleLiveState};
+pub use live_state::{MemoryRuleLiveState, RuleLiveState};
 #[cfg(unix)]
 pub use logger::{RuleLogger, RuleLoggerManager, format_conditions};
 #[cfg(unix)]
-pub use point_watch_dispatcher::{PointWatchDispatcher, RuleSubscriptionInfo, WatchEvent};
+pub use point_watch_dispatcher::{
+    PointWatchDispatcher, PointWatchHint, RuleSubscriptionInfo, WatchEvent,
+};
 #[cfg(unix)]
 pub use scheduler::{
     DEFAULT_TICK_MS, OnChangeState, PointKind, PointRef, RuleScheduler, SchedulerStatus,

@@ -1,5 +1,5 @@
 # Energy pack model instances example
-# All instances are based on product definitions in config/automation/products/
+# All instances reference models supplied by the explicitly active Energy Pack.
 
 instances:
   # ============================================

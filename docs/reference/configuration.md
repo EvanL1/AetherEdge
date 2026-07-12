@@ -6,12 +6,11 @@ updated: 2026-07-11
 
 # Configuration Reference
 
-Aether services never read YAML directly. All configuration lives in YAML,
-CSV, and JSON files under a `config/` directory, is imported into a SQLite
-database (`aether.db`) by the `aether sync` CLI command, and is read from
-SQLite when a service starts. This page documents the pipeline, the file
-layout, and the environment variables recognized by the Docker deployment and
-the CLI.
+Operational configuration lives in YAML, CSV, and JSON files under a `config/`
+directory and is imported into SQLite (`aether.db`) by `aether sync`. The one
+startup-time exception is `global.yaml`'s `packs` list: automation and
+`aether mcp` read that same entry directly so a Pack identity and root cannot
+drift between the two processes.
 
 ## The sync pipeline
 
@@ -34,8 +33,9 @@ target leaves the database untouched:
   (`telemetry_points`, `signal_points`, `control_points`,
   `adjustment_points`). Duplicate channel names abort the sync.
 - **aether-automation** — parses `config/automation/automation.yaml`, `instances.yaml`, and
-  `rules/*.json` into the instance and rules tables, and validates any
-  external product JSON files under `config/automation/products/`. There is no
+  `rules/*.json` into the instance and rules tables, imports measurement (`M`)
+  entries from `instance_routing.csv`, and validates any external product JSON
+  files under `config/automation/products/`. There is no
   standalone calculation-engine sync path — a previously-orphaned
   `calculations.yaml` template, its unused table, and its dead API schema
   types have been removed. Derived quantities are expressed with
@@ -47,7 +47,14 @@ global, IO, and automation configuration in one SQLite transaction, so an
 error in a later domain rolls back all earlier changes. By default rows with
 no corresponding config file (for example rules created through the HTTP API)
 are preserved. With `--force`, managed tables are fully replaced, but
-validation is still mandatory.
+validation is still mandatory. Action (`A`) routing is deliberately outside
+this compatibility importer: it selects the physical target of future device
+commands and must use the authenticated, confirmed, audited action-routing
+application command. An `A` row rolls back the whole sync. `--force` also
+refuses to start while any action route exists, so it cannot cascade-delete a
+commissioned command target. Delete or migrate those routes through the
+governed routing API before removing their instance, channel, control point, or
+adjustment point. Measurement routing remains sync-managed.
 
 Two related commands are easy to confuse with sync:
 
@@ -60,9 +67,11 @@ Two related commands are easy to confuse with sync:
   Any existing site configuration makes the fresh-only installer fail before
   it writes. Containers mount the new directory at `/app/config/`; the
   installer does not merge, upgrade, or import operator-owned configuration.
-  In a development checkout, `aether setup` plans and activates the exact
-  safe template under `./data/config` and initializes `./data/aether.db` only
-  after the returned plan ID is explicitly applied.
+  In a development checkout, `aether setup` plans and activates only the four
+  site-authored safe files under `./data/config` and initializes
+  `./data/aether.db` after the returned plan ID is explicitly applied. The
+  developer must then provide the explicit composition manifest described
+  below; setup never guesses which IO features were compiled.
 
 ## Directory layout
 
@@ -73,9 +82,11 @@ under `packs/energy/examples/config/`. Annotated:
 
 ```
 config.template/
-├── global.yaml                 # Shared settings: API bind
+├── global.yaml                 # Shared settings: active Packs, API bind
 │                               # host, log level/rotation, rule scheduler
 │                               # tick interval (rules.tick_ms, default 100)
+├── runtime-manifest.json       # Generated, checksummed build composition;
+│                               # never inferred or edited by site setup
 ├── io/
 │   ├── io.yaml                 # Empty channel list until commissioning
 │   │                           # (modbus_tcp, modbus_rtu, can, mqtt, http,
@@ -97,22 +108,53 @@ config.template/
     │   └── <name>/instance.yaml  # holding one instance definition
     ├── rules/                  # One JSON file per control rule (Vue Flow
     │   └── *.json              # graph: nodes, edges, priority, enabled)
-    └── products/               # (optional, not in the template) Custom
-                                # product JSON files; when present they
-                                # override the built-in product library
-                                # compiled into aether-model
+    └── products/               # (optional, not in the template) Site-owned
+                                # product JSON files; when present they may
+                                # override models from an active Pack
 ```
 
 Point-type shorthand: Aether uses T (telemetry), S (signal), C (control), and
 A (adjustment) for the four point classes throughout its APIs and file
 formats.
 
-Products deserve a note: the product library (device-type templates) is
-compiled into the `aether-model` crate, so a fresh install needs no product
-files at all. If `automation.yaml` sets `products_path` and that directory
-exists, automation loads the JSON files in it as overrides at startup
-(`services/automation/src/bootstrap.rs`), and `aether sync` validates them and
-reports per-file errors.
+The fail-safe default in `global.yaml` is `packs: []`, so a fresh site exposes
+zero domain products and no Pack-owned MCP knowledge. An installed Pack is
+activated with one identity-bound root:
+
+```yaml
+packs:
+  - id: energy
+    root: /opt/aether/packs/energy
+```
+
+The manifest identity must match `id`; compatibility, capability, protocol,
+commissioning, and asset confinement checks must all pass. A relative `root`
+is resolved from the configuration directory and cannot contain `..`.
+If `automation.yaml` sets `products_path`, that site-owned directory is loaded
+last and may deliberately override a model from an active Pack. Both runtime
+loading and `aether sync` reject symlinks, non-regular/oversized JSON, invalid
+JSON, and duplicate product names within one directory.
+
+`runtime-manifest.json` is mandatory beside `global.yaml`. It is generated by
+the runtime composition or installer, not authored by a Pack or inferred by an
+individual service. The closed v1 document records the Aether release, target,
+included services, exact `aether-io` protocol features, derived adapters, and
+application capabilities under a canonical SHA-256 checksum. Automation and
+MCP reject missing, tampered, version-mismatched, target-mismatched, unknown,
+feature-inconsistent, symlinked, non-regular, or oversized manifests before
+activating any Pack. For an explicit local development composition, generate
+it with:
+
+```bash
+HOST_TARGET=$(rustc -vV | sed -n 's/^host: //p')
+cargo run -p aether-runtime-catalog --bin aether-runtime-manifest -- \
+  generate "$HOST_TARGET" data/config
+```
+
+Pass a third comma-separated argument to `generate` for a deliberately trimmed
+IO feature set; there is no fallback that assumes all adapters are present.
+Use `aether runtime-manifest` (or `--path <artifact>`) to run the same verifier
+used by the installers, Automation, and MCP.
 
 ## Environment variables
 
@@ -129,10 +171,11 @@ gates):
 | `INFLUXDB_URL`, `INFLUXDB_ORG`, `INFLUXDB_BUCKET`, `INFLUXDB_TOKEN`, `INFLUXDB_PASSWORD` | unset | Optional InfluxDB history adapter only; unused by the default runtime |
 | `AETHER_IO_URL` | `http://127.0.0.1:6001` | io base URL for the API gateway and the `aether` CLI |
 | `AETHER_AUTOMATION_URL` | `http://127.0.0.1:6002` | automation base URL for the API gateway and the `aether` CLI |
-| `AETHER_ACCESS_TOKEN` | unset | Signed Admin/Engineer access JWT required by CLI and MCP device-control commands; query commands do not require it on the local interface |
+| `JWT_SECRET_KEY` | unset (required) | Shared 32-byte-or-longer access-JWT signing/verification secret for aether-api plus governed io, automation, and alarm operations; installers generate it and keep it outside configuration assets |
+| `AETHER_ACCESS_TOKEN` | unset | Signed Admin/Engineer access JWT required by governed CLI channel commissioning/lifecycle, device commands, action-routing changes, and automation/alarm policy operations, including MCP's 22 governed write tools; query commands do not require it on the local interface |
 | `AETHER_UPLINK_CONTROL_TOKEN` | unset | Separate 32-byte-or-longer service credential used only for uplink-to-automation device commands; installers generate it and never print it |
 | `AETHER_ALLOW_SIMULATION_WRITES` | `false` | Development-only opt-in for io T/S simulation writes into authoritative SHM; keep disabled in production |
-| `AETHER_CONFIG_PATH` | unset | Overrides the install-context config directory for the `aether` CLI |
+| `AETHER_CONFIG_PATH` | unset | Shared configuration directory used by automation and `aether mcp`; CLI path resolution may set it through deployment context or `--config-path` |
 | `AETHER_DATA_PATH` | unset | Overrides the install-context data directory for the `aether` CLI |
 | `AETHER_INSTALL_CONTEXT_PATH` | `/etc/aether/install.yaml` | Overrides the installed layout descriptor; CLI flags and the two path variables take precedence |
 | `AETHER_BOOTSTRAP_ADMIN_PASSWORD` | unset | Required only while `users` is empty; installers generate a strong value in their mode-0600 environment file, and it should be removed after the first password change |
@@ -146,6 +189,15 @@ gates):
 | `AETHER_LOAD_FORECASTING_IMAGE` | mutable local development image | Production must use an immutable `@sha256` image reference through the explicit Compose override and preflight validator |
 | `AETHER_LOAD_FORECASTING_PORT` | `8989` | Host-loopback published processor port for the Compose sidecar |
 | `RUST_LOG` | `info` | Log level for the Rust services; supports filter syntax such as `info,io=debug,automation=trace` |
+
+For MCP writes, `--allow-write` only registers the 22-tool write allowlist. The
+bridge sends `AETHER_ACCESS_TOKEN` as an `Authorization: Bearer` credential and
+adds an `X-Request-ID`; every invocation still requires `confirmed: true`.
+Preserve returned request/command IDs and do not automatically retry a timeout
+or an incomplete audit/publication result. Channel mutations also return a
+desired-state revision and may succeed with a degraded runtime projection;
+inspect `request_id`, `resulting_revision`, and `reconciliation_required`
+instead of retrying automatically.
 
 ### Data Processing and historian storage changes
 

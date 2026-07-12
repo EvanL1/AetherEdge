@@ -1,4 +1,4 @@
-//! Control and command handlers for channel operations
+//! Governed channel lifecycle and development-only point simulation handlers.
 //!
 //! This module contains handlers for:
 //! - Channel control operations (start, stop, restart)
@@ -8,118 +8,230 @@
 
 #![allow(clippy::disallowed_methods)] // json! macro used in multiple functions
 
+use super::channel_management_handlers::{
+    ChannelManagementHttpBoundary, path_channel_id, required_request_id,
+};
 use crate::api::routes::AppState;
-use crate::dto::{AppError, ChannelOperation, SuccessResponse, WritePointRequest, WriteResponse};
+use crate::dto::{
+    AppError, ChannelCompletionAudit, ChannelCompletionAuditState, ChannelControlOperationResult,
+    ChannelControlResponse, ChannelControlResult, ChannelOperation, ChannelOperationKind,
+    ChannelRuntimeProjectionResult, SuccessResponse, WritePointRequest, WriteResponse,
+};
+use aether_application::{
+    ChannelMutationAcceptance, ChannelReconciliationAcceptance, CompletionAuditStatus,
+};
+use aether_domain::ChannelId;
 use aether_model::PointType;
+use aether_ports::{ChannelMutation, ChannelReconciliationScope, ChannelRuntimeProjection};
 use axum::{
-    extract::{Path, State},
+    Extension,
+    extract::{Path, State, rejection::JsonRejection},
+    http::HeaderMap,
     response::Json,
 };
 
-/// Connect / disconnect / restart a channel's protocol runtime.
+/// Govern one channel's desired lifecycle or rebuildable runtime projection.
 ///
-/// `operation` accepts `start` (connect to device, begin polling),
-/// `stop` (disconnect cleanly, stop polling), or `restart` (cycle the
-/// connection without rewriting routing/SHM). Hot operations: SHM
-/// layout and routing cache are unaffected — only the protocol
-/// adapter's TCP / serial / CAN socket gets opened or closed.
-///
-/// 404 when the channel id doesn't exist in `channels` table; 500
-/// when the protocol-level connect fails (wrong address, timeout,
-/// permission denied on serial port, etc.). Use this for operator-
-/// driven device cycling; channels normally auto-reconnect via the
-/// reconnect helper with exponential backoff.
+/// `start` and `stop` mutate authoritative desired enabled state. `restart`
+/// reconciles the runtime from that desired state; it never writes SHM or
+/// calls a protocol entry directly from the HTTP boundary.
 #[utoipa::path(
     post,
     path = "/api/channels/{id}/control",
     params(
-        ("id" = String, Path, description = "Channel identifier")
+        ("id" = u32, Path, description = "Stable channel identifier below 10000", maximum = 9999),
+        ("x-request-id" = String, Header, format = "uuid", description = "Required UUID audit correlation ID; this is not an idempotency key"),
+        ("x-aether-confirmed" = bool, Header, description = "Required explicit confirmation; must be true")
     ),
     request_body = crate::dto::ChannelOperation,
     responses(
-        (status = 200, description = "Channel operation accepted", body = String,
-            example = json!({
-                "success": true,
-                "data": "Channel 1 connected successfully"
-            })
-        )
+        (status = 200, description = "Accepted non-idempotent desired-state or runtime lifecycle operation. Degraded projection and incomplete terminal audit remain accepted; do not retry automatically.", body = ChannelControlResponse),
+        (status = 400, description = "Malformed channel ID, request ID, JSON, or unsupported operation", body = common::ErrorResponse),
+        (status = 403, description = "Missing/invalid Bearer token or io.channel.manage permission", body = common::ErrorResponse),
+        (status = 404, description = "Channel not found", body = common::ErrorResponse),
+        (status = 409, description = "Desired state or runtime reconciliation conflicts with current state", body = common::ErrorResponse),
+        (status = 422, description = "Explicit confirmation is missing or false", body = common::ErrorResponse),
+        (status = 503, description = "Mandatory pre-execution audit or channel adapter is unavailable", body = common::ErrorResponse),
+        (status = 504, description = "Channel adapter timed out", body = common::ErrorResponse),
+        (status = 500, description = "Permanent channel adapter failure", body = common::ErrorResponse)
     ),
+    security(("bearer_auth" = [])),
     tag = "io"
 )]
 pub async fn control_channel(
-    State(state): State<AppState>,
     Path(id): Path<String>,
-    Json(operation): Json<ChannelOperation>,
-) -> Result<Json<SuccessResponse<String>>, AppError> {
-    let channel_id = id
-        .parse::<u32>()
-        .map_err(|_| AppError::bad_request(format!("Invalid channel ID format: {}", id)))?;
-    // Direct access without RwLock (lock-free)
-    let manager = &state.channel_manager;
+    Extension(boundary): Extension<ChannelManagementHttpBoundary>,
+    headers: HeaderMap,
+    payload: Result<Json<ChannelOperation>, JsonRejection>,
+) -> Result<Json<ChannelControlResponse>, AppError> {
+    let channel_id = ChannelId::new(path_channel_id(&id)?);
+    required_request_id(&headers)?;
+    let Json(operation) = payload
+        .map_err(|_| AppError::bad_request("Request body must be valid application/json"))?;
 
-    // Check if channel exists and get the channel entry
-    let Some(entry) = manager.get_channel(channel_id) else {
-        return Err(AppError::not_found(format!(
-            "Channel {} not found",
-            channel_id
-        )));
+    match operation.operation {
+        ChannelOperationKind::Start => boundary
+            .mutate(&headers, ChannelMutation::enable(channel_id))
+            .await
+            .map(|acceptance| {
+                Json(control_response_from_mutation(
+                    &acceptance,
+                    ChannelControlOperationResult::Start,
+                ))
+            }),
+        ChannelOperationKind::Stop => boundary
+            .mutate(&headers, ChannelMutation::disable(channel_id))
+            .await
+            .map(|acceptance| {
+                Json(control_response_from_mutation(
+                    &acceptance,
+                    ChannelControlOperationResult::Stop,
+                ))
+            }),
+        ChannelOperationKind::Restart => {
+            let acceptance = boundary
+                .reconcile(&headers, ChannelReconciliationScope::One(channel_id))
+                .await?;
+            Ok(Json(control_response_from_reconciliation(
+                &acceptance,
+                channel_id,
+            )))
+        },
+    }
+}
+
+fn control_response_from_mutation(
+    acceptance: &ChannelMutationAcceptance,
+    operation: ChannelControlOperationResult,
+) -> ChannelControlResponse {
+    control_response(
+        acceptance.channel_id(),
+        acceptance.request_id(),
+        operation,
+        Some(acceptance.resulting_revision().get()),
+        Some(acceptance.desired_enabled()),
+        acceptance.runtime_projection(),
+        acceptance.reconciliation_required(),
+        acceptance.completion_audit(),
+        acceptance.is_retryable(),
+    )
+}
+
+fn control_response_from_reconciliation(
+    acceptance: &ChannelReconciliationAcceptance,
+    channel_id: ChannelId,
+) -> ChannelControlResponse {
+    let item = acceptance
+        .items()
+        .iter()
+        .find(|item| item.channel_id() == channel_id);
+    let (desired_revision, desired_enabled, runtime_projection, reconciliation_required) = item
+        .map_or(
+            (None, None, ChannelRuntimeProjection::Degraded, true),
+            |item| {
+                (
+                    item.desired_revision()
+                        .map(aether_ports::ChannelRevision::get),
+                    item.desired_enabled(),
+                    item.runtime_projection(),
+                    item.reconciliation_required(),
+                )
+            },
+        );
+    if item.is_none() {
+        tracing::error!(
+            request_id = acceptance.request_id(),
+            channel_id = channel_id.get(),
+            "single-channel reconciliation returned no matching receipt item"
+        );
+    }
+
+    control_response(
+        channel_id,
+        acceptance.request_id(),
+        ChannelControlOperationResult::Restart,
+        desired_revision,
+        desired_enabled,
+        runtime_projection,
+        reconciliation_required,
+        acceptance.completion_audit(),
+        acceptance.is_retryable(),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn control_response(
+    channel_id: ChannelId,
+    request_id: &str,
+    operation: ChannelControlOperationResult,
+    desired_revision: Option<u64>,
+    desired_enabled: Option<bool>,
+    runtime_projection: ChannelRuntimeProjection,
+    reconciliation_required: bool,
+    completion_audit: &CompletionAuditStatus,
+    retryable: bool,
+) -> ChannelControlResponse {
+    let completion_audit = match completion_audit {
+        CompletionAuditStatus::Recorded => ChannelCompletionAudit {
+            status: ChannelCompletionAuditState::Recorded,
+            retryable: false,
+            message: None,
+        },
+        CompletionAuditStatus::Incomplete { failure } => {
+            tracing::error!(
+                request_id,
+                channel_id = channel_id.get(),
+                error = %failure,
+                "channel lifecycle operation was accepted but terminal audit is incomplete; do not retry"
+            );
+            ChannelCompletionAudit {
+                status: ChannelCompletionAuditState::Incomplete,
+                retryable: false,
+                message: Some(
+                    "operation was accepted but its terminal audit is incomplete; do not retry"
+                        .to_string(),
+                ),
+            }
+        },
+    };
+    let operation_name = match operation {
+        ChannelControlOperationResult::Start => "start",
+        ChannelControlOperationResult::Stop => "stop",
+        ChannelControlOperationResult::Restart => "restart",
     };
 
-    // Execute operation based on type using ChannelEntry's methods
-    match operation.operation.as_str() {
-        "start" => {
-            if let Err(e) = entry.connect().await {
-                tracing::error!("Ch{} connect: {}", channel_id, e);
-                return Err(AppError::internal_error(format!(
-                    "Failed to connect channel {}: {}",
-                    channel_id, e
-                )));
-            }
-            Ok(Json(SuccessResponse::new(format!(
-                "Channel {channel_id} connected successfully"
-            ))))
+    ChannelControlResponse {
+        success: true,
+        data: ChannelControlResult {
+            channel_id: channel_id.get(),
+            request_id: request_id.to_string(),
+            operation,
+            desired_revision,
+            desired_enabled,
+            runtime_projection: runtime_projection_result(runtime_projection),
+            reconciliation_required,
+            completion_audit,
+            retryable,
+            message: format!(
+                "channel {} {operation_name} accepted; automatic retry is forbidden",
+                channel_id.get()
+            ),
         },
-        "stop" => {
-            if let Err(e) = entry.disconnect().await {
-                tracing::error!("Ch{} disconnect: {}", channel_id, e);
-                return Err(AppError::internal_error(format!(
-                    "Failed to disconnect channel {}: {}",
-                    channel_id, e
-                )));
-            }
-            Ok(Json(SuccessResponse::new(format!(
-                "Channel {channel_id} disconnected successfully"
-            ))))
-        },
-        "restart" => {
-            // First stop the channel
-            if let Err(e) = entry.disconnect().await {
-                tracing::error!("Ch{} stop: {}", channel_id, e);
-                return Err(AppError::internal_error(format!(
-                    "Failed to stop channel {}: {}",
-                    channel_id, e
-                )));
-            }
+        metadata: std::collections::HashMap::new(),
+    }
+}
 
-            // Wait a moment before starting
-            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-
-            // Then start it again
-            if let Err(e) = entry.connect().await {
-                tracing::error!("Ch{} restart: {}", channel_id, e);
-                return Err(AppError::internal_error(format!(
-                    "Failed to restart channel {}: {}",
-                    channel_id, e
-                )));
-            }
-            Ok(Json(SuccessResponse::new(format!(
-                "Channel {channel_id} restarted successfully"
-            ))))
+const fn runtime_projection_result(
+    projection: ChannelRuntimeProjection,
+) -> ChannelRuntimeProjectionResult {
+    match projection {
+        ChannelRuntimeProjection::Stopped => ChannelRuntimeProjectionResult::Stopped,
+        ChannelRuntimeProjection::ActivationPending => {
+            ChannelRuntimeProjectionResult::ActivationPending
         },
-        _ => Err(AppError::bad_request(format!(
-            "Invalid operation: {}",
-            operation.operation
-        ))),
+        ChannelRuntimeProjection::Active => ChannelRuntimeProjectionResult::Active,
+        ChannelRuntimeProjection::Degraded => ChannelRuntimeProjectionResult::Degraded,
+        ChannelRuntimeProjection::Removed => ChannelRuntimeProjectionResult::Removed,
     }
 }
 
@@ -135,14 +247,16 @@ pub async fn control_channel(
 #[utoipa::path(
     post,
     path = "/api/channels/{channel_id}/write",
+    description = "Development-only injection of acquisition-owned T/S samples. The route returns 403 unless AETHER_ALLOW_SIMULATION_WRITES=true; C/A device commands are always rejected and must use the audited automation application API.",
     params(
         ("channel_id" = u16, Path, description = "Channel identifier", example = 1001)
     ),
     request_body = WritePointRequest,
     responses(
-        (status = 200, description = "Write operation completed (single or batch)",
+        (status = 200, description = "Simulation sample committed (single or batch)",
             body = WriteResponse),
-        (status = 400, description = "Invalid point type or parameters", body = String),
+        (status = 400, description = "Invalid T/S point type, identifier, value, or batch", body = String),
+        (status = 403, description = "Simulation writes are disabled by default", body = String),
         (status = 500, description = "Write operation failed", body = String)
     ),
     tag = "io"

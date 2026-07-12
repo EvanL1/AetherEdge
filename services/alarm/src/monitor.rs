@@ -292,9 +292,13 @@ async fn check_single_rule(state: Arc<AppState>, rule: crate::models::AlertRule)
 }
 
 async fn send_alarm_count_broadcast(state: &Arc<AppState>) {
-    match db::get_active_alarm_counts(&state.db).await {
+    send_alarm_count(&state.db, &state.broadcaster).await;
+}
+
+async fn send_alarm_count(pool: &sqlx::SqlitePool, broadcaster: &crate::broadcast::Broadcaster) {
+    match db::get_active_alarm_counts(pool).await {
         Ok(counts) => {
-            state.broadcaster.send_alarm_count(&counts).await;
+            broadcaster.send_alarm_count(&counts).await;
         },
         Err(e) => {
             error!("Failed to get alarm counts: {}", e);
@@ -302,56 +306,44 @@ async fn send_alarm_count_broadcast(state: &Arc<AppState>) {
     }
 }
 
-/// Called when a rule is updated – resolves its alerts if it's now disabled.
-pub async fn on_rule_updated(state: &Arc<AppState>, rule_id: i64) {
-    let rule = match db::get_rule_by_id(&state.db, rule_id).await {
-        Ok(Some(r)) => r,
-        _ => return,
-    };
-
-    if !rule.enabled {
-        let resolved = db::resolve_alerts_by_rule_id(&state.db, rule_id)
-            .await
-            .unwrap_or_default();
-        for alert in &resolved {
-            state
-                .broadcaster
-                .send_alarm_recovery(alert.id, &rule, None, "规则被禁用")
-                .await;
-        }
-        // Broadcast updated count only when at least one alert was resolved.
-        // (Must check `resolved` before the DB call, since the alerts are
-        // already marked recovered at this point.)
-        if !resolved.is_empty() {
-            send_alarm_count_broadcast(state).await;
-        }
-    }
-}
-
-/// Called when a rule is deleted – resolves its active alerts first.
-pub async fn on_rule_deleted(state: &Arc<AppState>, rule: &crate::models::AlertRule) {
-    let resolved = db::resolve_alerts_by_rule_id(&state.db, rule.id)
-        .await
-        .unwrap_or_default();
-    for alert in &resolved {
-        state
-            .broadcaster
-            .send_alarm_recovery(alert.id, rule, None, "规则被删除")
-            .await;
-    }
-    if !resolved.is_empty() {
-        send_alarm_count_broadcast(state).await;
-    }
-}
-
 /// Manual rule check (for the `/monitor/check-rule/{id}` endpoint).
+#[derive(Debug)]
+pub enum ManualCheckError {
+    RuleNotFound,
+    Internal(anyhow::Error),
+}
+
+impl std::fmt::Display for ManualCheckError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::RuleNotFound => formatter.write_str("Rule not found"),
+            Self::Internal(error) => error.fmt(formatter),
+        }
+    }
+}
+
+impl std::error::Error for ManualCheckError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::RuleNotFound => None,
+            Self::Internal(error) => Some(error.as_ref()),
+        }
+    }
+}
+
+impl From<anyhow::Error> for ManualCheckError {
+    fn from(error: anyhow::Error) -> Self {
+        Self::Internal(error)
+    }
+}
+
 pub async fn manual_check_rule(
     state: &Arc<AppState>,
     rule_id: i64,
-) -> anyhow::Result<serde_json::Value> {
+) -> Result<serde_json::Value, ManualCheckError> {
     let rule = db::get_rule_by_id(&state.db, rule_id)
         .await?
-        .ok_or_else(|| anyhow::anyhow!("Rule not found"))?;
+        .ok_or(ManualCheckError::RuleNotFound)?;
 
     if !rule.enabled {
         return Ok(serde_json::json!({

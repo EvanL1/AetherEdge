@@ -29,6 +29,9 @@ pub enum RuleCommands {
     Enable {
         /// Rule ID
         rule_id: i64,
+        /// Confirm this high-risk rule-policy mutation
+        #[arg(long)]
+        confirmed: bool,
     },
 
     /// Disable a rule
@@ -36,6 +39,9 @@ pub enum RuleCommands {
     Disable {
         /// Rule ID
         rule_id: i64,
+        /// Confirm this high-risk rule-policy mutation
+        #[arg(long)]
+        confirmed: bool,
     },
 
     /// Execute a rule
@@ -43,9 +49,9 @@ pub enum RuleCommands {
     Execute {
         /// Rule ID
         rule_id: i64,
-        /// Force execution even if conditions not met
-        #[arg(short, long)]
-        force: bool,
+        /// Confirm that executing the rule may dispatch real device commands
+        #[arg(long)]
+        confirmed: bool,
     },
 
     /// Create a new rule (empty shell, configure with 'update')
@@ -57,6 +63,9 @@ pub enum RuleCommands {
         /// Rule description
         #[arg(long)]
         description: Option<String>,
+        /// Confirm this high-risk rule-policy mutation
+        #[arg(long)]
+        confirmed: bool,
     },
 
     /// Update rule metadata and/or flow logic
@@ -82,6 +91,9 @@ pub enum RuleCommands {
         /// Path to Vue Flow JSON file (use '-' for stdin)
         #[arg(long = "flow-json")]
         flow_json: Option<String>,
+        /// Confirm this high-risk rule-policy mutation
+        #[arg(long)]
+        confirmed: bool,
     },
 
     /// Delete a rule
@@ -92,6 +104,9 @@ pub enum RuleCommands {
         /// Skip confirmation prompt
         #[arg(short, long)]
         force: bool,
+        /// Confirm this high-risk rule-policy mutation (`--force` only skips the prompt)
+        #[arg(long)]
+        confirmed: bool,
     },
 }
 
@@ -134,36 +149,42 @@ pub async fn handle_command(cmd: RuleCommands, base_url: &str, json: bool) -> Re
                 );
             }
         },
-        RuleCommands::Enable { rule_id } => {
-            client.enable_rule(rule_id).await?;
+        RuleCommands::Enable { rule_id, confirmed } => {
+            client.enable_rule(rule_id, confirmed).await?;
             if json {
                 crate::output::print_ok();
             } else {
                 println!("Rule '{}' enabled", rule_id);
             }
         },
-        RuleCommands::Disable { rule_id } => {
-            client.disable_rule(rule_id).await?;
+        RuleCommands::Disable { rule_id, confirmed } => {
+            client.disable_rule(rule_id, confirmed).await?;
             if json {
                 crate::output::print_ok();
             } else {
                 println!("Rule '{}' disabled", rule_id);
             }
         },
-        RuleCommands::Execute { rule_id, force } => {
-            let result = client.execute_rule(rule_id, force).await?;
+        RuleCommands::Execute { rule_id, confirmed } => {
+            let result = client.execute_rule(rule_id, confirmed).await?;
             if json {
                 crate::output::print_success(&result);
             } else {
                 println!(
-                    "Execution result for rule '{}': {}",
+                    "Rule '{}' evaluated; selected commands were accepted or rejected by the local command plane: {}",
                     rule_id,
                     serde_json::to_string_pretty(&result)?
                 );
             }
         },
-        RuleCommands::Create { name, description } => {
-            let result = client.create_rule(&name, description.as_deref()).await?;
+        RuleCommands::Create {
+            name,
+            description,
+            confirmed,
+        } => {
+            let result = client
+                .create_rule(&name, description.as_deref(), confirmed)
+                .await?;
             if json {
                 crate::output::print_success(&result);
             } else {
@@ -178,6 +199,7 @@ pub async fn handle_command(cmd: RuleCommands, base_url: &str, json: bool) -> Re
             priority,
             cooldown_ms,
             flow_json,
+            confirmed,
         } => {
             let mut body = serde_json::Map::new();
             if let Some(n) = name {
@@ -213,14 +235,20 @@ pub async fn handle_command(cmd: RuleCommands, base_url: &str, json: bool) -> Re
                     "No fields to update. Use --name, --description, --enabled, --priority, --cooldown-ms, or --flow-json"
                 );
             }
-            let result = client.update_rule(rule_id, Value::Object(body)).await?;
+            let result = client
+                .update_rule(rule_id, Value::Object(body), confirmed)
+                .await?;
             if json {
                 crate::output::print_success(&result);
             } else {
                 println!("Rule {} updated", rule_id);
             }
         },
-        RuleCommands::Delete { rule_id, force } => {
+        RuleCommands::Delete {
+            rule_id,
+            force,
+            confirmed,
+        } => {
             if !force && !json {
                 println!("Delete rule {}? [y/N]", rule_id);
                 let mut input = String::new();
@@ -230,7 +258,7 @@ pub async fn handle_command(cmd: RuleCommands, base_url: &str, json: bool) -> Re
                     return Ok(());
                 }
             }
-            client.delete_rule(rule_id).await?;
+            client.delete_rule(rule_id, confirmed).await?;
             if json {
                 crate::output::print_ok();
             } else {
@@ -246,6 +274,7 @@ pub async fn handle_command(cmd: RuleCommands, base_url: &str, json: bool) -> Re
 pub(crate) struct RuleClient {
     client: Client,
     base_url: String,
+    access_token: Option<String>,
 }
 
 impl RuleClient {
@@ -253,6 +282,18 @@ impl RuleClient {
         Ok(Self {
             client: Client::new(),
             base_url: base_url.to_string(),
+            access_token: std::env::var("AETHER_ACCESS_TOKEN")
+                .ok()
+                .filter(|value| !value.trim().is_empty() && value.trim() == value),
+        })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_access_token(base_url: &str, access_token: &str) -> Result<Self> {
+        Ok(Self {
+            client: Client::new(),
+            base_url: base_url.to_string(),
+            access_token: Some(access_token.to_string()),
         })
     }
 
@@ -287,10 +328,14 @@ impl RuleClient {
         }
     }
 
-    pub(crate) async fn enable_rule(&self, rule_id: i64) -> Result<Value> {
+    pub(crate) async fn enable_rule(&self, rule_id: i64, confirmed: bool) -> Result<Value> {
+        let access_token = self.rule_management_token(confirmed)?;
         let response = self
             .client
             .post(format!("{}/api/rules/{}/enable", self.base_url, rule_id))
+            .bearer_auth(access_token)
+            .header("x-request-id", uuid::Uuid::new_v4().to_string())
+            .json(&serde_json::json!({ "confirmed": true }))
             .send()
             .await?;
 
@@ -304,10 +349,14 @@ impl RuleClient {
         }
     }
 
-    pub(crate) async fn disable_rule(&self, rule_id: i64) -> Result<Value> {
+    pub(crate) async fn disable_rule(&self, rule_id: i64, confirmed: bool) -> Result<Value> {
+        let access_token = self.rule_management_token(confirmed)?;
         let response = self
             .client
             .post(format!("{}/api/rules/{}/disable", self.base_url, rule_id))
+            .bearer_auth(access_token)
+            .header("x-request-id", uuid::Uuid::new_v4().to_string())
+            .json(&serde_json::json!({ "confirmed": true }))
             .send()
             .await?;
 
@@ -322,11 +371,14 @@ impl RuleClient {
     }
 
     #[allow(clippy::disallowed_methods)] // json! macro internally uses unwrap (safe for known valid JSON)
-    pub(crate) async fn execute_rule(&self, rule_id: i64, force: bool) -> Result<Value> {
+    pub(crate) async fn execute_rule(&self, rule_id: i64, confirmed: bool) -> Result<Value> {
+        let access_token = self.rule_execution_token(confirmed)?;
         let response = self
             .client
             .post(format!("{}/api/rules/{}/execute", self.base_url, rule_id))
-            .json(&serde_json::json!({ "force": force }))
+            .bearer_auth(access_token)
+            .header("x-request-id", uuid::Uuid::new_v4().to_string())
+            .json(&serde_json::json!({ "confirmed": confirmed }))
             .send()
             .await?;
 
@@ -341,15 +393,24 @@ impl RuleClient {
     }
 
     #[allow(clippy::disallowed_methods)]
-    pub(crate) async fn create_rule(&self, name: &str, description: Option<&str>) -> Result<Value> {
+    pub(crate) async fn create_rule(
+        &self,
+        name: &str,
+        description: Option<&str>,
+        confirmed: bool,
+    ) -> Result<Value> {
+        let access_token = self.rule_management_token(confirmed)?;
         let mut body = serde_json::Map::new();
         body.insert("name".into(), Value::String(name.to_string()));
+        body.insert("confirmed".into(), Value::Bool(true));
         if let Some(d) = description {
             body.insert("description".into(), Value::String(d.to_string()));
         }
         let response = self
             .client
             .post(format!("{}/api/rules", self.base_url))
+            .bearer_auth(access_token)
+            .header("x-request-id", uuid::Uuid::new_v4().to_string())
             .json(&Value::Object(body))
             .send()
             .await?;
@@ -364,10 +425,21 @@ impl RuleClient {
         }
     }
 
-    pub(crate) async fn update_rule(&self, rule_id: i64, body: Value) -> Result<Value> {
+    pub(crate) async fn update_rule(
+        &self,
+        rule_id: i64,
+        mut body: Value,
+        confirmed: bool,
+    ) -> Result<Value> {
+        let access_token = self.rule_management_token(confirmed)?;
+        body.as_object_mut()
+            .ok_or_else(|| anyhow::anyhow!("rule update body must be a JSON object"))?
+            .insert("confirmed".to_string(), Value::Bool(true));
         let response = self
             .client
             .put(format!("{}/api/rules/{}", self.base_url, rule_id))
+            .bearer_auth(access_token)
+            .header("x-request-id", uuid::Uuid::new_v4().to_string())
             .json(&body)
             .send()
             .await?;
@@ -383,10 +455,14 @@ impl RuleClient {
         }
     }
 
-    pub(crate) async fn delete_rule(&self, rule_id: i64) -> Result<Value> {
+    pub(crate) async fn delete_rule(&self, rule_id: i64, confirmed: bool) -> Result<Value> {
+        let access_token = self.rule_management_token(confirmed)?;
         let response = self
             .client
             .delete(format!("{}/api/rules/{}", self.base_url, rule_id))
+            .bearer_auth(access_token)
+            .header("x-request-id", uuid::Uuid::new_v4().to_string())
+            .json(&serde_json::json!({ "confirmed": true }))
             .send()
             .await?;
 
@@ -398,6 +474,56 @@ impl RuleClient {
                 rule_id,
                 response.status()
             ))
+        }
+    }
+
+    fn rule_management_token(&self, confirmed: bool) -> Result<&str> {
+        if !confirmed {
+            return Err(anyhow::anyhow!(
+                "rule management requires explicit --confirmed"
+            ));
+        }
+        crate::transport_security::require_secure_bearer_transport(&self.base_url)?;
+        self.access_token.as_deref().ok_or_else(|| {
+            anyhow::anyhow!(
+                "rule management requires AETHER_ACCESS_TOKEN from an authenticated Admin or Engineer session"
+            )
+        })
+    }
+
+    fn rule_execution_token(&self, confirmed: bool) -> Result<&str> {
+        if !confirmed {
+            return Err(anyhow::anyhow!(
+                "manual rule execution requires explicit confirmation"
+            ));
+        }
+        crate::transport_security::require_secure_bearer_transport(&self.base_url)?;
+        self.access_token.as_deref().ok_or_else(|| {
+            anyhow::anyhow!(
+                "manual rule execution requires AETHER_ACCESS_TOKEN from an authenticated Admin or Engineer session"
+            )
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::RuleClient;
+
+    #[test]
+    fn bearer_writes_reject_remote_plaintext_before_token_access() {
+        let client = RuleClient {
+            client: reqwest::Client::new(),
+            base_url: "http://192.0.2.10:6002".to_string(),
+            access_token: None,
+        };
+
+        for result in [
+            client.rule_management_token(true),
+            client.rule_execution_token(true),
+        ] {
+            let error = result.expect_err("remote plaintext must fail closed");
+            assert!(error.to_string().contains("refusing to send"), "{error:#}");
         }
     }
 }

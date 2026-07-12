@@ -23,11 +23,16 @@ dependencies = [
 name = "aether"
 version = "0.5.0"
 dependencies = [
+ "aether-application",
  "aether-config",
+ "aether-dataplane",
+ "aether-domain",
  "aether-model",
+ "aether-pack",
  "aether-routing",
- "aether-rtdb-shm",
  "aether-rules",
+ "aether-runtime-catalog",
+ "aether-shm-bridge",
  "anyhow",
  "chrono",
  "clap",
@@ -46,6 +51,7 @@ dependencies = [
  "sha2",
  "sqlx",
  "tempfile",
+ "thiserror 2.0.17",
  "tokio",
  "tracing",
  "tracing-subscriber",
@@ -57,15 +63,20 @@ dependencies = [
 name = "aether-alarm"
 version = "0.5.0"
 dependencies = [
+ "aether-application",
+ "aether-auth-jwt",
  "aether-domain",
  "aether-ports",
  "aether-shm-bridge",
+ "aether-store-local",
  "anyhow",
+ "async-trait",
  "axum",
  "chrono",
  "common",
  "csv",
  "futures",
+ "jsonwebtoken",
  "reqwest",
  "serde",
  "serde_json",
@@ -73,6 +84,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "tokio-util",
+ "tower",
  "tracing",
  "utoipa",
  "utoipa-swagger-ui",
@@ -126,8 +138,21 @@ dependencies = [
  "async-trait",
  "serde",
  "serde_yaml_ng",
+ "sha2",
  "thiserror 2.0.17",
  "tokio",
+ "uuid",
+]
+
+[[package]]
+name = "aether-auth-jwt"
+version = "0.5.0"
+dependencies = [
+ "aether-application",
+ "aether-domain",
+ "jsonwebtoken",
+ "serde",
+ "thiserror 2.0.17",
  "uuid",
 ]
 
@@ -136,14 +161,17 @@ name = "aether-automation"
 version = "0.5.0"
 dependencies = [
  "aether-application",
+ "aether-auth-jwt",
  "aether-calc",
  "aether-config",
  "aether-domain",
  "aether-model",
+ "aether-pack",
  "aether-ports",
  "aether-routing",
  "aether-rtdb-shm",
  "aether-rules",
+ "aether-runtime-catalog",
  "aether-shm-bridge",
  "aether-store-local",
  "anyhow",
@@ -158,7 +186,6 @@ dependencies = [
  "http-body-util",
  "itoa",
  "jsonwebtoken",
- "parking_lot",
  "serde",
  "serde_json",
  "sqlx",
@@ -228,6 +255,7 @@ dependencies = [
 name = "aether-dataplane"
 version = "0.5.0"
 dependencies = [
+ "fs2",
  "memmap2",
  "tempfile",
  "thiserror 2.0.17",
@@ -244,6 +272,7 @@ version = "0.5.0"
 dependencies = [
  "aether-application",
  "aether-domain",
+ "aether-pack",
  "aether-ports",
  "aether-store-local",
  "async-trait",
@@ -257,11 +286,13 @@ version = "0.5.0"
 dependencies = [
  "aether-edge-sdk",
  "aether-example-minimal-gateway",
+ "aether-runtime-catalog",
  "aether-store-local",
  "async-trait",
  "serde",
  "serde_json",
  "serde_yaml_ng",
+ "tempfile",
  "thiserror 2.0.17",
  "tokio",
 ]
@@ -355,12 +386,18 @@ dependencies = [
 name = "aether-io"
 version = "0.5.0"
 dependencies = [
+ "aether-application",
+ "aether-auth-jwt",
  "aether-config",
+ "aether-dataplane",
  "aether-domain",
  "aether-model",
+ "aether-ports",
  "aether-routing",
  "aether-rtdb-shm",
+ "aether-runtime-catalog",
  "aether-shm-bridge",
+ "aether-store-local",
  "anyhow",
  "arc-swap",
  "async-opcua",
@@ -415,6 +452,18 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.17",
  "tracing",
+]
+
+[[package]]
+name = "aether-pack"
+version = "0.5.0"
+dependencies = [
+ "semver",
+ "serde",
+ "serde_json",
+ "serde_yaml_ng",
+ "tempfile",
+ "thiserror 2.0.17",
 ]
 
 [[package]]
@@ -488,9 +537,11 @@ name = "aether-rtdb-shm"
 version = "0.5.0"
 dependencies = [
  "aether-dataplane",
+ "aether-domain",
  "aether-model",
  "aether-routing",
  "aether-rules",
+ "aether-shm-bridge",
  "anyhow",
  "arc-swap",
  "async-trait",
@@ -510,10 +561,14 @@ name = "aether-rules"
 version = "0.5.0"
 dependencies = [
  "aether-calc",
+ "aether-dataplane",
+ "aether-domain",
  "aether-model",
+ "aether-ports",
  "aether-routing",
- "aether-rtdb-shm",
+ "aether-shm-bridge",
  "anyhow",
+ "async-trait",
  "chrono",
  "criterion",
  "evalexpr",
@@ -526,6 +581,21 @@ dependencies = [
  "tokio",
  "tokio-util",
  "tracing",
+]
+
+[[package]]
+name = "aether-runtime-catalog"
+version = "0.5.0"
+dependencies = [
+ "aether-application",
+ "aether-pack",
+ "semver",
+ "serde",
+ "serde_json",
+ "serde_json_canonicalizer",
+ "sha2",
+ "tempfile",
+ "thiserror 2.0.17",
 ]
 
 [[package]]
@@ -556,6 +626,7 @@ dependencies = [
  "aether-dataplane",
  "aether-domain",
  "aether-ports",
+ "arc-swap",
  "async-trait",
  "rustc-hash",
  "tempfile",
@@ -593,6 +664,7 @@ version = "0.5.0"
 dependencies = [
  "aether-domain",
  "aether-ports",
+ "aether-shm-bridge",
  "aether-testkit",
  "async-trait",
  "fs2",
@@ -4194,6 +4266,12 @@ dependencies = [
  "core-foundation-sys",
  "libc",
 ]
+
+[[package]]
+name = "semver"
+version = "1.0.28"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8a7852d02fc848982e0c167ef163aaff9cd91dc640ba85e263cb1ce46fae51cd"
 
 [[package]]
 name = "serde"

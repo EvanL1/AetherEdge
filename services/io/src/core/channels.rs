@@ -9,7 +9,7 @@ pub mod channel_entry; // Channel entry types: ChannelEntry, ChannelMetadata, Ch
 pub mod channel_manager; // Channel lifecycle manager: ChannelManager struct + query/lifecycle
 pub mod channel_task; // Unified channel task: async event loop (select! polling + commands)
 mod command_guard; // Final fail-closed validation before protocol dispatch
-pub mod shm_listener; // UDS event-driven command listener (self-healing via ShmNotifier backoff)
+pub mod shm_listener; // UDS event-driven command listener with producer-side reconnect backoff
 pub mod traits; // Core traits and type definitions (re-exports from types)
 
 pub mod types; // Channel communication types (owned by io)

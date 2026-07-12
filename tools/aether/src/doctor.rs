@@ -8,6 +8,8 @@ use std::path::Path;
 use std::process::Command;
 use std::time::{Duration, Instant};
 
+use aether_dataplane::SlotReader;
+
 use crate::utils::check_database_status;
 
 /// Check result status
@@ -169,8 +171,9 @@ const CORE_SERVICE_CHECKS: [ServiceCheck; 6] = [
     },
 ];
 
-const REQUIRED_CONFIG_FILES: [&str; 4] = [
+const REQUIRED_CONFIG_FILES: [&str; 5] = [
     "global.yaml",
+    aether_runtime_catalog::RUNTIME_MANIFEST_FILE_NAME,
     "io/io.yaml",
     "automation/automation.yaml",
     "automation/instances.yaml",
@@ -462,7 +465,19 @@ async fn check_config_files(config_path: &Path) -> CheckResult {
     }
 
     if missing.is_empty() {
-        CheckResult::ok("Config Files", "All present").with_duration(start.elapsed())
+        match aether_runtime_catalog::load_runtime_manifest_for_current_process(
+            config_path,
+            env!("CARGO_PKG_VERSION"),
+        ) {
+            Ok(_) => CheckResult::ok("Config Files", "All present and runtime manifest verified")
+                .with_duration(start.elapsed()),
+            Err(error) => CheckResult::error(
+                "Config Files",
+                format!("Invalid runtime manifest: {error}"),
+                "Restore the composition-provided runtime-manifest.json",
+            )
+            .with_duration(start.elapsed()),
+        }
     } else if missing.len() == REQUIRED_CONFIG_FILES.len() {
         CheckResult::error(
             "Config Files",
@@ -483,7 +498,7 @@ async fn check_config_files(config_path: &Path) -> CheckResult {
 /// Check shared memory availability
 async fn check_shared_memory() -> CheckResult {
     let start = Instant::now();
-    let shm_path = aether_rtdb_shm::core::config::default_shm_path();
+    let shm_path = aether_dataplane::core::config::default_shm_path();
 
     check_shared_memory_path(&shm_path).with_duration(start.elapsed())
 }
@@ -518,7 +533,7 @@ fn check_shared_memory_path(shm_path: &Path) -> CheckResult {
         );
     }
 
-    match aether_rtdb_shm::SlotReader::open(shm_path) {
+    match SlotReader::open(shm_path) {
         Ok(reader) => {
             let header = reader.header();
             if !reader.is_writer_alive(3_000) {
@@ -702,11 +717,26 @@ mod tests {
                 .expect("create nested config directory");
             std::fs::write(path, "# doctor test\n").expect("write config fixture");
         }
+        let target = match std::env::consts::OS {
+            "macos" => format!("{}-apple-darwin", std::env::consts::ARCH),
+            "windows" => format!("{}-pc-windows-msvc", std::env::consts::ARCH),
+            other => format!("{}-unknown-{other}-gnu", std::env::consts::ARCH),
+        };
+        aether_runtime_catalog::KernelRuntimeManifest::from_io_features(
+            env!("CARGO_PKG_VERSION"),
+            target,
+            aether_runtime_catalog::default_io_features()
+                .iter()
+                .copied(),
+        )
+        .expect("doctor runtime manifest")
+        .write_to_config_directory(config.path())
+        .expect("write runtime manifest");
 
         let result = check_config_files(config.path()).await;
 
         assert_eq!(result.status, CheckStatus::Ok);
-        assert_eq!(result.message, "All present");
+        assert_eq!(result.message, "All present and runtime manifest verified");
     }
 
     #[tokio::test]
@@ -720,7 +750,7 @@ mod tests {
         assert_eq!(result.status, CheckStatus::Error);
         assert_eq!(
             result.message,
-            "Missing: io/io.yaml, automation/automation.yaml, automation/instances.yaml"
+            "Missing: runtime-manifest.json, io/io.yaml, automation/automation.yaml, automation/instances.yaml"
         );
     }
 
@@ -749,17 +779,18 @@ mod tests {
         assert_eq!(check_shared_memory_path(&empty).status, CheckStatus::Error);
 
         let stale = directory.path().join("stale.shm");
-        let stale_writer =
-            aether_rtdb_shm::SlotWriter::create(&stale, 8, 2, 7).expect("create stale SHM fixture");
-        stale_writer
-            .update_heartbeat(aether_rtdb_shm::core::config::timestamp_ms().saturating_sub(10_000));
+        let stale_writer = aether_dataplane::SlotWriter::create(&stale, 8, 2, 7)
+            .expect("create stale SHM fixture");
+        stale_writer.update_heartbeat(
+            aether_dataplane::core::config::timestamp_ms().saturating_sub(10_000),
+        );
         drop(stale_writer);
         assert_eq!(check_shared_memory_path(&stale).status, CheckStatus::Error);
 
         let valid = directory.path().join("valid.shm");
-        let writer =
-            aether_rtdb_shm::SlotWriter::create(&valid, 8, 2, 7).expect("create valid SHM fixture");
-        writer.update_heartbeat(aether_rtdb_shm::core::config::timestamp_ms());
+        let writer = aether_dataplane::SlotWriter::create(&valid, 8, 2, 7)
+            .expect("create valid SHM fixture");
+        writer.update_heartbeat(aether_dataplane::core::config::timestamp_ms());
         drop(writer);
         assert_eq!(check_shared_memory_path(&valid).status, CheckStatus::Ok);
     }
@@ -772,9 +803,9 @@ mod tests {
         let directory = tempfile::tempdir().expect("temporary SHM directory");
         let target = directory.path().join("target.shm");
         let link = directory.path().join("link.shm");
-        let writer =
-            aether_rtdb_shm::SlotWriter::create(&target, 8, 0, 7).expect("create valid SHM target");
-        writer.update_heartbeat(aether_rtdb_shm::core::config::timestamp_ms());
+        let writer = aether_dataplane::SlotWriter::create(&target, 8, 0, 7)
+            .expect("create valid SHM target");
+        writer.update_heartbeat(aether_dataplane::core::config::timestamp_ms());
         drop(writer);
         symlink(&target, &link).expect("create SHM symlink fixture");
 

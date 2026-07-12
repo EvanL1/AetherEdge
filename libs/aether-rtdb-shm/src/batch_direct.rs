@@ -17,11 +17,20 @@ use aether_routing::{MAX_C2C_CASCADE_DEPTH, RoutingCache};
 /// Type alias for C2C visited tracking (channel_id, point_type, point_id)
 type C2CVisited = FxHashSet<(u32, PointType, u32)>;
 
-/// High-performance batch write using direct channel-to-slot mapping
+/// Legacy synchronous acquisition-write compatibility shim.
 ///
-/// Uses ChannelToSlotIndex to bypass C2M routing lookup during writes.
-/// Uses precomputed point ID pool and ryu for zero-allocation formatting.
-/// Includes C2C cycle detection to prevent A→B→A routing loops.
+/// New acquisition compositions use
+/// `aether_shm_bridge::ShmAcquisitionStateWriter`, which validates an entire
+/// typed batch before writing. Production io now uses the typed writer
+/// published by `ShmHandle`; this function remains only for legacy tests and
+/// benchmarks that exercise the historical C2C expansion and counters.
+///
+/// Removal criteria:
+/// 1. Legacy tests and benchmarks use domain `AcquiredPointSample` batches.
+/// 2. No downstream compatibility consumer calls this raw update API.
+///
+/// Uses `ChannelToSlotIndex` to bypass C2M routing lookup during writes and
+/// includes C2C cycle detection to prevent A→B→A routing loops.
 ///
 /// # Architecture
 /// ```text

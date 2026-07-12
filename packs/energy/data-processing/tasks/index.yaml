@@ -1,0 +1,11 @@
+schema: aether.pack.asset-index.v1
+category: data_processing
+assets:
+  - id: energy.site-load-forecast
+    path: site-load-forecast.yaml
+    schema: aether.data-processing-task.v1
+    media_type: application/yaml
+  - id: energy.site-pv-forecast
+    path: site-pv-forecast.yaml
+    schema: aether.data-processing-task.v1
+    media_type: application/yaml

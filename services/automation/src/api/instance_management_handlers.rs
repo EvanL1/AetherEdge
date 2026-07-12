@@ -31,12 +31,12 @@ use crate::error::AutomationError;
             example = json!({
                 "instance": {
                     "instance_id": 1,
-                    "instance_name": "pv_inverter_01",
-                    "product_name": "pv_inverter",
+                    "instance_name": "pump_01",
+                    "product_name": "pump",
                     "properties": {
-                        "rated_power": 5000.0,
-                        "manufacturer": "Huawei",
-                        "model": "SUN2000-5KTL-L1"
+                        "max_flow_lpm": 500.0,
+                        "manufacturer": "Example Corp",
+                        "model": "P-500"
                     },
                     "created_at": "2025-10-15T10:30:00Z",
                     "updated_at": "2025-10-15T10:30:00Z"
@@ -72,7 +72,7 @@ pub async fn create_instance(
     put,
     path = "/api/instances/{id}",
     params(
-        ("id" = u16, Path, description = "Instance ID")
+        ("id" = u32, Path, description = "Instance ID")
     ),
     request_body = UpdateInstanceDto,
     responses(
@@ -80,12 +80,12 @@ pub async fn create_instance(
             example = json!({
                 "instance": {
                     "instance_id": 1,
-                    "instance_name": "pv_inverter_renamed",
-                    "product_name": "pv_inverter",
+                    "instance_name": "pump_renamed",
+                    "product_name": "pump",
                     "properties": {
-                        "rated_power": 5000.0,
-                        "manufacturer": "Huawei",
-                        "model": "SUN2000-5KTL-L1"
+                        "max_flow_lpm": 500.0,
+                        "manufacturer": "Example Corp",
+                        "model": "P-500"
                     },
                     "created_at": "2025-10-15T10:30:00Z",
                     "updated_at": "2025-10-20T14:25:00Z"
@@ -238,7 +238,7 @@ pub async fn update_instance(
     delete,
     path = "/api/instances/{id}",
     params(
-        ("id" = u16, Path, description = "Instance ID")
+        ("id" = u32, Path, description = "Instance ID")
     ),
     responses(
         (status = 200, description = "Instance deleted", body = serde_json::Value,
@@ -263,6 +263,15 @@ pub async fn delete_instance(
 ///
 /// Rebuilds process-local caches from authoritative SQLite configuration.
 ///
+#[cfg_attr(feature = "swagger-ui", utoipa::path(
+    post,
+    path = "/api/instances/reload",
+    responses(
+        (status = 200, description = "Instances reloaded from SQLite", body = serde_json::Value),
+        (status = 500, description = "Reload failed", body = serde_json::Value)
+    ),
+    tag = "automation"
+))]
 pub async fn reload_instances_from_db(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<SuccessResponse<serde_json::Value>>, AutomationError> {
@@ -301,22 +310,36 @@ pub async fn reload_instances_from_db(
 // Action Execution
 // ============================================================================
 
-/// Execute an action on an instance
+/// Submit an instance action to the local command plane.
 ///
-/// Triggers an action point with the specified value.
+/// A successful response means SHM mirroring and the IO transport notification
+/// were accepted locally. It does not mean the physical device executed or
+/// acknowledged the command.
 #[utoipa::path(
     post,
     path = "/api/instances/{id}/action",
     params(
-        ("id" = u16, Path, description = "Instance ID")
+        ("id" = u32, Path, description = "Instance ID"),
+        ("x-request-id" = Option<String>, Header, description = "Optional UUID audit correlation ID")
     ),
     request_body = crate::dto::ActionRequest,
     responses(
-        (status = 200, description = "Action executed", body = serde_json::Value,
+        (status = 200, description = "Action accepted by the local command plane. `completed_at_ms` is the local transport-acceptance timestamp retained for compatibility; it is not a device completion time. A terminal-audit append failure is returned here as `audit.status=incomplete` with `retryable=false`, never as a retryable dispatch error.", body = serde_json::Value,
             example = json!({
-                "message": "Action executed"
+                "message": "Action accepted by local command plane",
+                "command_id": "018f0000000070008000000000000007",
+                "request_id": "018f0000-0000-7000-8000-000000000007",
+                "audit": { "status": "recorded", "retryable": false },
+                "completed_at_ms": 1720000000000_u64
             })
-        )
+        ),
+        (status = 403, description = "Credentials or permission denied the action"),
+        (status = 422, description = "Invalid action request or required confirmation was not provided"),
+        (status = 503, description = "The required attempted audit or downstream dispatch failed before command acceptance")
+    ),
+    security(
+        ("bearer_auth" = []),
+        ("aether_service_auth" = [])
     ),
     tag = "automation"
 )]
@@ -341,7 +364,7 @@ pub async fn execute_instance_action(
         aether_domain::PointKind::Action,
         aether_domain::PointId::new(point_id),
     );
-    let receipt = state
+    let acceptance = state
         .control_application
         .write_point(
             invocation.context(),
@@ -351,12 +374,24 @@ pub async fn execute_instance_action(
         )
         .await
         .map_err(AutomationError::from)?;
+    if let Some(failure) = acceptance.completion_audit().failure() {
+        error!(
+            request_id = acceptance.request_id(),
+            command_id = %format_args!("{:032x}", acceptance.command_id().get()),
+            error = %failure,
+            "device command was accepted but its terminal audit is incomplete; do not retry"
+        );
+    }
     Ok(Json(SuccessResponse::new(json!({
-        "message": "Action executed",
+        "message": "Action accepted by local command plane",
         "instance_id": id,
         "point_id": req.point_id,
         "value": req.value,
-        "request_id": invocation.context().request_id(),
-        "completed_at_ms": receipt.completed_at().get()
+        "command_id": format!("{:032x}", acceptance.command_id().get()),
+        "request_id": acceptance.request_id(),
+        "audit": crate::infra::application_control::completion_audit_response(
+            acceptance.completion_audit()
+        ),
+        "completed_at_ms": acceptance.completed_at().get()
     }))))
 }

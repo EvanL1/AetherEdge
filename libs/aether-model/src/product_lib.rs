@@ -1,13 +1,13 @@
-//! Built-in Product Library
+//! Runtime Product Library
 //!
-//! This module provides the built-in product templates that are embedded
-//! at compile time. Products define the structure for device instances
-//! including their measurements, actions, and properties.
+//! The industry-neutral kernel embeds no domain products. Composition roots
+//! explicitly select validated Pack model directories and optional site-owned
+//! product directories at runtime.
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeSet;
 use std::path::Path;
-use std::sync::LazyLock;
 
 /// Point definition for measurements, actions, and properties
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -43,111 +43,168 @@ pub struct BuiltinProduct {
     pub actions: Vec<PointDef>,
 }
 
-// Embed all product JSON files at compile time (auto-discovered by build.rs)
-static BUILTIN_PRODUCTS: LazyLock<Vec<BuiltinProduct>> = LazyLock::new(|| {
-    let jsons: &[&str] = include!(concat!(env!("OUT_DIR"), "/product_includes.rs"));
+static KERNEL_PRODUCTS: &[BuiltinProduct] = &[];
+const MAX_PRODUCT_JSON_BYTES: u64 = 1024 * 1024;
 
-    jsons
-        .iter()
-        .filter_map(|s| serde_json::from_str(s).ok())
-        .collect()
-});
+fn product_json_paths(directory: &Path) -> Result<Vec<std::path::PathBuf>> {
+    let canonical_directory = std::fs::canonicalize(directory)
+        .with_context(|| format!("Failed to resolve products dir: {}", directory.display()))?;
+    let entries = std::fs::read_dir(&canonical_directory).with_context(|| {
+        format!(
+            "Failed to read products dir: {}",
+            canonical_directory.display()
+        )
+    })?;
+    let mut paths = entries
+        .map(|entry| entry.map(|value| value.path()))
+        .collect::<std::io::Result<Vec<_>>>()?;
+    paths.sort_unstable();
 
-/// Get all built-in products
+    let mut validated = Vec::new();
+    for path in paths {
+        let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
+            bail!(
+                "Product entry has a non-UTF-8 filename in {}",
+                canonical_directory.display()
+            );
+        };
+        if Path::new(file_name)
+            .extension()
+            .and_then(|extension| extension.to_str())
+            != Some("json")
+        {
+            continue;
+        }
+        let metadata = std::fs::symlink_metadata(&path)
+            .with_context(|| format!("Failed to inspect {}", path.display()))?;
+        if metadata.file_type().is_symlink() {
+            bail!("Product JSON symlink is forbidden: {}", path.display());
+        }
+        if !metadata.file_type().is_file() {
+            bail!("Product JSON must be a regular file: {}", path.display());
+        }
+        if metadata.len() > MAX_PRODUCT_JSON_BYTES {
+            bail!(
+                "Product JSON exceeds {} bytes: {}",
+                MAX_PRODUCT_JSON_BYTES,
+                path.display()
+            );
+        }
+        let resolved = std::fs::canonicalize(&path)
+            .with_context(|| format!("Failed to resolve {}", path.display()))?;
+        if !resolved.starts_with(&canonical_directory) {
+            bail!(
+                "Product JSON escapes selected directory {}: {}",
+                canonical_directory.display(),
+                resolved.display()
+            );
+        }
+        validated.push(resolved);
+    }
+    Ok(validated)
+}
+
+fn read_product(path: &Path) -> Result<BuiltinProduct> {
+    let content = std::fs::read_to_string(path)
+        .with_context(|| format!("Failed to read {}", path.display()))?;
+    serde_json::from_str(&content).with_context(|| format!("JSON parse error: {}", path.display()))
+}
+
+/// Returns the empty kernel compatibility catalog.
 pub fn get_builtin_products() -> &'static [BuiltinProduct] {
-    &BUILTIN_PRODUCTS
+    KERNEL_PRODUCTS
 }
 
-/// Get a built-in product by name
+/// Looks up the empty kernel compatibility catalog.
 pub fn get_builtin_product(name: &str) -> Option<&'static BuiltinProduct> {
-    BUILTIN_PRODUCTS.iter().find(|p| p.name == name)
+    KERNEL_PRODUCTS.iter().find(|p| p.name == name)
 }
 
-/// Get all product names
+/// Returns no implicit product names.
 pub fn get_product_names() -> Vec<&'static str> {
-    BUILTIN_PRODUCTS.iter().map(|p| p.name.as_str()).collect()
+    KERNEL_PRODUCTS.iter().map(|p| p.name.as_str()).collect()
 }
 
-/// Check if a product exists in the built-in library
+/// Returns false because the kernel has no implicit products.
 pub fn product_exists(name: &str) -> bool {
-    BUILTIN_PRODUCTS.iter().any(|p| p.name == name)
+    KERNEL_PRODUCTS.iter().any(|p| p.name == name)
 }
 
-/// Get child products of a given parent
+/// Returns no implicit child products.
 pub fn get_child_products(parent_name: &str) -> Vec<&'static BuiltinProduct> {
-    BUILTIN_PRODUCTS
+    KERNEL_PRODUCTS
         .iter()
         .filter(|p| p.parent_name.as_deref() == Some(parent_name))
         .collect()
 }
 
-/// Runtime product library with external override support
+/// Runtime product library assembled from explicitly selected directories.
 ///
-/// Merges compile-time built-in products with optional external JSON files.
-/// External products (from `config/products/*.json`) override built-in ones
-/// by name, enabling new device types without recompilation.
-///
-/// # Priority
-/// External `config/products/*.json` > built-in `BUILTIN_PRODUCTS`
+/// Later directories override earlier directories by product name. This lets a
+/// site-owned directory deliberately refine models supplied by an active Pack.
 ///
 /// # Example
 /// ```ignore
 /// let lib = ProductLibrary::load(Some(Path::new("config/products")))?;
 /// let battery = lib.get("Battery").expect("Battery product");
 /// ```
+#[derive(Debug)]
 pub struct ProductLibrary {
     products: Vec<BuiltinProduct>,
 }
 
 impl ProductLibrary {
-    /// Load products: external dir overrides built-in defaults
+    /// Loads one explicitly selected directory.
     ///
-    /// If `products_dir` is None or doesn't exist, returns built-in products only.
+    /// `None` or a missing directory produces an empty library; it never falls
+    /// back to a domain Pack embedded in the kernel.
     pub fn load(products_dir: Option<&Path>) -> Result<Self> {
-        let mut products: Vec<BuiltinProduct> = BUILTIN_PRODUCTS.clone();
+        let directories = products_dir.into_iter().collect::<Vec<_>>();
+        Self::load_directories(&directories)
+    }
 
-        if let Some(dir) = products_dir
-            && dir.is_dir()
-        {
-            let entries = std::fs::read_dir(dir)
-                .with_context(|| format!("Failed to read products dir: {}", dir.display()))?;
-
-            for entry in entries {
-                let entry = entry?;
-                let path = entry.path();
-
-                if path.extension().and_then(|e| e.to_str()) != Some("json") {
-                    continue;
+    /// Loads product JSON from explicitly ordered directories.
+    pub fn load_directories(directories: &[&Path]) -> Result<Self> {
+        let mut products = Vec::new();
+        for directory in directories.iter().copied().filter(|path| path.is_dir()) {
+            let mut directory_names = BTreeSet::new();
+            for resolved in product_json_paths(directory)? {
+                let product = read_product(&resolved)?;
+                if !directory_names.insert(product.name.clone()) {
+                    bail!(
+                        "Product '{}' is declared more than once in {}",
+                        product.name,
+                        directory.display()
+                    );
                 }
 
-                let content = std::fs::read_to_string(&path)
-                    .with_context(|| format!("Failed to read {}", path.display()))?;
-
-                let product: BuiltinProduct = serde_json::from_str(&content)
-                    .with_context(|| format!("Invalid product JSON: {}", path.display()))?;
-
-                // Override existing or append new
-                if let Some(idx) = products.iter().position(|p| p.name == product.name) {
+                if let Some(index) = products
+                    .iter()
+                    .position(|existing: &BuiltinProduct| existing.name == product.name)
+                {
                     tracing::info!(
                         "Product '{}' overridden from {}",
                         product.name,
-                        path.display()
+                        resolved.display()
                     );
-                    products[idx] = product;
+                    products[index] = product;
                 } else {
-                    tracing::info!("Product '{}' loaded from {}", product.name, path.display());
+                    tracing::info!(
+                        "Product '{}' loaded from {}",
+                        product.name,
+                        resolved.display()
+                    );
                     products.push(product);
                 }
             }
         }
-
         Ok(Self { products })
     }
 
-    /// Create from built-in products only (no external overrides)
+    /// Creates an empty library for backward-compatible callers.
     pub fn builtin_only() -> Self {
         Self {
-            products: BUILTIN_PRODUCTS.clone(),
+            products: Vec::new(),
         }
     }
 
@@ -196,43 +253,35 @@ impl ProductLibrary {
 /// Valid files return an empty list.
 pub fn validate_product_dir(dir: &Path) -> Vec<(String, String)> {
     let mut errors = Vec::new();
-
-    let entries = match std::fs::read_dir(dir) {
-        Ok(e) => e,
-        Err(e) => {
-            errors.push(("(directory)".to_string(), e.to_string()));
+    let paths = match product_json_paths(dir) {
+        Ok(paths) => paths,
+        Err(error) => {
+            errors.push(("(directory)".to_string(), error.to_string()));
             return errors;
         },
     };
+    let mut names = BTreeSet::new();
 
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.extension().and_then(|e| e.to_str()) != Some("json") {
-            continue;
-        }
-
+    for path in paths {
         let filename = path
             .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("?")
             .to_string();
 
-        let content = match std::fs::read_to_string(&path) {
-            Ok(c) => c,
-            Err(e) => {
-                errors.push((filename, format!("read error: {}", e)));
-                continue;
-            },
-        };
-
-        match serde_json::from_str::<BuiltinProduct>(&content) {
+        match read_product(&path) {
             Ok(p) => {
                 if p.name.is_empty() {
                     errors.push((filename, "product name is empty".to_string()));
+                } else if !names.insert(p.name.clone()) {
+                    errors.push((
+                        filename,
+                        format!("Product '{}' is declared more than once", p.name),
+                    ));
                 }
             },
-            Err(e) => {
-                errors.push((filename, format!("JSON parse error: {}", e)));
+            Err(error) => {
+                errors.push((filename, error.to_string()));
             },
         }
     }
@@ -245,74 +294,37 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_builtin_products_loaded() {
+    fn test_kernel_builtin_product_catalog_is_empty() {
         let products = get_builtin_products();
-        assert!(!products.is_empty(), "Should have built-in products");
+        assert!(products.is_empty(), "kernel must not embed a domain pack");
     }
 
     #[test]
-    fn test_get_product_by_name() {
-        let battery = get_builtin_product("Battery").expect("Battery should exist");
-        assert_eq!(battery.name, "Battery");
-        assert_eq!(battery.parent_name.as_deref(), Some("ESS"));
-        assert!(!battery.measurements.is_empty());
+    fn test_kernel_builtin_queries_return_no_energy_products() {
+        assert!(get_builtin_product("Battery").is_none());
+        assert!(get_product_names().is_empty());
+        assert!(!product_exists("Battery"));
+        assert!(get_child_products("Station").is_empty());
     }
 
     #[test]
-    fn test_product_hierarchy() {
-        // Station is root
-        let station = get_builtin_product("Station").expect("Station should exist");
-        assert!(station.parent_name.is_none());
-
-        // ESS -> Station
-        let ess = get_builtin_product("ESS").expect("ESS should exist");
-        assert_eq!(ess.parent_name.as_deref(), Some("Station"));
-
-        // Battery -> ESS
-        let battery = get_builtin_product("Battery").expect("Battery should exist");
-        assert_eq!(battery.parent_name.as_deref(), Some("ESS"));
-    }
-
-    #[test]
-    fn test_get_child_products() {
-        let station_children = get_child_products("Station");
-        let names: Vec<_> = station_children.iter().map(|p| p.name.as_str()).collect();
-        assert!(names.contains(&"ESS"));
-        assert!(names.contains(&"Generator"));
-        assert!(names.contains(&"Env"));
-        assert!(names.contains(&"Load"));
-    }
-
-    #[test]
-    fn test_product_exists() {
-        assert!(product_exists("Battery"));
-        assert!(product_exists("PCS"));
-        assert!(!product_exists("NonExistent"));
-    }
-
-    // ========== ProductLibrary Tests ==========
-
-    #[test]
-    fn test_product_library_builtin_only() {
+    fn test_product_library_default_is_empty() {
         let lib = ProductLibrary::builtin_only();
-        assert!(lib.len() >= 10);
-        assert!(lib.exists("Battery"));
-        assert!(lib.exists("PCS"));
-        assert!(!lib.exists("CustomDevice"));
-        assert!(!lib.is_empty());
+        assert!(lib.is_empty());
+        assert_eq!(lib.len(), 0);
     }
 
     #[test]
     fn test_product_library_load_no_dir() -> anyhow::Result<()> {
         let lib = ProductLibrary::load(None)?;
-        assert!(lib.len() >= 10);
+        assert!(lib.is_empty());
         Ok(())
     }
 
     #[test]
     fn test_product_library_load_nonexistent_dir() -> anyhow::Result<()> {
         let lib = ProductLibrary::load(Some(Path::new("/nonexistent/path")))?;
-        assert!(lib.len() >= 10); // Falls back to built-in only
+        assert!(lib.is_empty());
         Ok(())
     }
 
@@ -321,7 +333,7 @@ mod tests {
         let temp_dir = tempfile::tempdir()?;
         let products_dir = temp_dir.path();
 
-        // Write a custom product that overrides Battery
+        // An explicitly selected directory may define a product named Battery.
         let custom_battery = r#"{
             "name": "Battery",
             "pName": "ESS",
@@ -332,7 +344,7 @@ mod tests {
         std::fs::write(products_dir.join("Battery.json"), custom_battery)?;
 
         let lib = ProductLibrary::load(Some(products_dir))?;
-        assert!(lib.len() >= 10); // Same count (override, not add)
+        assert_eq!(lib.len(), 1);
 
         let battery = lib.get("Battery").context("Battery not found")?;
         assert_eq!(battery.measurements.len(), 1);
@@ -356,8 +368,7 @@ mod tests {
         std::fs::write(products_dir.join("WindTurbine.json"), custom_product)?;
 
         let lib = ProductLibrary::load(Some(products_dir))?;
-        let builtin_count = get_builtin_products().len();
-        assert_eq!(lib.len(), builtin_count + 1); // built-in + 1 new
+        assert_eq!(lib.len(), 1);
         assert!(lib.exists("WindTurbine"));
 
         let wind = lib.get("WindTurbine").context("WindTurbine not found")?;
@@ -366,20 +377,154 @@ mod tests {
     }
 
     #[test]
-    fn test_product_library_names() {
-        let lib = ProductLibrary::builtin_only();
-        let names = lib.names();
-        assert!(names.contains(&"Battery"));
-        assert!(names.contains(&"Station"));
+    fn explicitly_ordered_directories_allow_site_overrides() -> anyhow::Result<()> {
+        let pack = tempfile::tempdir()?;
+        let site = tempfile::tempdir()?;
+        std::fs::write(
+            pack.path().join("Battery.json"),
+            r#"{"name":"Battery","M":[{"id":1,"name":"Pack SOC"}],"A":[],"P":[]}"#,
+        )?;
+        std::fs::write(
+            site.path().join("Battery.json"),
+            r#"{"name":"Battery","M":[{"id":1,"name":"Site SOC"}],"A":[],"P":[]}"#,
+        )?;
+
+        let lib = ProductLibrary::load_directories(&[pack.path(), site.path()])?;
+
+        assert_eq!(lib.len(), 1);
+        assert_eq!(
+            lib.get("Battery").context("Battery")?.measurements[0].name,
+            "Site SOC"
+        );
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn selected_product_directory_rejects_json_symlinks() -> anyhow::Result<()> {
+        use std::os::unix::fs::symlink;
+
+        let selected = tempfile::tempdir()?;
+        let outside = tempfile::tempdir()?;
+        let target = outside.path().join("Escaped.json");
+        std::fs::write(&target, r#"{"name":"Escaped","M":[],"A":[],"P":[]}"#)?;
+        symlink(target, selected.path().join("Escaped.json"))?;
+
+        let error = match ProductLibrary::load(Some(selected.path())) {
+            Err(error) => error,
+            Ok(_) => panic!("JSON symlink must be rejected"),
+        };
+
+        assert!(error.to_string().contains("symlink"));
+        Ok(())
     }
 
     #[test]
-    fn test_product_library_children() {
-        let lib = ProductLibrary::builtin_only();
-        let station_children = lib.children("Station");
-        let names: Vec<&str> = station_children.iter().map(|p| p.name.as_str()).collect();
-        assert!(names.contains(&"ESS"));
-        assert!(names.contains(&"Generator"));
+    fn selected_product_directory_rejects_non_regular_json_entries() -> anyhow::Result<()> {
+        let selected = tempfile::tempdir()?;
+        std::fs::create_dir(selected.path().join("Directory.json"))?;
+
+        let error = match ProductLibrary::load(Some(selected.path())) {
+            Err(error) => error,
+            Ok(_) => panic!("JSON directory must be rejected"),
+        };
+
+        assert!(error.to_string().contains("regular file"));
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn product_directory_validation_rejects_json_symlinks() -> anyhow::Result<()> {
+        use std::os::unix::fs::symlink;
+
+        let selected = tempfile::tempdir()?;
+        let outside = tempfile::tempdir()?;
+        let target = outside.path().join("Escaped.json");
+        std::fs::write(&target, r#"{"name":"Escaped","M":[],"A":[],"P":[]}"#)?;
+        symlink(target, selected.path().join("Escaped.json"))?;
+
+        let errors = validate_product_dir(selected.path());
+
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].1.contains("symlink"));
+        Ok(())
+    }
+
+    #[test]
+    fn duplicate_product_names_within_one_directory_fail_closed() -> anyhow::Result<()> {
+        let selected = tempfile::tempdir()?;
+        let product = r#"{"name":"Duplicate","M":[],"A":[],"P":[]}"#;
+        std::fs::write(selected.path().join("First.json"), product)?;
+        std::fs::write(selected.path().join("Second.json"), product)?;
+
+        let runtime_error = match ProductLibrary::load(Some(selected.path())) {
+            Err(error) => error,
+            Ok(_) => panic!("same-directory duplicate must be rejected"),
+        };
+        let validation_errors = validate_product_dir(selected.path());
+
+        assert!(runtime_error.to_string().contains("Duplicate"));
+        assert_eq!(validation_errors.len(), 1);
+        assert!(validation_errors[0].1.contains("Duplicate"));
+        Ok(())
+    }
+
+    #[test]
+    fn oversized_product_json_fails_runtime_and_validation() -> anyhow::Result<()> {
+        let selected = tempfile::tempdir()?;
+        std::fs::write(
+            selected.path().join("Huge.json"),
+            vec![b'x'; MAX_PRODUCT_JSON_BYTES as usize + 1],
+        )?;
+
+        let runtime_error = ProductLibrary::load(Some(selected.path()))
+            .expect_err("oversized product must fail runtime loading");
+        let validation_errors = validate_product_dir(selected.path());
+
+        assert!(runtime_error.to_string().contains("exceeds"));
+        assert_eq!(validation_errors.len(), 1);
+        assert!(validation_errors[0].1.contains("exceeds"));
+        Ok(())
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn non_utf8_product_entry_fails_runtime_and_validation() -> anyhow::Result<()> {
+        use std::ffi::OsString;
+        use std::os::unix::ffi::OsStringExt;
+
+        let selected = tempfile::tempdir()?;
+        let filename = OsString::from_vec(vec![0xff, b'.', b'j', b's', b'o', b'n']);
+        std::fs::write(selected.path().join(filename), b"{}")?;
+
+        let runtime_error = ProductLibrary::load(Some(selected.path()))
+            .expect_err("non-UTF-8 product name must fail runtime loading");
+        let validation_errors = validate_product_dir(selected.path());
+
+        assert!(runtime_error.to_string().contains("non-UTF-8"));
+        assert_eq!(validation_errors.len(), 1);
+        assert!(validation_errors[0].1.contains("non-UTF-8"));
+        Ok(())
+    }
+
+    #[test]
+    fn test_product_library_names_and_children_come_only_from_selected_directory()
+    -> anyhow::Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        std::fs::write(
+            temp_dir.path().join("Station.json"),
+            r#"{"name":"Station","M":[],"A":[],"P":[]}"#,
+        )?;
+        std::fs::write(
+            temp_dir.path().join("Battery.json"),
+            r#"{"name":"Battery","pName":"Station","M":[],"A":[],"P":[]}"#,
+        )?;
+        let lib = ProductLibrary::load(Some(temp_dir.path()))?;
+
+        assert_eq!(lib.names(), vec!["Battery", "Station"]);
+        assert_eq!(lib.children("Station")[0].name, "Battery");
+        Ok(())
     }
 
     #[test]

@@ -5,7 +5,7 @@
 use anyhow::{Context, Result};
 use chrono::{TimeZone, Utc};
 use sqlx::SqlitePool;
-use tracing::{debug, info};
+use tracing::info;
 
 use crate::models::{
     Alert, AlertEvent, AlertQueryParams, AlertRule, EventQueryParams, PagedData, RuleQueryParams,
@@ -84,8 +84,7 @@ pub async fn create_tables(pool: &SqlitePool) -> Result<()> {
             event_type      TEXT    NOT NULL,
             triggered_at    INTEGER,
             recovered_at    INTEGER,
-            duration        INTEGER,
-            FOREIGN KEY (rule_id) REFERENCES alert_rule(id)
+            duration        INTEGER
         )
         "#,
     )
@@ -93,59 +92,95 @@ pub async fn create_tables(pool: &SqlitePool) -> Result<()> {
     .await
     .context("create alert_event table")?;
 
+    migrate_alert_event_to_retained_history(pool).await?;
+
     info!("Alert tables ready");
+    Ok(())
+}
+
+/// Removes the legacy parent foreign key from historical alarm events.
+///
+/// Alarm-rule deletion intentionally retains `alert_event` rows. With
+/// production `PRAGMA foreign_keys=ON`, the original parent constraint made
+/// those two requirements mutually exclusive and rejected every deletion once
+/// a rule had history. Rebuilding is safe at startup before the HTTP server or
+/// monitor tasks begin.
+async fn migrate_alert_event_to_retained_history(pool: &SqlitePool) -> Result<()> {
+    let foreign_key_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM pragma_foreign_key_list('alert_event')")
+            .fetch_one(pool)
+            .await
+            .context("inspect alert_event foreign keys")?;
+    if foreign_key_count == 0 {
+        return Ok(());
+    }
+
+    let mut transaction = pool
+        .begin()
+        .await
+        .context("begin alert_event retention migration")?;
+    sqlx::query(
+        r#"
+        CREATE TABLE alert_event_retained_history (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            rule_id         INTEGER,
+            rule_snapshot   TEXT,
+            service_type    TEXT,
+            channel_id      INTEGER,
+            data_type       TEXT,
+            point_id        INTEGER,
+            rule_name       TEXT,
+            warning_level   INTEGER,
+            operator        TEXT,
+            threshold_value REAL,
+            trigger_value   REAL,
+            recovery_value  REAL,
+            event_type      TEXT    NOT NULL,
+            triggered_at    INTEGER,
+            recovered_at    INTEGER,
+            duration        INTEGER
+        )
+        "#,
+    )
+    .execute(&mut *transaction)
+    .await
+    .context("create retained alert_event table")?;
+    sqlx::query(
+        r#"
+        INSERT INTO alert_event_retained_history
+            (id, rule_id, rule_snapshot, service_type, channel_id, data_type,
+             point_id, rule_name, warning_level, operator, threshold_value,
+             trigger_value, recovery_value, event_type, triggered_at,
+             recovered_at, duration)
+        SELECT id, rule_id, rule_snapshot, service_type, channel_id, data_type,
+               point_id, rule_name, warning_level, operator, threshold_value,
+               trigger_value, recovery_value, event_type, triggered_at,
+               recovered_at, duration
+        FROM alert_event
+        "#,
+    )
+    .execute(&mut *transaction)
+    .await
+    .context("copy retained alert_event rows")?;
+    sqlx::query("DROP TABLE alert_event")
+        .execute(&mut *transaction)
+        .await
+        .context("drop constrained alert_event table")?;
+    sqlx::query("ALTER TABLE alert_event_retained_history RENAME TO alert_event")
+        .execute(&mut *transaction)
+        .await
+        .context("activate retained alert_event table")?;
+    transaction
+        .commit()
+        .await
+        .context("commit alert_event retention migration")?;
+    info!("Migrated alert_event to retained history without parent foreign key");
     Ok(())
 }
 
 // ============================================================================
 // AlertRule CRUD
 // ============================================================================
-
-#[allow(clippy::too_many_arguments)]
-pub async fn insert_rule(
-    pool: &SqlitePool,
-    service_type: &str,
-    channel_id: i64,
-    data_type: &str,
-    point_id: i64,
-    rule_name: &str,
-    warning_level: i64,
-    operator: &str,
-    value: f64,
-    enabled: bool,
-    description: Option<&str>,
-) -> Result<i64> {
-    let now = Utc::now().timestamp();
-    let enabled_int: i64 = if enabled { 1 } else { 0 };
-
-    let id = sqlx::query_scalar::<_, i64>(
-        r#"
-        INSERT INTO alert_rule
-            (service_type, channel_id, data_type, point_id, rule_name, warning_level,
-             operator, value, enabled, description, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        RETURNING id
-        "#,
-    )
-    .bind(service_type)
-    .bind(channel_id)
-    .bind(data_type)
-    .bind(point_id)
-    .bind(rule_name)
-    .bind(warning_level)
-    .bind(operator)
-    .bind(value)
-    .bind(enabled_int)
-    .bind(description)
-    .bind(now)
-    .bind(now)
-    .fetch_one(pool)
-    .await
-    .context("insert alert_rule")?;
-
-    debug!("Created rule id={}", id);
-    Ok(id)
-}
 
 pub async fn get_rule_by_id(pool: &SqlitePool, id: i64) -> Result<Option<AlertRule>> {
     let row = sqlx::query_as::<_, AlertRule>("SELECT * FROM alert_rule WHERE id = ?")
@@ -261,6 +296,7 @@ pub async fn get_rules_by_channel(pool: &SqlitePool, channel_id: i64) -> Result<
 }
 
 /// Check whether a rule with the given name already exists (case-insensitive).
+#[cfg(test)]
 pub async fn find_rule_by_name(pool: &SqlitePool, rule_name: &str) -> Result<Option<AlertRule>> {
     sqlx::query_as::<_, AlertRule>(
         "SELECT * FROM alert_rule WHERE LOWER(rule_name) = LOWER(?) LIMIT 1",
@@ -271,149 +307,11 @@ pub async fn find_rule_by_name(pool: &SqlitePool, rule_name: &str) -> Result<Opt
     .context("find rule by name")
 }
 
-/// Check whether a rule already exists for the given (service_type, channel_id, data_type, point_id)
-/// combination. Returns the first matching rule (enabled or disabled) if found.
-pub async fn find_rule_by_point(
-    pool: &SqlitePool,
-    service_type: &str,
-    channel_id: i64,
-    data_type: &str,
-    point_id: i64,
-) -> Result<Option<AlertRule>> {
-    sqlx::query_as::<_, AlertRule>(
-        "SELECT * FROM alert_rule WHERE service_type = ? AND channel_id = ? AND data_type = ? AND point_id = ? LIMIT 1",
-    )
-    .bind(service_type)
-    .bind(channel_id)
-    .bind(data_type)
-    .bind(point_id)
-    .fetch_optional(pool)
-    .await
-    .context("find rule by point")
-}
-
 pub async fn get_all_enabled_rules(pool: &SqlitePool) -> Result<Vec<AlertRule>> {
     sqlx::query_as::<_, AlertRule>("SELECT * FROM alert_rule WHERE enabled = 1 ORDER BY id ASC")
         .fetch_all(pool)
         .await
         .context("get enabled rules")
-}
-
-#[allow(clippy::too_many_arguments)]
-pub async fn update_rule(
-    pool: &SqlitePool,
-    id: i64,
-    service_type: Option<&str>,
-    channel_id: Option<i64>,
-    data_type: Option<&str>,
-    point_id: Option<i64>,
-    rule_name: Option<&str>,
-    warning_level: Option<i64>,
-    operator: Option<&str>,
-    value: Option<f64>,
-    enabled: Option<bool>,
-    description: Option<Option<&str>>,
-) -> Result<bool> {
-    let now = Utc::now().timestamp();
-    let mut set_clauses: Vec<String> = Vec::new();
-
-    if service_type.is_some() {
-        set_clauses.push("service_type = ?".into());
-    }
-    if channel_id.is_some() {
-        set_clauses.push("channel_id = ?".into());
-    }
-    if data_type.is_some() {
-        set_clauses.push("data_type = ?".into());
-    }
-    if point_id.is_some() {
-        set_clauses.push("point_id = ?".into());
-    }
-    if rule_name.is_some() {
-        set_clauses.push("rule_name = ?".into());
-    }
-    if warning_level.is_some() {
-        set_clauses.push("warning_level = ?".into());
-    }
-    if operator.is_some() {
-        set_clauses.push("operator = ?".into());
-    }
-    if value.is_some() {
-        set_clauses.push("value = ?".into());
-    }
-    if enabled.is_some() {
-        set_clauses.push("enabled = ?".into());
-    }
-    if description.is_some() {
-        set_clauses.push("description = ?".into());
-    }
-
-    if set_clauses.is_empty() {
-        return Ok(false);
-    }
-
-    set_clauses.push("updated_at = ?".into());
-    let sql = format!(
-        "UPDATE alert_rule SET {} WHERE id = ?",
-        set_clauses.join(", ")
-    );
-
-    let mut q = sqlx::query(&sql);
-    if let Some(v) = service_type {
-        q = q.bind(v);
-    }
-    if let Some(v) = channel_id {
-        q = q.bind(v);
-    }
-    if let Some(v) = data_type {
-        q = q.bind(v);
-    }
-    if let Some(v) = point_id {
-        q = q.bind(v);
-    }
-    if let Some(v) = rule_name {
-        q = q.bind(v);
-    }
-    if let Some(v) = warning_level {
-        q = q.bind(v);
-    }
-    if let Some(v) = operator {
-        q = q.bind(v);
-    }
-    if let Some(v) = value {
-        q = q.bind(v);
-    }
-    if let Some(v) = enabled {
-        q = q.bind(if v { 1i64 } else { 0i64 });
-    }
-    if let Some(v) = description {
-        q = q.bind(v);
-    }
-    q = q.bind(now).bind(id);
-
-    let result = q.execute(pool).await.context("update rule")?;
-    Ok(result.rows_affected() > 0)
-}
-
-pub async fn set_rule_enabled(pool: &SqlitePool, id: i64, enabled: bool) -> Result<bool> {
-    let now = Utc::now().timestamp();
-    let result = sqlx::query("UPDATE alert_rule SET enabled = ?, updated_at = ? WHERE id = ?")
-        .bind(if enabled { 1i64 } else { 0i64 })
-        .bind(now)
-        .bind(id)
-        .execute(pool)
-        .await
-        .context("set rule enabled")?;
-    Ok(result.rows_affected() > 0)
-}
-
-pub async fn delete_rule(pool: &SqlitePool, id: i64) -> Result<bool> {
-    let result = sqlx::query("DELETE FROM alert_rule WHERE id = ?")
-        .bind(id)
-        .execute(pool)
-        .await
-        .context("delete rule")?;
-    Ok(result.rows_affected() > 0)
 }
 
 // ============================================================================
@@ -609,64 +507,6 @@ pub async fn resolve_alert(pool: &SqlitePool, alert: &Alert, recovery_value: f64
     Ok(event_id)
 }
 
-/// Resolves all alerts for a rule (used when rule is disabled or deleted).
-/// Returns the list of resolved alert IDs.
-pub async fn resolve_alerts_by_rule_id(pool: &SqlitePool, rule_id: i64) -> Result<Vec<Alert>> {
-    let alerts = sqlx::query_as::<_, Alert>("SELECT * FROM alert WHERE rule_id = ?")
-        .bind(rule_id)
-        .fetch_all(pool)
-        .await
-        .context("get alerts by rule_id")?;
-
-    if alerts.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    let now = Utc::now().timestamp();
-    let mut tx = pool.begin().await.context("begin transaction")?;
-
-    for alert in &alerts {
-        let duration = now - alert.triggered_at;
-
-        sqlx::query(
-            r#"
-            INSERT INTO alert_event
-                (rule_id, rule_snapshot, service_type, channel_id, data_type, point_id,
-                 rule_name, warning_level, operator, threshold_value,
-                 trigger_value, recovery_value, event_type,
-                 triggered_at, recovered_at, duration)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 'recovery', ?, ?, ?)
-            "#,
-        )
-        .bind(alert.rule_id)
-        .bind(&alert.rule_snapshot)
-        .bind(&alert.service_type)
-        .bind(alert.channel_id)
-        .bind(&alert.data_type)
-        .bind(alert.point_id)
-        .bind(&alert.rule_name)
-        .bind(alert.warning_level)
-        .bind(&alert.operator)
-        .bind(alert.threshold_value)
-        .bind(alert.current_value)
-        .bind(alert.triggered_at)
-        .bind(now)
-        .bind(duration)
-        .execute(&mut *tx)
-        .await
-        .context("insert alert_event in bulk resolve")?;
-
-        sqlx::query("DELETE FROM alert WHERE id = ?")
-            .bind(alert.id)
-            .execute(&mut *tx)
-            .await
-            .context("delete alert in bulk resolve")?;
-    }
-
-    tx.commit().await.context("commit bulk resolve")?;
-    Ok(alerts)
-}
-
 // ============================================================================
 // AlertEvent queries
 // ============================================================================
@@ -833,6 +673,83 @@ pub async fn get_all_events_for_export(
     }
 
     q.fetch_all(pool).await.context("export events")
+}
+
+#[cfg(test)]
+mod retention_migration_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn legacy_event_foreign_key_is_removed_without_losing_history() {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("in-memory database");
+        sqlx::query("PRAGMA foreign_keys = ON")
+            .execute(&pool)
+            .await
+            .expect("enable foreign keys");
+        sqlx::query(
+            "CREATE TABLE alert_rule (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                service_type TEXT NOT NULL, channel_id INTEGER NOT NULL,
+                data_type TEXT NOT NULL, point_id INTEGER NOT NULL,
+                rule_name TEXT NOT NULL, warning_level INTEGER NOT NULL,
+                operator TEXT NOT NULL, value REAL NOT NULL,
+                enabled INTEGER NOT NULL, description TEXT,
+                created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+            )",
+        )
+        .execute(&pool)
+        .await
+        .expect("legacy parent table");
+        sqlx::query(
+            "CREATE TABLE alert_event (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                rule_id INTEGER, rule_snapshot TEXT, service_type TEXT,
+                channel_id INTEGER, data_type TEXT, point_id INTEGER,
+                rule_name TEXT, warning_level INTEGER, operator TEXT,
+                threshold_value REAL, trigger_value REAL, recovery_value REAL,
+                event_type TEXT NOT NULL, triggered_at INTEGER,
+                recovered_at INTEGER, duration INTEGER,
+                FOREIGN KEY (rule_id) REFERENCES alert_rule(id)
+            )",
+        )
+        .execute(&pool)
+        .await
+        .expect("legacy event table");
+        sqlx::query(
+            "INSERT INTO alert_rule
+             (id, service_type, channel_id, data_type, point_id, rule_name,
+              warning_level, operator, value, enabled, created_at, updated_at)
+             VALUES (7, 'io', 1, 'T', 2, 'temperature', 2, '>', 80, 0, 1, 1)",
+        )
+        .execute(&pool)
+        .await
+        .expect("legacy rule");
+        sqlx::query("INSERT INTO alert_event (rule_id, event_type) VALUES (7, 'recovery')")
+            .execute(&pool)
+            .await
+            .expect("legacy history");
+
+        create_tables(&pool).await.expect("migrate schema");
+        sqlx::query("DELETE FROM alert_rule WHERE id = 7")
+            .execute(&pool)
+            .await
+            .expect("delete parent after migration");
+
+        let retained: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM alert_event")
+            .fetch_one(&pool)
+            .await
+            .expect("retained history");
+        let foreign_keys: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM pragma_foreign_key_list('alert_event')")
+                .fetch_one(&pool)
+                .await
+                .expect("foreign-key count");
+        assert_eq!((retained, foreign_keys), (1, 0));
+    }
 }
 
 // ============================================================================

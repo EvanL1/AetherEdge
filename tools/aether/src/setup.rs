@@ -43,7 +43,13 @@ const SAFE_CONFIG_FILES: [SafeConfigFile; 4] = [
     },
 ];
 
-const NON_RUNTIME_DISTRIBUTION_FILES: [&str; 1] = ["io/README.md"];
+// Composition metadata is verified by runtime consumers and is never authored
+// or rewritten by site setup. An explicitly supplied manifest may coexist with
+// the four safe site files without making the site look commissioned.
+const NON_RUNTIME_DISTRIBUTION_FILES: [&str; 2] = [
+    "io/README.md",
+    aether_runtime_catalog::RUNTIME_MANIFEST_FILE_NAME,
+];
 const CORE_SCHEMA_TABLES: [&str; 15] = [
     "action_routing",
     "adjustment_points",

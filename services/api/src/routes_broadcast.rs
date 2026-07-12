@@ -18,7 +18,7 @@ use crate::state::AppState;
 #[utoipa::path(post, path = "/api/v1/broadcast", tag = "WebSocket",
     security(("bearer_auth" = [])),
     request_body(content = serde_json::Value, description = "Arbitrary JSON payload to broadcast to all connected WebSocket clients"),
-    responses((status = 200, description = "Broadcast delivered")))]
+    responses((status = 200, description = "Broadcast delivered", body = crate::models::GatewayDataResponse<serde_json::Value>)))]
 pub async fn broadcast_message(
     State(state): State<Arc<AppState>>,
     Json(body): Json<serde_json::Value>,
@@ -56,7 +56,7 @@ pub async fn broadcast_message(
 /// connection exists and whether its subscription matches the pushed data.
 #[utoipa::path(get, path = "/api/v1/broadcast/status", tag = "WebSocket",
     security(("bearer_auth" = [])),
-    responses((status = 200, description = "WebSocket hub connection status")))]
+    responses((status = 200, description = "WebSocket hub connection status", body = crate::models::GatewayDataResponse<serde_json::Value>)))]
 pub async fn broadcast_status(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let status = state.ws_hub.get_status();
 

@@ -3,17 +3,14 @@
 //! This module provides routing CRUD operations for measurement and action points.
 //! Extracted from instance_manager.rs for better code organization.
 
-use aether_model::PointType;
 use anyhow::{Result, anyhow};
 use common::{ValidationLevel, ValidationResult};
-use tracing::{debug, warn};
 
 use crate::routing_loader::{
     ActionRouting, ActionRoutingRow, MeasurementRouting, MeasurementRoutingRow,
 };
 
 use super::instance_manager::InstanceManager;
-use aether_rtdb_shm::SharedSlotRef;
 
 impl InstanceManager {
     /// Create or update routing for a single measurement point (UPSERT)
@@ -67,44 +64,6 @@ impl InstanceManager {
         .bind(request.enabled)
         .execute(&self.pool)
         .await?;
-
-        // Dynamic Slot Allocation: Add shared_slot reference for C2M routing
-        // Only for enabled bound routing (has channel info)
-        if request.enabled
-            && let (Some(index), Some(channel_id), Some(channel_type), Some(channel_point_id)) = (
-                self.dynamic_instance_index(),
-                request.channel_id,
-                request.four_remote,
-                request.channel_point_id,
-            )
-        {
-            let channel_id = channel_id as u32;
-            let slot_ref = SharedSlotRef {
-                // slot_id = 0: Delayed computation - resolve when accessing shared memory
-                slot_id: 0,
-                // point_type = source channel type (T/S for measurement routing)
-                point_type: channel_type,
-                point_id,
-                source_channel_id: channel_id,
-                source_point_type: channel_type,
-                source_point_id: channel_point_id,
-            };
-
-            match index.add_shared_slot(instance_id, slot_ref) {
-                Ok(()) => {
-                    debug!(
-                        "Inst{}:M:{} shared_slot added (ch:{}:{}:{})",
-                        instance_id, point_id, channel_id, channel_type, channel_point_id
-                    );
-                },
-                Err(e) => {
-                    warn!(
-                        "Inst{}:M:{} shared_slot add failed: {}",
-                        instance_id, point_id, e
-                    );
-                },
-            }
-        }
 
         Ok(())
     }
@@ -173,44 +132,6 @@ impl InstanceManager {
         .bind(point_id)
         .execute(&self.pool)
         .await?;
-
-        // Dynamic Slot Allocation: Remove shared_slot reference
-        // Try both Telemetry and Signal types since measurement routing uses T/S
-        if result.rows_affected() > 0
-            && let Some(index) = self.dynamic_instance_index()
-        {
-            // Try Telemetry first, then Signal
-            let removed = index
-                .remove_shared_slot(instance_id, PointType::Telemetry, point_id)
-                .ok()
-                .flatten()
-                .or_else(|| {
-                    index
-                        .remove_shared_slot(instance_id, PointType::Signal, point_id)
-                        .ok()
-                        .flatten()
-                });
-
-            match removed {
-                Some(slot_ref) => {
-                    debug!(
-                        "Inst{}:M:{} shared_slot removed (ch:{}:{}:{})",
-                        instance_id,
-                        point_id,
-                        slot_ref.source_channel_id,
-                        slot_ref.source_point_type,
-                        slot_ref.source_point_id
-                    );
-                },
-                None => {
-                    // No shared_slot found - might be unbound routing
-                    debug!(
-                        "Inst{}:M:{} no shared_slot to remove",
-                        instance_id, point_id
-                    );
-                },
-            }
-        }
 
         Ok(result.rows_affected())
     }
@@ -426,7 +347,6 @@ impl InstanceManager {
     /// Delete all routing for an instance
     ///
     /// Removes all measurement and action routing entries for the specified instance.
-    /// Also clears all shared_slots from InstanceIndex.
     pub async fn delete_all_routing(&self, instance_id: u32) -> Result<(u64, u64)> {
         let measurement_result =
             sqlx::query("DELETE FROM measurement_routing WHERE instance_id = ?")
@@ -438,26 +358,6 @@ impl InstanceManager {
             .bind(instance_id as i64)
             .execute(&self.pool)
             .await?;
-
-        // Dynamic Slot Allocation: Clear all shared_slots for this instance
-        // Note: We don't remove the instance from InstanceIndex, just clear its shared_slots
-        if measurement_result.rows_affected() > 0
-            && let Some(index) = self.dynamic_instance_index()
-        {
-            match index.clear_shared_slots(instance_id) {
-                Ok(cleared_count) if cleared_count > 0 => {
-                    debug!(
-                        "Inst{} cleared {} shared_slots (routing deleted)",
-                        instance_id, cleared_count
-                    );
-                },
-                Ok(_) => {},
-                Err(e) => {
-                    // Instance not found in InstanceIndex - might not be using dynamic allocation
-                    debug!("Inst{} clear_shared_slots skipped: {}", instance_id, e);
-                },
-            }
-        }
 
         Ok((
             measurement_result.rows_affected(),
@@ -474,7 +374,6 @@ impl InstanceManager {
 #[allow(clippy::disallowed_methods)] // Test code - unwrap is acceptable
 mod tests {
     use super::*;
-    use crate::product_loader::ProductLoader;
     use aether_routing::RoutingCache;
     use common::FourRemote;
     use sqlx::SqlitePool;
@@ -496,7 +395,7 @@ mod tests {
             .unwrap();
 
         // Note: measurement_points and action_points tables are no longer needed.
-        // Validation tests now use built-in product definitions from aether-model crate
+        // Validation tests explicitly load the Energy Pack model fixture.
         // (Battery has 19 measurements + 3 actions, PCS has its own set, etc.)
 
         (temp_dir, pool)
@@ -505,11 +404,11 @@ mod tests {
     // Helper: Create InstanceManager for testing
     fn create_test_instance_manager(pool: SqlitePool) -> InstanceManager {
         let routing_cache = Arc::new(RoutingCache::new());
-        let product_loader = Arc::new(ProductLoader::new(pool.clone()));
+        let product_loader = Arc::new(crate::product_loader::test_energy_product_loader(
+            pool.clone(),
+        ));
 
-        let dispatch: Arc<dyn crate::infra::shm_dispatch::ActionDispatch> =
-            Arc::new(crate::infra::shm_dispatch::NoopDispatch);
-        InstanceManager::new(pool, routing_cache, product_loader, dispatch)
+        InstanceManager::new(pool, routing_cache, product_loader)
     }
 
     // Helper: Create a test instance
@@ -595,6 +494,7 @@ mod tests {
             four_remote: Some(FourRemote::Telemetry),
             channel_point_id: Some(101),
             enabled: true,
+            confirmed: false,
         };
 
         let result = manager.upsert_measurement_routing(1001, 1, request).await;
@@ -622,6 +522,7 @@ mod tests {
             four_remote: Some(FourRemote::Control), // Invalid for measurement
             channel_point_id: Some(101),
             enabled: true,
+            confirmed: false,
         };
 
         let result = manager.upsert_measurement_routing(1001, 1, request).await;
@@ -649,6 +550,7 @@ mod tests {
             four_remote: None,
             channel_point_id: None,
             enabled: true, // Enable so get_measurement_routing returns it
+            confirmed: false,
         };
 
         let result = manager.upsert_measurement_routing(1001, 1, request).await;
@@ -683,6 +585,7 @@ mod tests {
             four_remote: Some(FourRemote::Adjustment),
             channel_point_id: Some(201),
             enabled: true,
+            confirmed: false,
         };
 
         let result = manager.upsert_action_routing(2001, 1, request).await;
@@ -709,6 +612,7 @@ mod tests {
             four_remote: Some(FourRemote::Telemetry), // Invalid for action
             channel_point_id: Some(201),
             enabled: true,
+            confirmed: false,
         };
 
         let result = manager.upsert_action_routing(2001, 1, request).await;
@@ -739,6 +643,7 @@ mod tests {
             four_remote: Some(FourRemote::Telemetry),
             channel_point_id: Some(101),
             enabled: true,
+            confirmed: false,
         };
         manager
             .upsert_measurement_routing(1001, 1, request)
@@ -786,6 +691,7 @@ mod tests {
             four_remote: Some(FourRemote::Telemetry),
             channel_point_id: Some(101),
             enabled: true,
+            confirmed: false,
         };
         manager
             .upsert_measurement_routing(1001, 1, request)
@@ -904,6 +810,7 @@ mod tests {
             four_remote: Some(FourRemote::Telemetry),
             channel_point_id: Some(101),
             enabled: true,
+            confirmed: false,
         };
         manager
             .upsert_measurement_routing(2001, 1, m_request)
@@ -916,6 +823,7 @@ mod tests {
             four_remote: Some(FourRemote::Adjustment),
             channel_point_id: Some(201),
             enabled: true,
+            confirmed: false,
         };
         manager
             .upsert_action_routing(2001, 1, a_request)

@@ -3,7 +3,7 @@
 #![allow(clippy::disallowed_methods)] // Test code - unwrap is acceptable
 
 use super::*;
-use crate::dto::{AdjustmentRequest, ChannelOperation, ControlRequest};
+use crate::dto::{AdjustmentRequest, ControlRequest};
 use axum::{
     body::Body,
     http::{Request, Response, StatusCode},
@@ -11,11 +11,21 @@ use axum::{
 use serde_json::json;
 use sqlx::SqlitePool;
 use std::collections::{BTreeMap, HashMap};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use aether_model::PointType;
-use aether_rtdb_shm::ShmHandle;
+use aether_ports::{
+    AuditOutcome, AuditRecord, AuditSink, ChannelDesiredStateObservation, ChannelMutation,
+    ChannelMutationKind, ChannelMutationReceipt, ChannelMutator, ChannelReconciler,
+    ChannelReconciliationItem, ChannelReconciliationReceipt, ChannelReconciliationScope,
+    ChannelRevision, ChannelRuntimeProjection, PortError, PortErrorKind, PortResult,
+};
+use aether_shm_bridge::ShmWriterHandle;
 use tower::util::ServiceExt; // for `oneshot` and `ready`
+
+const TEST_JWT_SECRET: &str = "0123456789abcdef0123456789abcdef";
+const ADMIN_ACCESS_TOKEN: &str = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyX2lkIjo3LCJyb2xlIjoiQWRtaW4iLCJ0eXBlIjoiYWNjZXNzIiwiaWF0IjoxNzAwMDAwMDAwLCJleHAiOjQxMDI0NDQ4MDB9.JtjQvDBo7j0bLOxwed6yC9-M9qFCloc4H2Dt0LjzF9E";
+const TEST_REQUEST_ID: &str = "018f0000-0000-7000-8000-000000000041";
 
 /// Helper: Create in-memory SQLite pool for testing
 async fn create_test_sqlite_pool() -> sqlx::SqlitePool {
@@ -52,8 +62,7 @@ async fn create_test_sqlite_pool_with_points() -> sqlx::SqlitePool {
 /// Helper: Create API routes over authoritative SHM for testing.
 async fn create_test_api_routes(channel_manager: Arc<ChannelManager>) -> Router {
     let sqlite_pool = create_test_sqlite_pool().await;
-    let command_tx_cache = Arc::new(crate::api::command_cache::CommandTxCache::new());
-    create_api_routes(channel_manager, sqlite_pool, command_tx_cache)
+    create_test_api_with_pool(channel_manager, sqlite_pool).await
 }
 
 /// Helper: Build a Router using a provided in-memory SQLite pool
@@ -61,8 +70,535 @@ async fn create_test_api_with_pool(
     channel_manager: Arc<ChannelManager>,
     sqlite_pool: SqlitePool,
 ) -> Router {
+    // Channel deletion owns cross-service routing/mapping rows in the unified
+    // edge database. Mirror the complete production topology so HTTP tests do
+    // not exercise the governed adapter against a partial schema.
+    common::test_utils::schema::init_automation_schema(&sqlite_pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS json_point_mappings (\
+             id INTEGER PRIMARY KEY AUTOINCREMENT,\
+             channel_id INTEGER NOT NULL REFERENCES channels(channel_id) ON DELETE CASCADE\
+         )",
+    )
+    .execute(&sqlite_pool)
+    .await
+    .unwrap();
+
     let command_tx_cache = Arc::new(crate::api::command_cache::CommandTxCache::new());
-    create_api_routes(channel_manager, sqlite_pool, command_tx_cache)
+    let adapter = Arc::new(crate::SqliteChannelMutator::new(
+        sqlite_pool.clone(),
+        Arc::clone(&channel_manager),
+    ));
+    let mutator: Arc<dyn ChannelMutator> = adapter.clone();
+    let reconciler: Arc<dyn ChannelReconciler> = adapter;
+    let audit: Arc<dyn AuditSink> = Arc::new(aether_store_local::MemoryAuditSink::new());
+    let application = Arc::new(aether_application::ChannelManagementApplication::new(
+        mutator,
+        Arc::clone(&audit),
+        aether_application::SafetyPolicy,
+    ));
+    let reconciliation = Arc::new(aether_application::ChannelReconciliationApplication::new(
+        reconciler,
+        audit,
+        aether_application::SafetyPolicy,
+    ));
+    let authenticator = Arc::new(
+        aether_auth_jwt::AccessTokenAuthenticator::new(TEST_JWT_SECRET)
+            .expect("valid test access-token secret"),
+    );
+    create_api_routes_with_boundary(
+        channel_manager,
+        sqlite_pool,
+        command_tx_cache,
+        false,
+        Some(Arc::clone(&reconciliation)),
+        ChannelManagementHttpBoundary::governed_with_reconciliation(
+            application,
+            reconciliation,
+            authenticator,
+        ),
+    )
+}
+
+fn channel_mutation_request(
+    method: &str,
+    uri: &str,
+    body: Option<serde_json::Value>,
+) -> Request<Body> {
+    let builder = Request::builder()
+        .uri(uri)
+        .method(method)
+        .header("authorization", format!("Bearer {ADMIN_ACCESS_TOKEN}"))
+        .header("x-request-id", TEST_REQUEST_ID)
+        .header("x-aether-confirmed", "true");
+    match body {
+        Some(body) => builder
+            .header("content-type", "application/json")
+            .body(Body::from(body.to_string()))
+            .expect("channel mutation request"),
+        None => builder
+            .body(Body::empty())
+            .expect("channel mutation request"),
+    }
+}
+
+struct RecordingChannelMutator {
+    mutations: Mutex<Vec<ChannelMutation>>,
+    error: Option<PortError>,
+    projection: Option<ChannelRuntimeProjection>,
+}
+
+impl RecordingChannelMutator {
+    fn successful(projection: Option<ChannelRuntimeProjection>) -> Arc<Self> {
+        Arc::new(Self {
+            mutations: Mutex::new(Vec::new()),
+            error: None,
+            projection,
+        })
+    }
+
+    fn failing(kind: PortErrorKind) -> Arc<Self> {
+        Arc::new(Self {
+            mutations: Mutex::new(Vec::new()),
+            error: Some(PortError::new(kind, format!("{kind:?} test failure"))),
+            projection: None,
+        })
+    }
+
+    fn mutation_count(&self) -> usize {
+        self.mutations.lock().unwrap().len()
+    }
+
+    fn mutations(&self) -> Vec<ChannelMutation> {
+        self.mutations.lock().unwrap().clone()
+    }
+}
+
+#[async_trait::async_trait]
+impl ChannelMutator for RecordingChannelMutator {
+    async fn mutate(&self, mutation: ChannelMutation) -> PortResult<ChannelMutationReceipt> {
+        self.mutations.lock().unwrap().push(mutation.clone());
+        if let Some(error) = &self.error {
+            return Err(error.clone());
+        }
+
+        let channel_id = mutation
+            .channel_id()
+            .unwrap_or(aether_domain::ChannelId::new(41));
+        let resulting_revision = mutation
+            .expected_revision()
+            .and_then(ChannelRevision::checked_next)
+            .unwrap_or(ChannelRevision::new(1));
+        let desired_enabled = match &mutation {
+            ChannelMutation::Create { definition } => definition.enabled(),
+            ChannelMutation::SetEnabled { enabled, .. } => *enabled,
+            ChannelMutation::Update { .. } => false,
+            ChannelMutation::Delete { .. } => false,
+        };
+        let projection = self.projection.unwrap_or(match mutation.kind() {
+            ChannelMutationKind::Delete => ChannelRuntimeProjection::Removed,
+            ChannelMutationKind::Enable => ChannelRuntimeProjection::Active,
+            ChannelMutationKind::Create
+            | ChannelMutationKind::Update
+            | ChannelMutationKind::Disable => ChannelRuntimeProjection::Stopped,
+        });
+        Ok(ChannelMutationReceipt::new(
+            channel_id,
+            mutation.kind(),
+            resulting_revision,
+            desired_enabled,
+            projection,
+        ))
+    }
+}
+
+struct RecordingChannelReconciler {
+    scopes: Mutex<Vec<ChannelReconciliationScope>>,
+    items: Vec<ChannelReconciliationItem>,
+    error: Option<PortError>,
+}
+
+impl RecordingChannelReconciler {
+    fn successful(items: Vec<ChannelReconciliationItem>) -> Arc<Self> {
+        Arc::new(Self {
+            scopes: Mutex::new(Vec::new()),
+            items,
+            error: None,
+        })
+    }
+
+    fn failing(kind: PortErrorKind) -> Arc<Self> {
+        Arc::new(Self {
+            scopes: Mutex::new(Vec::new()),
+            items: Vec::new(),
+            error: Some(PortError::new(
+                kind,
+                "sensitive protocol credential must not cross HTTP",
+            )),
+        })
+    }
+
+    fn scopes(&self) -> Vec<ChannelReconciliationScope> {
+        self.scopes.lock().unwrap().clone()
+    }
+}
+
+#[async_trait::async_trait]
+impl ChannelReconciler for RecordingChannelReconciler {
+    async fn reconcile(
+        &self,
+        scope: ChannelReconciliationScope,
+    ) -> PortResult<ChannelReconciliationReceipt> {
+        self.scopes.lock().unwrap().push(scope);
+        if let Some(error) = &self.error {
+            return Err(error.clone());
+        }
+        let items = match scope {
+            ChannelReconciliationScope::All => self.items.clone(),
+            ChannelReconciliationScope::One(channel_id) => self
+                .items
+                .iter()
+                .copied()
+                .filter(|item| item.channel_id() == channel_id)
+                .collect(),
+        };
+        Ok(ChannelReconciliationReceipt::new(scope, items))
+    }
+}
+
+struct TerminalAuditFailure;
+
+#[async_trait::async_trait]
+impl AuditSink for TerminalAuditFailure {
+    async fn record(&self, record: AuditRecord) -> PortResult<()> {
+        if record.outcome() == AuditOutcome::Succeeded {
+            Err(PortError::new(
+                PortErrorKind::Unavailable,
+                "terminal audit unavailable",
+            ))
+        } else {
+            Ok(())
+        }
+    }
+}
+
+struct UnavailableAuditSink;
+
+#[async_trait::async_trait]
+impl AuditSink for UnavailableAuditSink {
+    async fn record(&self, _record: AuditRecord) -> PortResult<()> {
+        Err(PortError::new(
+            PortErrorKind::Unavailable,
+            "sensitive audit backend detail",
+        ))
+    }
+}
+
+async fn recording_channel_router(mutator: Arc<RecordingChannelMutator>) -> Router {
+    recording_channel_router_with_audit(
+        mutator,
+        Arc::new(aether_store_local::MemoryAuditSink::new()),
+    )
+    .await
+}
+
+async fn recording_channel_router_with_audit(
+    mutator: Arc<RecordingChannelMutator>,
+    audit: Arc<dyn AuditSink>,
+) -> Router {
+    let pool = create_test_sqlite_pool().await;
+    let channel_manager = Arc::new(
+        ChannelManager::new(
+            crate::test_utils::create_test_shm_handle(),
+            crate::test_utils::create_test_routing_cache(),
+        )
+        .unwrap(),
+    );
+    let application = Arc::new(aether_application::ChannelManagementApplication::new(
+        mutator,
+        audit,
+        aether_application::SafetyPolicy,
+    ));
+    let authenticator = Arc::new(
+        aether_auth_jwt::AccessTokenAuthenticator::new(TEST_JWT_SECRET)
+            .expect("valid test access-token secret"),
+    );
+    create_api_routes_with_boundary(
+        channel_manager,
+        pool,
+        Arc::new(crate::api::command_cache::CommandTxCache::new()),
+        false,
+        None,
+        ChannelManagementHttpBoundary::governed(application, authenticator),
+    )
+}
+
+async fn recording_reconciliation_router(
+    reconciler: Arc<RecordingChannelReconciler>,
+    audit: Arc<dyn AuditSink>,
+) -> Router {
+    recording_channel_applications_router(
+        RecordingChannelMutator::successful(None),
+        reconciler,
+        audit,
+    )
+    .await
+}
+
+async fn recording_channel_applications_router(
+    mutator: Arc<RecordingChannelMutator>,
+    reconciler: Arc<RecordingChannelReconciler>,
+    audit: Arc<dyn AuditSink>,
+) -> Router {
+    let pool = create_test_sqlite_pool().await;
+    let channel_manager = Arc::new(
+        ChannelManager::new(
+            crate::test_utils::create_test_shm_handle(),
+            crate::test_utils::create_test_routing_cache(),
+        )
+        .unwrap(),
+    );
+    let channel_management = Arc::new(aether_application::ChannelManagementApplication::new(
+        mutator,
+        Arc::clone(&audit),
+        aether_application::SafetyPolicy,
+    ));
+    let channel_reconciliation =
+        Arc::new(aether_application::ChannelReconciliationApplication::new(
+            reconciler,
+            audit,
+            aether_application::SafetyPolicy,
+        ));
+    let authenticator = Arc::new(
+        aether_auth_jwt::AccessTokenAuthenticator::new(TEST_JWT_SECRET)
+            .expect("valid test access-token secret"),
+    );
+    create_api_routes_with_boundary(
+        channel_manager,
+        pool,
+        Arc::new(crate::api::command_cache::CommandTxCache::new()),
+        false,
+        Some(Arc::clone(&channel_reconciliation)),
+        ChannelManagementHttpBoundary::governed_with_reconciliation(
+            channel_management,
+            channel_reconciliation,
+            authenticator,
+        ),
+    )
+}
+
+#[tokio::test]
+async fn channel_mutations_require_real_bearer_auth_and_confirmation_before_side_effects() {
+    let mutator = RecordingChannelMutator::successful(None);
+    let app = recording_channel_router(Arc::clone(&mutator)).await;
+    let body = json!({
+        "channel_id": 41,
+        "name": "governed channel",
+        "protocol": "virtual",
+        "parameters": {}
+    });
+
+    let unauthenticated = Request::builder()
+        .uri("/api/channels")
+        .method("POST")
+        .header("content-type", "application/json")
+        .header("x-aether-confirmed", "true")
+        .body(Body::from(body.to_string()))
+        .unwrap();
+    let response = app.clone().oneshot(unauthenticated).await.unwrap();
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    assert_eq!(mutator.mutation_count(), 0);
+
+    let unconfirmed = Request::builder()
+        .uri("/api/channels")
+        .method("POST")
+        .header("content-type", "application/json")
+        .header("authorization", format!("Bearer {ADMIN_ACCESS_TOKEN}"))
+        .body(Body::from(body.to_string()))
+        .unwrap();
+    let response = app.oneshot(unconfirmed).await.unwrap();
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(mutator.mutation_count(), 0);
+}
+
+#[tokio::test]
+async fn channel_create_defaults_disabled_and_returns_the_typed_receipt() {
+    let mutator = RecordingChannelMutator::successful(None);
+    let app = recording_channel_router(Arc::clone(&mutator)).await;
+    let request = channel_mutation_request(
+        "POST",
+        "/api/channels",
+        Some(json!({
+            "channel_id": 41,
+            "name": "safe commissioning",
+            "description": "disabled until explicitly enabled",
+            "protocol": "virtual",
+            "parameters": {}
+        })),
+    );
+
+    let response = app.oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let payload = extract_json(response).await;
+    assert_eq!(payload["data"]["id"], 41);
+    assert_eq!(payload["data"]["channel_id"], 41);
+    assert_eq!(payload["data"]["name"], "safe commissioning");
+    assert_eq!(payload["data"]["protocol"], "virtual");
+    assert_eq!(payload["data"]["operation"], "create");
+    assert_eq!(payload["data"]["resulting_revision"], 1);
+    assert_eq!(payload["data"]["desired_enabled"], false);
+    assert_eq!(payload["data"]["runtime_projection"], "stopped");
+    assert_eq!(payload["data"]["runtime_status"], "stopped");
+    assert_eq!(payload["data"]["reconciliation_required"], false);
+    assert_eq!(payload["data"]["completion_audit"]["status"], "recorded");
+    assert_eq!(payload["data"]["retryable"], false);
+    assert_eq!(payload["data"]["request_id"], TEST_REQUEST_ID);
+
+    let mutations = mutator.mutations();
+    let ChannelMutation::Create { definition } = &mutations[0] else {
+        panic!("expected create mutation");
+    };
+    assert!(!definition.enabled());
+}
+
+#[tokio::test]
+async fn channel_revision_header_is_forwarded_as_compare_and_set() {
+    let mutator = RecordingChannelMutator::successful(None);
+    let app = recording_channel_router(Arc::clone(&mutator)).await;
+    let mut request = channel_mutation_request(
+        "PUT",
+        "/api/channels/41",
+        Some(json!({"name": "revision guarded"})),
+    );
+    request.headers_mut().insert(
+        "x-aether-expected-revision",
+        axum::http::HeaderValue::from_static("7"),
+    );
+
+    let response = app.oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let payload = extract_json(response).await;
+    assert_eq!(payload["data"]["resulting_revision"], 8);
+    assert_eq!(payload["data"]["request_id"], TEST_REQUEST_ID);
+    assert_eq!(
+        mutator.mutations()[0].expected_revision(),
+        Some(ChannelRevision::new(7))
+    );
+}
+
+#[tokio::test]
+async fn ordinary_update_rejects_channel_id_migration_without_mutating() {
+    let mutator = RecordingChannelMutator::successful(None);
+    let app = recording_channel_router(Arc::clone(&mutator)).await;
+    let request = channel_mutation_request(
+        "PUT",
+        "/api/channels/41",
+        Some(json!({"channel_id": 42, "name": "must not migrate"})),
+    );
+
+    let response = app.oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(mutator.mutation_count(), 0);
+}
+
+#[tokio::test]
+async fn channel_port_error_kinds_have_stable_http_mappings() {
+    for (kind, status) in [
+        (PortErrorKind::InvalidData, StatusCode::BAD_REQUEST),
+        (PortErrorKind::NotFound, StatusCode::NOT_FOUND),
+        (PortErrorKind::Rejected, StatusCode::CONFLICT),
+        (PortErrorKind::Conflict, StatusCode::CONFLICT),
+        (PortErrorKind::Unavailable, StatusCode::SERVICE_UNAVAILABLE),
+        (PortErrorKind::Timeout, StatusCode::GATEWAY_TIMEOUT),
+        (PortErrorKind::Permanent, StatusCode::INTERNAL_SERVER_ERROR),
+    ] {
+        let mutator = RecordingChannelMutator::failing(kind);
+        let app = recording_channel_router(Arc::clone(&mutator)).await;
+        let request = channel_mutation_request(
+            "PUT",
+            "/api/channels/41",
+            Some(json!({"name": "typed error mapping"})),
+        );
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), status, "unexpected mapping for {kind:?}");
+        assert_eq!(mutator.mutation_count(), 1);
+    }
+}
+
+#[tokio::test]
+async fn delete_conflicts_when_an_action_route_still_references_the_channel() {
+    let mutator = Arc::new(RecordingChannelMutator {
+        mutations: Mutex::new(Vec::new()),
+        error: Some(PortError::new(
+            PortErrorKind::Conflict,
+            "action route still references channel 41",
+        )),
+        projection: None,
+    });
+    let app = recording_channel_router(Arc::clone(&mutator)).await;
+    let request = channel_mutation_request("DELETE", "/api/channels/41", None);
+
+    let response = app.oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+    let payload = extract_json(response).await;
+    assert_eq!(
+        payload["error"]["message"],
+        "Channel mutation conflicts with current desired state"
+    );
+}
+
+#[tokio::test]
+async fn degraded_runtime_projection_is_an_accepted_non_retryable_outcome() {
+    let mutator = RecordingChannelMutator::successful(Some(ChannelRuntimeProjection::Degraded));
+    let app = recording_channel_router(mutator).await;
+    let request = channel_mutation_request(
+        "POST",
+        "/api/channels",
+        Some(json!({
+            "channel_id": 41,
+            "name": "degraded projection",
+            "protocol": "virtual",
+            "enabled": true,
+            "parameters": {}
+        })),
+    );
+
+    let response = app.oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let payload = extract_json(response).await;
+    assert_eq!(payload["data"]["runtime_projection"], "degraded");
+    assert_eq!(payload["data"]["runtime_status"], "degraded");
+    assert_eq!(payload["data"]["reconciliation_required"], true);
+    assert_eq!(payload["data"]["retryable"], false);
+}
+
+#[tokio::test]
+async fn terminal_audit_failure_stays_accepted_and_is_never_retryable() {
+    let mutator = RecordingChannelMutator::successful(None);
+    let app =
+        recording_channel_router_with_audit(Arc::clone(&mutator), Arc::new(TerminalAuditFailure))
+            .await;
+    let request = channel_mutation_request(
+        "POST",
+        "/api/channels",
+        Some(json!({
+            "channel_id": 41,
+            "name": "audit reconciliation",
+            "protocol": "virtual",
+            "parameters": {}
+        })),
+    );
+
+    let response = app.oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let payload = extract_json(response).await;
+    assert_eq!(payload["data"]["completion_audit"]["status"], "incomplete");
+    assert_eq!(payload["data"]["completion_audit"]["retryable"], false);
+    assert_eq!(payload["data"]["retryable"], false);
+    assert_eq!(mutator.mutation_count(), 1);
 }
 
 // The write-environment helper is inlined into
@@ -124,6 +660,12 @@ async fn test_get_service_status_returns_200() {
     let response = app.oneshot(request).await.unwrap();
 
     assert_eq!(response.status(), StatusCode::OK);
+    let payload = extract_json(response).await;
+    assert_json_field(
+        &payload,
+        "/data/name",
+        serde_json::Value::String("Aether I/O Service".to_string()),
+    );
 }
 
 #[tokio::test]
@@ -211,6 +753,8 @@ async fn test_get_all_channels_with_filters() {
         .unwrap();
     let resp1 = app.clone().oneshot(req1).await.unwrap();
     assert_eq!(resp1.status(), StatusCode::OK);
+    let payload = extract_json(resp1).await;
+    assert_eq!(payload["data"]["list"][0]["revision"], 1);
 
     // Enabled filter
     let req2 = Request::builder()
@@ -318,12 +862,7 @@ async fn test_create_channel_returns_description() {
         "parameters": {}
     });
 
-    let req = Request::builder()
-        .uri("/api/channels")
-        .method("POST")
-        .header("content-type", "application/json")
-        .body(Body::from(body.to_string()))
-        .unwrap();
+    let req = channel_mutation_request("POST", "/api/channels", Some(body));
 
     use http_body_util::BodyExt as _;
     let resp = app.oneshot(req).await.unwrap();
@@ -332,10 +871,11 @@ async fn test_create_channel_returns_description() {
     let bytes = resp.into_body().collect().await.unwrap().to_bytes();
     let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(v["success"], true);
-    assert_eq!(
-        v["data"]["description"],
-        serde_json::Value::String("desc-A".to_string())
-    );
+    assert_eq!(v["data"]["operation"], "create");
+    assert_eq!(v["data"]["desired_enabled"], true);
+    assert_eq!(v["data"]["retryable"], false);
+    assert_eq!(v["data"]["name"], "Virtual Channel A");
+    assert_eq!(v["data"]["description"], "desc-A");
     assert_eq!(v["data"]["protocol"], "virtual");
 }
 
@@ -372,33 +912,25 @@ async fn test_update_channel_returns_description() {
     let body = serde_json::json!({
         "description": "new-desc"
     });
-    let req = Request::builder()
-        .uri("/api/channels/42")
-        .method("PUT")
-        .header("content-type", "application/json")
-        .body(Body::from(body.to_string()))
-        .unwrap();
+    let req = channel_mutation_request("PUT", "/api/channels/42", Some(body));
 
     use http_body_util::BodyExt as _;
     let resp = app.clone().oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
     let bytes = resp.into_body().collect().await.unwrap().to_bytes();
     let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(v["data"]["operation"], "update");
     assert_eq!(v["data"]["description"], "new-desc");
 
     // Update without description: should keep last description
     let body2 = serde_json::json!({ "parameters": {"x": 1} });
-    let req2 = Request::builder()
-        .uri("/api/channels/42")
-        .method("PUT")
-        .header("content-type", "application/json")
-        .body(Body::from(body2.to_string()))
-        .unwrap();
+    let req2 = channel_mutation_request("PUT", "/api/channels/42", Some(body2));
     let resp2 = app.oneshot(req2).await.unwrap();
     assert_eq!(resp2.status(), StatusCode::OK);
     let bytes2 = resp2.into_body().collect().await.unwrap().to_bytes();
     let v2: serde_json::Value = serde_json::from_slice(&bytes2).unwrap();
-    assert_eq!(v2["data"]["description"], "new-desc");
+    assert_eq!(v2["data"]["operation"], "update");
+    assert!(v2["data"].get("description").is_none());
 }
 
 #[tokio::test]
@@ -431,32 +963,22 @@ async fn test_enable_disable_preserves_description() {
 
     // Enable
     let body = serde_json::json!({"enabled": true});
-    let req = Request::builder()
-        .uri("/api/channels/77/enabled")
-        .method("PUT")
-        .header("content-type", "application/json")
-        .body(Body::from(body.to_string()))
-        .unwrap();
+    let req = channel_mutation_request("PUT", "/api/channels/77/enabled", Some(body));
     use http_body_util::BodyExt as _;
     let resp = app.clone().oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
     let bytes = resp.into_body().collect().await.unwrap().to_bytes();
     let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-    assert_eq!(v["data"]["description"], "keep-me");
+    assert_eq!(v["data"]["desired_enabled"], true);
 
     // Disable
     let body2 = serde_json::json!({"enabled": false});
-    let req2 = Request::builder()
-        .uri("/api/channels/77/enabled")
-        .method("PUT")
-        .header("content-type", "application/json")
-        .body(Body::from(body2.to_string()))
-        .unwrap();
+    let req2 = channel_mutation_request("PUT", "/api/channels/77/enabled", Some(body2));
     let resp2 = app.oneshot(req2).await.unwrap();
     assert_eq!(resp2.status(), StatusCode::OK);
     let bytes2 = resp2.into_body().collect().await.unwrap().to_bytes();
     let v2: serde_json::Value = serde_json::from_slice(&bytes2).unwrap();
-    assert_eq!(v2["data"]["description"], "keep-me");
+    assert_eq!(v2["data"]["desired_enabled"], false);
 }
 
 #[tokio::test]
@@ -632,6 +1154,7 @@ async fn test_channel_detail_returns_description() {
     let bytes = resp.into_body().collect().await.unwrap().to_bytes();
     let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(v["data"]["description"], "detail-desc");
+    assert_eq!(v["data"]["revision"], 1);
 }
 
 #[tokio::test]
@@ -658,11 +1181,7 @@ async fn test_delete_channel_ok() {
         .await
         .unwrap();
     let app = create_test_api_with_pool(channel_manager, pool).await;
-    let req = Request::builder()
-        .uri("/api/channels/600")
-        .method("DELETE")
-        .body(Body::empty())
-        .unwrap();
+    let req = channel_mutation_request("DELETE", "/api/channels/600", None);
     let resp = app.oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
 }
@@ -921,7 +1440,7 @@ async fn test_update_mappings_invalid_function_code_for_t_400() {
 }
 
 #[tokio::test]
-async fn test_reload_configuration_disabled_channel_adds_without_runtime() {
+async fn test_reload_compatibility_reconciles_disabled_channel_without_runtime() {
     // Build sqlite with channels table only and a disabled channel
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(1)
@@ -948,13 +1467,13 @@ async fn test_reload_configuration_disabled_channel_adds_without_runtime() {
     );
     let app = create_test_api_with_pool(channel_manager, pool).await;
 
-    let req = Request::builder()
-        .uri("/api/channels/reload")
-        .method("POST")
-        .body(Body::empty())
-        .unwrap();
+    let req = governed_reconciliation_request("/api/channels/reload");
     let resp = app.oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
+    let payload = extract_json(resp).await;
+    assert_eq!(payload["data"]["scope"], "all");
+    assert_eq!(payload["data"]["items"][0]["channel_id"], 9009);
+    assert_eq!(payload["data"]["items"][0]["runtime_projection"], "stopped");
 }
 
 #[tokio::test]
@@ -1052,102 +1571,175 @@ async fn test_get_channel_status_valid_id() {
 // Phase 3: Channel Control Endpoint Tests
 // ========================================================================
 
-#[tokio::test]
-async fn test_control_channel_start_operation() {
-    let channel_manager = Arc::new(
-        ChannelManager::new(
-            crate::test_utils::create_test_shm_handle(),
-            crate::test_utils::create_test_routing_cache(),
-        )
-        .unwrap(),
-    );
-    let app = create_test_api_routes(channel_manager).await;
-
-    let operation = ChannelOperation {
-        operation: "start".to_string(),
-    };
-
-    let request = Request::builder()
+fn governed_channel_control_request(
+    operation: &str,
+    authenticated: bool,
+    confirmed: bool,
+    request_id: Option<&str>,
+) -> Request<Body> {
+    let mut request = Request::builder()
         .uri("/api/channels/1001/control")
         .method("POST")
         .header("content-type", "application/json")
-        .body(Body::from(serde_json::to_string(&operation).unwrap()))
-        .unwrap();
+        .header("x-aether-confirmed", confirmed.to_string());
+    if authenticated {
+        request = request.header("authorization", format!("Bearer {ADMIN_ACCESS_TOKEN}"));
+    }
+    if let Some(request_id) = request_id {
+        request = request.header("x-request-id", request_id);
+    }
+    request
+        .body(Body::from(
+            serde_json::json!({"operation": operation}).to_string(),
+        ))
+        .unwrap()
+}
 
-    let response = app.oneshot(request).await.unwrap();
+#[tokio::test]
+async fn channel_control_forwards_start_stop_and_restart_to_governed_applications() {
+    let mutator = RecordingChannelMutator::successful(None);
+    let reconciler = RecordingChannelReconciler::successful(vec![ChannelReconciliationItem::new(
+        aether_domain::ChannelId::new(1001),
+        ChannelDesiredStateObservation::present(ChannelRevision::new(9), true),
+        ChannelRuntimeProjection::Active,
+    )]);
+    let app = recording_channel_applications_router(
+        Arc::clone(&mutator),
+        Arc::clone(&reconciler),
+        Arc::new(aether_store_local::MemoryAuditSink::new()),
+    )
+    .await;
 
-    // Should return 404 (channel not found) or other valid status
-    assert!(
-        response.status() == StatusCode::NOT_FOUND
-            || response.status() == StatusCode::INTERNAL_SERVER_ERROR
-            || response.status() == StatusCode::OK
+    for (operation, enabled, revision, projection) in [
+        ("start", Some(true), Some(1), "active"),
+        ("stop", Some(false), Some(1), "stopped"),
+        ("restart", Some(true), Some(9), "active"),
+    ] {
+        let response = app
+            .clone()
+            .oneshot(governed_channel_control_request(
+                operation,
+                true,
+                true,
+                Some(TEST_REQUEST_ID),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK, "{operation}");
+        let payload = extract_json(response).await;
+        assert_eq!(payload["success"], true);
+        assert_eq!(payload["data"]["channel_id"], 1001);
+        assert_eq!(payload["data"]["request_id"], TEST_REQUEST_ID);
+        assert_eq!(payload["data"]["operation"], operation);
+        assert_eq!(
+            payload["data"]["desired_revision"],
+            revision.map_or(serde_json::Value::Null, serde_json::Value::from)
+        );
+        assert_eq!(
+            payload["data"]["desired_enabled"],
+            enabled.map_or(serde_json::Value::Null, serde_json::Value::from)
+        );
+        assert_eq!(payload["data"]["runtime_projection"], projection);
+        assert_eq!(payload["data"]["reconciliation_required"], false);
+        assert_eq!(payload["data"]["completion_audit"]["status"], "recorded");
+        assert_eq!(payload["data"]["retryable"], false);
+    }
+
+    let mutations = mutator.mutations();
+    assert_eq!(mutations.len(), 2);
+    assert_eq!(mutations[0].kind(), ChannelMutationKind::Enable);
+    assert_eq!(
+        mutations[0].channel_id(),
+        Some(aether_domain::ChannelId::new(1001))
+    );
+    assert!(matches!(
+        &mutations[0],
+        ChannelMutation::SetEnabled { enabled: true, .. }
+    ));
+    assert_eq!(mutations[1].kind(), ChannelMutationKind::Disable);
+    assert!(matches!(
+        &mutations[1],
+        ChannelMutation::SetEnabled { enabled: false, .. }
+    ));
+    assert_eq!(
+        reconciler.scopes(),
+        vec![ChannelReconciliationScope::One(
+            aether_domain::ChannelId::new(1001)
+        )]
     );
 }
 
 #[tokio::test]
-async fn test_control_channel_stop_operation() {
-    let channel_manager = Arc::new(
-        ChannelManager::new(
-            crate::test_utils::create_test_shm_handle(),
-            crate::test_utils::create_test_routing_cache(),
-        )
-        .unwrap(),
-    );
-    let app = create_test_api_routes(channel_manager).await;
+async fn channel_control_requires_auth_confirmation_and_uuid_before_side_effects() {
+    let mutator = RecordingChannelMutator::successful(None);
+    let reconciler = RecordingChannelReconciler::successful(reconciliation_items());
+    let app = recording_channel_applications_router(
+        Arc::clone(&mutator),
+        Arc::clone(&reconciler),
+        Arc::new(aether_store_local::MemoryAuditSink::new()),
+    )
+    .await;
 
-    let operation = ChannelOperation {
-        operation: "stop".to_string(),
-    };
+    for (request, expected) in [
+        (
+            governed_channel_control_request("start", false, true, Some(TEST_REQUEST_ID)),
+            StatusCode::FORBIDDEN,
+        ),
+        (
+            governed_channel_control_request("stop", true, false, Some(TEST_REQUEST_ID)),
+            StatusCode::UNPROCESSABLE_ENTITY,
+        ),
+        (
+            governed_channel_control_request("restart", true, true, None),
+            StatusCode::BAD_REQUEST,
+        ),
+        (
+            governed_channel_control_request("start", true, true, Some("not-a-uuid")),
+            StatusCode::BAD_REQUEST,
+        ),
+        (
+            governed_channel_control_request("invalid", true, true, Some(TEST_REQUEST_ID)),
+            StatusCode::BAD_REQUEST,
+        ),
+    ] {
+        let response = app.clone().oneshot(request).await.unwrap();
+        assert_eq!(response.status(), expected);
+    }
 
-    let request = Request::builder()
-        .uri("/api/channels/1001/control")
-        .method("POST")
-        .header("content-type", "application/json")
-        .body(Body::from(serde_json::to_string(&operation).unwrap()))
-        .unwrap();
-
-    let response = app.oneshot(request).await.unwrap();
-
-    assert!(
-        response.status() == StatusCode::NOT_FOUND
-            || response.status() == StatusCode::INTERNAL_SERVER_ERROR
-            || response.status() == StatusCode::OK
-    );
+    assert!(mutator.mutations().is_empty());
+    assert!(reconciler.scopes().is_empty());
 }
 
 #[tokio::test]
-async fn test_control_channel_restart_operation() {
-    let channel_manager = Arc::new(
-        ChannelManager::new(
-            crate::test_utils::create_test_shm_handle(),
-            crate::test_utils::create_test_routing_cache(),
-        )
-        .unwrap(),
-    );
-    let app = create_test_api_routes(channel_manager).await;
+async fn channel_control_terminal_audit_failure_is_accepted_and_sanitized() {
+    let mutator = RecordingChannelMutator::successful(None);
+    let reconciler = RecordingChannelReconciler::successful(reconciliation_items());
+    let app = recording_channel_applications_router(
+        Arc::clone(&mutator),
+        reconciler,
+        Arc::new(TerminalAuditFailure),
+    )
+    .await;
 
-    let operation = ChannelOperation {
-        operation: "restart".to_string(),
-    };
-
-    let request = Request::builder()
-        .uri("/api/channels/1001/control")
-        .method("POST")
-        .header("content-type", "application/json")
-        .body(Body::from(serde_json::to_string(&operation).unwrap()))
+    let response = app
+        .oneshot(governed_channel_control_request(
+            "start",
+            true,
+            true,
+            Some(TEST_REQUEST_ID),
+        ))
+        .await
         .unwrap();
-
-    let response = app.oneshot(request).await.unwrap();
-
-    assert!(
-        response.status() == StatusCode::NOT_FOUND
-            || response.status() == StatusCode::INTERNAL_SERVER_ERROR
-            || response.status() == StatusCode::OK
-    );
+    assert_eq!(response.status(), StatusCode::OK);
+    let payload = extract_json(response).await;
+    assert_eq!(payload["data"]["completion_audit"]["status"], "incomplete");
+    assert_eq!(payload["data"]["retryable"], false);
+    assert!(!payload.to_string().contains("terminal audit unavailable"));
+    assert_eq!(mutator.mutation_count(), 1);
 }
 
 #[tokio::test]
-async fn test_control_channel_invalid_operation_returns_400() {
+async fn legacy_router_fails_closed_for_channel_control() {
     let channel_manager = Arc::new(
         ChannelManager::new(
             crate::test_utils::create_test_shm_handle(),
@@ -1155,51 +1747,29 @@ async fn test_control_channel_invalid_operation_returns_400() {
         )
         .unwrap(),
     );
-    let app = create_test_api_routes(channel_manager).await;
-
-    let operation = ChannelOperation {
-        operation: "invalid_op".to_string(),
-    };
-
-    let request = Request::builder()
-        .uri("/api/channels/1001/control")
-        .method("POST")
-        .header("content-type", "application/json")
-        .body(Body::from(serde_json::to_string(&operation).unwrap()))
-        .unwrap();
-
-    let response = app.oneshot(request).await.unwrap();
-
-    assert!(
-        response.status() == StatusCode::BAD_REQUEST || response.status() == StatusCode::NOT_FOUND
+    let app = create_api_routes(
+        channel_manager,
+        create_test_sqlite_pool().await,
+        Arc::new(crate::api::command_cache::CommandTxCache::new()),
     );
-}
 
-#[tokio::test]
-async fn test_control_channel_not_found_returns_404() {
-    let channel_manager = Arc::new(
-        ChannelManager::new(
-            crate::test_utils::create_test_shm_handle(),
-            crate::test_utils::create_test_routing_cache(),
-        )
-        .unwrap(),
-    );
-    let app = create_test_api_routes(channel_manager).await;
-
-    let operation = ChannelOperation {
-        operation: "start".to_string(),
-    };
-
-    let request = Request::builder()
-        .uri("/api/channels/9999/control")
-        .method("POST")
-        .header("content-type", "application/json")
-        .body(Body::from(serde_json::to_string(&operation).unwrap()))
-        .unwrap();
-
-    let response = app.oneshot(request).await.unwrap();
-
-    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    for operation in ["start", "restart"] {
+        let response = app
+            .clone()
+            .oneshot(governed_channel_control_request(
+                operation,
+                true,
+                true,
+                Some(TEST_REQUEST_ID),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(
+            response.status(),
+            StatusCode::SERVICE_UNAVAILABLE,
+            "{operation}"
+        );
+    }
 }
 
 // ========================================================================
@@ -1261,6 +1831,98 @@ fn test_api_routes_compile() {
 // ========================================================================
 
 #[tokio::test]
+async fn create_channel_without_enabled_stays_disabled_and_has_no_runtime() {
+    let pool = create_test_sqlite_pool().await;
+    let channel_manager = Arc::new(
+        ChannelManager::with_shared_memory(
+            crate::test_utils::create_test_routing_cache(),
+            pool.clone(),
+            crate::test_utils::create_test_shm_handle(),
+            None,
+            None,
+        )
+        .unwrap(),
+    );
+    let app = create_test_api_with_pool(Arc::clone(&channel_manager), pool.clone()).await;
+    let request = channel_mutation_request(
+        "POST",
+        "/api/channels",
+        Some(json!({
+            "channel_id": 2101,
+            "name": "Safe Default Channel",
+            "protocol": "virtual",
+            "parameters": {}
+        })),
+    );
+
+    let response = app.oneshot(request).await.unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let payload = extract_json(response).await;
+    assert_json_field(&payload, "/data/enabled", json!(false));
+    assert_json_field(&payload, "/data/runtime_status", json!("stopped"));
+    let persisted_enabled: bool =
+        sqlx::query_scalar("SELECT enabled FROM channels WHERE channel_id = ?")
+            .bind(2101_i64)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(!persisted_enabled);
+    assert!(channel_manager.get_channel(2101).is_none());
+    assert_eq!(channel_manager.channel_count(), 0);
+}
+
+#[tokio::test]
+async fn create_channel_with_explicit_true_still_creates_runtime() {
+    let pool = create_test_sqlite_pool().await;
+    let channel_manager = Arc::new(
+        ChannelManager::with_shared_memory(
+            crate::test_utils::create_test_routing_cache(),
+            pool.clone(),
+            crate::test_utils::create_test_shm_handle(),
+            None,
+            None,
+        )
+        .unwrap(),
+    );
+    let app = create_test_api_with_pool(Arc::clone(&channel_manager), pool.clone()).await;
+    let request = channel_mutation_request(
+        "POST",
+        "/api/channels",
+        Some(json!({
+            "channel_id": 2102,
+            "name": "Explicitly Enabled Channel",
+            "protocol": "virtual",
+            "enabled": true,
+            "parameters": {}
+        })),
+    );
+
+    let response = app.oneshot(request).await.unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let payload = extract_json(response).await;
+    assert_json_field(&payload, "/data/enabled", json!(true));
+    assert!(matches!(
+        payload
+            .pointer("/data/runtime_status")
+            .and_then(|value| value.as_str()),
+        Some("connecting" | "running")
+    ));
+    let persisted_enabled: bool =
+        sqlx::query_scalar("SELECT enabled FROM channels WHERE channel_id = ?")
+            .bind(2102_i64)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(persisted_enabled);
+    assert!(channel_manager.get_channel(2102).is_some());
+    assert_eq!(channel_manager.channel_count(), 1);
+
+    channel_manager.remove_channel(2102).await.unwrap();
+}
+
+#[tokio::test]
 async fn test_create_channel_handler_returns_response() {
     let channel_manager = Arc::new(
         ChannelManager::new(
@@ -1285,12 +1947,11 @@ async fn test_create_channel_handler_returns_response() {
         logging: None,
     };
 
-    let request = Request::builder()
-        .uri("/api/channels")
-        .method("POST")
-        .header("content-type", "application/json")
-        .body(Body::from(serde_json::to_string(&request_body).unwrap()))
-        .unwrap();
+    let request = channel_mutation_request(
+        "POST",
+        "/api/channels",
+        Some(serde_json::to_value(request_body).unwrap()),
+    );
 
     let response = app.oneshot(request).await.unwrap();
 
@@ -1347,12 +2008,11 @@ async fn test_update_channel_handler() {
         logging: None,
     };
 
-    let request = Request::builder()
-        .uri("/api/channels/1001")
-        .method("PUT")
-        .header("content-type", "application/json")
-        .body(Body::from(serde_json::to_string(&request_body).unwrap()))
-        .unwrap();
+    let request = channel_mutation_request(
+        "PUT",
+        "/api/channels/1001",
+        Some(serde_json::to_value(request_body).unwrap()),
+    );
 
     let response = app.oneshot(request).await.unwrap();
 
@@ -1375,11 +2035,7 @@ async fn test_delete_channel_handler() {
     );
     let app = create_test_api_routes(channel_manager).await;
 
-    let request = Request::builder()
-        .uri("/api/channels/1001")
-        .method("DELETE")
-        .body(Body::empty())
-        .unwrap();
+    let request = channel_mutation_request("DELETE", "/api/channels/1001", None);
 
     let response = app.oneshot(request).await.unwrap();
 
@@ -1487,12 +2143,11 @@ async fn test_set_channel_enabled_handler() {
 
     let request_body = crate::dto::ChannelEnabledRequest { enabled: true };
 
-    let request = Request::builder()
-        .uri("/api/channels/1001/enabled")
-        .method("PUT")
-        .header("content-type", "application/json")
-        .body(Body::from(serde_json::to_string(&request_body).unwrap()))
-        .unwrap();
+    let request = channel_mutation_request(
+        "PUT",
+        "/api/channels/1001/enabled",
+        Some(serde_json::to_value(request_body).unwrap()),
+    );
 
     let response = app.oneshot(request).await.unwrap();
 
@@ -1517,12 +2172,11 @@ async fn test_set_channel_disabled() {
 
     let request_body = crate::dto::ChannelEnabledRequest { enabled: false };
 
-    let request = Request::builder()
-        .uri("/api/channels/1001/enabled")
-        .method("PUT")
-        .header("content-type", "application/json")
-        .body(Body::from(serde_json::to_string(&request_body).unwrap()))
-        .unwrap();
+    let request = channel_mutation_request(
+        "PUT",
+        "/api/channels/1001/enabled",
+        Some(serde_json::to_value(request_body).unwrap()),
+    );
 
     let response = app.oneshot(request).await.unwrap();
 
@@ -1535,7 +2189,7 @@ async fn test_set_channel_disabled() {
 }
 
 #[tokio::test]
-async fn test_reload_configuration_handler() {
+async fn legacy_router_fails_closed_for_channel_reconciliation() {
     let channel_manager = Arc::new(
         ChannelManager::new(
             crate::test_utils::create_test_shm_handle(),
@@ -1543,21 +2197,20 @@ async fn test_reload_configuration_handler() {
         )
         .unwrap(),
     );
-    let app = create_test_api_routes(channel_manager).await;
-
-    let request = Request::builder()
-        .uri("/api/channels/reload")
-        .method("POST")
-        .body(Body::empty())
-        .unwrap();
-
-    let response = app.oneshot(request).await.unwrap();
-
-    // Should return appropriate status code
-    assert!(
-        response.status() == StatusCode::OK
-            || response.status() == StatusCode::INTERNAL_SERVER_ERROR
+    let app = create_api_routes(
+        channel_manager,
+        create_test_sqlite_pool().await,
+        Arc::new(crate::api::command_cache::CommandTxCache::new()),
     );
+
+    for path in ["/api/channels/reconcile", "/api/channels/reload"] {
+        let response = app
+            .clone()
+            .oneshot(governed_reconciliation_request(path))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE, "{path}");
+    }
 }
 
 // ========================================================================
@@ -1659,12 +2312,7 @@ async fn test_create_channel_full_closed_loop() {
         "description": "Full closed-loop test channel"
     });
 
-    let create_req = Request::builder()
-        .uri("/api/channels")
-        .method("POST")
-        .header("content-type", "application/json")
-        .body(Body::from(create_body.to_string()))
-        .unwrap();
+    let create_req = channel_mutation_request("POST", "/api/channels", Some(create_body));
 
     let create_resp = app.clone().oneshot(create_req).await.unwrap();
     assert_eq!(
@@ -1733,12 +2381,7 @@ async fn test_update_channel_full_closed_loop() {
         "description": "Initial description"
     });
 
-    let create_req = Request::builder()
-        .uri("/api/channels")
-        .method("POST")
-        .header("content-type", "application/json")
-        .body(Body::from(create_body.to_string()))
-        .unwrap();
+    let create_req = channel_mutation_request("POST", "/api/channels", Some(create_body));
 
     let _ = app.clone().oneshot(create_req).await.unwrap();
 
@@ -1751,12 +2394,7 @@ async fn test_update_channel_full_closed_loop() {
         "description": "Updated description"
     });
 
-    let update_req = Request::builder()
-        .uri("/api/channels/2002")
-        .method("PUT")
-        .header("content-type", "application/json")
-        .body(Body::from(update_body.to_string()))
-        .unwrap();
+    let update_req = channel_mutation_request("PUT", "/api/channels/2002", Some(update_body));
 
     let update_resp = app.clone().oneshot(update_req).await.unwrap();
     assert_eq!(
@@ -1817,12 +2455,7 @@ async fn test_delete_channel_closed_loop() {
         "description": "This channel will be deleted"
     });
 
-    let create_req = Request::builder()
-        .uri("/api/channels")
-        .method("POST")
-        .header("content-type", "application/json")
-        .body(Body::from(create_body.to_string()))
-        .unwrap();
+    let create_req = channel_mutation_request("POST", "/api/channels", Some(create_body));
 
     let create_resp = app.clone().oneshot(create_req).await.unwrap();
     assert_eq!(
@@ -1845,11 +2478,7 @@ async fn test_delete_channel_closed_loop() {
     );
 
     // Step 3: DELETE - Remove channel
-    let delete_req = Request::builder()
-        .uri("/api/channels/3001")
-        .method("DELETE")
-        .body(Body::empty())
-        .unwrap();
+    let delete_req = channel_mutation_request("DELETE", "/api/channels/3001", None);
 
     let delete_resp = app.clone().oneshot(delete_req).await.unwrap();
     assert_eq!(
@@ -2558,7 +3187,7 @@ async fn test_protocol_data_type_normalization_closed_loop() {
 /// it as `_drainer` so it stays alive for the test's duration; dropping
 /// the JoinHandle does not abort the task, but holding it keeps the
 /// intent visible.
-async fn setup_write_test_env() -> (Router, Arc<ShmHandle>, tokio::task::JoinHandle<()>) {
+async fn setup_write_test_env() -> (Router, Arc<ShmWriterHandle>, tokio::task::JoinHandle<()>) {
     use crate::core::channels::types::ChannelCommand;
 
     let shm_handle = crate::test_utils::create_test_shm_handle_with_points(BTreeMap::from([(
@@ -3507,6 +4136,626 @@ async fn test_apply_template_with_slave_id_override() {
 }
 
 // ========================================================================
+// Governed channel-management HTTP boundary tests
+// ========================================================================
+
+#[tokio::test]
+async fn channel_management_logger_does_not_consume_large_chunked_json() {
+    let mutator = RecordingChannelMutator::successful(None);
+    let app = recording_channel_router(Arc::clone(&mutator)).await;
+    let credential = "sensitive-device-credential".repeat(180);
+    let body = json!({
+        "channel_id": 7,
+        "name": "large commissioning body",
+        "protocol": "virtual",
+        "parameters": {"credential": credential}
+    });
+    assert!(body.to_string().len() > 2_048);
+    let request = Request::builder()
+        .method("POST")
+        .uri("/api/channels")
+        .header("content-type", "application/json")
+        .header("authorization", format!("Bearer {ADMIN_ACCESS_TOKEN}"))
+        .header("x-aether-confirmed", "true")
+        // Intentionally omit Content-Length to exercise chunked semantics.
+        .body(Body::from(body.to_string()))
+        .unwrap();
+
+    let response = app.oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(mutator.mutation_count(), 1);
+}
+
+fn governed_channel_request(
+    method: &str,
+    uri: &str,
+    body: Option<serde_json::Value>,
+    authenticated: bool,
+    confirmed: bool,
+    expected_revision: Option<&str>,
+) -> Request<Body> {
+    let mut request = Request::builder()
+        .method(method)
+        .uri(uri)
+        .header("content-type", "application/json")
+        .header("x-request-id", "018f4f04-0db8-7c6c-84ab-4b8457d8d385")
+        .header("x-aether-confirmed", confirmed.to_string());
+    if authenticated {
+        request = request.header("authorization", format!("Bearer {ADMIN_ACCESS_TOKEN}"));
+    }
+    if let Some(revision) = expected_revision {
+        request = request.header("x-aether-expected-revision", revision);
+    }
+    request
+        .body(body.map_or_else(Body::empty, |body| Body::from(body.to_string())))
+        .unwrap()
+}
+
+fn governed_reconciliation_request(uri: &str) -> Request<Body> {
+    Request::builder()
+        .method("POST")
+        .uri(uri)
+        .header("authorization", format!("Bearer {ADMIN_ACCESS_TOKEN}"))
+        .header("x-request-id", TEST_REQUEST_ID)
+        .header("x-aether-confirmed", "true")
+        .body(Body::empty())
+        .unwrap()
+}
+
+fn reconciliation_items() -> Vec<ChannelReconciliationItem> {
+    vec![
+        ChannelReconciliationItem::new(
+            aether_domain::ChannelId::new(8),
+            ChannelDesiredStateObservation::absent(Some(ChannelRevision::new(4))),
+            ChannelRuntimeProjection::Removed,
+        ),
+        ChannelReconciliationItem::new(
+            aether_domain::ChannelId::new(7),
+            ChannelDesiredStateObservation::present(ChannelRevision::new(3), true),
+            ChannelRuntimeProjection::Active,
+        ),
+    ]
+}
+
+#[tokio::test]
+async fn canonical_compatibility_and_single_channel_reconciliation_share_one_application() {
+    let reconciler = RecordingChannelReconciler::successful(reconciliation_items());
+    let app = recording_reconciliation_router(
+        Arc::clone(&reconciler),
+        Arc::new(aether_store_local::MemoryAuditSink::new()),
+    )
+    .await;
+
+    for path in ["/api/channels/reconcile", "/api/channels/reload"] {
+        let response = app
+            .clone()
+            .oneshot(governed_reconciliation_request(path))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK, "{path}");
+        let payload = extract_json(response).await;
+        assert_eq!(payload["success"], true);
+        assert_eq!(payload["data"]["request_id"], TEST_REQUEST_ID);
+        assert_eq!(payload["data"]["scope"], "all");
+        assert_eq!(payload["data"]["channel_id"], serde_json::Value::Null);
+        assert_eq!(payload["data"]["degraded_count"], 0);
+        assert_eq!(payload["data"]["reconciliation_required"], false);
+        assert_eq!(payload["data"]["completion_audit"]["status"], "recorded");
+        assert_eq!(payload["data"]["retryable"], false);
+        assert_eq!(payload["data"]["items"][0]["channel_id"], 7);
+        assert_eq!(payload["data"]["items"][0]["desired"]["status"], "present");
+        assert_eq!(payload["data"]["items"][0]["desired"]["revision"], 3);
+        assert_eq!(payload["data"]["items"][0]["desired"]["enabled"], true);
+        assert_eq!(payload["data"]["items"][0]["runtime_projection"], "active");
+        assert_eq!(payload["data"]["items"][1]["channel_id"], 8);
+        assert_eq!(payload["data"]["items"][1]["desired"]["status"], "absent");
+        assert_eq!(payload["data"]["items"][1]["desired"]["last_revision"], 4);
+        let serialized = payload.to_string().to_ascii_lowercase();
+        for secret_bearing_field in ["parameters", "logging", "config", "credential"] {
+            assert!(!serialized.contains(secret_bearing_field));
+        }
+    }
+
+    let response = app
+        .oneshot(governed_reconciliation_request("/api/channels/7/reconcile"))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let payload = extract_json(response).await;
+    assert_eq!(payload["data"]["scope"], "one");
+    assert_eq!(payload["data"]["channel_id"], 7);
+    assert_eq!(payload["data"]["items"].as_array().unwrap().len(), 1);
+    assert_eq!(payload["data"]["items"][0]["channel_id"], 7);
+
+    assert_eq!(
+        reconciler.scopes(),
+        vec![
+            ChannelReconciliationScope::All,
+            ChannelReconciliationScope::All,
+            ChannelReconciliationScope::One(aether_domain::ChannelId::new(7)),
+        ]
+    );
+}
+
+#[tokio::test]
+async fn channel_reconciliation_requires_bearer_confirmation_and_explicit_request_id() {
+    let reconciler = RecordingChannelReconciler::successful(reconciliation_items());
+    let app = recording_reconciliation_router(
+        Arc::clone(&reconciler),
+        Arc::new(aether_store_local::MemoryAuditSink::new()),
+    )
+    .await;
+
+    let missing_bearer = Request::builder()
+        .method("POST")
+        .uri("/api/channels/reconcile")
+        .header("x-request-id", TEST_REQUEST_ID)
+        .header("x-aether-confirmed", "true")
+        .body(Body::empty())
+        .unwrap();
+    assert_eq!(
+        app.clone().oneshot(missing_bearer).await.unwrap().status(),
+        StatusCode::FORBIDDEN
+    );
+
+    let missing_confirmation = Request::builder()
+        .method("POST")
+        .uri("/api/channels/reload")
+        .header("authorization", format!("Bearer {ADMIN_ACCESS_TOKEN}"))
+        .header("x-request-id", TEST_REQUEST_ID)
+        .body(Body::empty())
+        .unwrap();
+    assert_eq!(
+        app.clone()
+            .oneshot(missing_confirmation)
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::UNPROCESSABLE_ENTITY
+    );
+
+    let missing_request_id = Request::builder()
+        .method("POST")
+        .uri("/api/channels/7/reconcile")
+        .header("authorization", format!("Bearer {ADMIN_ACCESS_TOKEN}"))
+        .header("x-aether-confirmed", "true")
+        .body(Body::empty())
+        .unwrap();
+    assert_eq!(
+        app.clone()
+            .oneshot(missing_request_id)
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::BAD_REQUEST
+    );
+
+    let invalid_channel_id =
+        governed_reconciliation_request("/api/channels/not-a-number/reconcile");
+    assert_eq!(
+        app.oneshot(invalid_channel_id).await.unwrap().status(),
+        StatusCode::BAD_REQUEST
+    );
+    assert!(reconciler.scopes().is_empty());
+}
+
+#[tokio::test]
+async fn channel_reconciliation_failures_and_terminal_audit_are_sanitized() {
+    let pre_audit_reconciler = RecordingChannelReconciler::successful(reconciliation_items());
+    let pre_audit_app = recording_reconciliation_router(
+        Arc::clone(&pre_audit_reconciler),
+        Arc::new(UnavailableAuditSink),
+    )
+    .await;
+    let response = pre_audit_app
+        .oneshot(governed_reconciliation_request("/api/channels/reconcile"))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    let payload = extract_json(response).await.to_string();
+    assert!(!payload.contains("sensitive audit backend detail"));
+    assert!(pre_audit_reconciler.scopes().is_empty());
+
+    let port_failure = RecordingChannelReconciler::failing(PortErrorKind::Unavailable);
+    let port_app = recording_reconciliation_router(
+        Arc::clone(&port_failure),
+        Arc::new(aether_store_local::MemoryAuditSink::new()),
+    )
+    .await;
+    let response = port_app
+        .oneshot(governed_reconciliation_request("/api/channels/reconcile"))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    let payload = extract_json(response).await.to_string();
+    assert!(!payload.contains("sensitive protocol credential"));
+    assert_eq!(port_failure.scopes(), vec![ChannelReconciliationScope::All]);
+
+    let terminal_reconciler = RecordingChannelReconciler::successful(reconciliation_items());
+    let terminal_app = recording_reconciliation_router(
+        Arc::clone(&terminal_reconciler),
+        Arc::new(TerminalAuditFailure),
+    )
+    .await;
+    let response = terminal_app
+        .oneshot(governed_reconciliation_request("/api/channels/reconcile"))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let payload = extract_json(response).await;
+    assert_eq!(payload["data"]["completion_audit"]["status"], "incomplete");
+    assert_eq!(payload["data"]["retryable"], false);
+    assert!(!payload.to_string().contains("terminal audit unavailable"));
+    assert_eq!(
+        terminal_reconciler.scopes(),
+        vec![ChannelReconciliationScope::All]
+    );
+}
+
+#[tokio::test]
+async fn channel_management_requires_authentication_and_confirmation_before_side_effects() {
+    let mutator =
+        RecordingChannelMutator::successful(Some(aether_ports::ChannelRuntimeProjection::Stopped));
+    let app = recording_channel_router(Arc::clone(&mutator)).await;
+    let body = json!({
+        "channel_id": 7,
+        "name": "Packaging PLC",
+        "protocol": "virtual",
+        "parameters": {}
+    });
+
+    let missing_auth = app
+        .clone()
+        .oneshot(governed_channel_request(
+            "POST",
+            "/api/channels",
+            Some(body.clone()),
+            false,
+            true,
+            None,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(missing_auth.status(), StatusCode::FORBIDDEN);
+    assert!(mutator.mutations().is_empty());
+
+    let missing_confirmation = app
+        .oneshot(governed_channel_request(
+            "POST",
+            "/api/channels",
+            Some(body),
+            true,
+            false,
+            None,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(
+        missing_confirmation.status(),
+        StatusCode::UNPROCESSABLE_ENTITY
+    );
+    assert!(mutator.mutations().is_empty());
+}
+
+#[tokio::test]
+async fn invalid_channel_http_inputs_never_reach_the_mutator() {
+    let mutator =
+        RecordingChannelMutator::successful(Some(aether_ports::ChannelRuntimeProjection::Stopped));
+    let app = recording_channel_router(Arc::clone(&mutator)).await;
+
+    for request in [
+        Request::builder()
+            .method("POST")
+            .uri("/api/channels")
+            .header("authorization", format!("Bearer {ADMIN_ACCESS_TOKEN}"))
+            .header("x-aether-confirmed", "true")
+            .body(Body::from(r#"{"name":"missing content type"}"#))
+            .unwrap(),
+        Request::builder()
+            .method("POST")
+            .uri("/api/channels")
+            .header("content-type", "application/json")
+            .header("authorization", format!("Bearer {ADMIN_ACCESS_TOKEN}"))
+            .header("x-aether-confirmed", "true")
+            .body(Body::from("{invalid-json"))
+            .unwrap(),
+        governed_channel_request(
+            "POST",
+            "/api/channels",
+            Some(json!({
+                "channel_id": 7,
+                "name": "cannot compare a create",
+                "protocol": "virtual",
+                "parameters": {}
+            })),
+            true,
+            true,
+            Some("1"),
+        ),
+        governed_channel_request(
+            "PUT",
+            "/api/channels/not-a-number",
+            Some(json!({"name": "renamed"})),
+            true,
+            true,
+            None,
+        ),
+        governed_channel_request(
+            "PUT",
+            "/api/channels/7",
+            Some(json!({"name": "renamed"})),
+            true,
+            true,
+            Some("not-a-revision"),
+        ),
+        governed_channel_request(
+            "PUT",
+            "/api/channels/7",
+            Some(json!({"name": "renamed"})),
+            true,
+            true,
+            Some("0"),
+        ),
+        governed_channel_request(
+            "PUT",
+            "/api/channels/10000",
+            Some(json!({"name": "renamed"})),
+            true,
+            true,
+            None,
+        ),
+        governed_channel_request("PUT", "/api/channels/7", Some(json!({})), true, true, None),
+        governed_channel_request(
+            "PUT",
+            "/api/channels/7",
+            Some(json!({"channel_id": 8, "name": "renamed"})),
+            true,
+            true,
+            None,
+        ),
+    ] {
+        let response = app.clone().oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+    assert!(mutator.mutations().is_empty());
+}
+
+#[tokio::test]
+async fn channel_application_errors_have_stable_http_statuses_without_internal_details() {
+    for (kind, expected_status) in [
+        (PortErrorKind::InvalidData, StatusCode::BAD_REQUEST),
+        (PortErrorKind::NotFound, StatusCode::NOT_FOUND),
+        (PortErrorKind::Rejected, StatusCode::CONFLICT),
+        (PortErrorKind::Conflict, StatusCode::CONFLICT),
+        (PortErrorKind::Unavailable, StatusCode::SERVICE_UNAVAILABLE),
+        (PortErrorKind::Timeout, StatusCode::GATEWAY_TIMEOUT),
+        (PortErrorKind::Permanent, StatusCode::INTERNAL_SERVER_ERROR),
+    ] {
+        let app = recording_channel_router(RecordingChannelMutator::failing(kind)).await;
+        let response = app
+            .oneshot(channel_mutation_request(
+                "PUT",
+                "/api/channels/7",
+                Some(json!({"name": "Packaging PLC"})),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(
+            response.status(),
+            expected_status,
+            "unexpected status for {kind:?}"
+        );
+        let payload = extract_json(response).await.to_string();
+        assert!(
+            !payload.contains("test failure"),
+            "{kind:?} leaked adapter detail"
+        );
+    }
+
+    let mutator = RecordingChannelMutator::successful(None);
+    let app =
+        recording_channel_router_with_audit(Arc::clone(&mutator), Arc::new(UnavailableAuditSink))
+            .await;
+    let response = app
+        .oneshot(channel_mutation_request(
+            "POST",
+            "/api/channels",
+            Some(json!({
+                "channel_id": 7,
+                "name": "Packaging PLC",
+                "protocol": "virtual",
+                "parameters": {}
+            })),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(mutator.mutation_count(), 0);
+    assert!(
+        !extract_json(response)
+            .await
+            .to_string()
+            .contains("sensitive audit backend detail")
+    );
+}
+
+#[tokio::test]
+async fn confirmed_channel_requests_forward_exact_typed_mutations() {
+    use aether_ports::{
+        ChannelDefinition, ChannelLoggingPolicy, ChannelMutation, ChannelParameterValue,
+        ChannelPatch, ChannelRevision,
+    };
+
+    let mutator =
+        RecordingChannelMutator::successful(Some(aether_ports::ChannelRuntimeProjection::Active));
+    let app = recording_channel_router(Arc::clone(&mutator)).await;
+
+    let requests = [
+        governed_channel_request(
+            "POST",
+            "/api/channels",
+            Some(json!({
+                "channel_id": 7,
+                "name": "Packaging PLC",
+                "description": "Line one",
+                "protocol": "modbus_tcp",
+                "parameters": {"port": 502},
+                "logging": {"enabled": true, "level": "debug", "file": "channel.log"}
+            })),
+            true,
+            true,
+            None,
+        ),
+        governed_channel_request(
+            "PUT",
+            "/api/channels/7",
+            Some(json!({
+                "name": "Packaging PLC 2",
+                "parameters": {"timeout_ms": 1000},
+                "logging": {"enabled": false, "level": null, "file": null}
+            })),
+            true,
+            true,
+            Some("3"),
+        ),
+        governed_channel_request(
+            "PUT",
+            "/api/channels/7/enabled",
+            Some(json!({"enabled": true})),
+            true,
+            true,
+            Some("4"),
+        ),
+        governed_channel_request("DELETE", "/api/channels/7", None, true, true, Some("5")),
+    ];
+
+    for request in requests {
+        assert_eq!(
+            app.clone().oneshot(request).await.unwrap().status(),
+            StatusCode::OK
+        );
+    }
+
+    let expected_create = ChannelDefinition::new(
+        Some(aether_domain::ChannelId::new(7)),
+        "Packaging PLC",
+        "modbus_tcp",
+        std::collections::BTreeMap::from([(
+            "port".to_string(),
+            ChannelParameterValue::Integer(502),
+        )]),
+    )
+    .with_description("Line one")
+    .with_logging(
+        ChannelLoggingPolicy::default()
+            .with_enabled(true)
+            .with_level("debug")
+            .with_file("channel.log"),
+    );
+    let expected_update = ChannelPatch::new()
+        .with_name("Packaging PLC 2")
+        .with_parameters(std::collections::BTreeMap::from([(
+            "timeout_ms".to_string(),
+            ChannelParameterValue::Integer(1000),
+        )]))
+        .with_logging(ChannelLoggingPolicy::default());
+    assert_eq!(
+        mutator.mutations(),
+        vec![
+            ChannelMutation::create(expected_create),
+            ChannelMutation::update_with_revision(
+                aether_domain::ChannelId::new(7),
+                ChannelRevision::new(3),
+                expected_update,
+            ),
+            ChannelMutation::enable_with_revision(
+                aether_domain::ChannelId::new(7),
+                ChannelRevision::new(4),
+            ),
+            ChannelMutation::delete_with_revision(
+                aether_domain::ChannelId::new(7),
+                ChannelRevision::new(5),
+            ),
+        ]
+    );
+}
+
+#[tokio::test]
+async fn degraded_and_terminal_audit_incomplete_are_explicit_non_retryable_acceptances() {
+    for (fail_terminal_audit, expected_audit) in [(false, "recorded"), (true, "incomplete")] {
+        let mutator = RecordingChannelMutator::successful(Some(
+            aether_ports::ChannelRuntimeProjection::Degraded,
+        ));
+        let audit: Arc<dyn AuditSink> = if fail_terminal_audit {
+            Arc::new(TerminalAuditFailure)
+        } else {
+            Arc::new(aether_store_local::MemoryAuditSink::new())
+        };
+        let app = recording_channel_router_with_audit(mutator, audit).await;
+        let response = app
+            .oneshot(governed_channel_request(
+                "PUT",
+                "/api/channels/7/enabled",
+                Some(json!({"enabled": true})),
+                true,
+                true,
+                Some("8"),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let payload = extract_json(response).await;
+        assert_eq!(payload["data"]["runtime_projection"], "degraded");
+        assert_eq!(payload["data"]["reconciliation_required"], true);
+        assert_eq!(
+            payload["data"]["completion_audit"]["status"],
+            expected_audit
+        );
+        assert_eq!(payload["data"]["completion_audit"]["retryable"], false);
+        assert_eq!(payload["data"]["retryable"], false);
+    }
+}
+
+#[tokio::test]
+async fn legacy_route_constructor_fails_closed_for_channel_mutations() {
+    let pool = create_test_sqlite_pool().await;
+    let manager = Arc::new(
+        ChannelManager::new(
+            crate::test_utils::create_test_shm_handle(),
+            crate::test_utils::create_test_routing_cache(),
+        )
+        .unwrap(),
+    );
+    let app = create_api_routes(
+        manager,
+        pool.clone(),
+        Arc::new(crate::api::command_cache::CommandTxCache::new()),
+    );
+    let response = app
+        .oneshot(governed_channel_request(
+            "POST",
+            "/api/channels",
+            Some(json!({
+                "channel_id": 91,
+                "name": "Must Not Be Created",
+                "protocol": "virtual",
+                "parameters": {}
+            })),
+            true,
+            true,
+            None,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM channels WHERE channel_id = 91")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(count, 0);
+}
+
+// ========================================================================
 // OpenAPI Spec Completeness Tests
 // ========================================================================
 
@@ -3515,11 +4764,715 @@ mod openapi_tests {
     use crate::api::routes::IoApiDoc;
     use utoipa::OpenApi;
 
+    fn spec() -> serde_json::Value {
+        serde_json::to_value(IoApiDoc::openapi()).expect("serialize io OpenAPI document")
+    }
+
+    fn assert_path_methods(
+        paths: &serde_json::Map<String, serde_json::Value>,
+        path: &str,
+        methods: &[&str],
+    ) {
+        let path_item = paths
+            .get(path)
+            .unwrap_or_else(|| panic!("missing OpenAPI path: {path}"));
+        for method in methods {
+            assert!(
+                path_item[*method].is_object(),
+                "OpenAPI path {path} is missing {method}"
+            );
+        }
+    }
+
+    fn schema_property<'a>(
+        schema: &'a serde_json::Value,
+        property: &str,
+    ) -> Option<&'a serde_json::Value> {
+        schema
+            .get("properties")
+            .and_then(|properties| properties.get(property))
+            .or_else(|| {
+                schema
+                    .get("allOf")
+                    .and_then(serde_json::Value::as_array)
+                    .and_then(|items| {
+                        items
+                            .iter()
+                            .find_map(|item| schema_property(item, property))
+                    })
+            })
+    }
+
     #[test]
     fn test_openapi_spec_generates_without_panic() {
         let doc = IoApiDoc::openapi();
         let json = doc.to_pretty_json().unwrap();
         assert!(!json.is_empty());
+    }
+
+    #[test]
+    fn test_openapi_metadata_matches_io_service() {
+        let spec = spec();
+
+        assert_eq!(spec["info"]["title"], "Aether I/O Service API");
+        assert_eq!(spec["info"]["version"], env!("CARGO_PKG_VERSION"));
+    }
+
+    #[test]
+    fn test_openapi_examples_are_industry_neutral() {
+        let serialized = serde_json::to_string(&spec())
+            .expect("I/O OpenAPI document should serialize")
+            .to_ascii_lowercase();
+
+        for energy_pack_identity in [
+            "pv inverter",
+            "battery bms",
+            "pcs modbus",
+            "diesel generator",
+            "pcs#",
+            "bams",
+            "power converter",
+            "soc,",
+        ] {
+            assert!(
+                !serialized.contains(energy_pack_identity),
+                "Kernel Swagger must not embed Energy Pack identity {energy_pack_identity}"
+            );
+        }
+    }
+
+    #[test]
+    fn channel_create_openapi_documents_disabled_as_the_default() {
+        let specification = spec();
+        let enabled = &specification["components"]["schemas"]["ChannelCreateRequest"]["properties"]
+            ["enabled"];
+
+        assert_eq!(enabled["default"], false);
+        assert_eq!(enabled["example"], false);
+        let examples = &specification["paths"]["/api/channels"]["post"]["requestBody"]["content"]["application/json"]
+            ["examples"];
+        for (name, example) in examples.as_object().expect("channel creation examples") {
+            assert_eq!(
+                example["value"]["enabled"], false,
+                "channel creation example {name:?} must be disabled"
+            );
+        }
+    }
+
+    #[test]
+    fn test_openapi_contains_protocol_and_admin_routes() {
+        let spec = spec();
+        let paths = spec["paths"].as_object().expect("OpenAPI paths object");
+
+        assert_path_methods(paths, "/api/protocols", &["get"]);
+        assert_path_methods(paths, "/api/admin/logs/files", &["get"]);
+        assert_path_methods(paths, "/api/admin/logs/view", &["get"]);
+    }
+
+    #[test]
+    fn protocol_discovery_openapi_matches_strict_modbus_configuration() {
+        let spec = spec();
+        let operation = spec
+            .pointer("/paths/~1api~1protocols/get")
+            .expect("protocol discovery operation");
+        let description = operation["description"]
+            .as_str()
+            .expect("protocol discovery description")
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .to_ascii_lowercase();
+
+        for contract in [
+            "host: non-empty string",
+            "port: integer 1..65535",
+            "device: non-empty string",
+            "baud_rate: integer 1..4294967295",
+            "poll_interval_ms: integer 1..86400000",
+            "read_timeout_ms: integer 1..86400000",
+            "no type coercion or fallback",
+        ] {
+            assert!(
+                description.contains(contract),
+                "protocol discovery must state the exact Modbus contract: {contract}"
+            );
+        }
+
+        let response_ref = operation
+            .pointer("/responses/200/content/application~1json/schema/$ref")
+            .and_then(serde_json::Value::as_str)
+            .expect("typed protocol discovery success envelope");
+        assert!(
+            response_ref.contains("SuccessResponse"),
+            "protocol discovery must document its actual SuccessResponse envelope"
+        );
+
+        let parameter_schema = spec
+            .pointer("/components/schemas/ParameterInfo/properties")
+            .expect("protocol parameter schema");
+        for constraint in ["minimum", "maximum", "min_length"] {
+            assert!(
+                parameter_schema.get(constraint).is_some(),
+                "ParameterInfo must expose {constraint} for dynamic forms"
+            );
+        }
+
+        let create_parameters = spec
+            .pointer("/components/schemas/ChannelCreateRequest/properties/parameters/description")
+            .and_then(serde_json::Value::as_str)
+            .expect("channel-create parameter description")
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .to_ascii_lowercase();
+        assert!(create_parameters.contains("no type coercion or fallback"));
+        assert!(create_parameters.contains("port: integer 1..65535"));
+        assert!(create_parameters.contains("baud_rate: integer 1..4294967295"));
+
+        let create_examples = spec
+            .pointer("/paths/~1api~1channels/post/requestBody/content/application~1json/examples")
+            .and_then(serde_json::Value::as_object)
+            .expect("channel-create examples");
+        for (name, example) in create_examples {
+            let parameters = example["value"]["parameters"]
+                .as_object()
+                .unwrap_or_else(|| panic!("channel-create example {name} parameters"));
+            assert!(parameters["host"].is_string());
+            assert!(parameters["port"].is_u64());
+            for parameter in parameters.keys() {
+                assert!(
+                    ["host", "port", "read_timeout_ms", "poll_interval_ms"]
+                        .contains(&parameter.as_str()),
+                    "channel-create example {name} advertises ignored parameter {parameter}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_openapi_simulation_write_matches_the_fail_closed_runtime_gate() {
+        let spec = spec();
+        let operation = spec
+            .pointer("/paths/~1api~1channels~1{channel_id}~1write/post")
+            .expect("simulation write operation");
+
+        for status in ["200", "400", "403", "500"] {
+            assert!(
+                operation.pointer(&format!("/responses/{status}")).is_some(),
+                "simulation write is missing response {status}"
+            );
+        }
+        let description = operation["description"]
+            .as_str()
+            .expect("simulation write description");
+        assert!(description.contains("AETHER_ALLOW_SIMULATION_WRITES=true"));
+        assert!(description.contains("C/A device commands are always rejected"));
+    }
+
+    #[test]
+    fn channel_management_openapi_is_the_governed_application_contract() {
+        let spec = spec();
+
+        assert_eq!(
+            spec.pointer("/components/securitySchemes/bearer_auth/type")
+                .and_then(serde_json::Value::as_str),
+            Some("http")
+        );
+        assert_eq!(
+            spec.pointer("/components/securitySchemes/bearer_auth/scheme")
+                .and_then(serde_json::Value::as_str),
+            Some("bearer")
+        );
+
+        for (pointer, request_schema, statuses, has_revision_header) in [
+            (
+                "/paths/~1api~1channels/post",
+                "ChannelCreateRequest",
+                &["200", "400", "403", "409", "422", "500", "503", "504"][..],
+                false,
+            ),
+            (
+                "/paths/~1api~1channels~1{id}/put",
+                "ChannelConfigUpdateRequest",
+                &[
+                    "200", "400", "403", "404", "409", "422", "500", "503", "504",
+                ][..],
+                true,
+            ),
+            (
+                "/paths/~1api~1channels~1{id}/delete",
+                "",
+                &[
+                    "200", "400", "403", "404", "409", "422", "500", "503", "504",
+                ][..],
+                true,
+            ),
+            (
+                "/paths/~1api~1channels~1{id}~1enabled/put",
+                "ChannelEnabledRequest",
+                &[
+                    "200", "400", "403", "404", "409", "422", "500", "503", "504",
+                ][..],
+                true,
+            ),
+        ] {
+            let operation = spec
+                .pointer(pointer)
+                .unwrap_or_else(|| panic!("missing channel management operation {pointer}"));
+
+            let security = operation["security"]
+                .as_array()
+                .expect("channel mutation security array");
+            assert_eq!(security.len(), 1, "{pointer} accepts only Bearer JWTs");
+            assert!(
+                security[0].get("bearer_auth").is_some(),
+                "{pointer} must require bearer_auth"
+            );
+
+            for header in ["x-request-id", "x-aether-confirmed"] {
+                let parameter = operation["parameters"]
+                    .as_array()
+                    .and_then(|parameters| {
+                        parameters.iter().find(|parameter| {
+                            parameter["name"] == header && parameter["in"] == "header"
+                        })
+                    })
+                    .unwrap_or_else(|| panic!("{pointer} must document {header}"));
+                if header == "x-request-id" {
+                    assert_eq!(parameter["schema"]["format"], "uuid", "{pointer}");
+                }
+            }
+            let has_documented_revision =
+                operation["parameters"]
+                    .as_array()
+                    .is_some_and(|parameters| {
+                        parameters.iter().any(|parameter| {
+                            parameter["name"] == "x-aether-expected-revision"
+                                && parameter["in"] == "header"
+                        })
+                    });
+            assert_eq!(
+                has_documented_revision, has_revision_header,
+                "{pointer} revision-header documentation must match resource semantics"
+            );
+            if has_revision_header {
+                let revision_parameter = operation["parameters"]
+                    .as_array()
+                    .and_then(|parameters| {
+                        parameters.iter().find(|parameter| {
+                            parameter["name"] == "x-aether-expected-revision"
+                                && parameter["in"] == "header"
+                        })
+                    })
+                    .expect("expected-revision parameter");
+                assert_eq!(revision_parameter["schema"]["minimum"], 1);
+                assert_eq!(
+                    revision_parameter["schema"]["maximum"],
+                    9_223_372_036_854_775_807_u64
+                );
+
+                let channel_id_parameter = operation["parameters"]
+                    .as_array()
+                    .and_then(|parameters| {
+                        parameters.iter().find(|parameter| {
+                            parameter["name"] == "id" && parameter["in"] == "path"
+                        })
+                    })
+                    .expect("channel ID path parameter");
+                assert_eq!(channel_id_parameter["schema"]["maximum"], 9999);
+            }
+
+            for status in statuses {
+                assert!(
+                    operation.pointer(&format!("/responses/{status}")).is_some(),
+                    "{pointer} must document HTTP {status}"
+                );
+            }
+
+            let accepted_description = operation
+                .pointer("/responses/200/description")
+                .and_then(serde_json::Value::as_str)
+                .expect("accepted mutation semantics");
+            assert!(
+                accepted_description
+                    .contains("reported with request_id for operator reconciliation")
+            );
+            assert!(accepted_description.contains("do not retry automatically"));
+            assert!(!accepted_description.contains("is reconciled by request_id"));
+
+            let response_ref = operation
+                .pointer("/responses/200/content/application~1json/schema/$ref")
+                .and_then(serde_json::Value::as_str)
+                .expect("typed channel mutation success envelope");
+            assert!(response_ref.ends_with("ChannelMutationResponse"));
+
+            if !request_schema.is_empty() {
+                let request_ref = operation
+                    .pointer("/requestBody/content/application~1json/schema/$ref")
+                    .and_then(serde_json::Value::as_str)
+                    .expect("typed channel mutation request body");
+                assert!(request_ref.ends_with(request_schema));
+            }
+        }
+
+        assert!(
+            spec.pointer("/paths/~1api~1channels/post/responses/404")
+                .is_none(),
+            "create cannot report an existing target as not found"
+        );
+
+        let create_channel_id = spec
+            .pointer("/components/schemas/ChannelCreateRequest/properties/channel_id")
+            .expect("optional create channel ID schema");
+        assert_eq!(create_channel_id["maximum"], 9999);
+        let create_channel_id_description = create_channel_id["description"]
+            .as_str()
+            .expect("automatic channel ID allocation description")
+            .to_ascii_lowercase();
+        assert!(create_channel_id_description.contains("lowest id"));
+        assert!(create_channel_id_description.contains("revision tombstones"));
+        assert!(!create_channel_id_description.contains("max+1"));
+
+        let update_channel_id = spec
+            .pointer("/components/schemas/ChannelConfigUpdateRequest/properties/channel_id/maximum")
+            .expect("update compatibility channel ID maximum");
+        assert_eq!(update_channel_id, 9999);
+
+        let update = spec
+            .pointer("/paths/~1api~1channels~1{id}/put")
+            .expect("channel update operation");
+        let update_description = update["description"]
+            .as_str()
+            .expect("channel update description")
+            .to_ascii_lowercase();
+        assert!(update_description.contains("patch semantics"));
+        assert!(update_description.contains("identity migration is forbidden"));
+
+        let receipt = spec
+            .pointer("/components/schemas/ChannelMutationResult/properties")
+            .expect("channel mutation receipt schema");
+        for field in [
+            "request_id",
+            "operation",
+            "resulting_revision",
+            "desired_enabled",
+            "runtime_projection",
+            "reconciliation_required",
+            "completion_audit",
+            "retryable",
+        ] {
+            assert!(receipt.get(field).is_some(), "receipt is missing {field}");
+        }
+        assert_eq!(receipt["request_id"]["format"], "uuid");
+        for field in ["id", "channel_id"] {
+            assert_eq!(receipt[field]["maximum"], 9999);
+        }
+        assert_eq!(receipt["resulting_revision"]["minimum"], 1);
+        assert_eq!(
+            receipt["resulting_revision"]["maximum"],
+            9_223_372_036_854_775_807_u64
+        );
+        let success_description = update
+            .pointer("/responses/200/description")
+            .and_then(serde_json::Value::as_str)
+            .expect("accepted outcome semantics");
+        assert!(success_description.contains("must not be retried automatically"));
+        assert!(success_description.contains("degraded"));
+
+        for schema in ["ChannelStatusResponse", "ChannelDetail"] {
+            let revision = schema_property(&spec["components"]["schemas"][schema], "revision")
+                .unwrap_or_else(|| panic!("{schema} must expose desired-state revision"));
+            assert_eq!(revision["type"], "integer");
+            assert_eq!(revision["minimum"], 1);
+            assert_eq!(revision["maximum"], 9_223_372_036_854_775_807_u64);
+        }
+    }
+
+    #[test]
+    fn channel_reconciliation_openapi_matches_the_governed_runtime_contract() {
+        let spec = spec();
+
+        for pointer in [
+            "/paths/~1api~1channels~1reconcile/post",
+            "/paths/~1api~1channels~1{id}~1reconcile/post",
+            "/paths/~1api~1channels~1reload/post",
+        ] {
+            let operation = spec
+                .pointer(pointer)
+                .unwrap_or_else(|| panic!("missing channel reconciliation operation {pointer}"));
+            assert!(operation["security"][0].get("bearer_auth").is_some());
+
+            for header in ["x-request-id", "x-aether-confirmed"] {
+                let parameter = operation["parameters"]
+                    .as_array()
+                    .and_then(|parameters| {
+                        parameters.iter().find(|parameter| {
+                            parameter["name"] == header && parameter["in"] == "header"
+                        })
+                    })
+                    .unwrap_or_else(|| panic!("{pointer} must document {header}"));
+                assert_eq!(parameter["required"], true, "{pointer} {header}");
+                if header == "x-request-id" {
+                    assert_eq!(parameter["schema"]["format"], "uuid", "{pointer}");
+                }
+            }
+
+            for status in ["200", "400", "403", "409", "422", "500", "503", "504"] {
+                assert!(
+                    operation.pointer(&format!("/responses/{status}")).is_some(),
+                    "{pointer} must document HTTP {status}"
+                );
+            }
+            let response_ref = operation
+                .pointer("/responses/200/content/application~1json/schema/$ref")
+                .and_then(serde_json::Value::as_str)
+                .expect("typed reconciliation response");
+            assert!(response_ref.ends_with("ChannelReconciliationResponse"));
+            assert!(operation.get("requestBody").is_none());
+
+            let description = operation
+                .pointer("/responses/200/description")
+                .and_then(serde_json::Value::as_str)
+                .expect("accepted reconciliation semantics");
+            assert!(description.contains("non-idempotent"));
+            assert!(description.contains("do not retry automatically"));
+        }
+
+        let one = spec
+            .pointer("/paths/~1api~1channels~1{id}~1reconcile/post")
+            .expect("single-channel reconciliation");
+        assert!(
+            one["responses"].get("404").is_none(),
+            "an absent desired channel is a successful fencing receipt, not not-found"
+        );
+        assert!(
+            one["responses"]["200"]["description"]
+                .as_str()
+                .is_some_and(|description| description.contains("absent"))
+        );
+        let channel_id = one["parameters"]
+            .as_array()
+            .and_then(|parameters| {
+                parameters
+                    .iter()
+                    .find(|parameter| parameter["name"] == "id" && parameter["in"] == "path")
+            })
+            .expect("single-channel ID");
+        assert_eq!(channel_id["schema"]["maximum"], 9999);
+
+        let receipt = spec
+            .pointer("/components/schemas/ChannelReconciliationResult/properties")
+            .expect("channel reconciliation receipt schema");
+        for field in [
+            "request_id",
+            "scope",
+            "channel_id",
+            "items",
+            "degraded_count",
+            "reconciliation_required",
+            "completion_audit",
+            "retryable",
+        ] {
+            assert!(receipt.get(field).is_some(), "receipt is missing {field}");
+        }
+        assert_eq!(receipt["request_id"]["format"], "uuid");
+
+        let reload = spec
+            .pointer("/paths/~1api~1channels~1reload/post")
+            .expect("compatibility reload alias");
+        assert_eq!(reload["deprecated"], true);
+        assert!(
+            reload["description"]
+                .as_str()
+                .is_some_and(|description| description.contains("/api/channels/reconcile"))
+        );
+        let serialized = serde_json::to_string(
+            spec.pointer("/components/schemas/ChannelReconciliationItemResult")
+                .expect("sanitized reconciliation item schema"),
+        )
+        .unwrap()
+        .to_ascii_lowercase();
+        for forbidden in ["parameters", "logging", "config", "credential"] {
+            assert!(!serialized.contains(forbidden));
+        }
+    }
+
+    #[test]
+    fn channel_control_openapi_is_a_governed_application_contract() {
+        let spec = spec();
+        let operation = spec
+            .pointer("/paths/~1api~1channels~1{id}~1control/post")
+            .expect("channel control operation");
+
+        assert!(operation["security"][0].get("bearer_auth").is_some());
+        for header in ["x-request-id", "x-aether-confirmed"] {
+            let parameter = operation["parameters"]
+                .as_array()
+                .and_then(|parameters| {
+                    parameters.iter().find(|parameter| {
+                        parameter["name"] == header && parameter["in"] == "header"
+                    })
+                })
+                .unwrap_or_else(|| panic!("channel control must document {header}"));
+            assert_eq!(parameter["required"], true, "{header}");
+            if header == "x-request-id" {
+                assert_eq!(parameter["schema"]["format"], "uuid");
+            }
+        }
+        let channel_id = operation["parameters"]
+            .as_array()
+            .and_then(|parameters| {
+                parameters
+                    .iter()
+                    .find(|parameter| parameter["name"] == "id" && parameter["in"] == "path")
+            })
+            .expect("channel control ID");
+        assert_eq!(channel_id["schema"]["maximum"], 9999);
+
+        for status in [
+            "200", "400", "403", "404", "409", "422", "500", "503", "504",
+        ] {
+            assert!(
+                operation.pointer(&format!("/responses/{status}")).is_some(),
+                "channel control must document HTTP {status}"
+            );
+        }
+        let response_ref = operation
+            .pointer("/responses/200/content/application~1json/schema/$ref")
+            .and_then(serde_json::Value::as_str)
+            .expect("typed channel control response");
+        assert!(response_ref.ends_with("ChannelControlResponse"));
+        let request_ref = operation
+            .pointer("/requestBody/content/application~1json/schema/$ref")
+            .and_then(serde_json::Value::as_str)
+            .expect("typed channel control request");
+        assert!(request_ref.ends_with("ChannelOperation"));
+        let operation_kind_ref = spec
+            .pointer("/components/schemas/ChannelOperation/properties/operation/$ref")
+            .and_then(serde_json::Value::as_str)
+            .expect("strongly typed channel operation enum");
+        assert!(operation_kind_ref.ends_with("ChannelOperationKind"));
+        let operation_values = spec
+            .pointer("/components/schemas/ChannelOperationKind/enum")
+            .and_then(serde_json::Value::as_array)
+            .expect("channel operation enum values");
+        assert_eq!(operation_values.len(), 3);
+        for (actual, expected) in operation_values.iter().zip(["start", "stop", "restart"]) {
+            assert_eq!(actual, expected);
+        }
+
+        let accepted = operation
+            .pointer("/responses/200/description")
+            .and_then(serde_json::Value::as_str)
+            .expect("channel control acceptance semantics");
+        assert!(accepted.contains("non-idempotent"));
+        assert!(accepted.contains("do not retry automatically"));
+
+        let receipt = spec
+            .pointer("/components/schemas/ChannelControlResult/properties")
+            .expect("channel control receipt schema");
+        for field in [
+            "channel_id",
+            "request_id",
+            "operation",
+            "desired_revision",
+            "desired_enabled",
+            "runtime_projection",
+            "reconciliation_required",
+            "completion_audit",
+            "retryable",
+        ] {
+            assert!(receipt.get(field).is_some(), "receipt is missing {field}");
+        }
+        assert_eq!(receipt["request_id"]["format"], "uuid");
+    }
+
+    #[test]
+    fn test_openapi_point_crud_matches_literal_router_paths() {
+        let spec = spec();
+        let paths = spec["paths"].as_object().expect("OpenAPI paths object");
+
+        for point_type in ["T", "S", "C", "A"] {
+            let path = format!("/api/channels/{{channel_id}}/{point_type}/points/{{point_id}}");
+            assert_path_methods(paths, &path, &["get", "post", "put", "delete"]);
+        }
+
+        assert!(
+            paths.keys().all(|path| !path.ends_with("/config")),
+            "OpenAPI must not expose the phantom point /config route"
+        );
+        assert!(
+            !paths.contains_key("/api/channels/{channel_id}/{type}/points/{point_id}"),
+            "OpenAPI must use the Router's literal T/S/C/A paths"
+        );
+
+        for point_type in ["T", "S", "C", "A"] {
+            let operation = &paths
+                [&format!("/api/channels/{{channel_id}}/{point_type}/points/{{point_id}}")]["post"];
+            assert!(
+                operation["responses"]["200"].is_object(),
+                "{point_type} point create returns HTTP 200"
+            );
+            assert!(
+                operation["responses"].get("201").is_none(),
+                "{point_type} point create must not advertise HTTP 201"
+            );
+        }
+    }
+
+    #[test]
+    fn test_openapi_operations_only_use_declared_tags() {
+        let spec = spec();
+        let declared: std::collections::HashSet<&str> = spec["tags"]
+            .as_array()
+            .expect("OpenAPI tags array")
+            .iter()
+            .filter_map(|tag| tag["name"].as_str())
+            .collect();
+
+        for (path, item) in spec["paths"].as_object().expect("OpenAPI paths object") {
+            for method in ["get", "post", "put", "delete", "patch"] {
+                let Some(operation) = item.get(method) else {
+                    continue;
+                };
+                for tag in operation["tags"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(serde_json::Value::as_str)
+                {
+                    assert!(
+                        declared.contains(tag),
+                        "{method} {path} uses undeclared tag {tag}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_openapi_http_operation_count_requires_router_parity_review() {
+        const HTTP_METHODS: [&str; 8] = [
+            "get", "post", "put", "delete", "patch", "options", "head", "trace",
+        ];
+
+        let spec = spec();
+        let operation_count = spec["paths"]
+            .as_object()
+            .expect("OpenAPI paths object")
+            .values()
+            .map(|path_item| {
+                HTTP_METHODS
+                    .iter()
+                    .filter(|method| path_item[**method].is_object())
+                    .count()
+            })
+            .sum::<usize>();
+
+        assert_eq!(
+            operation_count, 59,
+            "HTTP operation count changed; re-audit Router/OpenAPI parity before updating this guard"
+        );
     }
 
     #[test]

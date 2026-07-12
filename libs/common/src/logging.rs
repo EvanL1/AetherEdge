@@ -849,6 +849,9 @@ pub fn get_log_level() -> String {
 /// - api_key
 /// - secret
 /// - authorization
+/// - credential
+/// - community
+/// - complete `parameters` and `logging` containers
 ///
 /// # Example
 /// ```rust,ignore
@@ -860,12 +863,22 @@ pub fn get_log_level() -> String {
 fn redact_sensitive_fields(json_str: &str) -> String {
     use serde_json::{Value, json};
 
-    const SENSITIVE_KEYS: &[&str] = &["password", "token", "api_key", "secret", "authorization"];
+    const SENSITIVE_KEYS: &[&str] = &[
+        "password",
+        "token",
+        "api_key",
+        "secret",
+        "authorization",
+        "credential",
+        "community",
+    ];
+    const OPAQUE_SENSITIVE_KEYS: &[&str] = &["parameters", "logging"];
 
     // Try to parse as JSON
     let Ok(mut value) = serde_json::from_str::<Value>(json_str) else {
-        // If not valid JSON, return as-is
-        return json_str.to_string();
+        // Never copy a malformed payload into logs. It may contain a secret
+        // precisely because parsing/redaction failed.
+        return "<unparseable json omitted>".to_string();
     };
 
     // Recursive redaction function
@@ -874,7 +887,9 @@ fn redact_sensitive_fields(json_str: &str) -> String {
             Value::Object(map) => {
                 for (key, val) in map.iter_mut() {
                     let key_lower = key.to_lowercase();
-                    if SENSITIVE_KEYS.iter().any(|&k| key_lower.contains(k)) {
+                    if OPAQUE_SENSITIVE_KEYS.contains(&key_lower.as_str())
+                        || SENSITIVE_KEYS.iter().any(|&k| key_lower.contains(k))
+                    {
                         // Replace sensitive value with redacted marker
                         *val = json!("***REDACTED***");
                     } else {
@@ -895,7 +910,8 @@ fn redact_sensitive_fields(json_str: &str) -> String {
     redact_recursive(&mut value);
 
     // Serialize back to string (compact format)
-    serde_json::to_string(&value).unwrap_or_else(|_| json_str.to_string())
+    serde_json::to_string(&value)
+        .unwrap_or_else(|_| "<json redaction failed; body omitted>".to_string())
 }
 
 /// Truncate body string to maximum length
@@ -913,13 +929,23 @@ fn truncate_body(body: &str, max_length: usize) -> String {
     if body.len() <= max_length {
         body.to_string()
     } else {
-        let truncated_bytes = body.len() - max_length;
-        format!(
-            "{}[truncated {} bytes]",
-            &body[..max_length],
-            truncated_bytes
-        )
+        // `max_length` is a byte budget, but slicing Rust strings requires a
+        // UTF-8 character boundary. Walk back by at most three bytes so a
+        // legitimate JSON body containing CJK text or emoji can never panic
+        // (the workspace release profile aborts the whole service on panic).
+        let mut boundary = max_length;
+        while boundary > 0 && !body.is_char_boundary(boundary) {
+            boundary -= 1;
+        }
+        let truncated_bytes = body.len() - boundary;
+        format!("{}[truncated {} bytes]", &body[..boundary], truncated_bytes)
     }
+}
+
+/// Returns true for request families whose payload values must never enter
+/// access logs, even after generic field-name redaction.
+fn request_body_logging_forbidden(path: &str) -> bool {
+    path == "/api/channels" || path.starts_with("/api/channels/")
 }
 
 /// HTTP API request logger middleware
@@ -986,8 +1012,18 @@ pub async fn http_request_logger(
     let uri = req.uri().clone();
     let start = Instant::now();
 
-    // Decide whether to read body (DEBUG + modifying method + small JSON only)
+    // Channel payloads contain protocol credentials and per-channel log paths.
+    // Their application contract forbids recording parameter/logging values,
+    // so the access logger never captures any body below this route prefix --
+    // including malformed JSON that cannot be structurally redacted.
+    let body_logging_forbidden = request_body_logging_forbidden(uri.path());
+
+    // Decide whether to read body (DEBUG + modifying method + known-small JSON
+    // only). An absent Content-Length may be chunked; do not consume it merely
+    // for diagnostics because a bounded read cannot reconstruct an oversized
+    // stream after failure.
     let should_read_body = level_enabled!(Level::DEBUG)
+        && !body_logging_forbidden
         && matches!(method.as_str(), "POST" | "PUT" | "PATCH" | "DELETE")
         && req
             .headers()
@@ -999,8 +1035,7 @@ pub async fn http_request_logger(
             .get("content-length")
             .and_then(|v| v.to_str().ok())
             .and_then(|s| s.parse::<usize>().ok())
-            .unwrap_or(0)
-            <= MAX_BODY_READ;
+            .is_some_and(|length| length <= MAX_BODY_READ);
 
     let (req, body_str) = if should_read_body {
         extract_request_body(req, MAX_BODY_READ, MAX_BODY_LENGTH).await
@@ -1212,6 +1247,14 @@ mod tests {
         assert!(result.contains("[truncated"));
     }
 
+    #[test]
+    fn test_truncate_body_never_splits_utf8_code_points() {
+        let body = "ab设备🙂tail";
+        let result = truncate_body(body, 4);
+
+        assert_eq!(result, "ab[truncated 14 bytes]");
+    }
+
     // ========================================================================
     // redact_sensitive_fields tests
     // ========================================================================
@@ -1300,8 +1343,7 @@ mod tests {
     fn test_redact_invalid_json() {
         let invalid_json = "not valid json";
         let result = redact_sensitive_fields(invalid_json);
-        // Should return as-is
-        assert_eq!(result, "not valid json");
+        assert_eq!(result, "<unparseable json omitted>");
     }
 
     #[test]
@@ -1337,6 +1379,35 @@ mod tests {
         let result = redact_sensitive_fields(json);
         assert!(result.contains(r#""user_password":"***REDACTED***""#));
         assert!(result.contains(r#""access_token":"***REDACTED***""#));
+    }
+
+    #[test]
+    fn test_redact_channel_parameter_and_logging_containers_as_opaque() {
+        let json = r#"{
+            "name":"field device",
+            "parameters":{"username":"operator","community":"private","nested":{"key":"value"}},
+            "logging":{"enabled":true,"file":"/secret/site/device.log"}
+        }"#;
+        let result = redact_sensitive_fields(json);
+
+        assert!(!result.contains("operator"));
+        assert!(!result.contains("private"));
+        assert!(!result.contains("device.log"));
+        assert_eq!(result.matches("***REDACTED***").count(), 2);
+    }
+
+    #[test]
+    fn test_channel_request_bodies_are_never_eligible_for_access_logging() {
+        for path in [
+            "/api/channels",
+            "/api/channels/7",
+            "/api/channels/7/enabled",
+            "/api/channels/7/provision",
+        ] {
+            assert!(request_body_logging_forbidden(path), "{path}");
+        }
+        assert!(!request_body_logging_forbidden("/api/channel-health"));
+        assert!(!request_body_logging_forbidden("/api/auth/login"));
     }
 
     // ========================================================================

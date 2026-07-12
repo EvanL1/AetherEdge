@@ -12,6 +12,9 @@ use chrono::{DateTime, Utc};
 use std::sync::{Arc, OnceLock};
 use utoipa::OpenApi;
 
+use aether_application::{ChannelManagementApplication, ChannelReconciliationApplication};
+use aether_auth_jwt::AccessTokenAuthenticator;
+
 use crate::api::command_cache::CommandTxCache;
 use crate::core::channels::ChannelManager;
 
@@ -56,6 +59,8 @@ pub struct AppState {
     pub command_tx_cache: Arc<CommandTxCache>,
     /// Explicit development-only gate for authoritative T/S simulation writes.
     pub allow_simulation_writes: bool,
+    /// Internal runtime convergence facade shared with the governed HTTP boundary.
+    pub channel_reconciliation: Option<Arc<ChannelReconciliationApplication>>,
 }
 
 impl Clone for AppState {
@@ -65,6 +70,7 @@ impl Clone for AppState {
             sqlite_pool: self.sqlite_pool.clone(),
             command_tx_cache: self.command_tx_cache.clone(),
             allow_simulation_writes: self.allow_simulation_writes,
+            channel_reconciliation: self.channel_reconciliation.clone(),
         }
     }
 }
@@ -76,12 +82,14 @@ impl AppState {
         sqlite_pool: sqlx::SqlitePool,
         command_tx_cache: Arc<CommandTxCache>,
         allow_simulation_writes: bool,
+        channel_reconciliation: Option<Arc<ChannelReconciliationApplication>>,
     ) -> Self {
         Self {
             channel_manager,
             sqlite_pool,
             command_tx_cache,
             allow_simulation_writes,
+            channel_reconciliation,
         }
     }
 }
@@ -94,6 +102,9 @@ pub type ProductionAppState = AppState;
         // Health and service status
         crate::api::handlers::health::get_service_status,
         crate::api::handlers::health::health_check,
+
+        // Protocol discovery
+        crate::api::handlers::protocol_handlers::list_protocols,
 
         // Channel queries and status
         crate::api::handlers::channel_handlers::get_all_channels,
@@ -119,9 +130,19 @@ pub type ProductionAppState = AppState;
         crate::api::handlers::point_handlers::create_signal_point_handler,
         crate::api::handlers::point_handlers::create_control_point_handler,
         crate::api::handlers::point_handlers::create_adjustment_point_handler,
+        crate::api::handlers::point_handlers::get_telemetry_point_config_handler,
+        crate::api::handlers::point_handlers::get_signal_point_config_handler,
+        crate::api::handlers::point_handlers::get_control_point_config_handler,
+        crate::api::handlers::point_handlers::get_adjustment_point_config_handler,
+        crate::api::handlers::point_handlers::update_telemetry_point_handler,
+        crate::api::handlers::point_handlers::update_signal_point_handler,
+        crate::api::handlers::point_handlers::update_control_point_handler,
+        crate::api::handlers::point_handlers::update_adjustment_point_handler,
+        crate::api::handlers::point_handlers::delete_telemetry_point_handler,
+        crate::api::handlers::point_handlers::delete_signal_point_handler,
+        crate::api::handlers::point_handlers::delete_control_point_handler,
+        crate::api::handlers::point_handlers::delete_adjustment_point_handler,
         crate::api::handlers::point_handlers::batch_point_operations_handler,
-        // Note: GET/PUT/DELETE use type-specific wrappers at runtime, but OpenAPI
-        // documents the parameterized inner handlers for simplicity
 
         // Channel management (CRUD)
         crate::api::handlers::channel_management_handlers::create_channel_handler,
@@ -129,6 +150,8 @@ pub type ProductionAppState = AppState;
         crate::api::handlers::channel_management_handlers::set_channel_enabled_handler,
         crate::api::handlers::provision_handlers::provision_channel_handler,
         crate::api::handlers::channel_management_handlers::delete_channel_handler,
+        crate::api::handlers::channel_management_handlers::reconcile_channels_handler,
+        crate::api::handlers::channel_management_handlers::reconcile_channel_handler,
         crate::api::handlers::channel_management_handlers::reload_configuration_handler,
         crate::api::handlers::channel_management_handlers::reload_routing_handler,
 
@@ -148,6 +171,8 @@ pub type ProductionAppState = AppState;
         // Admin endpoints
         common::admin_api::set_log_level,
         common::admin_api::get_log_level,
+        common::admin_api::list_log_files,
+        common::admin_api::view_log_file,
 
         // Network configuration endpoints
         crate::api::handlers::network_handlers::list_network_interfaces,
@@ -166,6 +191,10 @@ pub type ProductionAppState = AppState;
             crate::dto::ChannelListQuery,
             crate::dto::PaginatedResponse<crate::dto::ChannelStatusResponse>,
             crate::dto::ChannelOperation,
+            crate::dto::ChannelOperationKind,
+            crate::dto::ChannelControlOperationResult,
+            crate::dto::ChannelControlResult,
+            crate::dto::ChannelControlResponse,
             crate::dto::ControlRequest,
             crate::dto::AdjustmentRequest,
             crate::dto::ControlValueRequest,
@@ -177,8 +206,19 @@ pub type ProductionAppState = AppState;
             crate::dto::ChannelCreateRequest,
             crate::dto::ChannelConfigUpdateRequest,
             crate::dto::ChannelEnabledRequest,
-            crate::dto::ChannelCrudResult,
-            crate::dto::ReloadConfigResult,
+            crate::dto::ChannelMutationOperation,
+            crate::dto::ChannelRuntimeProjectionResult,
+            crate::dto::ChannelCompletionAuditState,
+            crate::dto::ChannelCompletionAudit,
+            crate::dto::ChannelMutationResult,
+            crate::dto::ChannelMutationResponse,
+            crate::dto::ChannelReconciliationScopeResult,
+            crate::dto::ChannelDesiredStateResult,
+            crate::dto::ChannelReconciliationItemResult,
+            crate::dto::ChannelReconciliationResult,
+            crate::dto::ChannelReconciliationResponse,
+            common::ErrorInfo,
+            common::ErrorResponse,
             crate::dto::RoutingReloadResult,
             crate::dto::PointDefinition,
             crate::dto::GroupedPoints,
@@ -187,7 +227,6 @@ pub type ProductionAppState = AppState;
             crate::dto::PointMappingItem,
             crate::dto::MappingBatchUpdateRequest,
             crate::dto::MappingBatchUpdateResult,
-            crate::dto::ParameterChangeType,
             // Point CRUD DTOs
             crate::api::handlers::point_handlers::PointCrudResult,
             crate::api::handlers::point_handlers::PointUpdateRequest,
@@ -224,13 +263,46 @@ pub type ProductionAppState = AppState;
         )
     ),
     tags(
-        (name = "aether-io", description = "Device protocol and field I/O API"),
+        (name = "io", description = "Device protocol and field I/O API"),
         (name = "templates", description = "Channel template management (snapshot & apply)"),
         (name = "admin", description = "Administration and service management"),
         (name = "network", description = "Network interface configuration")
+    ),
+    modifiers(&SecurityAddon),
+    info(
+        title = "Aether I/O Service API",
+        version = env!("CARGO_PKG_VERSION"),
+        description = "Internal loopback API for device protocols, channels, point mappings, and commissioning. Do not expose this service port remotely; use an authenticated ingress or an on-device commissioning workflow."
     )
 )]
 pub struct IoApiDoc;
+
+struct SecurityAddon;
+
+impl utoipa::Modify for SecurityAddon {
+    fn modify(&self, openapi: &mut utoipa::openapi::OpenApi) {
+        if let Some(components) = openapi.components.as_mut() {
+            components.add_security_scheme(
+                "bearer_auth",
+                utoipa::openapi::security::SecurityScheme::Http(
+                    utoipa::openapi::security::HttpBuilder::new()
+                        .scheme(utoipa::openapi::security::HttpAuthScheme::Bearer)
+                        .bearer_format("JWT")
+                        .description(Some("Signed Aether access token"))
+                        .build(),
+                ),
+            );
+        }
+        if let Some(operation) = openapi
+            .paths
+            .paths
+            .get_mut("/api/channels/reload")
+            .and_then(|path| path.post.as_mut())
+        {
+            operation.deprecated = Some(utoipa::openapi::Deprecated::True);
+        }
+    }
+}
 
 /// Create the API router over authoritative SHM and SQLite configuration.
 pub fn create_api_routes(
@@ -238,11 +310,58 @@ pub fn create_api_routes(
     sqlite_pool: sqlx::SqlitePool,
     command_tx_cache: Arc<CommandTxCache>,
 ) -> Router {
-    create_api_routes_with_simulation_writes(
+    create_api_routes_with_boundary(
         channel_manager,
         sqlite_pool,
         command_tx_cache,
         simulation_writes_enabled(),
+        None,
+        ChannelManagementHttpBoundary::unavailable(),
+    )
+}
+
+/// Create the production API router with the governed channel application
+/// command explicitly composed by the service binary.
+pub fn create_api_routes_with_channel_management(
+    channel_manager: Arc<ChannelManager>,
+    sqlite_pool: sqlx::SqlitePool,
+    command_tx_cache: Arc<CommandTxCache>,
+    channel_management: Arc<ChannelManagementApplication>,
+    access_authenticator: Arc<AccessTokenAuthenticator>,
+) -> Router {
+    create_api_routes_with_boundary(
+        channel_manager,
+        sqlite_pool,
+        command_tx_cache,
+        simulation_writes_enabled(),
+        None,
+        ChannelManagementHttpBoundary::governed(channel_management, access_authenticator),
+    )
+}
+
+/// Create the production API router with governed channel desired-state and
+/// runtime-reconciliation application commands explicitly composed by the
+/// service binary.
+pub fn create_api_routes_with_channel_applications(
+    channel_manager: Arc<ChannelManager>,
+    sqlite_pool: sqlx::SqlitePool,
+    command_tx_cache: Arc<CommandTxCache>,
+    channel_management: Arc<ChannelManagementApplication>,
+    channel_reconciliation: Arc<ChannelReconciliationApplication>,
+    access_authenticator: Arc<AccessTokenAuthenticator>,
+) -> Router {
+    let state_reconciliation = Arc::clone(&channel_reconciliation);
+    create_api_routes_with_boundary(
+        channel_manager,
+        sqlite_pool,
+        command_tx_cache,
+        simulation_writes_enabled(),
+        Some(state_reconciliation),
+        ChannelManagementHttpBoundary::governed_with_reconciliation(
+            channel_management,
+            channel_reconciliation,
+            access_authenticator,
+        ),
     )
 }
 
@@ -257,17 +376,37 @@ fn simulation_writes_enabled() -> bool {
         })
 }
 
+#[cfg(test)]
 fn create_api_routes_with_simulation_writes(
     channel_manager: Arc<ChannelManager>,
     sqlite_pool: sqlx::SqlitePool,
     command_tx_cache: Arc<CommandTxCache>,
     allow_simulation_writes: bool,
 ) -> Router {
+    create_api_routes_with_boundary(
+        channel_manager,
+        sqlite_pool,
+        command_tx_cache,
+        allow_simulation_writes,
+        None,
+        ChannelManagementHttpBoundary::unavailable(),
+    )
+}
+
+fn create_api_routes_with_boundary(
+    channel_manager: Arc<ChannelManager>,
+    sqlite_pool: sqlx::SqlitePool,
+    command_tx_cache: Arc<CommandTxCache>,
+    allow_simulation_writes: bool,
+    channel_reconciliation: Option<Arc<ChannelReconciliationApplication>>,
+    channel_management: ChannelManagementHttpBoundary,
+) -> Router {
     let state = AppState::new(
         channel_manager,
         sqlite_pool,
         command_tx_cache,
         allow_simulation_writes,
+        channel_reconciliation,
     );
 
     Router::new()
@@ -282,6 +421,8 @@ fn create_api_routes_with_simulation_writes(
         .route("/api/channels/list", get(list_channels))
         .route("/api/channels/search", get(search_channels))
         .route("/api/points", get(list_all_points))
+        .route("/api/channels/reconcile", post(reconcile_channels_handler))
+        .route("/api/channels/{id}/reconcile", post(reconcile_channel_handler))
         .route("/api/channels/{id}", get(get_channel_detail_handler).put(update_channel_handler).delete(delete_channel_handler))
         .route("/api/channels/{id}/status", get(get_channel_status))
         .route("/api/channels/{id}/control", post(control_channel))
@@ -342,6 +483,7 @@ fn create_api_routes_with_simulation_writes(
             get(get_network_interface).put(update_network_interface),
         )
         .route("/api/network/apply", post(apply_network_changes))
+        .layer(axum::Extension(channel_management))
         // CRITICAL: Apply middleware BEFORE .with_state() for it to work
         .layer(axum::middleware::from_fn(common::logging::http_request_logger))
         .layer(DefaultBodyLimit::max(1024 * 1024)) // 1 MB request body limit

@@ -7,14 +7,13 @@
 use arc_swap::ArcSwapOption;
 use dashmap::DashSet;
 use std::sync::Arc;
-use tracing::{debug, error, info, warn};
+use tracing::{error, info, warn};
 
 use crate::core::channels::channel_entry::{ChannelEntry, ChannelStats, MAX_CHANNELS};
 use crate::core::channels::shm_listener::ShmCommandListener;
 use crate::error::{IoError, Result};
 use crate::store::ShmDataStore;
-use aether_rtdb_shm::{ChannelIndex, ShmHandle, SlotBitmap};
-use aether_shm_bridge::ShmChannelHealthWriter;
+use aether_shm_bridge::{ShmChannelHealthWriterHandle, ShmWriterHandle};
 
 // Re-export types for backwards compatibility
 pub use crate::core::channels::channel_entry::{ChannelMetadata, unix_timestamp_ms};
@@ -44,16 +43,10 @@ pub struct ChannelManager {
     /// SQLite connection pool for configuration loading
     pub(super) sqlite_pool: Option<sqlx::SqlitePool>,
     /// Runtime-swappable shared memory handle (writer + index, rebuilt on routing reload)
-    pub(super) shm_handle: Arc<ShmHandle>,
+    pub(super) shm_handle: Arc<ShmWriterHandle>,
     /// Command TX cache for O(1) hot path access
     /// Shared with AppState for direct API access bypassing RwLock
     pub(super) command_tx_cache: Option<Arc<crate::api::command_cache::CommandTxCache>>,
-
-    // ========== Dynamic Slot Allocation ==========
-    /// Dynamic channel index for unified pool architecture (optional)
-    pub(super) dynamic_channel_index: Option<Arc<ChannelIndex>>,
-    /// Slot bitmap for dynamic allocation (optional, requires RwLock for &mut access)
-    pub(super) slot_bitmap: Option<Arc<parking_lot::RwLock<SlotBitmap>>>,
 
     // ========== SHM Command Listener (Event-driven M2C via UDS) ==========
     /// SHM command listener for event-driven M2C command dispatch (UDS path, self-healing)
@@ -77,7 +70,7 @@ impl ChannelManager {
 
     /// Create new channel manager
     pub fn new(
-        shm_handle: Arc<ShmHandle>,
+        shm_handle: Arc<ShmWriterHandle>,
         routing_cache: Arc<aether_routing::RoutingCache>,
     ) -> Result<Self> {
         let store = Arc::new(ShmDataStore::new(
@@ -92,8 +85,6 @@ impl ChannelManager {
             sqlite_pool: None,
             shm_handle,
             command_tx_cache: None,
-            dynamic_channel_index: None,
-            slot_bitmap: None,
             shm_listener: None,
         })
     }
@@ -102,8 +93,8 @@ impl ChannelManager {
     pub fn with_shared_memory(
         routing_cache: Arc<aether_routing::RoutingCache>,
         sqlite_pool: sqlx::SqlitePool,
-        shm_handle: Arc<ShmHandle>,
-        channel_health_writer: Option<Arc<ShmChannelHealthWriter>>,
+        shm_handle: Arc<ShmWriterHandle>,
+        channel_health_writer: Option<Arc<ShmChannelHealthWriterHandle>>,
         command_tx_cache: Option<Arc<crate::api::command_cache::CommandTxCache>>,
     ) -> Result<Self> {
         let mut store = ShmDataStore::new(Arc::clone(&shm_handle), Arc::clone(&routing_cache))?;
@@ -118,21 +109,8 @@ impl ChannelManager {
             sqlite_pool: Some(sqlite_pool),
             shm_handle,
             command_tx_cache,
-            dynamic_channel_index: None,
-            slot_bitmap: None,
             shm_listener: None,
         })
-    }
-
-    /// Configure dynamic slot allocation (optional feature)
-    pub fn with_dynamic_allocation(
-        mut self,
-        dynamic_index: Arc<ChannelIndex>,
-        slot_bitmap: Arc<parking_lot::RwLock<SlotBitmap>>,
-    ) -> Self {
-        self.dynamic_channel_index = Some(dynamic_index);
-        self.slot_bitmap = Some(slot_bitmap);
-        self
     }
 
     /// Configure SHM command listener for event-driven M2C dispatch
@@ -154,8 +132,8 @@ impl ChannelManager {
         self.shm_listener.as_ref()
     }
 
-    /// Get ShmHandle for routing reload SHM rebuild
-    pub fn shm_handle(&self) -> &Arc<ShmHandle> {
+    /// Get the SHM writer handle for routing reload and SHM rebuild.
+    pub fn shm_handle(&self) -> &Arc<ShmWriterHandle> {
         &self.shm_handle
     }
 
@@ -165,52 +143,9 @@ impl ChannelManager {
         &self.store
     }
 
-    /// Get dynamic ChannelIndex (for external access, e.g., API stats)
-    pub fn dynamic_channel_index(&self) -> Option<&Arc<ChannelIndex>> {
-        self.dynamic_channel_index.as_ref()
-    }
-
-    /// Get slot bitmap stats (total/allocated/free)
-    pub fn slot_bitmap_stats(&self) -> Option<aether_rtdb_shm::BitmapStats> {
-        self.slot_bitmap.as_ref().map(|b| b.read().stats())
-    }
-
     // ========================================================================
     // Channel Lifecycle
     // ========================================================================
-
-    /// Respawn a hung channel: tear down the existing entry and rebuild it from
-    /// the same configuration. Used by the runtime watchdog when a task's
-    /// heartbeat goes stale (task hung in a non-cancellable await), since
-    /// `JoinHandle::abort()` alone cannot recover — a fresh task must replace
-    /// the zombie. Re-uses the original `Arc<ChannelConfig>` so points/protocol
-    /// stay identical; routing/SHM slots are reallocated as part of `create_channel`.
-    pub async fn respawn_channel(&self, channel_id: u32) -> Result<()> {
-        // Snapshot the config before we drop the entry; channel_config is the
-        // only piece needed to rebuild via the standard creation path.
-        let cfg = match self
-            .channels
-            .get(channel_id as usize)
-            .and_then(|s| s.load_full())
-        {
-            Some(entry) => Arc::clone(&entry.channel_config),
-            None => return Err(IoError::channel_not_found(channel_id)),
-        };
-
-        // Graceful remove: shutdown signal → 500ms timeout → force-abort.
-        // Errors here (e.g. already-removed) are tolerated; we still try to
-        // create fresh — that's the whole point of the respawn.
-        if let Err(e) = self.remove_channel(channel_id).await {
-            warn!(
-                "Ch{} respawn: remove returned {} — proceeding to recreate",
-                channel_id, e
-            );
-        }
-
-        self.create_channel(cfg).await.map(|_entry| {
-            info!("Ch{} respawned by watchdog", channel_id);
-        })
-    }
 
     /// Remove channel with graceful shutdown.
     pub async fn remove_channel(&self, channel_id: u32) -> Result<()> {
@@ -260,22 +195,6 @@ impl ChannelManager {
             {
                 warn!("Ch{} task did not exit in 500ms, aborting", channel_id);
                 abort_handle.abort();
-            }
-        }
-
-        // 3. Dynamic Slot Deallocation
-        if let (Some(index), Some(bitmap)) = (&self.dynamic_channel_index, &self.slot_bitmap) {
-            let mut bitmap_guard = bitmap.write();
-            match index.remove_channel(channel_id, &mut bitmap_guard) {
-                Ok(layout) => {
-                    debug!(
-                        "Ch{} slot freed: base={}, count={}",
-                        channel_id, layout.base_slot, layout.total_points
-                    );
-                },
-                Err(e) => {
-                    warn!("Ch{} slot deallocation failed: {}", channel_id, e);
-                },
             }
         }
 
@@ -435,27 +354,5 @@ mod tests {
 
         let count = manager.running_channel_count().await;
         assert_eq!(count, 0);
-    }
-
-    #[tokio::test]
-    async fn test_respawn_missing_channel_returns_not_found() {
-        // Watchdog must surface "no such channel" cleanly so a missing slot
-        // doesn't crash the cleanup loop. ChannelNotFound is the expected error
-        // shape — anything else (e.g. panic) would be a regression.
-        let shm_handle = crate::test_utils::create_test_shm_handle();
-        let routing_cache = create_test_routing_cache();
-        let manager = ChannelManager::new(shm_handle, routing_cache).unwrap();
-
-        let err = manager
-            .respawn_channel(42)
-            .await
-            .expect_err("respawn on missing channel must error");
-        // channel_not_found() constructor returns ChannelError("Channel not found: ...")
-        let msg = format!("{}", err);
-        assert!(
-            msg.contains("Channel not found"),
-            "expected 'Channel not found' in error, got: {}",
-            msg
-        );
     }
 }

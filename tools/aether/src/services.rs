@@ -495,65 +495,6 @@ async fn reload_service_outcome(service: &str) -> Result<ReloadOutcome> {
     Ok(ReloadOutcome::Reloaded)
 }
 
-/// Try to reload io + automation after sync.
-/// A stopped service is reported rather than treated as an apply failure;
-/// it will load the committed configuration on its next start.
-#[derive(Debug, serde::Serialize)]
-pub struct ConfigReloadReport {
-    pub reloaded: Vec<String>,
-    pub unavailable: Vec<String>,
-    pub restart_required: Vec<String>,
-}
-
-impl ConfigReloadReport {
-    pub fn requires_restart(&self) -> bool {
-        !self.restart_required.is_empty()
-    }
-}
-
-pub async fn reload_config_services() -> ConfigReloadReport {
-    let services = ["aether-io", "aether-automation"];
-    let mut report = ConfigReloadReport {
-        reloaded: Vec::new(),
-        unavailable: Vec::new(),
-        restart_required: Vec::new(),
-    };
-
-    for service in &services {
-        match reload_service_outcome(service).await {
-            Ok(ReloadOutcome::Reloaded) => report.reloaded.push((*service).to_string()),
-            Ok(ReloadOutcome::Unavailable) => report.unavailable.push((*service).to_string()),
-            Ok(ReloadOutcome::RestartRequired(_)) | Err(_) => {
-                report.restart_required.push((*service).to_string());
-            },
-        }
-    }
-
-    report
-}
-
-pub fn print_config_reload_report(report: &ConfigReloadReport) {
-    for service in &report.reloaded {
-        println!("  Reloaded {service}");
-    }
-    if report.reloaded.is_empty() {
-        if report.restart_required.is_empty() {
-            println!("  Services not running. Start with: aether services start");
-        }
-    } else if !report.unavailable.is_empty() {
-        println!(
-            "  Not reachable (will load config on restart): {}",
-            report.unavailable.join(", ")
-        );
-    }
-    if !report.restart_required.is_empty() {
-        println!(
-            "  Restart required before the applied configuration is authoritative: {}",
-            report.restart_required.join(", ")
-        );
-    }
-}
-
 /// Ensure the Compose log target is a real directory without rewriting an
 /// operator-owned symlink when external media is unavailable.
 fn ensure_logs_dir_exists() -> Result<()> {
@@ -1012,16 +953,6 @@ mod tests {
     fn automation_reload_covers_instances_and_the_rule_scheduler() {
         let (_, paths) = reload_targets("aether-automation").unwrap();
         assert_eq!(paths, ["/api/instances/reload", "/api/scheduler/reload"]);
-    }
-
-    #[test]
-    fn a_partial_live_reload_requires_an_explicit_restart() {
-        let report = ConfigReloadReport {
-            reloaded: Vec::new(),
-            unavailable: Vec::new(),
-            restart_required: vec!["aether-automation".to_string()],
-        };
-        assert!(report.requires_restart());
     }
 
     #[test]

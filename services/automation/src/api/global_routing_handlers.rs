@@ -7,6 +7,7 @@
 
 use axum::{
     extract::{Path, Query, State},
+    http::HeaderMap,
     response::Json,
 };
 use common::SuccessResponse;
@@ -161,48 +162,37 @@ pub async fn get_all_routing_handler(
     delete,
     path = "/api/routing",
     params(
-        ("confirm" = Option<bool>, Query, description = "Confirmation flag (must be true)")
+        ("confirm" = Option<bool>, Query, description = "Confirmation flag (must be true)"),
+        ("x-request-id" = Option<String>, Header, description = "Optional UUID audit correlation ID")
     ),
     responses(
         (status = 200, description = "All routing deleted", body = Value),
-        (status = 400, description = "Confirmation required"),
-        (status = 500, description = "Database error")
+        (status = 403, description = "Missing/invalid Bearer credentials or actor lacks automation.routing.manage"),
+        (status = 422, description = "Explicit confirmation is required"),
+        (status = 503, description = "Mandatory audit, routing storage, or cache publication is unavailable")
     ),
+    security(("bearer_auth" = [])),
     tag = "automation"
 )]
 pub async fn delete_all_routing_handler(
     State(state): State<Arc<AppState>>,
     Query(params): Query<ConfirmQuery>,
+    headers: HeaderMap,
 ) -> Result<Json<SuccessResponse<Value>>, AutomationError> {
-    if !params.confirm.unwrap_or(false) {
-        return Err(AutomationError::InvalidRouting(
-            "Confirmation required: add ?confirm=true to delete all routing".to_string(),
-        ));
-    }
+    let acceptance = crate::api::action_routing_boundary::apply(
+        &state,
+        &headers,
+        params.confirm.unwrap_or(false),
+        aether_ports::ActionRoutingMutation::delete_all(),
+    )
+    .await?;
 
-    let mut tx = state.instance_manager.pool.begin().await.map_err(|e| {
-        AutomationError::InternalError(format!("Failed to start transaction: {}", e))
-    })?;
-
-    // Delete all measurement routing
     let measurement_result = sqlx::query("DELETE FROM measurement_routing")
-        .execute(&mut *tx)
+        .execute(&state.instance_manager.pool)
         .await
         .map_err(|e| {
             AutomationError::InternalError(format!("Failed to delete measurement routing: {}", e))
         })?;
-
-    // Delete all action routing
-    let action_result = sqlx::query("DELETE FROM action_routing")
-        .execute(&mut *tx)
-        .await
-        .map_err(|e| {
-            AutomationError::InternalError(format!("Failed to delete action routing: {}", e))
-        })?;
-
-    tx.commit().await.map_err(|e| {
-        AutomationError::InternalError(format!("Failed to commit transaction: {}", e))
-    })?;
 
     state
         .instance_manager
@@ -218,8 +208,13 @@ pub async fn delete_all_routing_handler(
     let result = json!({
         "deleted": {
             "measurement": measurement_result.rows_affected(),
-            "action": action_result.rows_affected()
-        }
+            "action": acceptance.affected_routes()
+        },
+        "request_id": acceptance.request_id(),
+        "audit": crate::infra::application_control::completion_audit_response(
+            acceptance.completion_audit()
+        ),
+        "retryable": acceptance.is_retryable()
     });
 
     Ok(Json(SuccessResponse::new(result)))
@@ -232,7 +227,7 @@ pub async fn delete_all_routing_handler(
     get,
     path = "/api/routing/by-channel/{channel_id}",
     params(
-        ("channel_id" = u16, Path, description = "Channel ID")
+        ("channel_id" = u32, Path, description = "Channel ID")
     ),
     responses(
         (status = 200, description = "Channel routing entries", body = Value,
@@ -320,43 +315,48 @@ pub async fn get_routing_by_channel_handler(
     delete,
     path = "/api/routing/instances/{instance_name}",
     params(
-        ("instance_name" = String, Path, description = "Instance name")
+        ("instance_name" = String, Path, description = "Instance name"),
+        ("confirm" = Option<bool>, Query, description = "Confirmation flag (must be true)"),
+        ("x-request-id" = Option<String>, Header, description = "Optional UUID audit correlation ID")
     ),
     responses(
         (status = 200, description = "Instance routing deleted", body = Value),
-        (status = 500, description = "Database error")
+        (status = 403, description = "Missing/invalid Bearer credentials or actor lacks automation.routing.manage"),
+        (status = 404, description = "Instance not found"),
+        (status = 422, description = "Explicit confirmation is required"),
+        (status = 503, description = "Mandatory audit, routing storage, or cache publication is unavailable")
     ),
+    security(("bearer_auth" = [])),
     tag = "automation"
 )]
 pub async fn delete_instance_routing_handler(
     State(state): State<Arc<AppState>>,
     Path(instance_name): Path<String>,
+    Query(params): Query<ConfirmQuery>,
+    headers: HeaderMap,
 ) -> Result<Json<SuccessResponse<Value>>, AutomationError> {
-    let mut tx = state.instance_manager.pool.begin().await.map_err(|e| {
-        AutomationError::InternalError(format!("Failed to start transaction: {}", e))
-    })?;
+    let instance_id = state
+        .instance_manager
+        .get_instance_id(&instance_name)
+        .await
+        .map_err(|_| AutomationError::InstanceNotFound(instance_name.clone()))?;
+    let acceptance = crate::api::action_routing_boundary::apply(
+        &state,
+        &headers,
+        params.confirm.unwrap_or(false),
+        aether_ports::ActionRoutingMutation::delete_actions_for_instance(
+            aether_domain::InstanceId::new(instance_id),
+        ),
+    )
+    .await?;
 
-    // Delete measurement routing
     let measurement_result = sqlx::query("DELETE FROM measurement_routing WHERE instance_name = ?")
         .bind(&instance_name)
-        .execute(&mut *tx)
+        .execute(&state.instance_manager.pool)
         .await
         .map_err(|e| {
             AutomationError::InternalError(format!("Failed to delete measurement routing: {}", e))
         })?;
-
-    // Delete action routing
-    let action_result = sqlx::query("DELETE FROM action_routing WHERE instance_name = ?")
-        .bind(&instance_name)
-        .execute(&mut *tx)
-        .await
-        .map_err(|e| {
-            AutomationError::InternalError(format!("Failed to delete action routing: {}", e))
-        })?;
-
-    tx.commit().await.map_err(|e| {
-        AutomationError::InternalError(format!("Failed to commit transaction: {}", e))
-    })?;
 
     state
         .instance_manager
@@ -373,8 +373,13 @@ pub async fn delete_instance_routing_handler(
         "instance_name": instance_name,
         "deleted": {
             "measurement": measurement_result.rows_affected(),
-            "action": action_result.rows_affected()
-        }
+            "action": acceptance.affected_routes()
+        },
+        "request_id": acceptance.request_id(),
+        "audit": crate::infra::application_control::completion_audit_response(
+            acceptance.completion_audit()
+        ),
+        "retryable": acceptance.is_retryable()
     });
 
     Ok(Json(SuccessResponse::new(result)))
@@ -387,43 +392,42 @@ pub async fn delete_instance_routing_handler(
     delete,
     path = "/api/routing/channels/{channel_id}",
     params(
-        ("channel_id" = u16, Path, description = "Channel ID")
+        ("channel_id" = u32, Path, description = "Channel ID"),
+        ("confirm" = Option<bool>, Query, description = "Confirmation flag (must be true)"),
+        ("x-request-id" = Option<String>, Header, description = "Optional UUID audit correlation ID")
     ),
     responses(
         (status = 200, description = "Channel routing deleted", body = Value),
-        (status = 500, description = "Database error")
+        (status = 403, description = "Missing/invalid Bearer credentials or actor lacks automation.routing.manage"),
+        (status = 422, description = "Explicit confirmation is required"),
+        (status = 503, description = "Mandatory audit, routing storage, or cache publication is unavailable")
     ),
+    security(("bearer_auth" = [])),
     tag = "automation"
 )]
 pub async fn delete_channel_routing_handler(
     State(state): State<Arc<AppState>>,
     Path(channel_id): Path<u32>,
+    Query(params): Query<ConfirmQuery>,
+    headers: HeaderMap,
 ) -> Result<Json<SuccessResponse<Value>>, AutomationError> {
-    let mut tx = state.instance_manager.pool.begin().await.map_err(|e| {
-        AutomationError::InternalError(format!("Failed to start transaction: {}", e))
-    })?;
+    let acceptance = crate::api::action_routing_boundary::apply(
+        &state,
+        &headers,
+        params.confirm.unwrap_or(false),
+        aether_ports::ActionRoutingMutation::delete_actions_for_channel(
+            aether_domain::ChannelId::new(channel_id),
+        ),
+    )
+    .await?;
 
-    // Delete measurement routing (uplink)
     let uplink_result = sqlx::query("DELETE FROM measurement_routing WHERE channel_id = ?")
         .bind(channel_id)
-        .execute(&mut *tx)
+        .execute(&state.instance_manager.pool)
         .await
         .map_err(|e| {
             AutomationError::InternalError(format!("Failed to delete uplink routing: {}", e))
         })?;
-
-    // Delete action routing (downlink)
-    let downlink_result = sqlx::query("DELETE FROM action_routing WHERE channel_id = ?")
-        .bind(channel_id)
-        .execute(&mut *tx)
-        .await
-        .map_err(|e| {
-            AutomationError::InternalError(format!("Failed to delete downlink routing: {}", e))
-        })?;
-
-    tx.commit().await.map_err(|e| {
-        AutomationError::InternalError(format!("Failed to commit transaction: {}", e))
-    })?;
 
     state
         .instance_manager
@@ -440,8 +444,13 @@ pub async fn delete_channel_routing_handler(
         "channel_id": channel_id,
         "deleted": {
             "uplink": uplink_result.rows_affected(),
-            "downlink": downlink_result.rows_affected()
-        }
+            "downlink": acceptance.affected_routes()
+        },
+        "request_id": acceptance.request_id(),
+        "audit": crate::infra::application_control::completion_audit_response(
+            acceptance.completion_audit()
+        ),
+        "retryable": acceptance.is_retryable()
     });
 
     Ok(Json(SuccessResponse::new(result)))

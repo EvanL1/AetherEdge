@@ -40,7 +40,7 @@ pub async fn get_service_status(
     let uptime_seconds = uptime_duration.num_seconds().max(0) as u64;
 
     let status = ServiceStatus {
-        name: "Communication Service".to_string(),
+        name: "Aether I/O Service".to_string(),
         version: env!("CARGO_PKG_VERSION").to_string(),
         uptime: uptime_seconds,
         start_time,
@@ -171,19 +171,14 @@ pub async fn health_check(
     // healthy" from "SHM never initialized" — the old `if let Some(handle)`
     // path silently dropped the entry when the handle was None and
     // returned 200 alongside SQLite health, masking a degraded SHM.
-    match manager.shm_handle().layout() {
-        Some(layout_guard) => {
+    match manager.shm_handle().generation() {
+        Some(layout) => {
             let mut parts = Vec::new();
-
-            if let Some(layout) = layout_guard.as_ref() {
-                parts.push(format!("total={}", layout.writer.slot_count()));
-                parts.push(format!("heartbeat_ms={}", layout.writer.writer_heartbeat()));
-            }
-
-            if let Some(stats) = manager.slot_bitmap_stats() {
-                parts.push(format!("allocated={}", stats.allocated_slots));
-                parts.push(format!("free={}", stats.free_slots));
-            }
+            parts.push(format!("total={}", layout.slot_count()));
+            parts.push(format!(
+                "heartbeat_ms={}",
+                layout.acquisition_writer().writer_heartbeat()
+            ));
 
             checks.insert(
                 "shm".to_string(),

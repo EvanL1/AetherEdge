@@ -53,7 +53,7 @@ aether channels list
 aether models instances list
 aether rules list
 
-# Remote machine
+# Remote read-only inspection
 aether --host 192.168.30.21 channels list
 
 # Interactive dashboard
@@ -78,6 +78,9 @@ Docker Compose runtime and fails if that composition is not present.
 | `aether export` | Export config from database to files |
 | `aether status` | Show configuration status |
 | `aether doctor` | Full system health check |
+| `aether runtime-manifest [--path <FILE>]` | Verify and inspect feature-exact runtime metadata |
+| `aether packs build ...` | Build a data-only Pack artifact for one exact runtime manifest |
+| `aether packs install --artifact <DIR>` | Verify, publish, and atomically activate a Pack artifact |
 
 ### Channels (aether-io)
 
@@ -85,10 +88,14 @@ Docker Compose runtime and fails if that composition is not present.
 |---------|-------------|
 | `aether channels list` | List all communication channels |
 | `aether channels status <id>` | Channel runtime status and statistics |
+| `aether channels create ... --confirmed` | Create a channel disabled by default; requires `AETHER_ACCESS_TOKEN` |
+| `aether channels update <id> ... --confirmed` | Update desired channel configuration; accepts `--expected-revision` |
+| `aether channels enable\|disable <id> --confirmed` | Change desired runtime lifecycle; accepts `--expected-revision` |
+| `aether channels delete <id> --confirmed` | Delete a channel; `--force` only skips the prompt and action-route references fail with a conflict |
 | `aether channels write <id> --type T\|S ...` | Inject supervised simulation telemetry |
-| `aether channels reload` | Hot-reload channel configuration |
+| `aether channels reload --confirmed` | Reconcile all channel runtimes through `io.channel.reconcile`; requires `AETHER_ACCESS_TOKEN` and must not be retried automatically |
 | `aether channels health` | Service health check |
-| `aether models instances action ...` | Send the only supported external device command; requires `AETHER_ACCESS_TOKEN` from an Admin/Engineer session |
+| `aether models instances action ... --confirmed` | Submit the only supported external device command to the local command plane; requires explicit confirmation and `AETHER_ACCESS_TOKEN` from an Admin/Engineer session |
 
 ### Templates (aether-io)
 
@@ -104,7 +111,7 @@ Docker Compose runtime and fails if that composition is not present.
 
 | Command | Description |
 |---------|-------------|
-| `aether models products list` | List built-in product types |
+| `aether models products list` | List active Pack and site product types |
 | `aether models instances list` | List device instances |
 | `aether models instances create <product> <name>` | Create device instance |
 | `aether models instances get <name>` | Instance details |
@@ -116,9 +123,47 @@ Docker Compose runtime and fails if that composition is not present.
 |---------|-------------|
 | `aether rules list` | List business rules |
 | `aether rules get <id>` | Rule details with flow definition |
-| `aether rules enable <id>` | Enable rule |
-| `aether rules disable <id>` | Disable rule |
-| `aether rules execute <id>` | Execute rule (real execution — no dry-run) |
+| `aether rules enable <id> --confirmed` | Enable rule; requires `AETHER_ACCESS_TOKEN` |
+| `aether rules disable <id> --confirmed` | Disable rule; requires `AETHER_ACCESS_TOKEN` |
+| `aether rules create --name <name> --confirmed` | Create a disabled rule; requires `AETHER_ACCESS_TOKEN` |
+| `aether rules update <id> ... --confirmed` | Change rule policy; requires `AETHER_ACCESS_TOKEN` |
+| `aether rules delete <id> --confirmed` | Delete a rule; `--force` only skips the prompt |
+| `aether rules execute <id> --confirmed` | Evaluate a rule and submit selected actions to the local command plane; requires explicit confirmation and `AETHER_ACCESS_TOKEN` |
+| `aether routing action upsert/delete/enable/disable ... --confirmed` | Govern one physical C/A command route; requires `AETHER_ACCESS_TOKEN` |
+
+The production MCP catalog contains 45 tools: 23 read-only tools are always
+registered, while `aether mcp --allow-write` adds exactly 22 governed writes:
+
+- channel commissioning: `channels_create`, `channels_update`,
+  `channels_delete`, `channels_enable`, `channels_disable`, plus
+  `channels_reconcile` for explicitly confirmed runtime convergence;
+- device and execution commands: `models_instances_action`, `rules_execute`;
+- rule CRUD and lifecycle: `rules_create`, `rules_update`, `rules_delete`,
+  `rules_enable`, `rules_disable`;
+- alarm-rule CRUD and lifecycle: `alarms_rule_create`, `alarms_rule_update`,
+  `alarms_rule_delete`, `alarms_rule_enable`, `alarms_rule_disable`, plus
+  `alarms_resolve` for manual alert resolution;
+- action-route governance: `routing_action_upsert`, `routing_action_delete`,
+  `routing_action_set_enabled`.
+
+`--allow-write` is only a registration gate; every invocation still requires
+`confirmed: true`, application authorization, and mandatory audit. The MCP
+bridge reads `AETHER_ACCESS_TOKEN`, sends it as an `Authorization: Bearer`
+credential, and adds an `X-Request-ID` to each governed HTTP request. Retain
+returned `request_id`/`command_id` values and never automatically retry a write
+whose timeout, audit, or publication result is incomplete. Routing mutations
+change future physical command targets but do not execute a device command. A
+successful device-command response means local acceptance, not confirmed
+physical-device execution. Channel mutation success may be a degraded runtime
+projection; inspect `request_id`, `resulting_revision`, and
+`reconciliation_required` before any separately confirmed follow-up, and do
+not automatically retry it.
+
+Bearer credentials are allowed over loopback HTTP for on-device operation,
+but are never attached to non-loopback plaintext HTTP requests. Remote
+protected writes must configure the relevant `AETHER_*_URL` variables with a
+certificate-validated HTTPS ingress. `--host` constructs plaintext service
+URLs on the default ports, so use it only for remote read-only inspection.
 
 ### Live data (SHM)
 
@@ -163,7 +208,7 @@ aether --host 192.168.30.21 top    # Remote
 
 | Flag | Description |
 |------|-------------|
-| `--host <IP>` | Target remote machine (overrides localhost) |
+| `--host <IP>` | Target a remote machine over direct HTTP for read-only inspection; protected writes require HTTPS service URLs |
 | `--json` | Structured JSON output for scripts and AI agents |
 | `--verbose` | Enable debug logging |
 | `--no-color` | Disable colored output |

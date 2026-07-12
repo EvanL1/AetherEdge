@@ -260,8 +260,8 @@ async fn snapshot_channel_mappings(
                 "success": true,
                 "data": [{
                     "template_id": 1,
-                    "name": "PCS Modbus Template",
-                    "description": "Standard PCS point definitions",
+                    "name": "Packaging PLC Modbus Template",
+                    "description": "Standard packaging-controller point definitions",
                     "protocol": "modbus_tcp",
                     "point_counts": {"telemetry": 30, "signal": 10, "control": 5, "adjustment": 5},
                     "created_at": "2025-10-15T10:30:00Z"

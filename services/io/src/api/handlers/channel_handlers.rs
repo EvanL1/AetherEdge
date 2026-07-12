@@ -63,38 +63,44 @@ fn extract_description_from_config(
         ("connected" = Option<bool>, Query, description = "Filter by connection status")
     ),
     responses(
-        (status = 200, description = "Paginated list of channels", body = crate::dto::PaginatedResponse<crate::dto::ChannelStatusResponse>,
+        (status = 200, description = "Paginated list of channels, including the desired-state revision used by x-aether-expected-revision", body = common::SuccessResponse<crate::dto::PaginatedResponse<crate::dto::ChannelStatusResponse>>,
             example = json!({
-                "list": [
+                "success": true,
+                "data": {
+                  "list": [
                     {
                         "id": 1,
-                        "name": "PCS#1",
+                        "revision": 3,
+                        "name": "PLC#1",
                         "protocol": "modbus_tcp",
-                        "description": "Power Converter #1",
+                        "description": "Packaging Line Controller #1",
                         "enabled": true,
                         "connected": true,
                         "last_update": "2025-10-15T10:30:00Z"
                     },
                     {
                         "id": 2,
-                        "name": "BAMS#1",
+                        "revision": 1,
+                        "name": "HVAC#1",
                         "protocol": "modbus_tcp",
-                        "description": "Battery Management System #1",
+                        "description": "Building Climate Controller #1",
                         "enabled": true,
                         "connected": true,
                         "last_update": "2025-10-15T10:28:15Z"
                     },
                     {
                         "id": 3,
-                        "name": "GENSET#1",
+                        "revision": 7,
+                        "name": "METER#1",
                         "protocol": "modbus_rtu",
-                        "description": "Diesel Generator #1",
+                        "description": "Serial Process Meter #1",
                         "enabled": true,
                         "connected": false,
                         "last_update": "2025-10-15T10:25:00Z"
                     },
                     {
                         "id": 4,
+                        "revision": 2,
                         "name": "ECU1170_GPIO",
                         "protocol": "di_do",
                         "description": "ECU-1170 Onboard DI/DO",
@@ -103,9 +109,10 @@ fn extract_description_from_config(
                         "last_update": "2025-10-15T10:30:05Z"
                     }
                 ],
-                "page": 1,
-                "page_size": 20,
-                "total": 4
+                  "page": 1,
+                  "page_size": 20,
+                  "total": 4
+                }
             })
         )
     ),
@@ -116,22 +123,33 @@ pub async fn get_all_channels(
     Query(query): Query<ChannelListQuery>,
 ) -> Result<Json<SuccessResponse<PaginatedResponse<ChannelStatusResponse>>>, AppError> {
     // Load all channels from database first
-    let db_channels: Vec<(i64, String, String, bool, Option<String>)> =
-        sqlx::query_as("SELECT channel_id, name, protocol, enabled, config FROM channels")
-            .fetch_all(&state.sqlite_pool)
-            .await
-            .map_err(|e| {
-                tracing::error!("Load channels: {}", e);
-                AppError::internal_error(format!("Failed to load channels from database: {}", e))
-            })?;
+    let db_channels: Vec<(i64, String, String, bool, Option<String>, i64)> = sqlx::query_as(
+        "SELECT channel_id, name, protocol, enabled, config, revision FROM channels",
+    )
+    .fetch_all(&state.sqlite_pool)
+    .await
+    .map_err(|e| {
+        tracing::error!("Load channels: {}", e);
+        AppError::internal_error(format!("Failed to load channels from database: {}", e))
+    })?;
 
     // Direct access without RwLock (lock-free)
     let manager = &state.channel_manager;
     let mut all_channels = Vec::new();
 
-    for (id, name, protocol, enabled, config_str) in db_channels {
+    for (id, name, protocol, enabled, config_str, revision) in db_channels {
         let channel_id = u32::try_from(id)
             .map_err(|_| AppError::internal_error(format!("Channel ID {} out of range", id)))?;
+        let revision = u64::try_from(revision).map_err(|_| {
+            AppError::internal_error(format!(
+                "Channel {channel_id} has an invalid desired-state revision"
+            ))
+        })?;
+        if revision == 0 {
+            return Err(AppError::internal_error(format!(
+                "Channel {channel_id} has an invalid desired-state revision"
+            )));
+        }
 
         let description = extract_description_from_config(config_str.as_deref(), channel_id)?;
 
@@ -149,6 +167,7 @@ pub async fn get_all_channels(
 
         let channel_response = ChannelStatusResponse {
             id: channel_id,
+            revision,
             name,
             description,
             protocol: protocol.clone(),
@@ -178,7 +197,7 @@ pub async fn get_all_channels(
 ///
 /// Returns only `is_connected` and `last_update` timestamp without querying channel
 /// configuration or points — intended for frontend status indicator polling. For full
-/// information use `/channels/{id}/details`. Note: `is_connected` checks both TCP state
+/// information use `/api/channels/{id}`. Note: `is_connected` checks both TCP state
 /// and data freshness; a channel that is TCP-connected but has not received data for
 /// 90 s will return `false`.
 #[utoipa::path(
@@ -193,7 +212,7 @@ pub async fn get_all_channels(
                 "success": true,
                 "data": {
                     "id": 1,
-                    "name": "PCS#1",
+                    "name": "PLC#1",
                     "protocol": "modbus_tcp",
                     "connected": true,
                     "running": true,
@@ -268,13 +287,14 @@ pub async fn get_channel_status(
         ("id" = String, Path, description = "Channel identifier")
     ),
     responses(
-        (status = 200, description = "Channel details", body = crate::dto::ChannelDetail,
+        (status = 200, description = "Channel details, including the desired-state revision used by x-aether-expected-revision", body = common::SuccessResponse<crate::dto::ChannelDetail>,
             example = json!({
                 "success": true,
                 "data": {
                     "id": 1,
-                    "name": "PCS#1",
-                    "description": "Power Converter #1",
+                    "revision": 3,
+                    "name": "PLC#1",
+                    "description": "Packaging Line Controller #1",
                     "protocol": "modbus_tcp",
                     "enabled": true,
                     "parameters": {
@@ -314,8 +334,8 @@ pub async fn get_channel_detail_handler(
         .parse::<u32>()
         .map_err(|_| AppError::bad_request(format!("Invalid channel ID format: {}", id)))?;
 
-    let row = sqlx::query_as::<_, (String, String, bool, Option<String>)>(
-        "SELECT name, protocol, enabled, config FROM channels WHERE channel_id = ?",
+    let row = sqlx::query_as::<_, (String, String, bool, Option<String>, i64)>(
+        "SELECT name, protocol, enabled, config, revision FROM channels WHERE channel_id = ?",
     )
     .bind(id_u16 as i64)
     .fetch_optional(&state.sqlite_pool)
@@ -325,9 +345,19 @@ pub async fn get_channel_detail_handler(
         AppError::internal_error("Database operation failed")
     })?;
 
-    let Some((name, protocol, enabled, config_str)) = row else {
+    let Some((name, protocol, enabled, config_str, revision)) = row else {
         return Err(AppError::not_found(format!("Channel {} not found", id_u16)));
     };
+    let revision = u64::try_from(revision).map_err(|_| {
+        AppError::internal_error(format!(
+            "Channel {id_u16} has an invalid desired-state revision"
+        ))
+    })?;
+    if revision == 0 {
+        return Err(AppError::internal_error(format!(
+            "Channel {id_u16} has an invalid desired-state revision"
+        )));
+    }
 
     let mut obj = match config_str {
         None => serde_json::Map::new(),
@@ -445,6 +475,7 @@ pub async fn get_channel_detail_handler(
 
     let detail = ChannelDetail {
         config,
+        revision,
         runtime_status: ChannelRuntimeStatus {
             connected,
             running: connected,
@@ -483,8 +514,8 @@ pub async fn get_channel_detail_handler(
                 "list": [
                     {
                         "id": 1,
-                        "name": "PCS#1",
-                        "description": "Power Converter #1",
+                        "name": "PLC#1",
+                        "description": "Packaging Line Controller #1",
                         "protocol": "modbus_tcp",
                         "enabled": true,
                         "connected": true
@@ -681,7 +712,7 @@ pub async fn search_channels(
 /// Designed for "select a channel" scenarios such as frontend dropdowns and routing
 /// table association. Returns all channels but only three fields, avoiding a heavy
 /// query. For detailed configuration or runtime status use the paginated `/channels`
-/// endpoint or `/channels/{id}/details`.
+/// endpoint or `/api/channels/{id}`.
 #[utoipa::path(
     get,
     path = "/api/channels/list",
@@ -689,8 +720,8 @@ pub async fn search_channels(
         (status = 200, description = "Channel list", body = serde_json::Value,
             example = json!({
                 "list": [
-                    {"id": 1, "name": "PCS#1", "protocol": "modbus_tcp"},
-                    {"id": 2, "name": "BAMS#1", "protocol": "iec104"}
+                    {"id": 1, "name": "PLC#1", "protocol": "modbus_tcp"},
+                    {"id": 2, "name": "HVAC#1", "protocol": "iec104"}
                 ]
             })
         )

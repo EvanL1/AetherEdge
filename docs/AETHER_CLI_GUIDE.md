@@ -176,7 +176,7 @@ aether channels write <channel_id> --type T --id <point_id> --value <value>
 
 # 真实设备命令统一走实例 action（含签名身份、路由、确认与审计）
 AETHER_ACCESS_TOKEN='<signed access JWT>' \
-  aether models instances action <instance_id> --point-id <point_id> --value <value>
+  aether models instances action <instance_id> --point-id <point_id> --value <value> --confirmed
 
 # 重新加载通道配置
 aether channels reload
@@ -196,7 +196,7 @@ aether channels write 1 --type T --id 10 --value 50.5
 
 # 通过实例动作下发真实设备命令
 AETHER_ACCESS_TOKEN='<signed access JWT>' \
-  aether models instances action 2 --point-id 1 --value 50.5
+  aether models instances action 2 --point-id 1 --value 50.5 --confirmed
 ```
 
 ### models - 模型管理
@@ -284,18 +284,20 @@ aether rules list --enabled
 aether rules get <rule_id>
 
 # 启用/禁用规则
-aether rules enable <rule_id>
-aether rules disable <rule_id>
+AETHER_ACCESS_TOKEN='<Admin 或 Engineer JWT>' \
+  aether rules enable <rule_id> --confirmed
+AETHER_ACCESS_TOKEN='<Admin 或 Engineer JWT>' \
+  aether rules disable <rule_id> --confirmed
 
 # 执行规则
-aether rules execute <rule_id>
-aether rules execute <rule_id> --force  # CLI 接受该参数，但服务端 execute
-                                          # 接口不读取请求体，目前被忽略
+AETHER_ACCESS_TOKEN='<Admin 或 Engineer JWT>' \
+  aether rules execute <rule_id> --confirmed
 ```
 
 > **注意**：没有独立的"测试"/"仅评估不执行"命令——`execute` 就是真实执行。
-> 执行结果（`execution_path`、每个动作的 `success`）持久化在本地 SQLite
-> `rule_history` 中，并可由 aether-api 的 rule WebSocket 订阅读取。
+> 命令响应中的“成功”表示本地命令平面已接受，不代表物理设备已执行或达到目标值；应读取对应测点验证。
+> 详细 `execution_path` 和每个动作的结果持久化在本地 SQLite `rule_history` 中，并可由
+> aether-api 的 rule WebSocket 订阅读取。
 
 **示例：**
 
@@ -304,10 +306,12 @@ aether rules execute <rule_id> --force  # CLI 接受该参数，但服务端 exe
 aether rules list --enabled
 
 # 启用规则 1001
-aether rules enable 1001
+AETHER_ACCESS_TOKEN='<Admin 或 Engineer JWT>' \
+  aether rules enable 1001 --confirmed
 
-# 手动执行规则
-aether rules execute 1001
+# 手动执行规则（可能下发真实设备命令，必须显式确认）
+AETHER_ACCESS_TOKEN='<Admin 或 Engineer JWT>' \
+  aether rules execute 1001 --confirmed
 ```
 
 ### services - Docker 服务

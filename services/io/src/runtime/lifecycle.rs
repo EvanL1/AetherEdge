@@ -248,6 +248,7 @@ pub async fn shutdown_handler(channel_manager: Arc<ChannelManager>) {
 pub fn start_cleanup_task(
     channel_manager: Arc<ChannelManager>,
     configured_count: usize,
+    channel_reconciler: Option<Arc<dyn aether_ports::ChannelReconciler>>,
 ) -> (tokio::task::JoinHandle<()>, CancellationToken) {
     let token = CancellationToken::new();
     let task_token = token.clone();
@@ -266,11 +267,9 @@ pub fn start_cleanup_task(
                     let now_ms = crate::core::channels::channel_entry::unix_timestamp_ms();
                     let timeout_ms = WATCHDOG_HEARTBEAT_TIMEOUT_SECS * 1000;
 
-                    // Watchdog: detect stuck tasks (heartbeat stale > 120s).
-                    // Bare abort_task() previously left the slot empty — it scheduled
-                    // cancellation but never spawned a replacement, so a hung channel
-                    // stayed dead until io restarted. respawn_channel() tears down
-                    // and rebuilds from saved config so the runtime self-heals.
+                    // Watchdog submits repair through the same reconciler that owns
+                    // CRUD/reload lifecycle serialization. It never revives a cached
+                    // runtime configuration directly.
                     for stat in &all_stats {
                         // Skip channels that haven't started yet (heartbeat = 0)
                         if stat.watchdog_heartbeat_ms == 0 {
@@ -284,13 +283,26 @@ pub fn start_cleanup_task(
                                 stat.name,
                                 age_ms / 1000
                             );
-                            if let Err(e) =
-                                channel_manager.respawn_channel(stat.channel_id).await
-                            {
-                                error!(
-                                    "Ch{} ({}) watchdog respawn failed: {}",
-                                    stat.channel_id, stat.name, e
-                                );
+                            match &channel_reconciler {
+                                Some(reconciler) => {
+                                    if let Err(error) = reconciler
+                                        .reconcile(aether_ports::ChannelReconciliationScope::One(
+                                            aether_domain::ChannelId::new(stat.channel_id),
+                                        ))
+                                        .await
+                                    {
+                                        error!(
+                                            "Ch{} ({}) watchdog reconciliation failed: {}",
+                                            stat.channel_id, stat.name, error
+                                        );
+                                    }
+                                },
+                                None => {
+                                    error!(
+                                        "Ch{} ({}) watchdog repair deferred: reconciler unavailable",
+                                        stat.channel_id, stat.name
+                                    );
+                                },
                             }
                         }
                     }
@@ -644,7 +656,7 @@ mod tests {
             .unwrap(),
         );
 
-        let (handle, cancel_token) = start_cleanup_task(channel_manager, 0);
+        let (handle, cancel_token) = start_cleanup_task(channel_manager, 0, None);
 
         // Verify handle is valid
         assert!(!handle.is_finished(), "Cleanup task should be running");
@@ -664,7 +676,7 @@ mod tests {
             .unwrap(),
         );
 
-        let (handle, cancel_token) = start_cleanup_task(channel_manager, 0);
+        let (handle, cancel_token) = start_cleanup_task(channel_manager, 0, None);
 
         // Cancel immediately
         cancel_token.cancel();
@@ -694,7 +706,8 @@ mod tests {
             .unwrap();
 
         // Start cleanup task
-        let (handle, cancel_token) = start_cleanup_task(channel_manager.clone(), configured_count);
+        let (handle, cancel_token) =
+            start_cleanup_task(channel_manager.clone(), configured_count, None);
 
         // Let it run briefly
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;

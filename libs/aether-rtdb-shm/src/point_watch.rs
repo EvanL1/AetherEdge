@@ -150,6 +150,53 @@ impl PointWatchSignaler {
     /// **Must not block.** Returns immediately whether or not the event was sent.
     #[inline]
     pub fn emit(&self, slot: usize, value: f64, raw: f64, timestamp_ms: u64) {
+        let Some(origin) = self.reverse_index.get(slot) else {
+            return;
+        };
+        self.emit_known_origin(
+            slot,
+            origin.channel_id,
+            origin.point_type as u8,
+            origin.point_id,
+            value,
+            raw,
+            timestamp_ms,
+        );
+    }
+
+    /// Emits a committed typed acquisition sample without consulting the
+    /// generation-specific legacy reverse index.
+    #[inline]
+    pub fn emit_acquired(&self, slot: usize, sample: aether_domain::AcquiredPointSample) {
+        let address = sample.address();
+        let point_type = match address.kind() {
+            aether_domain::PointKind::Telemetry => 0,
+            aether_domain::PointKind::Status => 1,
+            aether_domain::PointKind::Command => 2,
+            aether_domain::PointKind::Action => 3,
+        };
+        self.emit_known_origin(
+            slot,
+            address.channel_id().get(),
+            point_type,
+            address.point_id().get(),
+            sample.value(),
+            sample.raw(),
+            sample.timestamp().get(),
+        );
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn emit_known_origin(
+        &self,
+        slot: usize,
+        channel_id: u32,
+        point_type: u8,
+        point_id: u32,
+        value: f64,
+        raw: f64,
+        timestamp_ms: u64,
+    ) {
         let mut event = None;
         for target in &self.targets {
             if !target.subscriptions.is_watched(slot) {
@@ -158,13 +205,10 @@ impl PointWatchSignaler {
             let event = match event {
                 Some(event) => event,
                 None => {
-                    let Some(origin) = self.reverse_index.get(slot) else {
-                        return;
-                    };
                     let created = PointWatchEvent {
-                        channel_id: origin.channel_id,
-                        point_id: origin.point_id,
-                        point_type: origin.point_type as u8,
+                        channel_id,
+                        point_id,
+                        point_type,
                         _padding: [0; 7],
                         value_bits: value.to_bits(),
                         raw_bits: raw.to_bits(),
@@ -198,6 +242,12 @@ impl PointWatchSignaler {
             .unwrap_or_default()
             .as_nanos() as u64;
         now ^ ((std::process::id() as u64) << 32)
+    }
+}
+
+impl aether_shm_bridge::AcquisitionCommitObserver for PointWatchSignaler {
+    fn point_committed(&self, slot: usize, sample: aether_domain::AcquiredPointSample) {
+        self.emit_acquired(slot, sample);
     }
 }
 

@@ -8,6 +8,8 @@ mod history;
 mod live_state;
 mod outbox;
 mod snapshot_covariates;
+#[cfg(feature = "sqlite-topology")]
+mod sqlite_topology;
 
 use aether_ports::{PortError, PortErrorKind};
 
@@ -21,6 +23,8 @@ pub use history::MemoryHistorySink;
 pub use live_state::MemoryLiveState;
 pub use outbox::MemoryOutbox;
 pub use snapshot_covariates::{SnapshotCovariateLimits, SnapshotCovariateSource};
+#[cfg(feature = "sqlite-topology")]
+pub use sqlite_topology::{SqliteShmTopologySnapshot, load_sqlite_shm_topology};
 
 fn lock_error(resource: &str) -> PortError {
     PortError::new(

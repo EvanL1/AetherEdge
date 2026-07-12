@@ -157,14 +157,17 @@ async fn read_upgrade_status() -> serde_json::Value {
 
 /// Check the health of the configuration directory.
 ///
-/// Scans the `config/` directory structure (products, instances, routing, etc.)
-/// and reports existence, completeness, and SQLite consistency for each
-/// sub-module. Use as a pre-flight check before importing configuration or
-/// running an upgrade, and as an indicator on the operations dashboard.
-/// **Read-only.**
+/// Reports whether the selected `config/` directory exists and lists its
+/// immediate entries. This lightweight probe does not parse files, validate
+/// completeness, or compare them with SQLite. **Read-only; Admin only.**
 #[utoipa::path(get, path = "/api/v1/config/check", tag = "Config",
     security(("bearer_auth" = [])),
-    responses((status = 200, description = "Configuration directory check result")))]
+    responses(
+        (status = 200, description = "Configuration directory check result", body = crate::models::GatewayDataResponse<serde_json::Value>),
+        (status = 401, description = "Missing, invalid, or expired access JWT"),
+        (status = 403, description = "Admin privileges required"),
+        (status = 500, description = "Configuration directory could not be read")
+    ))]
 pub async fn check_config(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Response {
     if let Err(response) = require_config_admin(&state, &headers) {
         return response.into_response();
@@ -213,16 +216,27 @@ pub async fn check_config(State(state): State<Arc<AppState>>, headers: HeaderMap
 
 // ── GET /api/v1/config/export ─────────────────────────────────────────────────
 
+#[allow(dead_code)] // OpenAPI-only binary response schema.
+#[derive(utoipa::ToSchema)]
+#[schema(value_type = String, format = Binary)]
+pub(crate) struct ConfigArchive(Vec<u8>);
+
 /// Export the current configuration as a ZIP archive.
 ///
 /// Packages the entire `config/` directory tree (product definitions,
 /// instances, routing, rules, etc.) into a ZIP stream returned as an
 /// `attachment`. Use for site-to-site configuration migration, pre-upgrade
 /// backups, and remote-support reproduction. The export includes only static
-/// configuration files; live SHM state is intentionally excluded.
+/// configuration files; live SHM state is intentionally excluded. **Admin only.**
 #[utoipa::path(get, path = "/api/v1/config/export", tag = "Config",
     security(("bearer_auth" = [])),
-    responses((status = 200, description = "ZIP file stream")))]
+    responses(
+        (status = 200, description = "ZIP file stream", body = ConfigArchive, content_type = "application/zip"),
+        (status = 401, description = "Missing, invalid, or expired access JWT"),
+        (status = 403, description = "Admin privileges required"),
+        (status = 404, description = "Configuration directory not found"),
+        (status = 500, description = "Configuration archive could not be created")
+    ))]
 pub async fn export_config(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Response {
     let admin = match require_config_admin(&state, &headers) {
         Ok(admin) => admin,
@@ -391,7 +405,11 @@ fn walkdir_safe(dir: &Path) -> io::Result<Vec<PathBuf>> {
 /// path-traversal hazards. Operators must use the local `aether` CLI instead.
 #[utoipa::path(post, path = "/api/v1/config/import", tag = "Config",
     security(("bearer_auth" = [])),
-    responses((status = 501, description = "Remote configuration import is disabled")))]
+    responses(
+        (status = 401, description = "Missing or invalid access token"),
+        (status = 403, description = "Admin privileges required"),
+        (status = 501, description = "Remote configuration import is disabled")
+    ))]
 pub async fn import_config(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Response {
     if let Err(response) = require_config_admin(&state, &headers) {
         return response.into_response();
@@ -408,7 +426,11 @@ pub async fn import_config(State(state): State<Arc<AppState>>, headers: HeaderMa
 /// or report success after a partial restart.
 #[utoipa::path(post, path = "/api/v1/config/restart-services", tag = "Config",
     security(("bearer_auth" = [])),
-    responses((status = 501, description = "Remote service restart is disabled")))]
+    responses(
+        (status = 401, description = "Missing or invalid access token"),
+        (status = 403, description = "Admin privileges required"),
+        (status = 501, description = "Remote service restart is disabled")
+    ))]
 pub async fn restart_services(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Response {
     if let Err(response) = require_config_admin(&state, &headers) {
         return response.into_response();
@@ -435,7 +457,11 @@ fn remote_config_mutation_disabled_response() -> Response {
 #[utoipa::path(post, path = "/api/v1/config/upgrade", tag = "Config",
     security(("bearer_auth" = [])),
     request_body(content_type = "multipart/form-data", description = "Upgrade package (.run installer)"),
-    responses((status = 501, description = "Unsigned remote upgrade is disabled")))]
+    responses(
+        (status = 401, description = "Missing or invalid access token"),
+        (status = 403, description = "Admin privileges required"),
+        (status = 501, description = "Unsigned remote upgrade is disabled")
+    ))]
 pub async fn start_upgrade(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -994,7 +1020,11 @@ async fn unsigned_start_upgrade(
 /// Remote upgrade mutation is disabled together with the upload endpoint.
 #[utoipa::path(post, path = "/api/v1/config/upgrade/abort", tag = "Config",
     security(("bearer_auth" = [])),
-    responses((status = 501, description = "Unsigned remote upgrade is disabled")))]
+    responses(
+        (status = 401, description = "Missing or invalid access token"),
+        (status = 403, description = "Admin privileges required"),
+        (status = 501, description = "Unsigned remote upgrade is disabled")
+    ))]
 pub async fn abort_upgrade(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Response {
     let admin = match require_config_admin(&state, &headers) {
         Ok(admin) => admin,
@@ -1092,10 +1122,15 @@ async fn unsigned_abort_upgrade(
 /// installing / restarting / done / failed), progress percentage, the latest
 /// log output, and the last failure reason if any. Used by the frontend upgrade
 /// page to drive the progress bar. `idle` status means no upgrade is running
-/// and a new package may be submitted via `POST /upgrade`.
+/// and a new package may be submitted via `POST /upgrade`. **Admin only.**
 #[utoipa::path(get, path = "/api/v1/config/upgrade/status", tag = "Config",
     security(("bearer_auth" = [])),
-    responses((status = 200, description = "Upgrade status")))]
+    responses(
+        (status = 200, description = "Compatibility upgrade status", body = crate::models::GatewayDataResponse<serde_json::Value>),
+        (status = 401, description = "Missing, invalid, or expired access JWT"),
+        (status = 403, description = "Admin privileges required"),
+        (status = 500, description = "Upgrade status state is unavailable")
+    ))]
 pub async fn upgrade_status(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Response {
     if let Err(response) = require_config_admin(&state, &headers) {
         return response.into_response();

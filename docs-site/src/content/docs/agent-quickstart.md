@@ -118,6 +118,15 @@ claude mcp add aether -- aether mcp --allow-write
 ```
 
 **Success criterion:** the client's `tools/list` response includes
-`channels_list` (read-only tools are always present; `--allow-write` adds 25
-more). See [Connect AI Assistants](/guides/ai-assistants/) for Claude
-Desktop config and pointing at a remote installation.
+`channels_list`. The default server registers 23 read-only tools;
+`--allow-write` adds exactly 21 governed writes, for 44 tools total. The five
+channel commissioning tools are `channels_create`, `channels_update`,
+`channels_delete`, `channels_enable`, and `channels_disable`. The flag
+only registers those writes: every invocation still needs `confirmed: true`,
+the signed `AETHER_ACCESS_TOKEN` is sent as a Bearer credential, and the bridge
+adds a request ID. Never automatically retry an incomplete write response.
+For a channel mutation, preserve `request_id`, `resulting_revision`, and
+`reconciliation_required`; successful desired-state commit can still report a
+degraded runtime projection.
+See [Connect AI Assistants](/guides/ai-assistants/) for Claude Desktop config
+and pointing at a remote installation.

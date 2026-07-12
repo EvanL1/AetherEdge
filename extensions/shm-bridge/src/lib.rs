@@ -1,10 +1,17 @@
-//! Read-only migration bridge from legacy SHM slots to `LiveState`.
+//! Typed migration bridge between domain live-state ports and physical SHM.
 
+mod acquisition_writer;
+mod channel_reader;
+#[cfg(unix)]
+mod command_sink;
 #[cfg(unix)]
 mod events;
 mod health;
 mod managed;
 mod manifest;
+#[cfg(unix)]
+mod point_watch;
+mod runtime;
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -13,9 +20,19 @@ use aether_domain::{PointAddress, PointQuality, PointSample, TimestampMs};
 use aether_ports::{LiveState, PortError, PortErrorKind, PortResult};
 use async_trait::async_trait;
 
-pub use aether_dataplane::core::config::default_shm_path;
+pub use acquisition_writer::{AcquisitionCommitObserver, ShmAcquisitionStateWriter};
+pub use aether_dataplane::core::config::{
+    cleanup_orphan_generation_files, default_shm_path, timestamp_ms,
+};
 pub use aether_dataplane::{
-    SubscriptionBitmap, automation_bitmap_path_from_shm, bitmap_path_for_consumer,
+    DEFAULT_MAX_SLOTS, SubscriptionBitmap, automation_bitmap_path_from_shm,
+    bitmap_path_for_consumer,
+};
+pub use channel_reader::{ShmChannelReader, ShmChannelReaderHandle};
+#[cfg(unix)]
+pub use command_sink::{
+    ChannelPointManifestSource, CommandMirrorObserver, DEFAULT_COMMAND_UDS_PATH,
+    DeviceCommandFrame, ShmDeviceCommandSink,
 };
 #[cfg(unix)]
 pub use events::{
@@ -24,15 +41,21 @@ pub use events::{
 };
 pub use health::{
     ChannelHealthManifest, ChannelHealthSample, ShmChannelHealthReader, ShmChannelHealthWriter,
-    channel_health_path_from_shm,
+    ShmChannelHealthWriterHandle, channel_health_path_from_shm,
 };
 pub use managed::{ReconnectingSlotSource, ShmClientConfig};
-pub use manifest::ChannelPointManifest;
+pub use manifest::{
+    CHANNEL_POINT_KINDS, ChannelPointLayout, ChannelPointManifest, PhysicalPointAddress,
+};
+#[cfg(unix)]
+pub use point_watch::PointWatchPublisher;
+pub use runtime::{ShmRuntimeConfig, ShmWriterGeneration, ShmWriterHandle};
 
 /// Business-neutral value read from one legacy SHM slot.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SlotSnapshot {
     value: f64,
+    raw: f64,
     timestamp_ms: u64,
 }
 
@@ -42,6 +65,17 @@ impl SlotSnapshot {
     pub const fn new(value: f64, timestamp_ms: u64) -> Self {
         Self {
             value,
+            raw: value,
+            timestamp_ms,
+        }
+    }
+
+    /// Creates a slot snapshot retaining both engineering and raw values.
+    #[must_use]
+    pub const fn new_with_raw(value: f64, raw: f64, timestamp_ms: u64) -> Self {
+        Self {
+            value,
+            raw,
             timestamp_ms,
         }
     }
@@ -50,6 +84,12 @@ impl SlotSnapshot {
     #[must_use]
     pub const fn value(self) -> f64 {
         self.value
+    }
+
+    /// Returns the raw device value.
+    #[must_use]
+    pub const fn raw(self) -> f64 {
+        self.raw
     }
 
     /// Returns the source timestamp in milliseconds since UNIX epoch.
@@ -91,7 +131,11 @@ where
                 format!("slot {index} was being updated during the read"),
             )
         })?;
-        Ok(Some(SlotSnapshot::new(slot.value, slot.timestamp_ms)))
+        Ok(Some(SlotSnapshot::new_with_raw(
+            slot.value,
+            slot.raw,
+            slot.timestamp_ms,
+        )))
     }
 }
 

@@ -1,0 +1,15 @@
+schema: aether.pack.asset-index.v1
+category: mappings
+assets:
+  - id: energy.product-name-aliases
+    path: product-name-aliases.yaml
+    schema: aether.pack.mapping-set.v1
+    media_type: application/yaml
+  - id: energy.example-instance-channel-bindings
+    path: example-instance-channel-bindings.yaml
+    schema: aether.pack.mapping-set.v1
+    media_type: application/yaml
+  - id: energy.legacy-instance-properties-v5
+    path: legacy-instance-properties-v5.yaml
+    schema: aether.pack.mapping-set.v1
+    media_type: application/yaml

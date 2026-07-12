@@ -1,8 +1,8 @@
 use std::sync::{Arc, Mutex};
 
 use aether_application::{
-    Actor, ApplicationError, AuditPolicy, ControlApplication, EdgeApplication, OperationKind,
-    RequestContext, RiskLevel, SafetyPolicy, capability_catalog,
+    Actor, ApplicationError, AuditPolicy, CompletionAuditStatus, ControlApplication,
+    EdgeApplication, OperationKind, RequestContext, RiskLevel, SafetyPolicy, capability_catalog,
 };
 use aether_domain::{
     CommandId, ControlCommand, InstanceId, PointAddress, PointId, PointKind, PointQuality,
@@ -51,14 +51,24 @@ impl CommandDispatcher for RecordingDispatcher {
 #[derive(Default)]
 struct RecordingAudit {
     records: Mutex<Vec<AuditRecord>>,
-    fail: bool,
+    calls: Mutex<usize>,
+    fail_on_call: Option<usize>,
 }
 
 impl RecordingAudit {
     fn failing() -> Self {
         Self {
             records: Mutex::new(Vec::new()),
-            fail: true,
+            calls: Mutex::new(0),
+            fail_on_call: Some(1),
+        }
+    }
+
+    fn failing_on_completion() -> Self {
+        Self {
+            records: Mutex::new(Vec::new()),
+            calls: Mutex::new(0),
+            fail_on_call: Some(2),
         }
     }
 }
@@ -66,7 +76,12 @@ impl RecordingAudit {
 #[async_trait]
 impl AuditSink for RecordingAudit {
     async fn record(&self, record: AuditRecord) -> PortResult<()> {
-        if self.fail {
+        let call = {
+            let mut calls = self.calls.lock().unwrap();
+            *calls += 1;
+            *calls
+        };
+        if self.fail_on_call == Some(call) {
             return Err(PortError::new(
                 PortErrorKind::Unavailable,
                 "audit sink offline",
@@ -126,6 +141,24 @@ fn capability_catalog_is_machine_discoverable_and_classifies_control_as_high_ris
     assert!(write.requires_confirmation());
     assert_eq!(write.audit_policy(), AuditPolicy::Required);
     assert!(!write.is_idempotent());
+}
+
+#[test]
+fn capability_catalog_classifies_manual_rule_execution_as_audited_control() {
+    let execute_rule = capability_catalog()
+        .iter()
+        .find(|descriptor| descriptor.name() == "automation.rule.execute")
+        .expect("manual rule execution capability is registered");
+
+    assert_eq!(execute_rule.kind(), OperationKind::Command);
+    assert_eq!(execute_rule.risk(), RiskLevel::High);
+    assert_eq!(
+        execute_rule.required_permission(),
+        "automation.rule.execute"
+    );
+    assert!(execute_rule.requires_confirmation());
+    assert_eq!(execute_rule.audit_policy(), AuditPolicy::Required);
+    assert!(!execute_rule.is_idempotent());
 }
 
 #[tokio::test]
@@ -200,6 +233,7 @@ async fn confirmed_control_is_audited_before_and_after_dispatch() {
         .expect("confirmed control succeeds");
 
     assert_eq!(receipt.command_id(), CommandId::new(18));
+    assert!(receipt.completion_audit().is_recorded());
     let commands = dispatcher.commands.lock().unwrap();
     assert_eq!(commands.len(), 1);
     assert_eq!(commands[0].issued_at(), TimestampMs::new(2_000));
@@ -216,6 +250,45 @@ async fn confirmed_control_is_audited_before_and_after_dispatch() {
         outcomes,
         vec![AuditOutcome::Attempted, AuditOutcome::Succeeded]
     );
+}
+
+#[tokio::test]
+async fn completion_audit_failure_returns_non_retryable_acceptance_without_redispatch() {
+    let dispatcher = Arc::new(RecordingDispatcher::default());
+    let audit = Arc::new(RecordingAudit::failing_on_completion());
+    let application = control_application(Arc::clone(&dispatcher), Arc::clone(&audit));
+
+    let acceptance = application
+        .write_point(
+            &context(
+                Actor::new("operator").with_permission("device.control"),
+                true,
+            ),
+            CommandId::new(0xfeed),
+            action_address(),
+            34.5,
+        )
+        .await
+        .expect("a command accepted before completion-audit failure stays accepted");
+
+    assert_eq!(acceptance.command_id(), CommandId::new(0xfeed));
+    assert_eq!(acceptance.request_id(), "request-1");
+    assert!(!acceptance.is_retryable());
+    assert!(matches!(
+        acceptance.completion_audit(),
+        CompletionAuditStatus::Incomplete { .. }
+    ));
+    assert_eq!(dispatcher.commands.lock().unwrap().len(), 1);
+
+    let records = audit.records.lock().unwrap();
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].outcome(), AuditOutcome::Attempted);
+    let detail = records[0].detail().expect("attempt audit command detail");
+    assert!(detail.contains("command_id=0000000000000000000000000000feed"));
+    assert!(detail.contains("instance_id=8"));
+    assert!(detail.contains("point_kind=Action"));
+    assert!(detail.contains("point_id=2"));
+    assert!(detail.contains("value=34.5"));
 }
 
 #[tokio::test]

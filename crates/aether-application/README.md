@@ -8,6 +8,19 @@ dispatches control through capability ports. Infrastructure choices stay
 outside this crate, so its default graph contains no Redis, PostgreSQL, SQLx,
 MQTT client, or web framework.
 
+Control, manual rule execution, rule/alarm policy changes, alert resolution,
+I/O channel commissioning, and physical action-routing mutations persist an
+`Attempted` audit event before calling a non-idempotent port. Channel audit
+details identify changed fields but never include protocol parameter or
+per-channel logging values. If the pre-execution event cannot be stored,
+execution fails closed. Once the port accepts an operation, failure to append
+the terminal `Succeeded` event is returned as an
+`AcceptedOutcome` with `CompletionAuditStatus::Incomplete`, the request and
+command/rule correlation IDs, and `is_retryable() == false`; it is never turned
+into a retryable error that could execute the operation twice. Audit details
+include operation-specific command targets, rule identifiers, action counts,
+or routing keys.
+
 `DataProcessingApplication` is the transport-neutral query facade for Aether
 Data Processing. A composition root registers a declarative task, a
 `DataProcessingBinding`, and a `DataProcessor` route. The binding resolves

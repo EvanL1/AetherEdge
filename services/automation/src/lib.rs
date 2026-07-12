@@ -15,6 +15,7 @@ pub mod api {
     //! - single point APIs
     //! - admin (log level management)
     //! - cloud sync (cloud-edge synchronization)
+    pub mod action_routing_boundary;
     pub mod admin_handlers;
     pub mod cloud_sync;
     pub mod global_routing_handlers;
@@ -33,13 +34,15 @@ pub mod api {
 // Map dto module to api/dto.rs while keeping crate::dto path stable
 pub mod infra {
     //! Infrastructure layer — SHM-backed external side effects
+    pub mod action_routing;
     pub mod application_control;
     pub mod channel_health;
-    pub mod shm_dispatch;
+    pub mod rule_live_state;
+    pub mod rule_mutation;
+    pub mod shm_manifest;
 }
 pub mod runtime {
     //! Runtime layer — in-memory caches and SHM slot management
-    pub mod dynamic_slot_runtime;
 }
 
 pub mod app_state;

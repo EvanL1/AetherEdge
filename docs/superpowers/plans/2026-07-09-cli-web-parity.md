@@ -1875,11 +1875,10 @@ git commit -m "feat: add 'aether channels write/points-batch/point-mapping'"
 
 ---
 
-## Task 10: `models instances action` / `measurement`
+## Task 10: `models instances action`
 
 端点（`services/modsrv/src/routes.rs:157-158`）：
 - `POST /api/instances/{id}/action`，body `ActionRequest`（`api/dto.rs:184`）：`{"point_id":"1","value":4500.0}`（`point_id` 是 **String**，可为数字或语义名）
-- `POST /api/instances/{id}/measurement`，body `SetMeasurementRequest`（`instance_query_handlers.rs:546`）：同样 `{"point_id":"101","value":650.5}`
 
 `ModelClient` 位于 `tools/aether/src/models/client.rs`，且**已经是 `pub`**（与其余 7 个 client 不同）。
 
@@ -1914,21 +1913,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn set_measurement_posts_to_measurement_endpoint() {
-        let server = MockServer::start().await;
-        Mock::given(method("POST"))
-            .and(path("/api/instances/3/measurement"))
-            .and(body_json(serde_json::json!({ "point_id": "101", "value": 650.5 })))
-            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
-            .expect(1)
-            .mount(&server)
-            .await;
-
-        let client = ModelClient::new(&server.uri()).unwrap();
-        client.set_measurement(3, "101", 650.5).await.unwrap();
-    }
-
-    #[tokio::test]
     async fn execute_action_surfaces_modsrv_typed_error() {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
@@ -1957,9 +1941,9 @@ mod tests {
 Run: `cargo test -p aether models::client::tests`
 Expected: FAIL — `no method named 'execute_action'`
 
-- [ ] **Step 3: 实现两个 client 方法**
+- [ ] **Step 3: 实现 action client 方法**
 
-在 `models/client.rs` 的 `impl ModelClient` 追加。注意这两个 client 方法是 `pub`，与该文件既有风格一致：
+在 `models/client.rs` 的 `impl ModelClient` 追加。该 client 方法是 `pub`，与该文件既有风格一致：
 
 ```rust
     /// modsrv's ActionRequest takes point_id as a String: it may be numeric
@@ -1979,27 +1963,11 @@ Expected: FAIL — `no method named 'execute_action'`
             Err(crate::output::parse_error_body("Failed to execute instance action", resp).await)
         }
     }
-
-    pub async fn set_measurement(&self, instance_id: u32, point_id: &str, value: f64) -> Result<Value> {
-        let body = serde_json::json!({ "point_id": point_id, "value": value });
-        let resp = self
-            .client
-            .post(format!("{}/api/instances/{}/measurement", self.base_url, instance_id))
-            .json(&body)
-            .send()
-            .await?;
-
-        if resp.status().is_success() {
-            Ok(resp.json().await?)
-        } else {
-            Err(crate::output::parse_error_body("Failed to set instance measurement", resp).await)
-        }
-    }
 ```
 
 - [ ] **Step 4: 加子命令**
 
-`tools/aether/src/models.rs` 的结构已确认为 `ModelCommands { Products{ ProductCommands }, Instances{ InstanceCommands } }`，`InstanceCommands`（`models.rs:48`）现有 `List` / `Create` / `Get` / `Update` / `Delete` / `Data`。两个新变体加进 **`InstanceCommands`**：
+`tools/aether/src/models.rs` 的结构已确认为 `ModelCommands { Products{ ProductCommands }, Instances{ InstanceCommands } }`，`InstanceCommands`（`models.rs:48`）现有 `List` / `Create` / `Get` / `Update` / `Delete` / `Data`。新变体加进 **`InstanceCommands`**：
 
 ```rust
     /// Execute a control action on an instance
@@ -2011,19 +1979,6 @@ Expected: FAIL — `no method named 'execute_action'`
         #[arg(long)]
         point_id: String,
         /// Value to write
-        #[arg(long)]
-        value: f64,
-    },
-
-    /// Set a measurement value on an instance
-    #[command(about = "Set a measurement value on an instance")]
-    Measurement {
-        /// Instance ID
-        instance_id: u32,
-        /// Point ID: numeric ("101") or semantic name
-        #[arg(long)]
-        point_id: String,
-        /// Value to set
         #[arg(long)]
         value: f64,
     },
@@ -2041,26 +1996,18 @@ Expected: FAIL — `no method named 'execute_action'`
                 println!("Action sent to instance {instance_id} point {point_id} = {value}");
             }
         },
-        InstanceCommands::Measurement { instance_id, point_id, value } => {
-            let data = client.set_measurement(instance_id, &point_id, value).await?;
-            if json {
-                crate::output::print_success(&data);
-            } else {
-                println!("Measurement set on instance {instance_id} point {point_id} = {value}");
-            }
-        },
 ```
 
 - [ ] **Step 6: 跑测试确认通过**
 
 Run: `cargo test -p aether models::client::tests`
-Expected: PASS，3 个测试
+Expected: PASS，2 个测试
 
 - [ ] **Step 7: 提交**
 
 ```bash
 git add tools/aether/src/models.rs tools/aether/src/models/client.rs
-git commit -m "feat: add 'aether models instances action/measurement'"
+git commit -m "feat: add 'aether models instances action'"
 ```
 
 Task 8–10 合起来完成 Spec 的 Step 3。

@@ -27,7 +27,7 @@ use super::point_types::*;
     path = "/api/channels/{channel_id}/points/batch",
     params(
         ("channel_id" = u32, Path, description = "Channel identifier"),
-        ("auto_reload" = bool, Query, description = "Auto-reload channel after batch operations (default: true)")
+        ("auto_reload" = bool, Query, description = "Reconcile the channel through the governed application boundary after the batch (default: false)")
     ),
     request_body(
         content = PointBatchRequest,

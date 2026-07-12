@@ -1,7 +1,7 @@
 //! Product Management API Handlers (Read-only)
 //!
 //! Provides endpoints for querying product templates and definitions.
-//! Products are compile-time constants and cannot be created via API.
+//! Products come from the validated active Pack set and cannot be created via API.
 
 #![allow(clippy::disallowed_methods)] // json! macro internally uses unwrap (safe for known valid JSON)
 
@@ -32,11 +32,11 @@ use crate::error::AutomationError;
             example = json!({
                 "success": true,
                 "data": {
-                    "count": 9,
+                    "count": 3,
                     "products": [
-                        {"product_name": "Station", "parent_name": null},
-                        {"product_name": "ESS", "parent_name": "Station"},
-                        {"product_name": "Battery", "parent_name": "ESS"}
+                        {"product_name": "Facility", "parent_name": null},
+                        {"product_name": "ProcessLine", "parent_name": "Facility"},
+                        {"product_name": "Pump", "parent_name": "ProcessLine"}
                     ]
                 }
             })
@@ -46,7 +46,7 @@ use crate::error::AutomationError;
 pub async fn list_products(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<SuccessResponse<serde_json::Value>>, AutomationError> {
-    // Products are compile-time constants, no async needed
+    // Product templates are loaded from the validated active Pack set.
     let product_names = state
         .instance_manager
         .product_loader()
@@ -87,13 +87,13 @@ pub async fn list_products(
                 "success": true,
                 "data": {
                     "product": {
-                        "product_name": "Battery",
-                        "parent_name": "ESS",
+                        "product_name": "Pump",
+                        "parent_name": "ProcessLine",
                         "measurements": [
-                            {"measurement_id": 1, "name": "SOC", "unit": "%", "description": null}
+                            {"measurement_id": 1, "name": "Outlet Pressure", "unit": "kPa", "description": null}
                         ],
                         "actions": [
-                            {"action_id": 1, "name": "Charge", "unit": null, "description": null}
+                            {"action_id": 1, "name": "Speed Setpoint", "unit": "rpm", "description": null}
                         ],
                         "properties": []
                     }
@@ -107,7 +107,7 @@ pub async fn get_product_points(
     State(state): State<Arc<AppState>>,
     Path(product_name): Path<String>,
 ) -> Result<Json<SuccessResponse<serde_json::Value>>, AutomationError> {
-    // Products are compile-time constants, no async needed
+    // Product templates are loaded from the validated active Pack set.
     match state
         .instance_manager
         .product_loader()

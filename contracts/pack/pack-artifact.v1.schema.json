@@ -1,0 +1,86 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aether.dev/schemas/pack-artifact.v1.json",
+  "title": "Aether Pack-only Artifact v1",
+  "description": "Closed metadata for a data-only Pack bundle. The bundle root contains only this file and pack/; the installed Kernel CLI verifies and activates it.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "pack", "kernel", "payload"],
+  "properties": {
+    "schema": { "const": "aether.pack-artifact.v1" },
+    "pack": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "version", "compatibility"],
+      "properties": {
+        "id": { "$ref": "#/$defs/identifier" },
+        "version": { "$ref": "#/$defs/semver" },
+        "compatibility": { "type": "string", "minLength": 1 }
+      }
+    },
+    "kernel": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "target_triple", "runtime_manifest_digest"],
+      "properties": {
+        "version": { "$ref": "#/$defs/semver" },
+        "target_triple": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_]+(?:-[A-Za-z0-9_.]+){2,}$"
+        },
+        "runtime_manifest_digest": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["algorithm", "digest", "files"],
+      "properties": {
+        "algorithm": { "const": "sha256" },
+        "digest": { "$ref": "#/$defs/sha256" },
+        "files": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 4096,
+          "uniqueItems": true,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["path", "size", "digest"],
+            "properties": {
+              "path": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^[^/\\\\]+(?:/[^/\\\\]+)*$",
+                "allOf": [
+                  { "not": { "pattern": "^[A-Za-z]:" } },
+                  { "not": { "pattern": "(^|/)\\.{1,2}(/|$)" } }
+                ]
+              },
+              "size": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 8388608
+              },
+              "digest": { "$ref": "#/$defs/sha256" }
+            }
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "identifier": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+    },
+    "semver": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    }
+  }
+}

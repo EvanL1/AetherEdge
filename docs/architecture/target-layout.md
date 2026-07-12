@@ -8,6 +8,7 @@ crates/
   aether-domain        pure types and invariants
   aether-ports         external capability traits
   aether-application   commands, queries, policies, capability registry
+  aether-pack          versioned, fail-closed declarative pack manifest loader
   aether-data-processing strict transport-neutral processor JSON codec
   aether-dataplane     physical SHM layout, slots, mmap I/O, snapshots
   aether-runtime       reusable service lifecycle and supervision primitives
@@ -137,9 +138,10 @@ ports and may not become the only runnable form.
 
 ## Phase-two implementation status
 
-- `aether-dataplane` now contains the physical SHM core. Routing and
-  channel-aware adapters remain in `libs/aether-rtdb-shm` and consume it
-  through compatibility re-exports.
+- `aether-dataplane` contains the physical SHM core. Production channel-aware
+  readers, acquisition writers, command sinks, generation lifecycle, and
+  PointWatch adapters live in `extensions/shm-bridge`; the legacy
+  `libs/aether-rtdb-shm` aggregate is retained only for compatibility tests.
 - `extensions/store-local::FileOutbox` is the default durable outbox option;
   it is a versioned append-only journal, not an external database.
 - `OutboxForwarder` in the application layer connects `DurableOutbox` to an

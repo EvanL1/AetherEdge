@@ -2,7 +2,9 @@
 //!
 //! Contains ChannelEntry, ChannelMetadata, ChannelStats, and related helpers.
 
+use aether_config::io::MAX_CHANNEL_TIMING_MS;
 use arc_swap::ArcSwapOption;
+use std::num::NonZeroU64;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU8, AtomicU64, Ordering};
 use std::time::Instant;
@@ -10,6 +12,7 @@ use tokio::task::JoinHandle;
 use tracing::warn;
 
 use crate::core::config::ChannelConfig;
+use crate::error::{IoError, Result};
 use crate::protocols::core::logging::ChannelLogHandler;
 use crate::protocols::gateway::ChannelRuntime;
 use crate::runtime::reconnect::{AutoRecoveryPolicy, ReconnectPolicy};
@@ -21,6 +24,16 @@ use super::command_guard::CommandGuard;
 /// Maximum number of channel slots (pre-allocated for O(1) access)
 /// Channel IDs must be < MAX_CHANNELS
 pub(crate) const MAX_CHANNELS: usize = 10000;
+
+fn validated_poll_interval_ms(value: u64) -> Result<NonZeroU64> {
+    if value > MAX_CHANNEL_TIMING_MS {
+        return Err(IoError::config(format!(
+            "poll_interval_ms must not exceed {MAX_CHANNEL_TIMING_MS}"
+        )));
+    }
+    NonZeroU64::new(value)
+        .ok_or_else(|| IoError::config("poll_interval_ms must be greater than zero"))
+}
 
 // ============================================================================
 // Channel Types
@@ -165,7 +178,9 @@ impl ChannelEntry {
         poll_interval_ms: u64,
         log_handler: Arc<dyn ChannelLogHandler>,
         command_guard: CommandGuard,
-    ) -> Self {
+    ) -> Result<Self> {
+        let poll_interval_ms = validated_poll_interval_ms(poll_interval_ms)?;
+        let poll_interval_value = poll_interval_ms.get();
         let metadata = ChannelMetadata {
             name: Arc::from(channel_config.name()),
             protocol_type,
@@ -216,8 +231,8 @@ impl ChannelEntry {
             .and_then(|v| v.as_u64())
             .map(|v| v as u32)
             .unwrap_or(5);
-        let data_freshness_timeout = data_freshness_timeout_ms(poll_interval_ms);
-        let first_poll_grace = first_poll_grace_ms(poll_interval_ms);
+        let data_freshness_timeout = data_freshness_timeout_ms(poll_interval_value);
+        let first_poll_grace = first_poll_grace_ms(poll_interval_value);
 
         // Spawn the unified channel task
         let ctx = ChannelPollContext {
@@ -246,7 +261,7 @@ impl ChannelEntry {
             .await;
         });
 
-        Self {
+        Ok(Self {
             protocol_tx,
             store,
             task_handle: Arc::new(std::sync::Mutex::new(Some(task_handle))),
@@ -261,7 +276,7 @@ impl ChannelEntry {
             last_successful_read_ms,
             data_freshness_timeout_ms: data_freshness_timeout,
             first_poll_grace_ms: first_poll_grace,
-        }
+        })
     }
 
     /// Get channel statistics
@@ -571,5 +586,17 @@ mod tests {
     fn freshness_windows_scale_for_slow_polling() {
         assert_eq!(data_freshness_timeout_ms(120_000), 360_000);
         assert_eq!(first_poll_grace_ms(120_000), 240_000);
+    }
+
+    #[test]
+    fn task_poll_interval_is_non_zero_and_bounded_before_spawn() {
+        assert!(validated_poll_interval_ms(0).is_err());
+        assert!(validated_poll_interval_ms(MAX_CHANNEL_TIMING_MS + 1).is_err());
+        assert_eq!(
+            validated_poll_interval_ms(1)
+                .expect("minimum interval")
+                .get(),
+            1
+        );
     }
 }

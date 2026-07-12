@@ -1,0 +1,17 @@
+schema: aether.pack.mapping-set.v1
+id: energy.product-name-aliases
+kind: product_aliases
+description: Explicit Energy Pack compatibility aliases removed from the generic kernel CLI.
+compatibility:
+  owner: energy
+  removed_from_kernel: 0.5.0
+  apply_before_kernel_schema: 2
+  source: instances.product_name
+  target: instances.product_name
+aliases:
+  battery_pack: Battery
+  pcs: PCS
+  diesel_generator: Diesel
+  pv_inverter: PVInverter
+  pv_dcdc: PV DCDC
+  PV_DCDC: PV DCDC

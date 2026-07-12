@@ -6,6 +6,7 @@
 //! - Periodic polling
 
 use arc_swap::ArcSwapOption;
+use std::num::NonZeroU64;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU8, AtomicU64, Ordering};
 use std::time::Duration;
@@ -30,7 +31,7 @@ use super::command_guard::CommandGuard;
 pub(super) struct ChannelPollContext {
     pub store: Arc<ShmDataStore>,
     pub channel_id: u32,
-    pub poll_interval_ms: u64,
+    pub poll_interval_ms: NonZeroU64,
     pub cached_state: Arc<AtomicU8>,
     pub cached_diagnostics: Arc<ArcSwapOption<crate::protocols::core::traits::Diagnostics>>,
     pub log_handler: Arc<dyn ChannelLogHandler>,
@@ -255,8 +256,9 @@ pub(super) async fn run_unified_channel_task(
     .await;
 
     // Use configured poll interval
-    let mut interval =
-        tokio::time::interval(tokio::time::Duration::from_millis(ctx.poll_interval_ms));
+    let mut interval = tokio::time::interval(tokio::time::Duration::from_millis(
+        ctx.poll_interval_ms.get(),
+    ));
 
     // Track previous error count to detect new errors
     let mut prev_error_count: u64 = 0;

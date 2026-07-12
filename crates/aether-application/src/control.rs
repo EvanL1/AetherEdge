@@ -3,10 +3,11 @@
 use std::sync::Arc;
 
 use aether_domain::{CommandId, ControlCommand, PointAddress};
-use aether_ports::{AuditOutcome, AuditRecord, AuditSink, CommandDispatcher, CommandReceipt};
+use aether_ports::{AuditOutcome, AuditRecord, AuditSink, CommandDispatcher};
 
 use crate::{
-    ApplicationError, DEFAULT_COMMAND_TTL_MS, RequestContext, SafetyPolicy, WRITE_POINT_CAPABILITY,
+    ApplicationError, CommandAcceptance, DEFAULT_COMMAND_TTL_MS, RequestContext, SafetyPolicy,
+    WRITE_POINT_CAPABILITY,
 };
 
 /// Device-control facade shared by HTTP, CLI, MCP, and embedded hosts.
@@ -42,10 +43,17 @@ impl ControlApplication {
         command_id: CommandId,
         target: PointAddress,
         value: f64,
-    ) -> Result<CommandReceipt, ApplicationError> {
+    ) -> Result<CommandAcceptance, ApplicationError> {
         if let Err(error) = self.policy.authorize(WRITE_POINT_CAPABILITY, context) {
-            self.record_audit(context, AuditOutcome::Rejected, Some(error.to_string()))
-                .await?;
+            self.record_audit(
+                context,
+                command_id,
+                target,
+                value,
+                AuditOutcome::Rejected,
+                Some(error.to_string()),
+            )
+            .await?;
             return Err(error);
         }
 
@@ -59,24 +67,59 @@ impl ControlApplication {
             match ControlCommand::new(command_id, target, value, context.timestamp(), expires_at) {
                 Ok(command) => command,
                 Err(error) => {
-                    self.record_audit(context, AuditOutcome::Rejected, Some(error.to_string()))
-                        .await?;
+                    self.record_audit(
+                        context,
+                        command_id,
+                        target,
+                        value,
+                        AuditOutcome::Rejected,
+                        Some(error.to_string()),
+                    )
+                    .await?;
                     return Err(ApplicationError::InvalidCommand(error));
                 },
             };
 
-        self.record_audit(context, AuditOutcome::Attempted, None)
-            .await?;
+        self.record_audit(
+            context,
+            command_id,
+            target,
+            value,
+            AuditOutcome::Attempted,
+            None,
+        )
+        .await?;
 
         match self.dispatcher.dispatch(command).await {
             Ok(receipt) => {
-                self.record_audit(context, AuditOutcome::Succeeded, None)
-                    .await?;
-                Ok(receipt)
+                match self
+                    .record_audit(
+                        context,
+                        command_id,
+                        target,
+                        value,
+                        AuditOutcome::Succeeded,
+                        None,
+                    )
+                    .await
+                {
+                    Ok(()) => Ok(CommandAcceptance::recorded(receipt, context.request_id())),
+                    Err(ApplicationError::AuditUnavailable(failure)) => Ok(
+                        CommandAcceptance::audit_incomplete(receipt, context.request_id(), failure),
+                    ),
+                    Err(error) => Err(error),
+                }
             },
             Err(error) => {
-                self.record_audit(context, AuditOutcome::Failed, Some(error.to_string()))
-                    .await?;
+                self.record_audit(
+                    context,
+                    command_id,
+                    target,
+                    value,
+                    AuditOutcome::Failed,
+                    Some(error.to_string()),
+                )
+                .await?;
                 Err(ApplicationError::Port(error))
             },
         }
@@ -85,16 +128,30 @@ impl ControlApplication {
     async fn record_audit(
         &self,
         context: &RequestContext,
+        command_id: CommandId,
+        target: PointAddress,
+        value: f64,
         outcome: AuditOutcome,
-        detail: Option<String>,
+        failure: Option<String>,
     ) -> Result<(), ApplicationError> {
+        let mut detail = format!(
+            "command_id={:032x}; instance_id={}; point_kind={:?}; point_id={}; value={value:?}",
+            command_id.get(),
+            target.instance_id().get(),
+            target.kind(),
+            target.point_id().get(),
+        );
+        if let Some(failure) = failure {
+            detail.push_str("; ");
+            detail.push_str(&failure);
+        }
         let record = AuditRecord::new(
             context.request_id(),
             context.actor().id(),
             WRITE_POINT_CAPABILITY.name(),
             outcome,
             context.timestamp(),
-            detail,
+            Some(detail),
         );
         self.audit
             .record(record)

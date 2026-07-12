@@ -1,18 +1,16 @@
 //! Live-value input for deterministic rule evaluation.
 
 use std::collections::HashMap;
-use std::sync::{Arc, RwLock};
-
-use aether_routing::RoutingCache;
-use aether_rtdb_shm::UnifiedReaderHandle;
+use std::sync::RwLock;
 
 type InstancePointKey = (u32, u8, u32);
 type TimestampedValue = (f64, u64);
 
 /// Read-only live state consumed by rule evaluation.
 ///
-/// Production composition uses [`ShmRuleLiveState`]. The trait exists so unit
-/// tests can supply deterministic values without creating an mmap file.
+/// Production composition injects its adapter at the service boundary. The
+/// trait exists so unit tests can supply deterministic values without creating
+/// an mmap file.
 pub trait RuleLiveState: Send + Sync {
     /// Read `(value, timestamp_ms)` for an instance point.
     /// `instance_type` is `0` for Measurement and `1` for Action.
@@ -22,36 +20,6 @@ pub trait RuleLiveState: Send + Sync {
         instance_type: u8,
         point_id: u32,
     ) -> Option<(f64, u64)>;
-}
-
-/// Production live-state adapter backed exclusively by the current SHM
-/// generation and the SQLite-derived in-memory routing cache.
-pub struct ShmRuleLiveState {
-    reader: Arc<UnifiedReaderHandle>,
-    routing_cache: Arc<RoutingCache>,
-}
-
-impl ShmRuleLiveState {
-    /// Creates a read-only rule input over the current SHM reader and routing snapshot.
-    #[must_use]
-    pub fn new(reader: Arc<UnifiedReaderHandle>, routing_cache: Arc<RoutingCache>) -> Self {
-        Self {
-            reader,
-            routing_cache,
-        }
-    }
-}
-
-impl RuleLiveState for ShmRuleLiveState {
-    fn get_instance(
-        &self,
-        instance_id: u32,
-        instance_type: u8,
-        point_id: u32,
-    ) -> Option<(f64, u64)> {
-        self.reader
-            .get_instance(instance_id, instance_type, point_id, &self.routing_cache)
-    }
 }
 
 /// Deterministic in-process adapter for tests and simulations.

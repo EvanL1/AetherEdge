@@ -10,6 +10,7 @@ publish = false
 [dependencies]
 aether-sdk = { package = "aether-edge-sdk", path = "../../crates/aether-sdk" }
 aether-example-minimal-gateway = { path = "../minimal-gateway" }
+aether-runtime-catalog = { path = "../../libs/aether-runtime-catalog" }
 async-trait = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -21,4 +22,5 @@ workspace = true
 
 [dev-dependencies]
 aether-store-local = { path = "../../extensions/store-local" }
+tempfile = { workspace = true }
 tokio = { workspace = true }

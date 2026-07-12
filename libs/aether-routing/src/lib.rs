@@ -19,7 +19,7 @@ use anyhow::Result;
 pub const MAX_C2C_CASCADE_DEPTH: u8 = 2;
 
 /// Metadata for dispatching one resolved model action to the IO-owned channel
-/// slot. The value itself is written through the SHM `ActionDispatch` port.
+/// slot. The value itself is handed to the formal physical device-command port.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RouteContext {
     pub channel_id: String,

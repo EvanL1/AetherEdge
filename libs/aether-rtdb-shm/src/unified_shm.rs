@@ -31,6 +31,7 @@ use crate::channel_points::ChannelPointCounts;
 use crate::core::slot::PointSlot;
 use crate::layout::{ChannelLayout, allocate_layouts};
 use crate::shared_config::SharedConfig;
+use aether_dataplane::AuthorityWriteGuard;
 use aether_model::PointType;
 use aether_routing::RoutingCache;
 use anyhow::{Context, Result, bail};
@@ -196,7 +197,7 @@ fn verify_mmap_covers_slots(mmap_len: usize, max_slots: u32, path: &std::path::P
 /// write on the hot path. The signaler is `None` by default (zero overhead in
 /// non-PointWatch deployments).
 pub struct UnifiedWriter {
-    pub(crate) inner: SlotWriter,
+    pub(crate) inner: Arc<SlotWriter>,
     /// Channel layouts (Vec indexed by channel_id) — business adapter state.
     channel_layouts: Vec<ChannelLayout>,
     /// Optional PointWatch signaler. When set, `set_direct` / `set` will emit
@@ -317,7 +318,13 @@ impl UnifiedWriter {
         );
 
         Ok(Self {
-            inner: SlotWriter::from_mmap(mmap, path.to_path_buf(), max_slots, slot_count)?,
+            inner: Arc::new(SlotWriter::from_mmap_with_file(
+                mmap,
+                path.to_path_buf(),
+                max_slots,
+                slot_count,
+                &file,
+            )?),
             channel_layouts,
             #[cfg(unix)]
             point_watch: None,
@@ -355,6 +362,8 @@ impl UnifiedWriter {
         build: impl FnOnce(&SharedConfig, &ChannelPointCounts) -> Result<Self>,
     ) -> Result<Self> {
         let canonical_path = config.path();
+        let _authority = AuthorityWriteGuard::acquire(canonical_path)
+            .context("Failed to acquire exclusive SHM authority for publication")?;
         let sequence = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|duration| duration.as_nanos() as u64)
@@ -367,8 +376,12 @@ impl UnifiedWriter {
             writer
                 .flush()
                 .context("Failed to flush private SHM generation before publish")?;
-            crate::core::config::commit_generation_swap(&staging_path, canonical_path)
-                .context("Failed to publish private SHM generation")?;
+            crate::core::config::commit_generation_swap_locked(
+                &staging_path,
+                canonical_path,
+                &_authority,
+            )
+            .context("Failed to publish private SHM generation")?;
             drop(writer);
             Self::open_existing(config, channel_points)
         })();
@@ -403,6 +416,13 @@ impl UnifiedWriter {
     #[inline]
     pub fn channel_layouts(&self) -> &[ChannelLayout] {
         &self.channel_layouts
+    }
+
+    /// Shares the physical writer with the typed acquisition adapter.
+    ///
+    /// Kept crate-private so external callers cannot bypass typed addressing.
+    pub(crate) fn acquisition_slot_writer(&self) -> Arc<SlotWriter> {
+        Arc::clone(&self.inner)
     }
 
     /// Write value to slot by channel key
@@ -576,7 +596,13 @@ impl UnifiedWriter {
         );
 
         Ok(Self {
-            inner: SlotWriter::from_mmap(mmap, path.to_path_buf(), max_slots, slot_count)?,
+            inner: Arc::new(SlotWriter::from_mmap_with_file(
+                mmap,
+                path.to_path_buf(),
+                max_slots,
+                slot_count,
+                &file,
+            )?),
             channel_layouts,
             #[cfg(unix)]
             point_watch: None,
@@ -1228,27 +1254,27 @@ impl UnifiedReader {
 impl crate::core::slot_io::SlotIo for UnifiedWriter {
     #[inline]
     fn slot_count(&self) -> usize {
-        crate::core::slot_io::SlotIo::slot_count(&self.inner)
+        crate::core::slot_io::SlotIo::slot_count(self.inner.as_ref())
     }
 
     #[inline]
     fn read_slot(&self, index: usize) -> Option<crate::core::slot_io::SlotRead> {
-        crate::core::slot_io::SlotIo::read_slot(&self.inner, index)
+        crate::core::slot_io::SlotIo::read_slot(self.inner.as_ref(), index)
     }
 
     #[inline]
     fn generation(&self) -> u64 {
-        crate::core::slot_io::SlotIo::generation(&self.inner)
+        crate::core::slot_io::SlotIo::generation(self.inner.as_ref())
     }
 
     #[inline]
     fn writer_heartbeat(&self) -> u64 {
-        crate::core::slot_io::SlotIo::writer_heartbeat(&self.inner)
+        crate::core::slot_io::SlotIo::writer_heartbeat(self.inner.as_ref())
     }
 
     #[inline]
     fn header(&self) -> HeaderSnapshot {
-        crate::core::slot_io::SlotIo::header(&self.inner)
+        crate::core::slot_io::SlotIo::header(self.inner.as_ref())
     }
 }
 
@@ -1284,12 +1310,18 @@ impl crate::core::slot_io::SlotIo for UnifiedReader {
 impl crate::core::slot_io::SlotIoWrite for UnifiedWriter {
     #[inline]
     fn write_slot(&self, index: usize, value: f64, raw: f64, timestamp_ms: u64) -> bool {
-        crate::core::slot_io::SlotIoWrite::write_slot(&self.inner, index, value, raw, timestamp_ms)
+        crate::core::slot_io::SlotIoWrite::write_slot(
+            self.inner.as_ref(),
+            index,
+            value,
+            raw,
+            timestamp_ms,
+        )
     }
 
     #[inline]
     fn take_dirty_slots(&self) -> Vec<usize> {
-        crate::core::slot_io::SlotIoWrite::take_dirty_slots(&self.inner)
+        crate::core::slot_io::SlotIoWrite::take_dirty_slots(self.inner.as_ref())
     }
 }
 

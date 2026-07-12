@@ -1,7 +1,7 @@
 ---
 title: CLI Reference
 description: Every aether command - services, sync, doctor, channels, rules, and more
-updated: 2026-07-10
+updated: 2026-07-12
 ---
 
 # CLI Reference
@@ -79,6 +79,53 @@ enables devices or rules, performs physical control, or installs a domain
 pack. Continue with `aether services start` and `aether doctor`; device
 commissioning is a separate audited operation.
 
+## aether runtime-manifest
+
+Verify the composition-provided runtime metadata before installing a Pack or
+starting services. With no `--path`, the command reads
+`<config-path>/runtime-manifest.json` and also requires its target OS and
+architecture to match the current process. An explicit artifact path verifies
+schema, Aether version, known capabilities/features, exact feature-derived
+protocols, and checksum without binding a staged artifact to the verifier host.
+
+```bash
+aether runtime-manifest
+aether --json runtime-manifest --path ./runtime-manifest.json
+```
+
+There is no full-distribution fallback: a missing, tampered, or incompatible
+manifest is an error even when `packs: []`.
+
+## aether packs
+
+Build or install a Pack-only artifact. These are local filesystem operations;
+`--host` is ignored.
+
+```text
+Usage: aether packs [OPTIONS] <COMMAND>
+
+Commands:
+  build    Build a data-only Pack bundle bound to one Kernel runtime manifest
+  install  Verify, publish, and atomically activate a Pack bundle
+```
+
+```bash
+aether packs build \
+  --pack-root ./packs/example \
+  --runtime-manifest ./runtime-manifest.json \
+  --output ./example.bundle
+
+aether packs install --artifact ./example.bundle
+```
+
+`build` validates `pack.yaml` against the supplied, checksummed runtime
+manifest and refuses Kernel/build directories, source files, executables,
+symlinks, and unbounded payloads. `install` requires the installed Kernel's
+version, target, and full runtime-manifest digest to match, publishes to
+`<data-path>/packs/<id>/<version>`, and atomically updates `global.yaml` only
+after validating the complete candidate active Pack set. It does not start
+services or commission devices.
+
 ## aether sync
 
 Sync all configuration to SQLite database.
@@ -90,7 +137,7 @@ Usage: aether sync [OPTIONS]
 | Flag | Description |
 |------|-------------|
 | `-n, --dry-run` | Validate only, don't write to database (dry run) |
-| `-f, --force` | Replace managed rows after successful validation instead of preserving unmatched rows |
+| `-f, --force` | Replace sync-managed rows after successful validation; refused while any governed action route exists |
 | `-d, --detailed` | Show detailed progress for each item |
 | `--check` | Check database consistency (duplicates, references) |
 
@@ -182,15 +229,28 @@ aether channels status 1001
 
 ### channels reload
 
-Reload all channel configurations.
+Reconcile every channel runtime from authoritative desired state. The command
+name is retained for compatibility, but it calls the canonical governed
+`POST /api/channels/reconcile` endpoint rather than the legacy reload route.
 
 ```
-Usage: aether channels reload [OPTIONS]
+Usage: aether channels reload [OPTIONS] --confirmed
 ```
+
+| Flag | Description |
+|------|-------------|
+| `--confirmed` | Explicitly confirm this high-risk runtime reconciliation; requires `AETHER_ACCESS_TOKEN` |
 
 ```bash
-aether channels reload
+AETHER_ACCESS_TOKEN='<signed access JWT>' aether channels reload --confirmed
 ```
+
+The receipt reports the sanitized desired-state observation and runtime
+projection for each channel, plus `degraded_count`,
+`reconciliation_required`, and terminal `completion_audit`. Preserve its UUID
+`request_id`; this operation can reconnect protocol sessions and is
+non-idempotent, so never retry it automatically, including after an incomplete
+terminal audit.
 
 ### channels health
 
@@ -209,7 +269,7 @@ aether channels health --json
 Create a new communication channel.
 
 ```
-Usage: aether channels create [OPTIONS] --name <NAME> --protocol <PROTOCOL> --params <PARAMS>
+Usage: aether channels create [OPTIONS] --name <NAME> --protocol <PROTOCOL> --params <PARAMS> --confirmed
 ```
 
 | Flag | Description |
@@ -218,12 +278,14 @@ Usage: aether channels create [OPTIONS] --name <NAME> --protocol <PROTOCOL> --pa
 | `--protocol <PROTOCOL>` | Protocol type (`modbus_tcp`, `modbus_rtu`, `virtual`, `di_do`, `can`) |
 | `--params <PARAMS>` | Protocol parameters as JSON string (e.g. `'{"host":"192.168.1.10","port":502}'`) |
 | `--description <DESCRIPTION>` | Channel description |
-| `--enabled <ENABLED>` | Start channel immediately (default: true) [possible values: `true`, `false`] |
+| `--enabled <ENABLED>` | Start channel immediately (default: false) [possible values: `true`, `false`] |
 | `--id <ID>` | Override channel ID (auto-assigned if omitted) |
+| `--confirmed` | Explicitly confirm this high-risk commissioning mutation; requires `AETHER_ACCESS_TOKEN` |
 
 ```bash
-aether channels create --name pcs-main --protocol modbus_tcp \
-  --params '{"host":"192.168.1.10","port":502}'
+AETHER_ACCESS_TOKEN='<signed access JWT>' aether channels create \
+  --name pcs-main --protocol modbus_tcp \
+  --params '{"host":"192.168.1.10","port":502}' --confirmed
 ```
 
 ### channels update
@@ -239,14 +301,19 @@ Usage: aether channels update [OPTIONS] <CHANNEL_ID>
 | `--name <NAME>` | New channel name |
 | `--params <PARAMS>` | Updated protocol parameters as JSON string |
 | `--description <DESCRIPTION>` | Updated description |
+| `--expected-revision <EXPECTED_REVISION>` | Optional desired-state compare-and-set guard; must be at least 1 |
+| `--confirmed` | Explicitly confirm this high-risk commissioning mutation; requires `AETHER_ACCESS_TOKEN` |
 
 ```bash
-aether channels update 1001 --description "PCS main feed"
+AETHER_ACCESS_TOKEN='<signed access JWT>' aether channels update 1001 \
+  --description "PCS main feed" --expected-revision 7 --confirmed
 ```
 
 ### channels delete
 
-Delete a channel and cascade-remove its points, mappings, and routing.
+Delete a channel and its measurement-owned points, mappings, and routing.
+The command fails closed while a physical action route targets the channel;
+delete or migrate that route with the governed routing command first.
 
 ```
 Usage: aether channels delete [OPTIONS] <CHANNEL_ID>
@@ -254,10 +321,13 @@ Usage: aether channels delete [OPTIONS] <CHANNEL_ID>
 
 | Flag | Description |
 |------|-------------|
-| `-f, --force` | Skip confirmation prompt |
+| `-f, --force` | Skip the interactive prompt only; it never replaces `--confirmed` |
+| `--expected-revision <EXPECTED_REVISION>` | Optional desired-state compare-and-set guard; must be at least 1 |
+| `--confirmed` | Explicitly confirm this high-risk commissioning mutation; requires `AETHER_ACCESS_TOKEN` |
 
 ```bash
-aether channels delete 1001 --force
+AETHER_ACCESS_TOKEN='<signed access JWT>' aether channels delete 1001 \
+  --force --expected-revision 7 --confirmed
 ```
 
 ### channels enable
@@ -268,8 +338,14 @@ Enable a channel.
 Usage: aether channels enable [OPTIONS] <CHANNEL_ID>
 ```
 
+| Flag | Description |
+|------|-------------|
+| `--expected-revision <EXPECTED_REVISION>` | Optional desired-state compare-and-set guard; must be at least 1 |
+| `--confirmed` | Explicitly confirm this high-risk lifecycle mutation; requires `AETHER_ACCESS_TOKEN` |
+
 ```bash
-aether channels enable 1001
+AETHER_ACCESS_TOKEN='<signed access JWT>' aether channels enable 1001 \
+  --expected-revision 7 --confirmed
 ```
 
 ### channels disable
@@ -280,9 +356,23 @@ Disable a channel.
 Usage: aether channels disable [OPTIONS] <CHANNEL_ID>
 ```
 
+| Flag | Description |
+|------|-------------|
+| `--expected-revision <EXPECTED_REVISION>` | Optional desired-state compare-and-set guard; must be at least 1 |
+| `--confirmed` | Explicitly confirm this high-risk lifecycle mutation; requires `AETHER_ACCESS_TOKEN` |
+
 ```bash
-aether channels disable 1001
+AETHER_ACCESS_TOKEN='<signed access JWT>' aether channels disable 1001 --confirmed
 ```
+
+The five channel commissioning and lifecycle mutations call the governed
+`io.channel.manage` application boundary. Success may report a degraded
+runtime projection after desired state has committed. Preserve `request_id`,
+inspect `resulting_revision` and `reconciliation_required`, and do not
+automatically retry the non-idempotent command. `channels reload` is the sixth
+governed channel command and maps separately to `io.channel.reconcile` while
+requiring the same `io.channel.manage` permission, explicit confirmation,
+Bearer token, UUID request ID, and audit policy.
 
 ### channels mappings
 
@@ -440,7 +530,7 @@ Usage: aether models [OPTIONS] <COMMAND>
 
 ### models products list
 
-Show all built-in products from `aether-model`.
+Show products selected by validated active Packs and site configuration.
 
 ```
 Usage: aether models products list [OPTIONS]
@@ -464,7 +554,7 @@ aether models products available
 
 ### models products get
 
-Show detailed information about a built-in product.
+Show detailed information about a selected product.
 
 ```
 Usage: aether models products get [OPTIONS] <NAME>
@@ -539,6 +629,9 @@ aether models instances update bat-01 --props capacity=120
 
 Delete a device instance.
 
+The command fails closed while the instance owns a physical action route;
+delete or migrate that route with the governed routing command first.
+
 ```
 Usage: aether models instances delete [OPTIONS] <NAME>
 ```
@@ -569,7 +662,11 @@ aether models instances data 9 --point-type M
 
 ### models instances action
 
-Execute a control action on an instance (writes to the device).
+Submit a confirmed control action to the local command plane. A successful
+response does not prove that the physical device executed it; read back the
+corresponding measurement to verify the outcome.
+If the returned `audit.status` is `incomplete`, retain `request_id` and
+`command_id`; the action was already accepted and must not be retried.
 Set `AETHER_ACCESS_TOKEN` to a current Admin or Engineer access token before
 running this command; forged actor/role headers and local-port access do not
 grant device-control permission.
@@ -582,29 +679,11 @@ Usage: aether models instances action [OPTIONS] --point-id <POINT_ID> --value <V
 |------|-------------|
 | `--point-id <POINT_ID>` | Numeric action point ID encoded as a string, e.g. `"1"` |
 | `--value <VALUE>` | Value to write |
+| `--confirmed` | Explicitly confirm this high-risk device command |
 
 ```bash
 AETHER_ACCESS_TOKEN='<signed access JWT>' \
-  aether models instances action 9 --point-id 1 --value 50
-```
-
-### models instances measurement
-
-Set a measurement value on an instance. This writes into the measurement
-hash that is normally fed by live device data, so treat it as a test and
-simulation tool rather than a routine operation.
-
-```
-Usage: aether models instances measurement [OPTIONS] --point-id <POINT_ID> --value <VALUE> <INSTANCE_ID>
-```
-
-| Flag | Description |
-|------|-------------|
-| `--point-id <POINT_ID>` | Point ID: numeric (`"101"`) or semantic name |
-| `--value <VALUE>` | Value to set |
-
-```bash
-aether models instances measurement 9 --point-id 101 --value 3.14
+  aether models instances action 9 --point-id 1 --value 50 --confirmed
 ```
 
 ## aether rules
@@ -651,8 +730,12 @@ Enable a business rule.
 Usage: aether rules enable [OPTIONS] <RULE_ID>
 ```
 
+| Flag | Description |
+|------|-------------|
+| `--confirmed` | Explicitly confirm this high-risk rule-policy mutation |
+
 ```bash
-aether rules enable 3
+AETHER_ACCESS_TOKEN='<signed access JWT>' aether rules enable 3 --confirmed
 ```
 
 ### rules disable
@@ -663,13 +746,19 @@ Disable a business rule.
 Usage: aether rules disable [OPTIONS] <RULE_ID>
 ```
 
+| Flag | Description |
+|------|-------------|
+| `--confirmed` | Explicitly confirm this high-risk rule-policy mutation |
+
 ```bash
-aether rules disable 3
+AETHER_ACCESS_TOKEN='<signed access JWT>' aether rules disable 3 --confirmed
 ```
 
 ### rules execute
 
 Execute a rule (evaluate and execute if conditions met).
+If the returned `audit.status` is `incomplete`, retain `request_id`; execution
+already completed and must not be retried.
 
 ```
 Usage: aether rules execute [OPTIONS] <RULE_ID>
@@ -677,10 +766,11 @@ Usage: aether rules execute [OPTIONS] <RULE_ID>
 
 | Flag | Description |
 |------|-------------|
-| `-f, --force` | Force execution even if conditions not met. Accepted by the CLI but currently ignored server-side: automation's execute handler takes no request body |
+| `--confirmed` | Explicitly confirm that the rule may dispatch real device commands |
 
 ```bash
-aether rules execute 3 --force
+AETHER_ACCESS_TOKEN='<signed access JWT>' \
+  aether rules execute 3 --confirmed
 ```
 
 ### rules create
@@ -695,9 +785,11 @@ Usage: aether rules create [OPTIONS] --name <NAME>
 |------|-------------|
 | `--name <NAME>` | Rule name |
 | `--description <DESCRIPTION>` | Rule description |
+| `--confirmed` | Explicitly confirm this high-risk rule-policy mutation |
 
 ```bash
-aether rules create --name night-charge --description "Charge during off-peak hours"
+AETHER_ACCESS_TOKEN='<signed access JWT>' \
+  aether rules create --name night-charge --description "Charge during off-peak hours" --confirmed
 ```
 
 ### rules update
@@ -716,9 +808,11 @@ Usage: aether rules update [OPTIONS] <RULE_ID>
 | `--priority <PRIORITY>` | Rule priority (lower = higher priority) |
 | `--cooldown-ms <COOLDOWN_MS>` | Cooldown between executions in milliseconds |
 | `--flow-json <FLOW_JSON>` | Path to Vue Flow JSON file (use `-` for stdin) |
+| `--confirmed` | Explicitly confirm this high-risk rule-policy mutation |
 
 ```bash
-aether rules update 3 --flow-json flow.json
+AETHER_ACCESS_TOKEN='<signed access JWT>' \
+  aether rules update 3 --flow-json flow.json --confirmed
 ```
 
 ### rules delete
@@ -732,9 +826,11 @@ Usage: aether rules delete [OPTIONS] <RULE_ID>
 | Flag | Description |
 |------|-------------|
 | `-f, --force` | Skip confirmation prompt |
+| `--confirmed` | Required safety confirmation; `--force` does not replace it |
 
 ```bash
-aether rules delete 3 --force
+AETHER_ACCESS_TOKEN='<signed access JWT>' \
+  aether rules delete 3 --force --confirmed
 ```
 
 ## aether routing
@@ -762,6 +858,30 @@ Usage: aether routing list [OPTIONS]
 aether routing list --instance 9
 ```
 
+### routing action
+
+Governed single-route commands for physical C/A destinations. Every operation
+requires `AETHER_ACCESS_TOKEN` and `--confirmed`; changing a route does not
+execute a device command.
+
+```bash
+AETHER_ACCESS_TOKEN='<signed access JWT>' aether routing action upsert \
+  9 1 --channel-id 1001 --channel-type c --channel-point-id 7 --confirmed
+
+AETHER_ACCESS_TOKEN='<signed access JWT>' \
+  aether routing action delete 9 1 --confirmed
+
+AETHER_ACCESS_TOKEN='<signed access JWT>' \
+  aether routing action enable 9 1 --confirmed
+
+AETHER_ACCESS_TOKEN='<signed access JWT>' \
+  aether routing action disable 9 1 --confirmed
+```
+
+`upsert` accepts `--disabled` to commission a route without activating it.
+The older `routing create --point-type a ... --confirmed` form remains a
+compatibility alias for enabled upsert.
+
 ### routing create
 
 Create a single routing entry for an instance.
@@ -777,15 +897,24 @@ Usage: aether routing create [OPTIONS] --point-type <POINT_TYPE> --point-id <POI
 | `--channel-id <CHANNEL_ID>` | Channel ID |
 | `-r, --four-remote <FOUR_REMOTE>` | Four-remote type: `t` (telemetry), `s` (signal), `c` (control), `a` (adjustment) |
 | `-P, --channel-point-id <CHANNEL_POINT_ID>` | Channel point ID |
+| `--confirmed` | Explicitly confirm an action route that changes a physical command target; requires `AETHER_ACCESS_TOKEN` |
 
 ```bash
 aether routing create 9 --point-type m --point-id 101 \
   --channel-id 1001 --four-remote t --channel-point-id 101
+
+AETHER_ACCESS_TOKEN='<signed access JWT>' aether routing create 9 \
+  --point-type a --point-id 1 --channel-id 1001 \
+  --four-remote c --channel-point-id 7 --confirmed
 ```
 
 ### routing batch
 
 Batch upsert routing from JSON file or stdin.
+
+The compatibility batch accepts measurement entries only. Action entries fail
+closed until a governed batch application command is available; create action
+routes one at a time with `routing create ... --point-type a --confirmed`.
 
 ```
 Usage: aether routing batch [OPTIONS] --file <FILE> <INSTANCE_ID>
@@ -811,9 +940,11 @@ Usage: aether routing delete-instance [OPTIONS] <INSTANCE_NAME>
 | Flag | Description |
 |------|-------------|
 | `-f, --force` | Skip confirmation |
+| `--confirmed` | Confirm deletion of physical action routes; requires `AETHER_ACCESS_TOKEN` |
 
 ```bash
-aether routing delete-instance bat-01 --force
+AETHER_ACCESS_TOKEN='<signed access JWT>' \
+  aether routing delete-instance bat-01 --force --confirmed
 ```
 
 ### routing delete-channel
@@ -827,9 +958,11 @@ Usage: aether routing delete-channel [OPTIONS] <CHANNEL_ID>
 | Flag | Description |
 |------|-------------|
 | `-f, --force` | Skip confirmation |
+| `--confirmed` | Confirm deletion of physical action routes; requires `AETHER_ACCESS_TOKEN` |
 
 ```bash
-aether routing delete-channel 1001 --force
+AETHER_ACCESS_TOKEN='<signed access JWT>' \
+  aether routing delete-channel 1001 --force --confirmed
 ```
 
 ## aether services
@@ -1281,6 +1414,20 @@ Usage: aether alarms get [OPTIONS] <ID>
 aether alarms get 42
 ```
 
+### alarms resolve
+
+Manually clear one active alert indication. If the underlying condition still
+holds, the monitor will create a new alert on a later evaluation.
+
+```
+Usage: aether alarms resolve [OPTIONS] --confirmed <ID>
+```
+
+```bash
+AETHER_ACCESS_TOKEN='<signed access JWT>' \
+  aether alarms resolve 42 --confirmed
+```
+
 ### alarms rules
 
 List alarm rules.
@@ -1363,16 +1510,23 @@ aether alarms monitor
 
 Create an alarm rule from a JSON file.
 
+Alarm-rule creation, update, deletion, enablement, disablement, and manual alert
+resolution are governed high-risk policy commands. Set `AETHER_ACCESS_TOKEN` to
+a current Admin or Engineer access JWT and pass `--confirmed`; query commands
+remain token-free on the local interface.
+
 ```
-Usage: aether alarms rule-create [OPTIONS] --file <FILE>
+Usage: aether alarms rule-create [OPTIONS] --file <FILE> --confirmed
 ```
 
 | Flag | Description |
 |------|-------------|
 | `--file <FILE>` | Path to a JSON file matching alarm's `CreateRuleRequest` |
+| `--confirmed` | Explicitly confirm the alarm-policy mutation |
 
 ```bash
-aether alarms rule-create --file alarm-rule.json
+AETHER_ACCESS_TOKEN='<signed access JWT>' \
+  aether alarms rule-create --file alarm-rule.json --confirmed
 ```
 
 ### alarms rule-update
@@ -1380,15 +1534,17 @@ aether alarms rule-create --file alarm-rule.json
 Update an alarm rule from a JSON file (only present fields change).
 
 ```
-Usage: aether alarms rule-update [OPTIONS] --file <FILE> <ID>
+Usage: aether alarms rule-update [OPTIONS] --file <FILE> --confirmed <ID>
 ```
 
 | Flag | Description |
 |------|-------------|
 | `--file <FILE>` | Path to a JSON file matching alarm's `UpdateRuleRequest` |
+| `--confirmed` | Explicitly confirm the alarm-policy mutation |
 
 ```bash
-aether alarms rule-update 7 --file alarm-rule-patch.json
+AETHER_ACCESS_TOKEN='<signed access JWT>' \
+  aether alarms rule-update 7 --file alarm-rule-patch.json --confirmed
 ```
 
 ### alarms rule-delete
@@ -1396,11 +1552,12 @@ aether alarms rule-update 7 --file alarm-rule-patch.json
 Delete an alarm rule.
 
 ```
-Usage: aether alarms rule-delete [OPTIONS] <ID>
+Usage: aether alarms rule-delete [OPTIONS] --confirmed <ID>
 ```
 
 ```bash
-aether alarms rule-delete 7
+AETHER_ACCESS_TOKEN='<signed access JWT>' \
+  aether alarms rule-delete 7 --confirmed
 ```
 
 ### alarms rule-enable
@@ -1408,11 +1565,12 @@ aether alarms rule-delete 7
 Enable an alarm rule.
 
 ```
-Usage: aether alarms rule-enable [OPTIONS] <ID>
+Usage: aether alarms rule-enable [OPTIONS] --confirmed <ID>
 ```
 
 ```bash
-aether alarms rule-enable 7
+AETHER_ACCESS_TOKEN='<signed access JWT>' \
+  aether alarms rule-enable 7 --confirmed
 ```
 
 ### alarms rule-disable
@@ -1420,11 +1578,12 @@ aether alarms rule-enable 7
 Disable an alarm rule.
 
 ```
-Usage: aether alarms rule-disable [OPTIONS] <ID>
+Usage: aether alarms rule-disable [OPTIONS] --confirmed <ID>
 ```
 
 ```bash
-aether alarms rule-disable 7
+AETHER_ACCESS_TOKEN='<signed access JWT>' \
+  aether alarms rule-disable 7 --confirmed
 ```
 
 ## aether net
@@ -1664,11 +1823,31 @@ Usage: aether mcp [OPTIONS]
 
 | Flag | Description |
 |------|-------------|
-| `--allow-write` | Register write tools (channel writes, rule changes, config changes). Without this flag, only read-only tools appear in `tools/list` |
+| `--allow-write` | Add the 22 governed write tools to the 23 always-registered read-only tools. It is only a registration gate; each invocation still requires `confirmed: true` |
 
 ```bash
 aether mcp --allow-write
 ```
+
+The 22 writes are channel CRUD/lifecycle (`channels_create`,
+`channels_update`, `channels_delete`, `channels_enable`, `channels_disable`,
+`channels_reconcile`);
+`models_instances_action`, `rules_execute`; rule CRUD and
+lifecycle (`rules_create`, `rules_update`, `rules_delete`, `rules_enable`,
+`rules_disable`); alarm-rule CRUD and lifecycle (`alarms_rule_create`,
+`alarms_rule_update`, `alarms_rule_delete`, `alarms_rule_enable`,
+`alarms_rule_disable`); manual alert resolution (`alarms_resolve`); and
+action-route governance (`routing_action_upsert`, `routing_action_delete`,
+`routing_action_set_enabled`). The write-enabled catalog therefore has 45
+tools in total.
+
+The MCP bridge reads `AETHER_ACCESS_TOKEN`, sends it as an
+`Authorization: Bearer` credential, and generates an `X-Request-ID` for each
+governed HTTP request. Keep returned `request_id`/`command_id` values and do
+not automatically retry writes after a timeout or an incomplete audit or
+publication response; inspect state and audit records first. Channel mutation
+success may contain a degraded runtime projection; use its `request_id`,
+`resulting_revision`, and `reconciliation_required` rather than retrying.
 
 See [AI Assistants](../guides/ai-assistants.md) for connecting MCP clients.
 

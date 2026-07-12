@@ -71,6 +71,9 @@ TARGET=""
 SELECTED_SERVICES=""
 ENABLE_SWAGGER=0
 BARE_METAL=0
+MANIFEST_ONLY=""
+IO_PROTOCOL_FEATURES=""
+IO_PROTOCOL_FEATURES_SET=0
 
 # Parse all arguments
 while [[ $# -gt 0 ]]; do
@@ -90,6 +93,24 @@ while [[ $# -gt 0 ]]; do
         --bare-metal)
             BARE_METAL=1
             shift
+            ;;
+        --manifest-only=*)
+            MANIFEST_ONLY="${1#*=}"
+            shift
+            ;;
+        --manifest-only)
+            MANIFEST_ONLY="$2"
+            shift 2
+            ;;
+        --io-features=*)
+            IO_PROTOCOL_FEATURES="${1#*=}"
+            IO_PROTOCOL_FEATURES_SET=1
+            shift
+            ;;
+        --io-features)
+            IO_PROTOCOL_FEATURES="$2"
+            IO_PROTOCOL_FEATURES_SET=1
+            shift 2
             ;;
         *)
             if [[ -z "$VERSION" ]]; then
@@ -123,6 +144,22 @@ case "$ARCH" in
     exit 1
     ;;
 esac
+
+# Contract/CI mode produces exactly the metadata that a matching build would
+# ship, without requiring makeself, cross toolchains, Docker, or host mutation.
+if [[ -n "$MANIFEST_ONLY" ]]; then
+    MANIFEST_TEMP_DIR=$(mktemp -d)
+    trap 'rm -rf "$MANIFEST_TEMP_DIR"' EXIT
+    MANIFEST_GENERATE_ARGS=(generate "$TARGET" "$MANIFEST_TEMP_DIR")
+    if [[ "$IO_PROTOCOL_FEATURES_SET" == 1 ]]; then
+        MANIFEST_GENERATE_ARGS+=("$IO_PROTOCOL_FEATURES")
+    fi
+    cargo run --quiet -p aether-runtime-catalog --bin aether-runtime-manifest -- \
+        "${MANIFEST_GENERATE_ARGS[@]}" >/dev/null
+    mkdir -p "$(dirname "$MANIFEST_ONLY")"
+    cp "$MANIFEST_TEMP_DIR/runtime-manifest.json" "$MANIFEST_ONLY"
+    exit 0
+fi
 
 ARCH_LABEL=$(printf '%s' "$ARCH" | tr '[:lower:]' '[:upper:]')
 
@@ -460,6 +497,37 @@ rm -rf "$BUILD_DIR"
 mkdir -p "$BUILD_DIR"/{tools,docker,config,scripts}
 mkdir -p "$OUTPUT_DIR"
 
+# Generate the mandatory feature-exact runtime metadata from the same default
+# feature source that is passed to the aether-io build below. The target-specific
+# file is staged outside the source tree and later copied into Docker and
+# bare-metal configuration payloads.
+RUNTIME_MANIFEST_DIR="$BUILD_DIR/runtime"
+mkdir -p "$RUNTIME_MANIFEST_DIR"
+RUNTIME_MANIFEST_GENERATE_ARGS=(generate "$TARGET" "$RUNTIME_MANIFEST_DIR")
+if [[ "$IO_PROTOCOL_FEATURES_SET" == 1 ]]; then
+    RUNTIME_MANIFEST_GENERATE_ARGS+=("$IO_PROTOCOL_FEATURES")
+fi
+cargo run --quiet -p aether-runtime-catalog --bin aether-runtime-manifest -- \
+    "${RUNTIME_MANIFEST_GENERATE_ARGS[@]}" >/dev/null
+RUNTIME_MANIFEST_PATH="$RUNTIME_MANIFEST_DIR/runtime-manifest.json"
+if [[ ! -s "$RUNTIME_MANIFEST_PATH" ]]; then
+    echo -e "${RED}Error: feature-exact runtime manifest was not generated${NC}"
+    exit 1
+fi
+if [[ "$IO_PROTOCOL_FEATURES_SET" == 1 ]]; then
+    RUNTIME_CARGO_FEATURES=""
+    IFS=',' read -ra SELECTED_IO_FEATURE_ARRAY <<< "$IO_PROTOCOL_FEATURES"
+    for feature in "${SELECTED_IO_FEATURE_ARRAY[@]}"; do
+        feature=$(echo "$feature" | xargs)
+        [[ -z "$feature" ]] && continue
+        RUNTIME_CARGO_FEATURES=$(add_csv_item \
+            "$RUNTIME_CARGO_FEATURES" "aether-io/$feature")
+    done
+else
+    RUNTIME_CARGO_FEATURES=$(cargo run --quiet -p aether-runtime-catalog \
+        --bin aether-runtime-manifest -- print-default-features)
+fi
+
 # Step 1+2: Build Rust binaries and Docker images
 echo ""
 if csv_contains "$BUILD_IMAGES" "aetherems:latest"; then
@@ -477,8 +545,15 @@ if csv_contains "$BUILD_IMAGES" "aetherems:latest"; then
         rustup target add $TARGET
     fi
 
-    # Build aether CLI + all 6 service binaries in one pass
+    # Build the CLI and six services. A custom IO feature selection is built
+    # separately so `--no-default-features` applies only to aether-io.
     CARGO_FEATURES=""
+    OTHER_CARGO_FEATURES=""
+    IO_BUILD_FEATURES="$RUNTIME_CARGO_FEATURES"
+    IFS=',' read -ra RUNTIME_FEATURE_ARRAY <<< "$RUNTIME_CARGO_FEATURES"
+    for feature in "${RUNTIME_FEATURE_ARRAY[@]}"; do
+        CARGO_FEATURES=$(add_csv_item "$CARGO_FEATURES" "$feature")
+    done
     if [[ "$ENABLE_SWAGGER" == "1" ]]; then
         # Explicitly enable Swagger UI where it is feature-gated.
         for feature in \
@@ -489,19 +564,46 @@ if csv_contains "$BUILD_IMAGES" "aetherems:latest"; then
             aether-history/swagger-ui \
             aether-uplink/swagger-ui; do
             CARGO_FEATURES=$(add_csv_item "$CARGO_FEATURES" "$feature")
+            if [[ "$feature" == aether-io/* ]]; then
+                IO_BUILD_FEATURES=$(add_csv_item "$IO_BUILD_FEATURES" "$feature")
+            else
+                OTHER_CARGO_FEATURES=$(add_csv_item "$OTHER_CARGO_FEATURES" "$feature")
+            fi
         done
     fi
     if csv_contains "$BUILD_IMAGES" "timescale/timescaledb:2.25.2-pg17"; then
         CARGO_FEATURES=$(add_csv_item \
             "$CARGO_FEATURES" "aether-history/postgres-storage")
+        OTHER_CARGO_FEATURES=$(add_csv_item \
+            "$OTHER_CARGO_FEATURES" "$(printf 'aether-%s/%s' history postgres-storage)")
     fi
     CARGO_FEATURE_ARGS=()
     [[ -n "$CARGO_FEATURES" ]] \
         && CARGO_FEATURE_ARGS=(--features "$CARGO_FEATURES")
 
-    CARGO_BUILD_JOBS=$CPU_CORES cargo zigbuild --release --target $TARGET \
-        -p aether -p aether-io -p aether-automation -p aether-alarm -p aether-api -p aether-history -p aether-uplink \
-        ${CARGO_FEATURE_ARGS[@]+"${CARGO_FEATURE_ARGS[@]}"}
+    if [[ "$IO_PROTOCOL_FEATURES_SET" == 1 ]]; then
+        # Cargo cannot disable defaults for only one member in a multi-package
+        # invocation. Build IO separately so a trimmed adapter selection is
+        # real, then build the remaining services with their normal defaults.
+        IO_BUILD_FEATURES=$(add_csv_item "$IO_BUILD_FEATURES" "aether-io/openapi")
+        IO_FEATURE_ARGS=()
+        [[ -n "$IO_BUILD_FEATURES" ]] \
+            && IO_FEATURE_ARGS=(--features "$IO_BUILD_FEATURES")
+        CARGO_BUILD_JOBS=$CPU_CORES cargo zigbuild --release --target "$TARGET" \
+            -p aether-io --no-default-features \
+            ${IO_FEATURE_ARGS[@]+"${IO_FEATURE_ARGS[@]}"}
+
+        OTHER_FEATURE_ARGS=()
+        [[ -n "$OTHER_CARGO_FEATURES" ]] \
+            && OTHER_FEATURE_ARGS=(--features "$OTHER_CARGO_FEATURES")
+        CARGO_BUILD_JOBS=$CPU_CORES cargo zigbuild --release --target "$TARGET" \
+            -p aether -p aether-automation -p aether-alarm -p aether-api -p aether-history -p aether-uplink \
+            ${OTHER_FEATURE_ARGS[@]+"${OTHER_FEATURE_ARGS[@]}"}
+    else
+        CARGO_BUILD_JOBS=$CPU_CORES cargo zigbuild --release --target "$TARGET" \
+            -p aether -p aether-io -p aether-automation -p aether-alarm -p aether-api -p aether-history -p aether-uplink \
+            ${CARGO_FEATURE_ARGS[@]+"${CARGO_FEATURE_ARGS[@]}"}
+    fi
 
     if [[ -f "$ROOT_DIR/target/$TARGET/release/aether" ]]; then
         cp "$ROOT_DIR/target/$TARGET/release/aether" "$BUILD_DIR/tools/"
@@ -576,6 +678,7 @@ if csv_contains "$BUILD_IMAGES" "aetherems:latest"; then
             mkdir -p "$BM_PKG_DIR/$(dirname "$f")"
             cp "$f" "$BM_PKG_DIR/$f"
         done
+        cp "$RUNTIME_MANIFEST_PATH" "$BM_PKG_DIR/config.template/runtime-manifest.json"
 
         chmod +x "$BM_PKG_DIR/bin/"* "$BM_PKG_DIR/install.sh"
 
@@ -605,6 +708,7 @@ if csv_contains "$BUILD_IMAGES" "aetherems:latest"; then
         echo -e "${BLUE}Building AetherEMS Docker image (dev tag: ${_DEV_TAG})...${NC}"
         if docker build --platform $DOCKER_PLATFORM \
             --build-arg TARGET_TRIPLE=$TARGET \
+            --build-arg RUNTIME_MANIFEST_PATH=build/installer/runtime/runtime-manifest.json \
             -f "$ROOT_DIR/Dockerfile" \
             -t "$_DEV_TAG" \
             "$ROOT_DIR"; then
@@ -619,6 +723,7 @@ if csv_contains "$BUILD_IMAGES" "aetherems:latest"; then
         echo -e "${BLUE}Building AetherEMS Docker image (all services)...${NC}"
         if docker build --platform $DOCKER_PLATFORM \
             --build-arg TARGET_TRIPLE=$TARGET \
+            --build-arg RUNTIME_MANIFEST_PATH=build/installer/runtime/runtime-manifest.json \
             -f "$ROOT_DIR/Dockerfile" \
             -t aetherems:latest \
             "$ROOT_DIR"; then
@@ -719,6 +824,7 @@ echo -e "${BLUE}[3/5] Copying configuration templates...${NC}"
 
 if [[ -d "$ROOT_DIR/config.template" ]]; then
     copy_config_files "$ROOT_DIR/config.template" "$BUILD_DIR/config.template"
+    cp "$RUNTIME_MANIFEST_PATH" "$BUILD_DIR/config.template/runtime-manifest.json"
     echo -e "${GREEN}✓ Copied config.template${NC}"
 fi
 

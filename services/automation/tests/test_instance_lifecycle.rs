@@ -8,17 +8,16 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use aether_automation::instance_manager::InstanceManager;
-use aether_automation::product_loader::{CreateInstanceRequest, ProductLoader};
+use aether_automation::product_loader::CreateInstanceRequest;
 use aether_routing::RoutingCache;
 use anyhow::Result;
-use common::{TestEnv, fixtures, helpers};
+use common::{TestEnv, energy_product_loader, fixtures, helpers};
 
 fn manager(env: &TestEnv) -> InstanceManager {
     InstanceManager::new(
         env.pool().clone(),
         Arc::new(RoutingCache::new()),
-        Arc::new(ProductLoader::new(env.pool().clone())),
-        Arc::new(aether_automation::infra::shm_dispatch::NoopDispatch),
+        Arc::new(energy_product_loader(env.pool().clone())),
     )
 }
 

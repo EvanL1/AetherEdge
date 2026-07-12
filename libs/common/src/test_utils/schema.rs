@@ -34,12 +34,153 @@ pub const CHANNELS_TABLE: &str = r#"
         channel_id INTEGER NOT NULL PRIMARY KEY,
         name TEXT NOT NULL UNIQUE,
         protocol TEXT,
-        enabled INTEGER NOT NULL DEFAULT 1,
+        enabled INTEGER NOT NULL DEFAULT 0,
         config TEXT,
+        revision INTEGER NOT NULL DEFAULT 1
+            CHECK (TYPEOF(revision) = 'integer' AND revision >= 1),
         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
 "#;
+
+/// Durable per-identity high-water mark retained after channel deletion.
+///
+/// A recreated channel must advance beyond this value so a CAS token issued
+/// for a deleted entity can never match the new entity (ABA protection).
+pub const CHANNEL_REVISION_TOMBSTONES_TABLE: &str = r#"
+    CREATE TABLE IF NOT EXISTS channel_revision_tombstones (
+        channel_id INTEGER NOT NULL PRIMARY KEY
+            CHECK (channel_id >= 0 AND channel_id < 10000),
+        last_revision INTEGER NOT NULL
+            CHECK (TYPEOF(last_revision) = 'integer' AND last_revision >= 1),
+        deleted_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+"#;
+
+/// Reject writes once a channel's durable compare-and-set revision is exhausted.
+///
+/// The companion bump trigger intentionally supports legacy writers that do
+/// not yet mention `revision`. Without this guard SQLite would promote
+/// `i64::MAX + 1` to REAL and silently stop providing an integer CAS token.
+pub const CHANNEL_REVISION_EXHAUSTED_TRIGGER: &str = r#"
+    CREATE TRIGGER IF NOT EXISTS reject_exhausted_channel_revision
+    BEFORE UPDATE OF name, protocol, enabled, config ON channels
+    FOR EACH ROW
+    WHEN NEW.revision = OLD.revision
+     AND OLD.revision >= 9223372036854775807
+    BEGIN
+        SELECT RAISE(ABORT, 'channel revision exhausted');
+    END
+"#;
+
+/// Increment the channel revision for compatibility writes that omit it.
+///
+/// Governed writers set `revision = revision + 1` explicitly. In that case
+/// `NEW.revision != OLD.revision`, so this trigger does not double-increment.
+pub const CHANNEL_REVISION_BUMP_TRIGGER: &str = r#"
+    CREATE TRIGGER IF NOT EXISTS bump_channel_revision
+    AFTER UPDATE OF name, protocol, enabled, config ON channels
+    FOR EACH ROW
+    WHEN NEW.revision = OLD.revision
+     AND OLD.revision < 9223372036854775807
+    BEGIN
+        UPDATE channels
+        SET revision = OLD.revision + 1
+        WHERE channel_id = NEW.channel_id;
+    END
+"#;
+
+/// Refuse recreation only when no revision remains beyond the tombstone.
+pub const CHANNEL_REVISION_INSERT_GUARD_TRIGGER: &str = r#"
+    CREATE TRIGGER IF NOT EXISTS reject_exhausted_channel_revision_on_recreate
+    BEFORE INSERT ON channels
+    FOR EACH ROW
+    WHEN EXISTS (
+        SELECT 1 FROM channel_revision_tombstones
+        WHERE channel_id = NEW.channel_id
+          AND last_revision >= 9223372036854775807
+    )
+    BEGIN
+        SELECT RAISE(ABORT, 'channel revision exhausted');
+    END
+"#;
+
+/// Advance staged legacy INSERTs beyond the deleted entity's high-water mark.
+///
+/// Formal writers already supply `last_revision + 1`, so they do not match.
+/// This AFTER trigger covers sync/import writers that still rely on DEFAULT 1.
+pub const CHANNEL_REVISION_INSERT_ADVANCE_TRIGGER: &str = r#"
+    CREATE TRIGGER IF NOT EXISTS advance_channel_revision_on_recreate
+    AFTER INSERT ON channels
+    FOR EACH ROW
+    WHEN EXISTS (
+        SELECT 1 FROM channel_revision_tombstones
+        WHERE channel_id = NEW.channel_id
+          AND NEW.revision <= last_revision
+    )
+    BEGIN
+        UPDATE channels
+        SET revision = (
+            SELECT last_revision + 1
+            FROM channel_revision_tombstones
+            WHERE channel_id = NEW.channel_id
+        )
+        WHERE channel_id = NEW.channel_id;
+    END
+"#;
+
+/// Refuse a legacy deletion when no monotonic tombstone revision remains.
+pub const CHANNEL_REVISION_DELETE_EXHAUSTED_TRIGGER: &str = r#"
+    CREATE TRIGGER IF NOT EXISTS reject_exhausted_channel_revision_on_delete
+    BEFORE DELETE ON channels
+    FOR EACH ROW
+    WHEN OLD.revision >= 9223372036854775807
+    BEGIN
+        SELECT RAISE(ABORT, 'channel revision exhausted');
+    END
+"#;
+
+/// Preserve ABA safety even for staged legacy writers that delete directly.
+pub const CHANNEL_REVISION_DELETE_TOMBSTONE_TRIGGER: &str = r#"
+    CREATE TRIGGER IF NOT EXISTS tombstone_channel_revision_on_delete
+    AFTER DELETE ON channels
+    FOR EACH ROW
+    BEGIN
+        INSERT INTO channel_revision_tombstones
+            (channel_id, last_revision, deleted_at)
+        VALUES
+            (OLD.channel_id, OLD.revision + 1, CURRENT_TIMESTAMP)
+        ON CONFLICT(channel_id) DO UPDATE SET
+            last_revision = MAX(last_revision, excluded.last_revision),
+            deleted_at = excluded.deleted_at;
+    END
+"#;
+
+/// Install the durable channel revision compatibility triggers.
+pub async fn install_channel_revision_triggers(pool: &SqlitePool) -> Result<()> {
+    sqlx::query(CHANNEL_REVISION_TOMBSTONES_TABLE)
+        .execute(pool)
+        .await?;
+    sqlx::query(CHANNEL_REVISION_EXHAUSTED_TRIGGER)
+        .execute(pool)
+        .await?;
+    sqlx::query(CHANNEL_REVISION_BUMP_TRIGGER)
+        .execute(pool)
+        .await?;
+    sqlx::query(CHANNEL_REVISION_INSERT_GUARD_TRIGGER)
+        .execute(pool)
+        .await?;
+    sqlx::query(CHANNEL_REVISION_INSERT_ADVANCE_TRIGGER)
+        .execute(pool)
+        .await?;
+    sqlx::query(CHANNEL_REVISION_DELETE_EXHAUSTED_TRIGGER)
+        .execute(pool)
+        .await?;
+    sqlx::query(CHANNEL_REVISION_DELETE_TOMBSTONE_TRIGGER)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
 
 /// Telemetry points table DDL (matches io::core::config::TelemetryPointRecord)
 pub const TELEMETRY_POINTS_TABLE: &str = r#"
@@ -270,6 +411,7 @@ pub async fn init_io_schema(pool: &SqlitePool) -> Result<()> {
 
     // Core channel table
     sqlx::query(CHANNELS_TABLE).execute(pool).await?;
+    install_channel_revision_triggers(pool).await?;
 
     // Point tables
     sqlx::query(TELEMETRY_POINTS_TABLE).execute(pool).await?;
@@ -296,8 +438,8 @@ pub async fn init_io_schema(pool: &SqlitePool) -> Result<()> {
 /// - instances
 /// - measurement_routing, action_routing
 ///
-/// Note: Products are now compile-time built-in constants from aether-model crate.
-/// No products table is created. Use built-in product names like "Battery", "PCS", etc.
+/// No products table is created. Product definitions come from validated active
+/// Packs and an optional site directory at runtime.
 pub async fn init_automation_schema(pool: &SqlitePool) -> Result<()> {
     // Service metadata tables
     sqlx::query(SERVICE_CONFIG_TABLE).execute(pool).await?;
@@ -305,6 +447,7 @@ pub async fn init_automation_schema(pool: &SqlitePool) -> Result<()> {
 
     // Channels table (required by routing table foreign keys in unified database architecture)
     sqlx::query(CHANNELS_TABLE).execute(pool).await?;
+    install_channel_revision_triggers(pool).await?;
 
     // Instance table (no longer references products table)
     sqlx::query(INSTANCES_TABLE).execute(pool).await?;
@@ -380,6 +523,204 @@ mod tests {
             .unwrap();
             assert_eq!(on_delete, "CASCADE", "wrong delete action for {table}");
         }
+
+        let revision: i64 = sqlx::query_scalar(
+            "INSERT INTO channels (channel_id, name, protocol, enabled, config) \
+             VALUES (7, 'revision-contract', 'virtual', 0, '{}') \
+             RETURNING revision",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(revision, 1);
+
+        sqlx::query("UPDATE channels SET name = 'legacy-update' WHERE channel_id = 7")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let revision: i64 =
+            sqlx::query_scalar("SELECT revision FROM channels WHERE channel_id = 7")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(revision, 2, "legacy writes must receive a revision");
+
+        sqlx::query(
+            "UPDATE channels SET name = 'governed-update', revision = revision + 1 \
+             WHERE channel_id = 7",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let revision: i64 =
+            sqlx::query_scalar("SELECT revision FROM channels WHERE channel_id = 7")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(revision, 3, "governed writes must not be bumped twice");
+    }
+
+    #[tokio::test]
+    async fn channel_revision_trigger_covers_legacy_and_explicit_writers() {
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        init_io_schema(&pool).await.unwrap();
+        sqlx::query(
+            "INSERT INTO channels (channel_id, name, protocol, enabled, config) \
+             VALUES (7, 'legacy-writer', 'virtual', 0, '{}')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT revision FROM channels WHERE channel_id = 7")
+                .fetch_one(&pool)
+                .await
+                .unwrap(),
+            1
+        );
+
+        sqlx::query("UPDATE channels SET name = 'legacy-updated' WHERE channel_id = 7")
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT revision FROM channels WHERE channel_id = 7")
+                .fetch_one(&pool)
+                .await
+                .unwrap(),
+            2
+        );
+
+        sqlx::query(
+            "UPDATE channels SET enabled = 1, revision = 3 \
+             WHERE channel_id = 7 AND revision = 2",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT revision FROM channels WHERE channel_id = 7")
+                .fetch_one(&pool)
+                .await
+                .unwrap(),
+            3,
+            "explicit CAS revision must not be incremented twice"
+        );
+
+        sqlx::query("UPDATE channels SET updated_at = '2099-01-01 00:00:00' WHERE channel_id = 7")
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT revision FROM channels WHERE channel_id = 7")
+                .fetch_one(&pool)
+                .await
+                .unwrap(),
+            3,
+            "non-desired metadata updates must not bump revision"
+        );
+
+        sqlx::query("UPDATE channels SET revision = 9223372036854775807 WHERE channel_id = 7")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let exhausted =
+            sqlx::query("UPDATE channels SET name = 'must-not-overflow' WHERE channel_id = 7")
+                .execute(&pool)
+                .await
+                .expect_err("legacy desired update must not overflow revision");
+        assert!(exhausted.to_string().contains("channel revision exhausted"));
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT revision FROM channels WHERE channel_id = 7")
+                .fetch_one(&pool)
+                .await
+                .unwrap(),
+            i64::MAX
+        );
+    }
+
+    #[tokio::test]
+    async fn channel_revision_tombstone_prevents_delete_recreate_aba() {
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        init_io_schema(&pool).await.unwrap();
+        sqlx::query(
+            "INSERT INTO channels (channel_id, name, protocol, enabled, config) \
+             VALUES (8, 'first-entity', 'virtual', 0, '{}')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query("DELETE FROM channels WHERE channel_id = 8")
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>(
+                "SELECT last_revision FROM channel_revision_tombstones WHERE channel_id = 8",
+            )
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+            2
+        );
+
+        sqlx::query(
+            "INSERT INTO channels (channel_id, name, protocol, enabled, config) \
+             VALUES (8, 'legacy-recreate', 'virtual', 0, '{}')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT revision FROM channels WHERE channel_id = 8")
+                .fetch_one(&pool)
+                .await
+                .unwrap(),
+            3,
+            "legacy recreation must advance beyond the delete tombstone"
+        );
+        assert_eq!(
+            sqlx::query(
+                "UPDATE channels SET name = 'stale-cas' WHERE channel_id = 8 AND revision = 1"
+            )
+            .execute(&pool)
+            .await
+            .unwrap()
+            .rows_affected(),
+            0,
+            "a stale CAS token must not match the recreated entity"
+        );
+    }
+
+    #[tokio::test]
+    async fn exhausted_channel_tombstone_rejects_recreation_before_insert() {
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        init_io_schema(&pool).await.unwrap();
+        sqlx::query(
+            "INSERT INTO channel_revision_tombstones (channel_id, last_revision) \
+             VALUES (9, 9223372036854775807)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let error = sqlx::query(
+            "INSERT INTO channels (channel_id, name, protocol, enabled, config) \
+             VALUES (9, 'exhausted-recreate', 'virtual', 0, '{}')",
+        )
+        .execute(&pool)
+        .await
+        .expect_err("an exhausted identity must not be recreated");
+        assert!(error.to_string().contains("channel revision exhausted"));
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM channels WHERE channel_id = 9")
+                .fetch_one(&pool)
+                .await
+                .unwrap(),
+            0,
+            "the BEFORE guard must reject the row itself"
+        );
     }
 
     #[tokio::test]

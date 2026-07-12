@@ -146,6 +146,110 @@ pub const WRITE_POINT_CAPABILITY: CapabilityDescriptor = CapabilityDescriptor::n
     false,
 );
 
+/// Manually execute a commissioned automation rule.
+///
+/// A rule may dispatch one or more device commands, so this capability uses
+/// the same fail-closed confirmation and audit posture as direct control.
+pub const EXECUTE_RULE_CAPABILITY: CapabilityDescriptor = CapabilityDescriptor::new(
+    "automation.rule.execute",
+    OperationKind::Command,
+    RiskLevel::High,
+    "automation.rule.execute",
+    ConfirmationPolicy::Always,
+    AuditPolicy::Required,
+    false,
+);
+
+/// Create, edit, enable, disable, or delete an automation rule.
+///
+/// Rule definitions are control policy: changing even a currently-disabled
+/// rule can alter later device behavior. Every mutation therefore uses the
+/// high-risk, explicitly-confirmed, durably-audited command posture.
+pub const MANAGE_RULE_CAPABILITY: CapabilityDescriptor = CapabilityDescriptor::new(
+    "automation.rule.manage",
+    OperationKind::Command,
+    RiskLevel::High,
+    "automation.rule.manage",
+    ConfirmationPolicy::Always,
+    AuditPolicy::Required,
+    false,
+);
+
+/// Create, replace, toggle, or delete commissioned action routes.
+///
+/// Action routes decide which physical command-owned point receives a logical
+/// automation action. Mutating them can redirect later device control, so the
+/// operation is always confirmed, durably audited, and non-idempotent.
+pub const MANAGE_ROUTING_CAPABILITY: CapabilityDescriptor = CapabilityDescriptor::new(
+    "automation.routing.manage",
+    OperationKind::Command,
+    RiskLevel::High,
+    "automation.routing.manage",
+    ConfirmationPolicy::Always,
+    AuditPolicy::Required,
+    false,
+);
+
+/// Create, edit, enable, disable, or delete an I/O channel.
+///
+/// Channel commissioning changes acquisition and device-control connectivity.
+/// Every mutation therefore requires explicit confirmation and durable audit,
+/// and is never advertised as safely retryable.
+pub const MANAGE_CHANNEL_CAPABILITY: CapabilityDescriptor = CapabilityDescriptor::new(
+    "io.channel.manage",
+    OperationKind::Command,
+    RiskLevel::High,
+    "io.channel.manage",
+    ConfirmationPolicy::Always,
+    AuditPolicy::Required,
+    false,
+);
+
+/// Reconcile commissioned I/O channels into their rebuildable runtimes.
+///
+/// Reconciliation can disconnect and reconnect protocol sessions. It therefore
+/// uses the same permission and fail-closed posture as channel commissioning,
+/// while remaining a separately discoverable application capability.
+pub const RECONCILE_CHANNELS_CAPABILITY: CapabilityDescriptor = CapabilityDescriptor::new(
+    "io.channel.reconcile",
+    OperationKind::Command,
+    RiskLevel::High,
+    "io.channel.manage",
+    ConfirmationPolicy::Always,
+    AuditPolicy::Required,
+    false,
+);
+
+/// Create, edit, enable, disable, or delete an alarm policy.
+///
+/// Alarm rules affect operator-facing safety signals and may resolve active
+/// alarms when disabled or removed, so changes are explicitly confirmed and
+/// durably audited.
+pub const MANAGE_ALARM_RULE_CAPABILITY: CapabilityDescriptor = CapabilityDescriptor::new(
+    "alarm.rule.manage",
+    OperationKind::Command,
+    RiskLevel::High,
+    "alarm.rule.manage",
+    ConfirmationPolicy::Always,
+    AuditPolicy::Required,
+    false,
+);
+
+/// Manually resolve an active alarm indication.
+///
+/// Resolution can temporarily hide a condition that remains true until the
+/// monitor evaluates it again, so it uses the same fail-closed posture as
+/// changing alarm policy.
+pub const RESOLVE_ALERT_CAPABILITY: CapabilityDescriptor = CapabilityDescriptor::new(
+    "alarm.alert.resolve",
+    OperationKind::Command,
+    RiskLevel::High,
+    "alarm.alert.resolve",
+    ConfirmationPolicy::Always,
+    AuditPolicy::Required,
+    false,
+);
+
 /// Discover configured data-processing tasks and bindings.
 pub const TASKS_LIST_CAPABILITY: CapabilityDescriptor = CapabilityDescriptor::new(
     "data_processing.tasks.list",
@@ -179,9 +283,16 @@ pub const PROCESS_DATA_CAPABILITY: CapabilityDescriptor = CapabilityDescriptor::
     false,
 );
 
-const CAPABILITY_CATALOG: [CapabilityDescriptor; 5] = [
+const CAPABILITY_CATALOG: [CapabilityDescriptor; 12] = [
     READ_POINT_CAPABILITY,
     WRITE_POINT_CAPABILITY,
+    EXECUTE_RULE_CAPABILITY,
+    MANAGE_RULE_CAPABILITY,
+    MANAGE_ROUTING_CAPABILITY,
+    MANAGE_CHANNEL_CAPABILITY,
+    RECONCILE_CHANNELS_CAPABILITY,
+    MANAGE_ALARM_RULE_CAPABILITY,
+    RESOLVE_ALERT_CAPABILITY,
     TASKS_LIST_CAPABILITY,
     PROCESSOR_HEALTH_CAPABILITY,
     PROCESS_DATA_CAPABILITY,

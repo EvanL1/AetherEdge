@@ -24,10 +24,7 @@ fn test_automation_config_default() {
     assert_eq!(config.api.host, "127.0.0.1");
 
     // Check default paths
-    assert_eq!(
-        config.products_path,
-        Some("config/automation/products".to_string())
-    );
+    assert!(config.products_path.is_none());
     assert_eq!(
         config.instances_path,
         Some("config/automation/instances.yaml".to_string())

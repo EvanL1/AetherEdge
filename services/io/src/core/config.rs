@@ -34,6 +34,8 @@ pub use types::{
     // Table SQL constants
     ADJUSTMENT_POINTS_TABLE,
     AdjustmentPoint,
+    CHANNEL_REVISION_BUMP_TRIGGER,
+    CHANNEL_REVISION_EXHAUSTED_TRIGGER,
     CHANNEL_ROUTING_TABLE,
     CHANNELS_TABLE,
     CONTROL_POINTS_TABLE,
@@ -60,6 +62,7 @@ pub use types::{
     TELEMETRY_POINTS_TABLE,
     TelemetryPoint,
     VirtualMapping,
+    install_channel_revision_triggers,
 };
 
 // Re-export common configuration types

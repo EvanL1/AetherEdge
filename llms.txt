@@ -7,8 +7,8 @@
 > optional domain pack, not a core dependency.
 
 AetherEMS is the official energy distribution layered over Aether. The current
-repository integrates both until the versioned pack boundary is ready for the
-staged repository split recorded in ADR-0007.
+repository integrates both while the Pack v1 contract lands and legacy asset
+shims are removed for the staged repository split recorded in ADR-0007.
 
 The kernel API and safe default site are industry-neutral. The compatibility
 runtime still embeds the legacy energy model catalog until pack loading is
@@ -35,6 +35,7 @@ read-only historian directory/identity for `aether-api`; the base
 - [ADR-0007](docs/adr/0007-aether-core-and-ems-distribution.md): Staged separation of the Aether kernel and AetherEMS energy distribution without rewriting Git history
 - [ADR-0009](docs/adr/0009-aether-data-processing.md): Accepted industry-neutral task, processor direction, derived-data authority, opt-in API/sidecar composition, and reserved future runtime decision
 - [Target Repository Layout](docs/architecture/target-layout.md): Core crates, optional extensions, interfaces, and domain packs
+- [Pack Contract Crate](crates/aether-pack/README.md): Versioned manifest loading, release compatibility, required identifiers, fail-safe examples, and pack-root path confinement
 - [SHM Data Plane Crate](crates/aether-dataplane/README.md): Layout ownership, mmap validation, seqlock safety, and compatibility imports
 - [Data Processing Codec Crate](crates/aether-data-processing/README.md): Strict transport-neutral v1 JSON codec, DTO conversion, and RFC 8785 input digests
 - [Local Store Extension](extensions/store-local/README.md): Memory adapters and the crash-recoverable FileOutbox
@@ -53,7 +54,7 @@ read-only historian directory/identity for `aether-api`; the base
 ## Domain Knowledge
 
 - [Energy Storage Primer](docs/domain/ess-primer.md): How ESS concepts - PCS, BMS, SOC, grid interface - map onto Aether products, instances, and points
-- [Built-in Product Models](docs/domain/product-models.md): The 13 built-in product models, their hierarchy, and the meaning of every measurement and action point
+- [Energy Pack Product Models](docs/domain/product-models.md): Compatibility pointer to the 13 Energy Pack-owned product models and their point semantics
 - [Control Strategies as Rules](docs/domain/control-strategies.md): Expressing SOC management, peak shaving, and demand control as executable rule flows
 - [Safe Operations for AI Agents](docs/domain/safe-operations.md): Which writes reach real devices, how write gating works, and the operating rules an AI agent must follow
 - [Power Forecasting](docs/domain/power-forecasting.md): Map AetherEMS load and PV data into the request-driven Load-Forecasting processor without creating a second data plane

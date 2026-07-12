@@ -24,11 +24,12 @@ and so on), plus three point lists:
 - `actions` — action point definitions (id, name, unit, description)
 - `properties` — property templates (static configuration values, e.g. rated power)
 
-The product library ships as JSON files under `libs/aether-model/src/products/`,
-where the same three lists appear as the `M`, `A`, and `P` arrays and the
-hierarchy as `name` / `pName`. Product files are validated in code by
-`validate_product_dir` (`libs/aether-model/src/product_lib.rs`), which parses
-each JSON file and reports per-file errors.
+The kernel product library is empty by default. Validated active Packs provide
+JSON model assets (the Energy Pack owns its models under
+`packs/energy/models/`), where the same three lists appear as `M`, `A`, and `P`
+and the hierarchy as `name` / `pName`. A site may add an explicit custom
+directory. Product candidates pass the same confinement, regular-file, size,
+JSON, and duplicate-name checks in validation and at runtime.
 
 **Instance** — one physical device. Defined in `Instance` / `InstanceCore`
 (`libs/aether-config/src/automation.rs`):

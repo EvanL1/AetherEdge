@@ -279,11 +279,58 @@ pub fn resolve_pagination(
 // Response wrappers
 // ============================================================================
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct ApiResponse<T: Serialize> {
     pub success: bool,
     pub message: String,
     pub data: T,
+}
+
+/// Success payload returned after creating a rule.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct CreateRuleData {
+    pub rule_id: u64,
+    pub rule_name: String,
+    pub logical_key: Option<String>,
+    pub point_id: i64,
+    pub monitoring: bool,
+    pub rule: Option<AlertRule>,
+    pub request_id: String,
+    pub audit: CompletionAuditData,
+}
+
+/// Compatibility payload used by legacy single-item endpoints.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct SingleItemData<T: Serialize> {
+    pub total: i64,
+    pub list: Vec<T>,
+}
+
+/// Success payload returned after updating a rule.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct RuleIdData {
+    pub rule_id: u64,
+    pub request_id: String,
+    pub audit: CompletionAuditData,
+}
+
+/// Success payload returned after an active alert is manually resolved.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct AlertResolutionData {
+    pub alert_id: u64,
+    pub rule_id: u64,
+    pub resolved_at_ms: u64,
+    pub request_id: String,
+    pub audit: CompletionAuditData,
+}
+
+/// Public terminal-audit state for an already accepted non-idempotent command.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct CompletionAuditData {
+    pub status: String,
+    pub retryable: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
 }
 
 impl<T: Serialize> ApiResponse<T> {

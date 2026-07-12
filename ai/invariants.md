@@ -5,8 +5,9 @@ These rules are more important than the current directory layout.
 1. SHM is authoritative for current point values.
 2. A point has exactly one live writer for each ownership class.
 3. Configuration discovery never depends on scanning live-state keys.
-4. Device commands pass authorization, safety policy, idempotency handling, and
-   audit before reaching a driver.
+4. Device commands pass authorization, safety policy, declared retry policy,
+   and audit before reaching a driver. A correlation ID is not an idempotency
+   key; current device-control capabilities are non-idempotent.
 5. Read-only AI capabilities cannot mutate device, configuration, or storage
    state.
 6. External-service failure cannot stop local acquisition or local safety
@@ -42,3 +43,15 @@ These rules are more important than the current directory layout.
 20. SQLite read-only flags do not replace OS permissions. Production direct
     history reads give the API an independent read-only historian directory or
     identity, separate from its writable configuration/audit store.
+21. Physical acquisition samples carry a channel identity and enter only
+    through the IO-owned `AcquisitionStateWriter`; logical application points
+    carry an instance identity. HTTP, CLI, MCP, automation, alarm, history,
+    and uplink never receive the acquisition writer.
+22. Pack activation requires a target-compatible, checksummed runtime manifest
+    whose capabilities and protocols match the concrete composition. A process
+    never fills a missing manifest by assuming a full feature set.
+23. Local SQLite is authoritative for commissioned channel desired state; the
+    active protocol runtime is a rebuildable projection. HTTP, CLI, and MCP
+    create, update, delete, enable, or disable channels only through the
+    confirmed, audited `io.channel.manage` application command and never
+    coordinate SQLite and `ChannelManager` directly.

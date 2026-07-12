@@ -21,11 +21,13 @@ common = { path = "../../libs/common", default-features = false, features = ["sq
 errors = { path = "../../libs/errors", default-features = false, features = ["axum-support"] }
 aether-config = { path = "../../libs/aether-config" }
 aether-application = { path = "../../crates/aether-application" }
+aether-auth-jwt = { path = "../../extensions/auth-jwt" }
+aether-pack = { path = "../../crates/aether-pack" }
+aether-runtime-catalog = { path = "../../libs/aether-runtime-catalog" }
 aether-domain = { path = "../../crates/aether-domain" }
 aether-ports = { path = "../../crates/aether-ports" }
-aether-store-local = { path = "../../extensions/store-local", features = ["sqlite-audit"] }
+aether-store-local = { path = "../../extensions/store-local", features = ["sqlite-audit", "sqlite-topology"] }
 aether-model = { path = "../../libs/aether-model" }
-aether-rtdb-shm = { path = "../../libs/aether-rtdb-shm" }
 aether-shm-bridge = { path = "../../extensions/shm-bridge" }
 aether-routing = { path = "../../libs/aether-routing" }
 aether-rules = { path = "../../libs/aether-rules" }
@@ -50,21 +52,21 @@ sqlx = { workspace = true }
 # cron removed - not currently used
 arc-swap = "1.7"  # ArcSwapOption for runtime-swappable SHM writer
 dashmap = { workspace = true }  # For high-performance concurrent name→id cache
-parking_lot = { workspace = true }  # Non-poisoning RwLock for SlotBitmap
 itoa = { workspace = true }  # Stack-allocated u32→str formatting
 tower = { workspace = true }
-jsonwebtoken = "9"
 subtle = "2.6"
 
 [dev-dependencies]
 # criterion removed - no benchmarks
+aether-rtdb-shm = { path = "../../libs/aether-rtdb-shm" }
 tempfile = { workspace = true }
 http-body-util = "0.1"
+jsonwebtoken = "9"
 
 [features]
 default = ["sqlite"]
 sqlite = []
-swagger-ui = ["utoipa-swagger-ui", "common/openapi"]  # Swagger UI documentation (enabled by default for development)
+swagger-ui = ["utoipa-swagger-ui", "common/openapi"]  # Opt-in Swagger UI documentation
 
 [lints]
 workspace = true

@@ -3,10 +3,11 @@
 use std::sync::Arc;
 
 use aether_domain::{CommandId, PointAddress};
-use aether_ports::{AuditSink, CommandDispatcher, CommandReceipt, LiveState};
+use aether_ports::{AuditSink, CommandDispatcher, LiveState};
 
 use crate::{
-    ApplicationError, ControlApplication, READ_POINT_CAPABILITY, RequestContext, SafetyPolicy,
+    ApplicationError, CommandAcceptance, ControlApplication, READ_POINT_CAPABILITY, RequestContext,
+    SafetyPolicy,
 };
 
 /// Application facade shared by CLI, MCP, and optional network transports.
@@ -52,7 +53,7 @@ impl EdgeApplication {
         command_id: CommandId,
         target: PointAddress,
         value: f64,
-    ) -> Result<CommandReceipt, ApplicationError> {
+    ) -> Result<CommandAcceptance, ApplicationError> {
         self.control
             .write_point(context, command_id, target, value)
             .await

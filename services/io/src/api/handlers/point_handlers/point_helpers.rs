@@ -242,61 +242,68 @@ pub(super) async fn validate_point_uniqueness(
 // Auto-Reload Helper Functions
 // ============================================================================
 
-/// Trigger channel reload if auto_reload is enabled
+/// Reconcile the affected channel through the shared application boundary.
 ///
-/// Uses `tokio::spawn` for async execution to avoid blocking the API response.
+/// The operation is awaited so a detached stale snapshot can never reactivate
+/// a channel after a later disable or delete.
 pub async fn trigger_channel_reload_if_needed(
     channel_id: u32,
     state: &AppState,
     auto_reload: bool,
-) {
+) -> bool {
     if !auto_reload {
         tracing::debug!(
             "Auto-reload disabled for channel {}, skipping hot reload",
             channel_id
         );
-        return;
+        return false;
     }
 
-    tracing::debug!("Ch{} auto-reload", channel_id);
-
-    let state_clone = state.clone();
-    tokio::spawn(async move {
-        match perform_channel_reload(channel_id, &state_clone).await {
-            Err(e) => {
-                tracing::error!("Ch{} reload: {}", channel_id, e);
-            },
-            _ => {
-                tracing::debug!("Ch{} reloaded", channel_id);
-            },
-        }
-    });
-}
-
-/// Perform channel reload (load config from SQLite and hot-reload)
-async fn perform_channel_reload(channel_id: u32, state: &AppState) -> anyhow::Result<()> {
-    use crate::core::channels::channel_manager::ChannelManager;
-
-    let config = ChannelManager::load_channel_from_db(&state.sqlite_pool, channel_id)
+    let Some(application) = &state.channel_reconciliation else {
+        tracing::warn!(
+            "Ch{} reconciliation deferred: application boundary unavailable",
+            channel_id
+        );
+        return false;
+    };
+    let request_id = uuid::Uuid::new_v4().to_string();
+    let timestamp = chrono::Utc::now().timestamp_millis().max(0) as u64;
+    let context = aether_application::RequestContext::new(
+        &request_id,
+        aether_application::Actor::new("io.point-topology").with_permission("io.channel.manage"),
+        true,
+        aether_domain::TimestampMs::new(timestamp),
+    );
+    match application
+        .reconcile(
+            &context,
+            aether_ports::ChannelReconciliationScope::One(aether_domain::ChannelId::new(
+                channel_id,
+            )),
+        )
         .await
-        .map_err(|e| anyhow::anyhow!("Failed to load channel config: {}", e))?;
-
-    let manager = &state.channel_manager;
-    if let Err(e) = manager.remove_channel(channel_id).await {
-        tracing::warn!("Ch{} remove: {}", channel_id, e);
+    {
+        Ok(acceptance) => {
+            let converged = !acceptance.reconciliation_required();
+            if converged {
+                tracing::debug!("Ch{} reconciled", channel_id);
+            } else {
+                tracing::warn!(
+                    request_id = acceptance.request_id(),
+                    "Ch{} reconciliation remains degraded",
+                    channel_id
+                );
+            }
+            converged
+        },
+        Err(error) => {
+            tracing::error!(
+                request_id,
+                "Ch{} reconciliation failed: {}",
+                channel_id,
+                error
+            );
+            false
+        },
     }
-
-    let entry = manager
-        .create_channel(std::sync::Arc::new(config))
-        .await
-        .map_err(|e| anyhow::anyhow!("Failed to create channel: {}", e))?;
-
-    tokio::spawn(async move {
-        match entry.connect().await {
-            Ok(_) => tracing::debug!("Ch{} connected", channel_id),
-            Err(e) => tracing::warn!("Ch{} connect: {}", channel_id, e),
-        }
-    });
-
-    Ok(())
 }

@@ -7,6 +7,7 @@ pub use forecast::PersistenceForecastProcessor;
 pub use load_forecast::LoadForecastContract;
 
 use aether_example_minimal_gateway::MinimalGateway;
+use aether_sdk::pack::{PackRuntime, parse_pack_manifest};
 use serde::Deserialize;
 use thiserror::Error;
 
@@ -14,15 +15,15 @@ const ENERGY_PACK_MANIFEST: &str = include_str!("../../../packs/energy/pack.yaml
 const ENERGY_IO_EXAMPLES: &str = include_str!("../../../packs/energy/examples/config/io/io.yaml");
 const ENERGY_AUTOMATION_EXAMPLE: &str =
     include_str!("../../../packs/energy/examples/config/automation/automation.yaml");
-const ENERGY_RULE_EXAMPLE: &str = include_str!(
-    "../../../packs/energy/examples/config/automation/rules/battery_soc_management.json"
-);
+const ENERGY_RULE_EXAMPLE: &str =
+    include_str!("../../../packs/energy/rules/battery_soc_management.json");
 const LOAD_FORECAST_TASK: &str =
     include_str!("../../../packs/energy/data-processing/tasks/site-load-forecast.yaml");
 const PV_FORECAST_TASK: &str =
     include_str!("../../../packs/energy/data-processing/tasks/site-pv-forecast.yaml");
 const EXAMPLE_PROCESSING_BINDING: &str =
     include_str!("../../../packs/energy/data-processing/bindings/example-site.yaml");
+const ENERGY_PACK_ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../packs/energy");
 
 /// Pack metadata exposed by the safe AetherEMS composition.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -47,6 +48,10 @@ pub struct EnergyPackSummary {
 pub enum EnergyGatewayError {
     #[error("cannot compose the Aether core: {0}")]
     Core(#[from] aether_sdk::BuildError),
+    #[error("cannot load the bundled energy pack: {0}")]
+    Pack(#[from] aether_sdk::pack::PackError),
+    #[error("cannot construct the explicit example runtime manifest: {0}")]
+    RuntimeManifest(#[from] aether_runtime_catalog::RuntimeManifestError),
     #[error("cannot parse bundled asset {asset}: {message}")]
     InvalidAsset {
         asset: &'static str,
@@ -54,27 +59,6 @@ pub enum EnergyGatewayError {
     },
     #[error("unsafe bundled energy pack: {0}")]
     UnsafePack(String),
-}
-
-#[derive(Deserialize)]
-struct PackManifest {
-    schema_version: u32,
-    id: String,
-    name: String,
-    status: String,
-    compatibility: PackCompatibility,
-    capabilities: PackCapabilities,
-}
-
-#[derive(Deserialize)]
-struct PackCompatibility {
-    aether: String,
-}
-
-#[derive(Deserialize)]
-struct PackCapabilities {
-    models: Vec<String>,
-    data_processing_tasks: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -95,6 +79,7 @@ struct AutomationExample {
 #[derive(Deserialize)]
 struct RuleExample {
     enabled: bool,
+    commissioned: bool,
 }
 
 #[derive(Deserialize)]
@@ -171,7 +156,8 @@ impl EnergyGateway {
         pv_task_contents: &str,
         processing_binding_contents: &str,
     ) -> Result<Self, EnergyGatewayError> {
-        let manifest: PackManifest = parse_yaml("packs/energy/pack.yaml", manifest_contents)?;
+        let pack_runtime = energy_pack_runtime()?;
+        let manifest = parse_pack_manifest(manifest_contents, ENERGY_PACK_ROOT, &pack_runtime)?;
         let io: IoExamples = parse_yaml("packs/energy/examples/config/io/io.yaml", io_contents)?;
         let automation: AutomationExample = parse_yaml(
             "packs/energy/examples/config/automation/automation.yaml",
@@ -179,7 +165,7 @@ impl EnergyGateway {
         )?;
         let rule: RuleExample = serde_json::from_str(rule_contents).map_err(|error| {
             EnergyGatewayError::InvalidAsset {
-                asset: "packs/energy/examples/config/automation/rules/battery_soc_management.json",
+                asset: "packs/energy/rules/battery_soc_management.json",
                 message: error.to_string(),
             }
         })?;
@@ -198,30 +184,26 @@ impl EnergyGateway {
             processing_binding_contents,
         )?;
 
-        if manifest.schema_version != 1 {
-            return Err(EnergyGatewayError::UnsafePack(format!(
-                "unsupported schema version {}",
-                manifest.schema_version
-            )));
-        }
-        if !supports_aether_release(&manifest.compatibility.aether, env!("CARGO_PKG_VERSION")) {
-            return Err(EnergyGatewayError::UnsafePack(format!(
-                "Aether {} does not satisfy {}",
-                env!("CARGO_PKG_VERSION"),
-                manifest.compatibility.aether
-            )));
-        }
-
         let enabled_channel_count = io.channels.iter().filter(|channel| channel.enabled).count();
         let enabled_rule_count = usize::from(rule.enabled);
-        if enabled_channel_count > 0 || enabled_rule_count > 0 || automation.auto_load_instances {
+        if enabled_channel_count > 0
+            || enabled_rule_count > 0
+            || rule.commissioned
+            || automation.auto_load_instances
+        {
             return Err(EnergyGatewayError::UnsafePack(
                 "bundled examples must require explicit commissioning".to_string(),
             ));
         }
 
         validate_data_processing_assets(
-            &manifest.capabilities.data_processing_tasks,
+            manifest
+                .capability_ids("data_processing_tasks")
+                .ok_or_else(|| {
+                    EnergyGatewayError::UnsafePack(
+                        "pack manifest has no data-processing task capabilities".to_string(),
+                    )
+                })?,
             [&load_task, &pv_task],
             &processing_binding,
         )?;
@@ -237,11 +219,18 @@ impl EnergyGateway {
             .count();
 
         let summary = EnergyPackSummary {
-            id: manifest.id,
-            name: manifest.name,
-            status: manifest.status,
-            aether_compatibility: manifest.compatibility.aether,
-            capabilities: manifest.capabilities.models,
+            id: manifest.id().to_string(),
+            name: manifest.name().to_string(),
+            status: manifest.status().to_string(),
+            aether_compatibility: manifest.aether_requirement().to_string(),
+            capabilities: manifest
+                .capability_ids("models")
+                .ok_or_else(|| {
+                    EnergyGatewayError::UnsafePack(
+                        "pack manifest has no model capabilities".to_string(),
+                    )
+                })?
+                .to_vec(),
             example_channel_count: io.channels.len(),
             enabled_channel_count,
             enabled_rule_count,
@@ -278,26 +267,13 @@ impl EnergyGateway {
     }
 }
 
-fn supports_aether_release(requirement: &str, current: &str) -> bool {
-    let mut clauses = requirement.split(',');
-    let Some(minimum) = clauses.next().and_then(|clause| clause.strip_prefix(">=")) else {
-        return false;
-    };
-    let Some(maximum) = clauses.next().and_then(|clause| clause.strip_prefix('<')) else {
-        return false;
-    };
-    if clauses.next().is_some() {
-        return false;
-    }
-
-    match (
-        parse_release_version(minimum),
-        parse_release_version(maximum),
-        parse_release_version(current),
-    ) {
-        (Some(minimum), Some(maximum), Some(current)) => current >= minimum && current < maximum,
-        _ => false,
-    }
+fn energy_pack_runtime() -> Result<PackRuntime, aether_runtime_catalog::RuntimeManifestError> {
+    aether_runtime_catalog::KernelRuntimeManifest::from_io_features(
+        env!("CARGO_PKG_VERSION"),
+        "aarch64-unknown-linux-musl",
+        ["can", "gpio", "http", "modbus", "mqtt"],
+    )?
+    .pack_runtime()
 }
 
 fn reject_forbidden_binding_fields(contents: &str) -> Result<(), EnergyGatewayError> {
@@ -438,17 +414,6 @@ fn validate_data_processing_assets(
     Ok(())
 }
 
-fn parse_release_version(version: &str) -> Option<(u64, u64, u64)> {
-    let core = version.split_once('-').map_or(version, |(core, _)| core);
-    let mut parts = core.split('.');
-    let parsed = (
-        parts.next()?.parse().ok()?,
-        parts.next()?.parse().ok()?,
-        parts.next()?.parse().ok()?,
-    );
-    parts.next().is_none().then_some(parsed)
-}
-
 fn parse_yaml<T>(asset: &'static str, contents: &str) -> Result<T, EnergyGatewayError>
 where
     T: for<'de> Deserialize<'de>,
@@ -477,7 +442,7 @@ mod tests {
             EXAMPLE_PROCESSING_BINDING,
         );
 
-        assert!(matches!(result, Err(EnergyGatewayError::UnsafePack(_))));
+        assert!(matches!(result, Err(EnergyGatewayError::Pack(_))));
     }
 
     #[test]
@@ -498,6 +463,26 @@ mod tests {
     }
 
     #[test]
+    fn rule_template_must_remain_disabled_and_uncommissioned() {
+        for rule in [
+            ENERGY_RULE_EXAMPLE.replacen("\"enabled\": false", "\"enabled\": true", 1),
+            ENERGY_RULE_EXAMPLE.replacen("\"commissioned\": false", "\"commissioned\": true", 1),
+        ] {
+            let result = EnergyGateway::from_assets(
+                ENERGY_PACK_MANIFEST,
+                ENERGY_IO_EXAMPLES,
+                ENERGY_AUTOMATION_EXAMPLE,
+                &rule,
+                LOAD_FORECAST_TASK,
+                PV_FORECAST_TASK,
+                EXAMPLE_PROCESSING_BINDING,
+            );
+
+            assert!(matches!(result, Err(EnergyGatewayError::UnsafePack(_))));
+        }
+    }
+
+    #[test]
     fn incompatible_aether_release_fails_closed() {
         let manifest = ENERGY_PACK_MANIFEST.replacen(">=0.5.0,<0.6.0", ">=0.6.0,<0.7.0", 1);
 
@@ -511,7 +496,7 @@ mod tests {
             EXAMPLE_PROCESSING_BINDING,
         );
 
-        assert!(matches!(result, Err(EnergyGatewayError::UnsafePack(_))));
+        assert!(matches!(result, Err(EnergyGatewayError::Pack(_))));
     }
 
     #[test]

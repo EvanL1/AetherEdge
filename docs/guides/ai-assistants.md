@@ -1,7 +1,7 @@
 ---
 title: Connect AI Assistants
 description: Point Claude or any MCP client at aether mcp, and choose between read-only and write access
-updated: 2026-07-10
+updated: 2026-07-12
 ---
 
 # Connect AI Assistants
@@ -14,7 +14,7 @@ the server at a remote installation, and the read-only/write access model.
 
 ## What you get
 
-`aether mcp` registers 48 tools in two tiers:
+The production MCP catalog has 45 tools in two tiers:
 
 - **23 read-only tools**, always registered — listing and inspecting channels
   and their point mappings (`channels_list`, `channels_status`,
@@ -23,10 +23,22 @@ the server at a remote installation, and the read-only/write access model.
   routing, historical data (`history_query`, `history_latest`), product models
   and device instances (`models_products`, `models_instances`), channel
   templates, and cloud-link status (`net_mqtt_status`, `net_cert_info`).
-- **25 write tools**, registered only when the server is started with
-  `--allow-write` — device writes, channel/rule/alarm-rule configuration, and
-  MQTT/certificate management. See
-  [Read-only vs write access](#read-only-vs-write-access) below.
+- **22 governed write tools**, registered only when the server is started
+  with `--allow-write`: `channels_create`, `channels_update`,
+  `channels_delete`, `channels_enable`, `channels_disable`, and
+  `channels_reconcile`;
+  `models_instances_action`; `rules_execute`;
+  `rules_create`, `rules_update`, `rules_delete`, `rules_enable`, and
+  `rules_disable`; `alarms_rule_create`, `alarms_rule_update`,
+  `alarms_rule_delete`, `alarms_rule_enable`, and `alarms_rule_disable`;
+  `alarms_resolve`; and `routing_action_upsert`, `routing_action_delete`, and
+  `routing_action_set_enabled`. They map respectively to the governed
+  `io.channel.manage`, `io.channel.reconcile`, `device.write_point`, `automation.rule.execute`,
+  `automation.rule.manage`, `alarm.rule.manage`, `alarm.alert.resolve`, and
+  `automation.routing.manage` application capabilities. Every write requires
+  a signed identity, `confirmed: true`, application authorization, and
+  mandatory audit. See [Read-only vs write access](#read-only-vs-write-access)
+  below.
 
 Each tool wraps one CLI client call against the same service HTTP APIs the
 `aether` command line uses. Results come back as structured content; a failed
@@ -71,18 +83,19 @@ claude mcp add aether -- aether mcp --allow-write
 ## Pointing at a remote system
 
 The MCP server does not have to run on the edge device. Every tool talks to
-the Aether services over HTTP, so `aether mcp` on a laptop can drive a remote
-installation. Two mechanisms, both resolved at server startup:
+the Aether service APIs, so `aether mcp` on a laptop can inspect a remote
+installation. Two mechanisms are resolved at server startup:
 
 - **`--host <hostname>`** rewrites the host for all five service URLs while
-  keeping the default ports — the quick path when all services run on one box:
+  keeping plaintext HTTP and the default ports. This is a quick path for
+  read-only tools when all services run on one trusted network host:
 
   ```bash
   aether mcp --host 192.168.1.50
   ```
 
 - **Five environment variables** set each service URL independently, useful
-  when ports or hosts differ per service:
+  when schemes, ports, or hosts differ per service:
 
   | Environment variable | Service | Tools served | Default |
   |----------------------|---------|--------------|---------|
@@ -95,20 +108,28 @@ installation. Two mechanisms, both resolved at server startup:
 Precedence: `--host` wins — when it is passed, the environment variables are
 not consulted. When neither is set, everything defaults to `localhost`.
 
-In the Claude Desktop config, use the `env` block:
+Protected writes carrying `AETHER_ACCESS_TOKEN` are allowed over loopback HTTP
+for on-device operation. For any remote write-enabled MCP server, omit
+`--host` and point the service variables at certificate-validated HTTPS
+ingresses. The transport guard rejects non-loopback plaintext HTTP before the
+Bearer token is selected for the request or attached.
+
+In the Claude Desktop config, a remote write-enabled server can use the `env`
+block like this (replace the example hostnames with your ingress endpoints):
 
 ```json
 {
   "mcpServers": {
     "aether-site-a": {
       "command": "aether",
-      "args": ["mcp"],
+      "args": ["mcp", "--allow-write"],
       "env": {
-        "AETHER_IO_URL": "http://192.168.1.50:6001",
-        "AETHER_AUTOMATION_URL": "http://192.168.1.50:6002",
-        "AETHER_ALARM_URL": "http://192.168.1.50:6007",
-        "AETHER_UPLINK_URL": "http://192.168.1.50:6006",
-        "AETHER_HISTORY_URL": "http://192.168.1.50:6004"
+        "AETHER_IO_URL": "https://io.edge.example.test",
+        "AETHER_AUTOMATION_URL": "https://automation.edge.example.test",
+        "AETHER_ALARM_URL": "https://alarm.edge.example.test",
+        "AETHER_UPLINK_URL": "https://uplink.edge.example.test",
+        "AETHER_HISTORY_URL": "https://history.edge.example.test",
+        "AETHER_ACCESS_TOKEN": "<SIGNED_ADMIN_OR_ENGINEER_TOKEN>"
       }
     }
   }
@@ -118,17 +139,39 @@ In the Claude Desktop config, use the `env` block:
 ## Read-only vs write access
 
 By default, `aether mcp` is read-only. This is not an advisory annotation:
-without `--allow-write`, the 25 write tools are never registered and do not
+without `--allow-write`, the 22 write tools are never registered and do not
 appear in the `tools/list` response at all. A client cannot call — or even
 see — what is not registered, so the guarantee holds regardless of how the
 client is configured or how the model behaves.
 
-Starting the server with `--allow-write` is a deliberate act. Some of the
-tools it unlocks move real hardware — power setpoints, breakers, generator
-start/stop — and one of them overwrites live telemetry. **Before enabling it,
-read [Safe Operations for AI Agents](../domain/safe-operations.md)**, which
-classifies every write tool by severity and states the operating rules an
-agent must follow.
+Starting the server with `--allow-write` is a deliberate act, but the flag is
+only a registration gate. It is not confirmation for any command. The MCP
+caller must still pass `confirmed: true` on every invocation, and the
+application rejects unauthorized or unauditable requests before dispatch.
+The MCP bridge reads `AETHER_ACCESS_TOKEN`, sends it to the service as an
+`Authorization: Bearer` credential, and generates an `X-Request-ID` for each
+governed request. It refuses to attach that credential to non-loopback
+plaintext HTTP; remote writes require a certificate-validated HTTPS ingress.
+Preserve the returned `request_id` and any `command_id`: timeouts and incomplete
+audit or publication responses are not safe automatic retry signals.
+A successful device-command response means the local command plane accepted
+the command; it does not prove that the physical device executed it. A routing
+response means the physical target was persisted and published; it does not
+execute a device command. **Before
+enabling writes, read [Safe Operations for AI Agents](../domain/safe-operations.md).**
+If a command response reports `audit.status="incomplete"`, the command was
+already accepted: retain its `request_id`/`command_id` and do not retry it.
+Channel mutation success can also report a degraded runtime projection. Retain
+its `request_id` and `resulting_revision`, inspect
+`reconciliation_required`, and do not automatically retry the non-idempotent
+commissioning command.
+
+Channel simulation/point-batch and uplink configuration/certificate operations
+remain outside MCP. Channel CRUD/lifecycle, rule CRUD/lifecycle, alarm-rule
+CRUD/lifecycle, and alert resolution are present only because their schemas
+and application capabilities are explicitly mapped in the 22-tool write
+allowlist. No existing wrapper is promoted to an AI tool merely because
+`--allow-write` is present.
 
 The one-line rule: **give an assistant write access for a task, not as a
 default.** Register the write-enabled server for the session that needs it,
@@ -136,13 +179,14 @@ and drop back to read-only afterward.
 
 ## Resources
 
-Beyond tools, the server serves an embedded, curated subset of this
-documentation as MCP resources under `aether://docs/...` — read-only, and
-available in both modes. Clients that support MCP resources can pull domain
-context directly instead of relying on the model's prior knowledge:
+Beyond tools, the server serves a curated subset of this documentation as
+read-only MCP resources in both modes. Kernel pages are embedded; Pack
+knowledge appears only when that validated Pack is active in `global.yaml`.
+Clients that support MCP resources can pull context directly instead of relying
+on the model's prior knowledge:
 
-- `aether://docs/domain/ess-primer` — energy-storage concepts (PCS, BMS, SOC)
-- `aether://docs/domain/safe-operations` — the safety contract for agents
+- `aether://packs/energy/knowledge/ess-primer` — energy-storage concepts when the Energy Pack is active
+- `aether://packs/energy/knowledge/safe-operations` — the Energy Pack safety contract
 - `aether://docs/concepts/architecture` — the seven services and how they talk
 - `aether://docs/concepts/data-model` — instances, channels, points
 - `aether://docs/reference/mcp-tools` — the full tool reference

@@ -3,7 +3,7 @@ name = "aether-shm-bridge"
 version.workspace = true
 edition = "2024"
 rust-version = "1.90"
-description = "Transitional read-only bridge from the legacy Aether SHM data plane"
+description = "Typed Aether domain-port bridge for the shared-memory data plane"
 license.workspace = true
 repository.workspace = true
 documentation = "https://docs.rs/aether-shm-bridge"
@@ -16,6 +16,7 @@ aether-domain = { version = "0.5.0", path = "../../crates/aether-domain" }
 aether-dataplane = { version = "0.5.0", path = "../../crates/aether-dataplane" }
 aether-ports = { version = "0.5.0", path = "../../crates/aether-ports" }
 async-trait = { workspace = true }
+arc-swap = "1.7"
 rustc-hash = { workspace = true }
 tokio = { workspace = true }
 tokio-util = { workspace = true }

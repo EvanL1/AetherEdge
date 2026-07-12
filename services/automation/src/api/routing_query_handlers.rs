@@ -24,7 +24,7 @@ use crate::error::AutomationError;
     get,
     path = "/api/instances/{id}/routing",
     params(
-        ("id" = u16, Path, description = "Instance ID")
+        ("id" = u32, Path, description = "Instance ID")
     ),
     responses(
         (status = 200, description = "Instance routing categorized by type", body = serde_json::Value,

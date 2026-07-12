@@ -7,12 +7,11 @@ use chrono::{DateTime, SecondsFormat, Utc};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
-const REQUEST_FIXTURE: &[u8] = include_bytes!("fixtures/load-processing-request.json");
-const RESULT_FIXTURE: &[u8] = include_bytes!("fixtures/load-processing-result.json");
-const DERIVED_FIXTURE: &[u8] =
-    include_bytes!("../../../packs/energy/data-processing/fixtures/load-derived-data.json");
+const REQUEST_FIXTURE: &[u8] = include_bytes!("fixtures/forecast-processing-request.json");
+const RESULT_FIXTURE: &[u8] = include_bytes!("fixtures/forecast-processing-result.json");
+const DERIVED_FIXTURE: &[u8] = include_bytes!("fixtures/forecast-derived-data.json");
 const PYTHON_RFC8785_DIGEST: &str =
-    "sha256:98967bdedc60b8ab555e596516eb272063c139ccf3a3112fb29a46ab0610f270";
+    "sha256:66aade139532bcd80b8ae85f5e6b120332e8b29128df82546440f209064193dc";
 
 fn refresh_digest(request: &mut Value) {
     let basis = json!({
@@ -58,23 +57,7 @@ fn fixture_derived_data() -> DerivedData {
 }
 
 #[test]
-fn packaged_goldens_match_the_ems_pack_fixtures_in_the_workspace() {
-    let workspace_fixtures = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../packs/energy/data-processing/fixtures");
-    if workspace_fixtures.is_dir() {
-        assert_eq!(
-            std::fs::read(workspace_fixtures.join("load-processing-request.json")).unwrap(),
-            REQUEST_FIXTURE
-        );
-        assert_eq!(
-            std::fs::read(workspace_fixtures.join("load-processing-result.json")).unwrap(),
-            RESULT_FIXTURE
-        );
-    }
-}
-
-#[test]
-fn accepted_derived_data_encodes_as_the_complete_ems_golden() {
+fn accepted_derived_data_encodes_as_the_complete_contract_golden() {
     let derived = fixture_derived_data();
 
     let dto = DerivedDataDto::try_from(&derived).expect("accepted data must encode as a DTO");
@@ -116,7 +99,7 @@ fn fallback_derived_data_retains_fallback_metadata_warnings_and_accepted_quality
         "strategy": "persistence",
         "strategy_version": "1",
         "reason_code": "MODEL_UNAVAILABLE",
-        "source_feature": "load",
+        "source_feature": "signal",
         "based_on_data_through": "2026-07-11T11:45:00Z"
     });
     result_json["warnings"] = json!(["MODEL_FALLBACK"]);
@@ -166,11 +149,11 @@ fn derived_encoder_rejects_non_wire_ids_and_impossible_acceptance_order() {
 }
 
 #[test]
-fn ems_request_fixture_round_trips_between_json_dto_and_domain() {
+fn request_fixture_round_trips_between_json_dto_and_domain() {
     let request = decode_request(REQUEST_FIXTURE).expect("fixture must decode");
 
-    assert_eq!(request.task().id(), "energy.site-load-forecast");
-    assert_eq!(request.binding().id(), "energy.example-site");
+    assert_eq!(request.task().id(), "example.signal-forecast");
+    assert_eq!(request.binding().id(), "example.edge-asset");
     assert_eq!(request.frame().history().sample_count(), 4);
     assert_eq!(
         request.frame().future_covariates().unwrap().sample_count(),
@@ -192,9 +175,9 @@ fn ems_request_fixture_round_trips_between_json_dto_and_domain() {
 }
 
 #[test]
-fn ems_digest_matches_python_rfc8785_reference() {
+fn digest_matches_python_rfc8785_reference() {
     // PYTHON_RFC8785_DIGEST was independently generated with:
-    // uv run --with rfc8785 python -c '<load fixture; rfc8785.dumps; sha256>'
+    // uv run --with rfc8785 python -c '<read fixture; rfc8785.dumps; sha256>'
     let request = decode_request(REQUEST_FIXTURE).expect("fixture must decode");
     let digest = compute_input_digest(
         request.task(),
@@ -211,10 +194,10 @@ fn ems_digest_matches_python_rfc8785_reference() {
 }
 
 #[test]
-fn ems_result_fixture_round_trips_between_json_dto_and_domain() {
+fn result_fixture_round_trips_between_json_dto_and_domain() {
     let result = decode_result(RESULT_FIXTURE).expect("fixture must decode");
 
-    assert_eq!(result.processor().id(), "load-forecasting-edge");
+    assert_eq!(result.processor().id(), "example-forecast-processor");
     assert!(result.warnings().is_empty());
 
     let dto = ProcessingResultDto::try_from(&result).expect("domain must encode as DTO");
@@ -318,9 +301,9 @@ fn decoder_requires_exactly_one_provenance_entry_per_feature_key() {
     let mut request: Value = serde_json::from_slice(REQUEST_FIXTURE).unwrap();
     let duplicate = json!({
         "segment": "history",
-        "feature": "load",
+        "feature": "signal",
         "source_kind": "history",
-        "source_ref": "energy.site.load.archive",
+        "source_ref": "example.asset.signal.archive",
         "watermark": "2026-07-11T11:45:00Z"
     });
     request["frame"]["provenance"]
@@ -374,8 +357,8 @@ fn codec_round_trips_missing_aware_boundary_gaps_and_single_interval_history() {
     for missing_indices in [vec![0_usize], vec![1], vec![2, 3]] {
         let mut request: Value = serde_json::from_slice(REQUEST_FIXTURE).unwrap();
         for index in &missing_indices {
-            request["frame"]["history"]["features"]["load"]["values"][*index] = Value::Null;
-            request["frame"]["history"]["features"]["load"]["quality"][*index] = json!("missing");
+            request["frame"]["history"]["features"]["signal"]["values"][*index] = Value::Null;
+            request["frame"]["history"]["features"]["signal"]["quality"][*index] = json!("missing");
         }
         request["frame"]["quality"]["missing_ratio"] = json!(missing_indices.len() as f64 / 28.0);
         request["frame"]["quality"]["max_gap_seconds"] = json!(1800);
@@ -598,7 +581,7 @@ fn decoder_enforces_identifier_unit_and_source_reference_bounds() {
     assert_request_rejected(request);
 
     let mut request: Value = serde_json::from_slice(REQUEST_FIXTURE).unwrap();
-    request["frame"]["history"]["features"]["load"]["unit"] = json!("u".repeat(65));
+    request["frame"]["history"]["features"]["signal"]["unit"] = json!("u".repeat(65));
     assert_request_rejected(request);
 
     let mut request: Value = serde_json::from_slice(REQUEST_FIXTURE).unwrap();

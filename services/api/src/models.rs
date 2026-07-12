@@ -95,6 +95,94 @@ pub struct TokenResponse {
     pub expires_in: i64,
 }
 
+/// Compatibility response envelope used by the gateway auth routes.
+///
+/// The gateway predates `common::SuccessResponse` and includes a human-readable
+/// message alongside typed data. Keep this schema explicit so generated clients
+/// match the wire format during migration.
+#[allow(dead_code)] // OpenAPI-only compatibility schema.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct GatewayDataResponse<T> {
+    pub success: bool,
+    pub message: String,
+    pub data: T,
+}
+
+#[allow(dead_code)] // OpenAPI-only compatibility schema.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct GatewayMessageResponse {
+    pub success: bool,
+    pub message: String,
+}
+
+#[allow(dead_code)] // OpenAPI-only compatibility schema.
+#[derive(Debug, ToSchema)]
+pub struct RegistrationResult {
+    pub id: i64,
+    pub username: String,
+    pub role_id: i64,
+}
+
+#[allow(dead_code)] // OpenAPI-only compatibility schema.
+#[derive(Debug, ToSchema)]
+pub struct RoleListResponse {
+    pub success: bool,
+    pub message: String,
+    pub data: Vec<Role>,
+    pub total: usize,
+}
+
+#[allow(dead_code)] // OpenAPI-only compatibility schema.
+#[derive(Debug, ToSchema)]
+pub struct UserListData {
+    pub total: usize,
+    pub list: Vec<UserWithRole>,
+}
+
+#[allow(dead_code)] // OpenAPI-only compatibility schema.
+#[derive(Debug, ToSchema)]
+pub struct DeletedUserData {
+    pub user_id: i64,
+    pub username: String,
+}
+
+#[allow(dead_code)] // OpenAPI-only compatibility schema.
+#[derive(Debug, ToSchema)]
+pub struct AuthStatsData {
+    pub active_refresh_tokens: usize,
+    pub expired_tokens: usize,
+    pub access_token_expire_minutes: i64,
+    pub refresh_token_expire_days: i64,
+}
+
+#[allow(dead_code)] // OpenAPI-only compatibility schema.
+#[derive(Debug, ToSchema)]
+pub struct HomepagePageData {
+    pub items: Vec<CalculatedPoint>,
+    pub total: i64,
+    pub page: i64,
+    pub limit: i64,
+    pub pages: i64,
+}
+
+#[allow(dead_code)] // OpenAPI-only compatibility schema.
+#[derive(Debug, ToSchema)]
+pub struct HomepageResetData {
+    /// Number of homepage point definitions after reset; always zero.
+    pub remaining_count: i64,
+    /// Confirms that reset does not import domain-specific defaults.
+    pub note: String,
+}
+
+#[allow(dead_code)] // OpenAPI-only compatibility schema.
+#[derive(Debug, ToSchema)]
+pub struct UserUpdateSuccess {
+    pub success: bool,
+    pub message: String,
+    /// Present for profile updates; omitted for the compatibility password path.
+    pub data: Option<UserWithRole>,
+}
+
 /// Stored refresh token metadata (in-memory)
 #[allow(dead_code)]
 #[derive(Debug, Clone)]

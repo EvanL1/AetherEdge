@@ -141,7 +141,6 @@ modsrv（`services/modsrv/src/routes.rs:157-158`）：
 | 命令 | 端点 | 方法 |
 |---|---|---|
 | `aether models instances action <id>` | `/api/instances/{id}/action` | POST |
-| `aether models instances measurement <id>` | `/api/instances/{id}/measurement` | POST |
 
 ## 错误处理
 

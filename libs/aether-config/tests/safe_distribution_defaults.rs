@@ -17,6 +17,15 @@ fn read(path: &Path) -> String {
 #[test]
 fn default_distribution_has_no_commissioned_device_or_rule() {
     let root = repository_root();
+    let global_path = root.join("config.template/global.yaml");
+    let global: Value = serde_yml::from_str(&read(&global_path))
+        .unwrap_or_else(|error| panic!("failed to parse {}: {error}", global_path.display()));
+    assert_eq!(
+        global.get("packs").and_then(Value::as_array).map(Vec::len),
+        Some(0),
+        "the distribution template must not activate a domain Pack"
+    );
+
     let io_path = root.join("config.template/io/io.yaml");
     let io: IoConfig = serde_yml::from_str(&read(&io_path))
         .unwrap_or_else(|error| panic!("failed to parse {}: {error}", io_path.display()));
@@ -39,6 +48,10 @@ fn default_distribution_has_no_commissioned_device_or_rule() {
     assert!(
         !automation.auto_load_instances,
         "the distribution template must not auto-load device instances"
+    );
+    assert!(
+        automation.products_path.is_none(),
+        "the distribution template must not select an implicit product directory"
     );
 
     let instances_path = root.join("config.template/automation/instances.yaml");

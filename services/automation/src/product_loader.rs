@@ -1,7 +1,7 @@
-//! Product Configuration - Compile-time Built-in Products
+//! Product configuration loaded by the automation composition root.
 //!
-//! Products are loaded from aether-model crate at compile time.
-//! No database queries needed - all data is embedded in the binary.
+//! Product queries use an explicitly assembled runtime [`ProductLibrary`]. The
+//! default loader is empty and never selects a domain Pack implicitly.
 
 use aether_model::product_lib::{self, BuiltinProduct, PointDef, ProductLibrary};
 use anyhow::{Context, Result};
@@ -19,9 +19,8 @@ pub use aether_model::PointRole;
 
 /// Product loader that provides access to products
 ///
-/// Supports two modes:
-/// - Built-in only: delegates to `aether_model::product_lib` static functions
-/// - Library mode: uses `ProductLibrary` for runtime product overrides
+/// The optional library is populated by startup after active Pack validation.
+/// `None` is the fail-safe empty state retained for constructor compatibility.
 #[derive(Clone)]
 pub struct ProductLoader {
     /// SQLite pool for instance schema initialization (not for product queries)
@@ -31,7 +30,7 @@ pub struct ProductLoader {
 }
 
 impl ProductLoader {
-    /// Create a new ProductLoader (built-in products only)
+    /// Creates a ProductLoader with no domain products.
     ///
     /// The pool is only used for schema initialization, not product queries.
     pub fn new(pool: SqlitePool) -> Self {
@@ -43,8 +42,8 @@ impl ProductLoader {
 
     /// Create a ProductLoader with a runtime product library
     ///
-    /// When a library is provided, all product queries use it instead of
-    /// the compile-time built-in products. This enables runtime overrides.
+    /// When a library is provided, all product queries use its active Pack and
+    /// site-selected products.
     pub fn with_library(pool: SqlitePool, library: Arc<ProductLibrary>) -> Self {
         Self {
             pool,
@@ -54,7 +53,8 @@ impl ProductLoader {
 
     /// Initialize database schema for instances and mappings
     ///
-    /// Note: Product tables are no longer created - products come from compile-time definitions.
+    /// Note: product tables are not created; definitions come from the selected
+    /// runtime library.
     /// This method only creates instance-related tables.
     pub async fn init_schema(&self) -> Result<()> {
         debug!("Init instance tables");
@@ -103,7 +103,7 @@ impl ProductLoader {
         Ok(())
     }
 
-    // ============ Product Query Methods (from compile-time data) ============
+    // ============ Product Query Methods ============
 
     /// Get a complete product with nested structure
     pub fn get_product(&self, product_name: &str) -> Result<Product> {
@@ -194,6 +194,14 @@ impl ProductLoader {
     }
 }
 
+#[cfg(test)]
+pub(crate) fn test_energy_product_loader(pool: SqlitePool) -> ProductLoader {
+    let directory =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../packs/energy/models");
+    let library = ProductLibrary::load(Some(&directory)).expect("load Energy Pack model fixture");
+    ProductLoader::with_library(pool, Arc::new(library))
+}
+
 // ============ Type Conversion Functions ============
 
 /// Convert BuiltinProduct to Product
@@ -263,13 +271,23 @@ fn convert_point_to_property(point: &PointDef) -> PropertyTemplate {
 mod tests {
     use super::*;
 
+    #[tokio::test]
+    async fn default_loader_exposes_no_domain_products() {
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        let loader = ProductLoader::new(pool);
+
+        assert_eq!(loader.product_count(), 0);
+        assert!(loader.get_all_products().is_empty());
+        assert!(!loader.product_exists("Battery"));
+    }
+
     #[test]
     fn test_get_product() {
         // Create a dummy pool for testing (not used for product queries)
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
             let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
-            let loader = ProductLoader::new(pool);
+            let loader = test_energy_product_loader(pool);
 
             let product = loader.get_product("Battery").expect("Battery should exist");
             assert_eq!(product.product_name, "Battery");
@@ -283,7 +301,7 @@ mod tests {
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
             let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
-            let loader = ProductLoader::new(pool);
+            let loader = test_energy_product_loader(pool);
 
             let products = loader.get_all_products();
             let names: Vec<&str> = products.iter().map(|p| p.product_name.as_str()).collect();
@@ -298,7 +316,7 @@ mod tests {
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
             let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
-            let loader = ProductLoader::new(pool);
+            let loader = test_energy_product_loader(pool);
 
             assert!(loader.product_exists("Battery"));
             assert!(loader.product_exists("PCS"));
@@ -311,7 +329,7 @@ mod tests {
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
             let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
-            let loader = ProductLoader::new(pool);
+            let loader = test_energy_product_loader(pool);
 
             let hierarchy = loader.get_product_hierarchy();
             assert!(!hierarchy.is_empty());

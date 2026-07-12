@@ -116,7 +116,7 @@ pub struct ProvisionResult {
     path = "/api/channels/{channel_id}/provision",
     params(
         ("channel_id" = u32, Path, description = "Channel identifier"),
-        ("auto_reload" = bool, Query, description = "Reload channel after provision (default: true)")
+        ("auto_reload" = bool, Query, description = "Reconcile the channel through the governed application boundary after provision (default: false)")
     ),
     request_body(
         content = ProvisionRequest,
@@ -147,7 +147,7 @@ pub struct ProvisionResult {
         (status = 404, description = "Channel not found"),
         (status = 502, description = "Device discovery failed")
     ),
-    tag = "channels"
+    tag = "io"
 )]
 pub async fn provision_channel_handler(
     Path(channel_id): Path<u32>,

@@ -238,6 +238,9 @@ cargo watch -x "check --workspace"
 ### 服务开发
 
 ```bash
+# 本地服务共同使用的 access-JWT 校验密钥（仅限当前开发终端）
+export JWT_SECRET_KEY="${JWT_SECRET_KEY:-$(openssl rand -hex 32)}"
+
 # 开发模式运行 aether-io（自动重载）
 cargo watch -x "run -p aether-io"
 

@@ -6,7 +6,6 @@
 
 #![allow(clippy::disallowed_methods)] // test code — unwrap is acceptable
 
-use aether_automation::infra::shm_dispatch::{ActionDispatch, NoopDispatch};
 use aether_automation::instance_manager::InstanceManager;
 use aether_automation::product_loader::ProductLoader;
 use aether_routing::RoutingCache;
@@ -33,8 +32,7 @@ async fn create_test_db() -> (TempDir, SqlitePool) {
 fn make_manager(pool: SqlitePool) -> InstanceManager {
     let routing_cache = Arc::new(RoutingCache::new());
     let product_loader = Arc::new(ProductLoader::new(pool.clone()));
-    let dispatch: Arc<dyn ActionDispatch> = Arc::new(NoopDispatch);
-    InstanceManager::new(pool, routing_cache, product_loader, dispatch)
+    InstanceManager::new(pool, routing_cache, product_loader)
 }
 
 async fn insert_action_routing(pool: &SqlitePool) {
@@ -106,9 +104,8 @@ async fn test_refresh_routing_updates_cache() {
 /// refresh_routing() succeeds even when no io is reachable.
 ///
 /// This test also implicitly verifies that refresh_routing() triggers no SHM
-/// operations: `NoopDispatch` is used, which performs no SHM reads or writes by
-/// definition. If refresh_routing() attempted any SHM call it would panic or
-/// require a real SHM file, causing the test to fail.
+/// operations: the instance manager owns no physical command sink. If routing
+/// refresh attempted any SHM call it would require a real segment and fail.
 #[tokio::test]
 async fn test_refresh_routing_succeeds_without_io() {
     let (_tmp, pool) = create_test_db().await;

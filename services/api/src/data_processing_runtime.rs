@@ -1097,8 +1097,7 @@ mod tests {
         validate_sqlite_history_authority,
     };
 
-    const ENERGY_RUNTIME: &str =
-        include_str!("../../../packs/energy/data-processing/runtime.example.yaml");
+    const RUNTIME_FIXTURE: &str = include_str!("../tests/fixtures/data-processing-runtime.yaml");
 
     struct RecordingHistory {
         calls: Arc<AtomicUsize>,
@@ -1122,9 +1121,9 @@ mod tests {
     }
 
     #[test]
-    fn energy_runtime_template_parses_into_the_exact_task_policy() {
+    fn runtime_fixture_parses_into_the_exact_task_policy() {
         let mut config: RuntimeConfig =
-            serde_yml::from_str(ENERGY_RUNTIME).expect("template parses");
+            serde_yml::from_str(RUNTIME_FIXTURE).expect("fixture parses");
         let mut route = config.routes.remove(0);
         route.processor.bearer_token_env = None;
         let task = route.task.into_domain().expect("task is representable");
@@ -1143,13 +1142,13 @@ mod tests {
             HistoryDuplicatePolicy::Latest
         );
         assert_eq!(specification.max_quantiles(), 0);
-        assert_eq!(route.processor.id, "load-forecasting-edge");
+        assert_eq!(route.processor.id, "example-forecast-processor");
         assert_eq!(
-            specification.history_aggregation_for("rain"),
+            specification.history_aggregation_for("precipitation"),
             HistoryAggregation::Sum
         );
         assert_eq!(
-            specification.history_aggregation_for("load"),
+            specification.history_aggregation_for("signal"),
             HistoryAggregation::Mean
         );
         assert!(
@@ -1168,7 +1167,7 @@ mod tests {
             .processor
             .build()
             .expect("processor endpoint and limits are composable");
-        assert_eq!(processor.descriptor().id(), "load-forecasting-edge");
+        assert_eq!(processor.descriptor().id(), "example-forecast-processor");
     }
 
     #[tokio::test]
@@ -1277,7 +1276,7 @@ mod tests {
                 .expect("channel is inserted");
         }
         for (instance, measurement, channel, unit) in [
-            (1001_i64, 1_i64, 10_i64, "kW"),
+            (1001_i64, 1_i64, 10_i64, "1"),
             (2001, 1, 20, "Cel"),
             (2001, 2, 20, "%"),
             (2001, 3, 20, "mm"),
@@ -1300,7 +1299,7 @@ mod tests {
         }
 
         let mut config: RuntimeConfig =
-            serde_yml::from_str(ENERGY_RUNTIME).expect("template parses");
+            serde_yml::from_str(RUNTIME_FIXTURE).expect("fixture parses");
         let route = config.routes.remove(0);
         let task = route.task.into_domain().expect("task is valid");
         let (binding, _) = route.binding.into_domain(&task).expect("binding is valid");
@@ -1312,8 +1311,8 @@ mod tests {
         target_from_calendar
             .routes
             .iter_mut()
-            .find(|history_route| history_route.feature == "load")
-            .expect("load history route exists")
+            .find(|history_route| history_route.feature == "signal")
+            .expect("signal history route exists")
             .source = HistorySourceConfig::QuarterHourOfDay;
         assert!(
             validate_physical_history_routes(&pool, &task, &binding, &target_from_calendar)
@@ -1335,16 +1334,16 @@ mod tests {
                 history: route.history.clone(),
             }],
         };
-        let load = task
+        let signal = task
             .features()
             .iter()
-            .find(|feature| feature.role() == FeatureRole::History && feature.name() == "load")
+            .find(|feature| feature.role() == FeatureRole::History && feature.name() == "signal")
             .cloned()
-            .expect("load feature is commissioned");
+            .expect("signal feature is commissioned");
         let guarded_window = HistoryWindow::new(
             task.identity().clone(),
             binding.identity().clone(),
-            vec![load],
+            vec![signal],
             TimestampMs::new(1_000),
             TimestampMs::new(2_000),
             1,
@@ -1360,7 +1359,7 @@ mod tests {
         assert_eq!(calls.load(Ordering::SeqCst), 1);
 
         sqlx::query(
-            "UPDATE telemetry_points SET unit = 'W' WHERE channel_id = 10 AND point_id = 1",
+            "UPDATE telemetry_points SET unit = 'Cel' WHERE channel_id = 10 AND point_id = 1",
         )
         .execute(&pool)
         .await
@@ -1378,7 +1377,7 @@ mod tests {
         assert_eq!(calls.load(Ordering::SeqCst), 1);
 
         sqlx::query(
-            "UPDATE telemetry_points SET unit = 'kW' WHERE channel_id = 10 AND point_id = 1",
+            "UPDATE telemetry_points SET unit = '1' WHERE channel_id = 10 AND point_id = 1",
         )
         .execute(&pool)
         .await

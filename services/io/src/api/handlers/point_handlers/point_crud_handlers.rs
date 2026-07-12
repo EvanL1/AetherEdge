@@ -97,8 +97,8 @@ fn extract_create_fields(
 
 /// Create a new telemetry point (Telemetry / type "T").
 ///
-/// T points are read-only floating-point measurements (voltage, current, temperature,
-/// SOC, etc.) polled periodically from the device. Writes to the `telemetry_points`
+/// T points are read-only floating-point measurements (temperature, pressure, flow,
+/// humidity, etc.) polled periodically from the device. Writes to the `telemetry_points`
 /// table and registers the corresponding SHM slot (if the channel is already running).
 /// Register address, byte order, linear scaling, and unit are supplied in the request.
 /// `point_id` must be unique within a channel.
@@ -108,10 +108,10 @@ fn extract_create_fields(
     params(
         ("channel_id" = u32, Path, description = "Channel identifier"),
         ("point_id" = u32, Path, description = "Point identifier"),
-        ("auto_reload" = bool, Query, description = "Auto-reload channel after creation (default: true)")
+        ("auto_reload" = bool, Query, description = "Reconcile the channel through the governed application boundary after creation (default: false)")
     ),
     responses(
-        (status = 201, description = "Point created", body = PointCrudResult),
+        (status = 200, description = "Point created", body = PointCrudResult),
         (status = 400, description = "Invalid request"),
         (status = 404, description = "Channel not found"),
         (status = 409, description = "Point ID already exists")
@@ -182,10 +182,10 @@ pub async fn create_telemetry_point_handler(
     params(
         ("channel_id" = u32, Path, description = "Channel identifier"),
         ("point_id" = u32, Path, description = "Point identifier"),
-        ("auto_reload" = bool, Query, description = "Auto-reload channel after creation (default: true)")
+        ("auto_reload" = bool, Query, description = "Reconcile the channel through the governed application boundary after creation (default: false)")
     ),
     responses(
-        (status = 201, description = "Point created", body = PointCrudResult),
+        (status = 200, description = "Point created", body = PointCrudResult),
         (status = 400, description = "Invalid request"),
         (status = 404, description = "Channel not found"),
         (status = 409, description = "Point ID already exists")
@@ -351,10 +351,10 @@ async fn create_ca_point_inner(
     params(
         ("channel_id" = u32, Path, description = "Channel identifier"),
         ("point_id" = u32, Path, description = "Point identifier"),
-        ("auto_reload" = bool, Query, description = "Auto-reload channel after creation (default: true)")
+        ("auto_reload" = bool, Query, description = "Reconcile the channel through the governed application boundary after creation (default: false)")
     ),
     responses(
-        (status = 201, description = "Point created", body = PointCrudResult),
+        (status = 200, description = "Point created", body = PointCrudResult),
         (status = 400, description = "Invalid request"),
         (status = 404, description = "Channel not found"),
         (status = 409, description = "Point ID already exists")
@@ -392,10 +392,10 @@ pub async fn create_control_point_handler(
     params(
         ("channel_id" = u32, Path, description = "Channel identifier"),
         ("point_id" = u32, Path, description = "Point identifier"),
-        ("auto_reload" = bool, Query, description = "Auto-reload channel after creation (default: true)")
+        ("auto_reload" = bool, Query, description = "Reconcile the channel through the governed application boundary after creation (default: false)")
     ),
     responses(
-        (status = 201, description = "Point created", body = PointCrudResult),
+        (status = 200, description = "Point created", body = PointCrudResult),
         (status = 400, description = "Invalid request"),
         (status = 404, description = "Channel not found"),
         (status = 409, description = "Point ID already exists")
@@ -431,76 +431,6 @@ pub async fn create_adjustment_point_handler(
 /// alarm limits. Changing `point_id` or `channel_id` is not allowed (delete and
 /// recreate instead, to avoid breaking SHM slot mappings). The new configuration takes
 /// effect on the next poll cycle; no channel restart is required.
-#[utoipa::path(
-    put,
-    path = "/api/channels/{channel_id}/{type}/points/{point_id}",
-    params(
-        ("channel_id" = u32, Path, description = "Channel identifier"),
-        ("type" = String, Path, description = "Point type: T, S, C, or A"),
-        ("point_id" = u32, Path, description = "Point identifier"),
-        ("auto_reload" = bool, Query, description = "Auto-reload channel after update (default: true)")
-    ),
-    request_body(
-        content = PointUpdateRequest,
-        description = "Update request for point fields (supports partial updates). Only provide fields you want to update.",
-        examples(
-            ("Telemetry (T)" = (
-                summary = "Update telemetry point",
-                description = "Common fields: signal_name, description, unit, scale, offset, data_type, reverse",
-                value = json!({
-                    "signal_name": "DC_Voltage",
-                    "description": "DC bus voltage",
-                    "unit": "V",
-                    "scale": 0.1,
-                    "offset": 0.0,
-                    "data_type": "float32",
-                    "reverse": false
-                })
-            )),
-            ("Signal (S)" = (
-                summary = "Update signal point",
-                description = "Common fields: signal_name, description, reverse",
-                value = json!({
-                    "signal_name": "Grid_Connected",
-                    "description": "Grid connection status",
-                    "reverse": false
-                })
-            )),
-            ("Control (C)" = (
-                summary = "Update control point",
-                description = "Control fields: signal_name, description, reverse, control_type, on_value, off_value, pulse_duration_ms",
-                value = json!({
-                    "signal_name": "Main_Breaker",
-                    "description": "Main breaker control",
-                    "control_type": "momentary",
-                    "on_value": 1,
-                    "off_value": 0,
-                    "pulse_duration_ms": 500,
-                    "reverse": false
-                })
-            )),
-            ("Adjustment (A)" = (
-                summary = "Update adjustment point",
-                description = "Adjustment fields: signal_name, description, unit, scale, offset, data_type, reverse (same as Telemetry)",
-                value = json!({
-                    "signal_name": "Target_Power",
-                    "description": "Target power setpoint",
-                    "unit": "kW",
-                    "scale": 1.0,
-                    "offset": 0.0,
-                    "data_type": "float32",
-                    "reverse": false
-                })
-            ))
-        )
-    ),
-    responses(
-        (status = 200, description = "Point updated", body = PointCrudResult),
-        (status = 400, description = "Invalid point type"),
-        (status = 404, description = "Channel or point not found")
-    ),
-    tag = "io"
-)]
 /// All four point tables share the same updatable columns,
 /// so a single parameterized query works for all types.
 pub(super) async fn update_point_handler_inner(
@@ -655,22 +585,6 @@ pub(super) async fn update_point_handler_inner(
 /// storms). If the point is the target of a M2C routing entry, that route becomes
 /// stale but is not cascade-deleted — orphaned routing entries must be cleaned up
 /// separately.
-#[utoipa::path(
-    delete,
-    path = "/api/channels/{channel_id}/{type}/points/{point_id}",
-    params(
-        ("channel_id" = u32, Path, description = "Channel identifier"),
-        ("type" = String, Path, description = "Point type: T, S, C, or A"),
-        ("point_id" = u32, Path, description = "Point identifier"),
-        ("auto_reload" = bool, Query, description = "Auto-reload channel after deletion (default: true)")
-    ),
-    responses(
-        (status = 200, description = "Point deleted", body = PointCrudResult),
-        (status = 400, description = "Invalid point type"),
-        (status = 404, description = "Channel or point not found")
-    ),
-    tag = "io"
-)]
 pub(super) async fn delete_point_handler_inner(
     channel_id: u32,
     point_type: &str,
@@ -741,6 +655,22 @@ pub(super) async fn delete_point_handler_inner(
 // --- PUT wrappers ---
 
 /// Update telemetry point
+#[utoipa::path(
+    put,
+    path = "/api/channels/{channel_id}/T/points/{point_id}",
+    params(
+        ("channel_id" = u32, Path, description = "Channel identifier"),
+        ("point_id" = u32, Path, description = "Telemetry point identifier"),
+        ("auto_reload" = bool, Query, description = "Reconcile the channel through the governed application boundary after update (default: false)")
+    ),
+    request_body(content = PointUpdateRequest, description = "Telemetry point fields to update"),
+    responses(
+        (status = 200, description = "Telemetry point updated", body = PointCrudResult),
+        (status = 400, description = "Invalid update"),
+        (status = 404, description = "Channel or telemetry point not found")
+    ),
+    tag = "io"
+)]
 pub async fn update_telemetry_point_handler(
     Path((channel_id, point_id)): Path<(u32, u32)>,
     State(state): State<AppState>,
@@ -751,6 +681,22 @@ pub async fn update_telemetry_point_handler(
 }
 
 /// Update signal point
+#[utoipa::path(
+    put,
+    path = "/api/channels/{channel_id}/S/points/{point_id}",
+    params(
+        ("channel_id" = u32, Path, description = "Channel identifier"),
+        ("point_id" = u32, Path, description = "Signal point identifier"),
+        ("auto_reload" = bool, Query, description = "Reconcile the channel through the governed application boundary after update (default: false)")
+    ),
+    request_body(content = PointUpdateRequest, description = "Signal point fields to update"),
+    responses(
+        (status = 200, description = "Signal point updated", body = PointCrudResult),
+        (status = 400, description = "Invalid update"),
+        (status = 404, description = "Channel or signal point not found")
+    ),
+    tag = "io"
+)]
 pub async fn update_signal_point_handler(
     Path((channel_id, point_id)): Path<(u32, u32)>,
     State(state): State<AppState>,
@@ -761,6 +707,22 @@ pub async fn update_signal_point_handler(
 }
 
 /// Update control point
+#[utoipa::path(
+    put,
+    path = "/api/channels/{channel_id}/C/points/{point_id}",
+    params(
+        ("channel_id" = u32, Path, description = "Channel identifier"),
+        ("point_id" = u32, Path, description = "Control point identifier"),
+        ("auto_reload" = bool, Query, description = "Reconcile the channel through the governed application boundary after update (default: false)")
+    ),
+    request_body(content = PointUpdateRequest, description = "Control point fields to update"),
+    responses(
+        (status = 200, description = "Control point updated", body = PointCrudResult),
+        (status = 400, description = "Invalid update"),
+        (status = 404, description = "Channel or control point not found")
+    ),
+    tag = "io"
+)]
 pub async fn update_control_point_handler(
     Path((channel_id, point_id)): Path<(u32, u32)>,
     State(state): State<AppState>,
@@ -771,6 +733,22 @@ pub async fn update_control_point_handler(
 }
 
 /// Update adjustment point
+#[utoipa::path(
+    put,
+    path = "/api/channels/{channel_id}/A/points/{point_id}",
+    params(
+        ("channel_id" = u32, Path, description = "Channel identifier"),
+        ("point_id" = u32, Path, description = "Adjustment point identifier"),
+        ("auto_reload" = bool, Query, description = "Reconcile the channel through the governed application boundary after update (default: false)")
+    ),
+    request_body(content = PointUpdateRequest, description = "Adjustment point fields to update"),
+    responses(
+        (status = 200, description = "Adjustment point updated", body = PointCrudResult),
+        (status = 400, description = "Invalid update"),
+        (status = 404, description = "Channel or adjustment point not found")
+    ),
+    tag = "io"
+)]
 pub async fn update_adjustment_point_handler(
     Path((channel_id, point_id)): Path<(u32, u32)>,
     State(state): State<AppState>,
@@ -783,6 +761,20 @@ pub async fn update_adjustment_point_handler(
 // --- DELETE wrappers ---
 
 /// Delete telemetry point
+#[utoipa::path(
+    delete,
+    path = "/api/channels/{channel_id}/T/points/{point_id}",
+    params(
+        ("channel_id" = u32, Path, description = "Channel identifier"),
+        ("point_id" = u32, Path, description = "Telemetry point identifier"),
+        ("auto_reload" = bool, Query, description = "Reconcile the channel through the governed application boundary after deletion (default: false)")
+    ),
+    responses(
+        (status = 200, description = "Telemetry point deleted", body = PointCrudResult),
+        (status = 404, description = "Channel or telemetry point not found")
+    ),
+    tag = "io"
+)]
 pub async fn delete_telemetry_point_handler(
     Path((channel_id, point_id)): Path<(u32, u32)>,
     State(state): State<AppState>,
@@ -792,6 +784,20 @@ pub async fn delete_telemetry_point_handler(
 }
 
 /// Delete signal point
+#[utoipa::path(
+    delete,
+    path = "/api/channels/{channel_id}/S/points/{point_id}",
+    params(
+        ("channel_id" = u32, Path, description = "Channel identifier"),
+        ("point_id" = u32, Path, description = "Signal point identifier"),
+        ("auto_reload" = bool, Query, description = "Reconcile the channel through the governed application boundary after deletion (default: false)")
+    ),
+    responses(
+        (status = 200, description = "Signal point deleted", body = PointCrudResult),
+        (status = 404, description = "Channel or signal point not found")
+    ),
+    tag = "io"
+)]
 pub async fn delete_signal_point_handler(
     Path((channel_id, point_id)): Path<(u32, u32)>,
     State(state): State<AppState>,
@@ -801,6 +807,20 @@ pub async fn delete_signal_point_handler(
 }
 
 /// Delete control point
+#[utoipa::path(
+    delete,
+    path = "/api/channels/{channel_id}/C/points/{point_id}",
+    params(
+        ("channel_id" = u32, Path, description = "Channel identifier"),
+        ("point_id" = u32, Path, description = "Control point identifier"),
+        ("auto_reload" = bool, Query, description = "Reconcile the channel through the governed application boundary after deletion (default: false)")
+    ),
+    responses(
+        (status = 200, description = "Control point deleted", body = PointCrudResult),
+        (status = 404, description = "Channel or control point not found")
+    ),
+    tag = "io"
+)]
 pub async fn delete_control_point_handler(
     Path((channel_id, point_id)): Path<(u32, u32)>,
     State(state): State<AppState>,
@@ -810,6 +830,20 @@ pub async fn delete_control_point_handler(
 }
 
 /// Delete adjustment point
+#[utoipa::path(
+    delete,
+    path = "/api/channels/{channel_id}/A/points/{point_id}",
+    params(
+        ("channel_id" = u32, Path, description = "Channel identifier"),
+        ("point_id" = u32, Path, description = "Adjustment point identifier"),
+        ("auto_reload" = bool, Query, description = "Reconcile the channel through the governed application boundary after deletion (default: false)")
+    ),
+    responses(
+        (status = 200, description = "Adjustment point deleted", body = PointCrudResult),
+        (status = 404, description = "Channel or adjustment point not found")
+    ),
+    tag = "io"
+)]
 pub async fn delete_adjustment_point_handler(
     Path((channel_id, point_id)): Path<(u32, u32)>,
     State(state): State<AppState>,

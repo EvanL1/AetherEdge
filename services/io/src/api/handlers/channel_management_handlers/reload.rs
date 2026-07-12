@@ -1,169 +1,223 @@
-//! Channel and routing reload handlers
+//! Governed channel runtime reconciliation and routing reload handlers.
 
-use super::helpers::*;
+use super::{ChannelManagementHttpBoundary, path_channel_id};
 use crate::api::routes::AppState;
-use crate::core::channels::ChannelManager;
-use crate::core::config::ChannelCore;
-use crate::dto::{AppError, SuccessResponse};
-use axum::{extract::State, response::Json};
-use std::sync::Arc;
+use crate::dto::{
+    AppError, ChannelCompletionAudit, ChannelCompletionAuditState, ChannelDesiredStateResult,
+    ChannelReconciliationItemResult, ChannelReconciliationResponse, ChannelReconciliationResult,
+    ChannelReconciliationScopeResult, ChannelRuntimeProjectionResult, SuccessResponse,
+};
 
-/// Reload all channel configurations from SQLite.
+use aether_application::{ChannelReconciliationAcceptance, CompletionAuditStatus};
+use aether_ports::{
+    ChannelDesiredStateObservation, ChannelReconciliationScope, ChannelRuntimeProjection,
+};
+use axum::{
+    Extension,
+    extract::{Path, State},
+    http::HeaderMap,
+    response::Json,
+};
+
+/// Reconcile every commissioned channel runtime from authoritative desired
+/// state through the shared application command.
+#[utoipa::path(
+    post,
+    path = "/api/channels/reconcile",
+    params(
+        ("x-request-id" = String, Header, format = "uuid", description = "Required UUID audit correlation ID; this is not an idempotency key"),
+        ("x-aether-confirmed" = bool, Header, description = "Required explicit confirmation; must be true")
+    ),
+    responses(
+        (status = 200, description = "Accepted non-idempotent full runtime reconciliation. Per-channel degradation and incomplete terminal audit remain accepted; do not retry automatically.", body = ChannelReconciliationResponse),
+        (status = 400, description = "Malformed request ID or invalid reconciliation scope", body = common::ErrorResponse),
+        (status = 403, description = "Missing/invalid Bearer token or io.channel.manage permission", body = common::ErrorResponse),
+        (status = 409, description = "Runtime reconciliation conflicts with current state", body = common::ErrorResponse),
+        (status = 422, description = "Explicit confirmation is missing or false", body = common::ErrorResponse),
+        (status = 503, description = "Mandatory pre-execution audit or reconciliation adapter is unavailable", body = common::ErrorResponse),
+        (status = 504, description = "Reconciliation adapter timed out", body = common::ErrorResponse),
+        (status = 500, description = "Permanent reconciliation adapter failure", body = common::ErrorResponse)
+    ),
+    security(("bearer_auth" = [])),
+    tag = "io"
+)]
+pub async fn reconcile_channels_handler(
+    Extension(boundary): Extension<ChannelManagementHttpBoundary>,
+    headers: HeaderMap,
+) -> Result<Json<ChannelReconciliationResponse>, AppError> {
+    reconcile_scope(&boundary, &headers, ChannelReconciliationScope::All).await
+}
+
+/// Reconcile one commissioned channel runtime from authoritative desired
+/// state through the shared application command.
+#[utoipa::path(
+    post,
+    path = "/api/channels/{id}/reconcile",
+    params(
+        ("id" = u32, Path, description = "Stable channel identifier below 10000", maximum = 9999),
+        ("x-request-id" = String, Header, format = "uuid", description = "Required UUID audit correlation ID; this is not an idempotency key"),
+        ("x-aether-confirmed" = bool, Header, description = "Required explicit confirmation; must be true")
+    ),
+    responses(
+        (status = 200, description = "Accepted non-idempotent single-channel runtime reconciliation. An absent desired channel is fenced and reported as an accepted removed projection; a degraded projection or incomplete terminal audit also remains accepted; do not retry automatically.", body = ChannelReconciliationResponse),
+        (status = 400, description = "Malformed channel ID or request ID", body = common::ErrorResponse),
+        (status = 403, description = "Missing/invalid Bearer token or io.channel.manage permission", body = common::ErrorResponse),
+        (status = 409, description = "Runtime reconciliation conflicts with current state", body = common::ErrorResponse),
+        (status = 422, description = "Explicit confirmation is missing or false", body = common::ErrorResponse),
+        (status = 503, description = "Mandatory pre-execution audit or reconciliation adapter is unavailable", body = common::ErrorResponse),
+        (status = 504, description = "Reconciliation adapter timed out", body = common::ErrorResponse),
+        (status = 500, description = "Permanent reconciliation adapter failure", body = common::ErrorResponse)
+    ),
+    security(("bearer_auth" = [])),
+    tag = "io"
+)]
+pub async fn reconcile_channel_handler(
+    Path(id): Path<String>,
+    Extension(boundary): Extension<ChannelManagementHttpBoundary>,
+    headers: HeaderMap,
+) -> Result<Json<ChannelReconciliationResponse>, AppError> {
+    let channel_id = aether_domain::ChannelId::new(path_channel_id(&id)?);
+    reconcile_scope(
+        &boundary,
+        &headers,
+        ChannelReconciliationScope::One(channel_id),
+    )
+    .await
+}
+
+/// Compatibility alias for full channel reconciliation.
 ///
-/// Call this after `aether sync` writes new configuration to SQLite so that io
-/// picks up the changes. Performs an incremental diff: newly added channels start their
-/// protocol adapters, removed channels stop, modified channels restart. The operation is
-/// hot — unaffected channels are not disturbed. Major topology changes (routing changes)
-/// trigger an SHM rebuild and increment `writer_generation`; automation automatically
-/// reopens SHM. Returns per-channel processing results.
+/// New clients must use `POST /api/channels/reconcile`. This deprecated alias
+/// executes the same governed application command and has the same receipt.
 #[utoipa::path(
     post,
     path = "/api/channels/reload",
-    responses(
-        (status = 200, description = "Configuration reloaded", body = crate::dto::ReloadConfigResult)
+    params(
+        ("x-request-id" = String, Header, format = "uuid", description = "Required UUID audit correlation ID; this is not an idempotency key"),
+        ("x-aether-confirmed" = bool, Header, description = "Required explicit confirmation; must be true")
     ),
+    responses(
+        (status = 200, description = "Accepted non-idempotent full runtime reconciliation through the compatibility alias. Per-channel degradation and incomplete terminal audit remain accepted; do not retry automatically.", body = ChannelReconciliationResponse),
+        (status = 400, description = "Malformed request ID or invalid reconciliation scope", body = common::ErrorResponse),
+        (status = 403, description = "Missing/invalid Bearer token or io.channel.manage permission", body = common::ErrorResponse),
+        (status = 409, description = "Runtime reconciliation conflicts with current state", body = common::ErrorResponse),
+        (status = 422, description = "Explicit confirmation is missing or false", body = common::ErrorResponse),
+        (status = 503, description = "Mandatory pre-execution audit or reconciliation adapter is unavailable", body = common::ErrorResponse),
+        (status = 504, description = "Reconciliation adapter timed out", body = common::ErrorResponse),
+        (status = 500, description = "Permanent reconciliation adapter failure", body = common::ErrorResponse)
+    ),
+    security(("bearer_auth" = [])),
     tag = "io"
 )]
 pub async fn reload_configuration_handler(
-    State(state): State<AppState>,
-) -> Result<Json<SuccessResponse<crate::dto::ReloadConfigResult>>, AppError> {
-    use crate::core::config::ChannelConfig;
+    Extension(boundary): Extension<ChannelManagementHttpBoundary>,
+    headers: HeaderMap,
+) -> Result<Json<ChannelReconciliationResponse>, AppError> {
+    reconcile_scope(&boundary, &headers, ChannelReconciliationScope::All).await
+}
 
-    tracing::debug!("Reloading config");
+async fn reconcile_scope(
+    boundary: &ChannelManagementHttpBoundary,
+    headers: &HeaderMap,
+    scope: ChannelReconciliationScope,
+) -> Result<Json<ChannelReconciliationResponse>, AppError> {
+    let acceptance = boundary.reconcile(headers, scope).await?;
+    Ok(Json(reconciliation_response(&acceptance)))
+}
 
-    // 1. Load all channels from SQLite
-    let db_channels: Vec<(i64, String, String, bool)> =
-        sqlx::query_as("SELECT channel_id, name, protocol, enabled FROM channels")
-            .fetch_all(&state.sqlite_pool)
-            .await
-            .map_err(|e| {
-                tracing::error!("Load channels: {}", e);
-                AppError::internal_error("Database operation failed")
-            })?;
-
-    // 2. Get runtime channel IDs
-    let runtime_ids: std::collections::HashSet<u32> = {
-        // Direct access without RwLock (lock-free)
-        let manager = &state.channel_manager;
-        manager.get_channel_ids().into_iter().collect()
+fn reconciliation_response(
+    acceptance: &ChannelReconciliationAcceptance,
+) -> ChannelReconciliationResponse {
+    let (scope, channel_id) = match acceptance.scope() {
+        ChannelReconciliationScope::All => (ChannelReconciliationScopeResult::All, None),
+        ChannelReconciliationScope::One(channel_id) => (
+            ChannelReconciliationScopeResult::One,
+            Some(channel_id.get()),
+        ),
     };
-
-    let db_ids: std::collections::HashSet<u32> =
-        db_channels.iter().map(|(id, _, _, _)| *id as u32).collect();
-
-    // 3. Determine changes
-    let to_add: Vec<u32> = db_ids.difference(&runtime_ids).copied().collect();
-    let to_remove: Vec<u32> = runtime_ids.difference(&db_ids).copied().collect();
-    let to_update: Vec<u32> = db_ids.intersection(&runtime_ids).copied().collect();
-
-    let mut channels_added = Vec::new();
-    let mut channels_updated = Vec::new();
-    let mut channels_removed = Vec::new();
-    let mut errors = Vec::new();
-
-    // 4. Remove channels that are no longer in SQLite
-    {
-        // Direct access without RwLock (lock-free)
-        let manager = &state.channel_manager;
-        for id in &to_remove {
-            match manager.remove_channel(*id).await {
-                Ok(_) => {
-                    channels_removed.push(*id);
-                    tracing::debug!("Ch{} removed (not in DB)", id);
-                },
-                Err(e) => {
-                    errors.push(format!("Failed to remove channel {}: {}", id, e));
-                },
-            }
-        }
-    }
-
-    // 5-6. Add new and update existing channels
-    let combined = to_add
+    let items = acceptance
+        .items()
         .iter()
-        .map(|id| (*id, false))
-        .chain(to_update.iter().map(|id| (*id, true)));
-
-    let manager = &state.channel_manager;
-    for (id, is_update) in combined {
-        let label = if is_update { "update" } else { "add" };
-        let Some((_, name, protocol, enabled)) =
-            db_channels.iter().find(|(cid, _, _, _)| *cid as u32 == id)
-        else {
-            continue;
-        };
-
-        let config_str: Option<String> =
-            sqlx::query_scalar("SELECT config FROM channels WHERE channel_id = ?")
-                .bind(id as i64)
-                .fetch_optional(&state.sqlite_pool)
-                .await
-                .map_err(|e| {
-                    tracing::error!("Load channel {} config: {}", id, e);
-                    AppError::internal_error("Database operation failed")
-                })?
-                .flatten();
-
-        let (description, parameters, logging) = parse_channel_config(id, config_str)?;
-
-        if is_update && let Err(e) = manager.remove_channel(id).await {
-            tracing::debug!("Ch{} not in runtime: {}", id, e);
-        }
-
-        let result_vec = if is_update {
-            &mut channels_updated
-        } else {
-            &mut channels_added
-        };
-
-        if *enabled {
-            let channel_config = ChannelConfig {
-                core: ChannelCore {
-                    id,
-                    name: name.clone(),
-                    description,
-                    protocol: protocol.clone(),
-                    enabled: *enabled,
-                },
-                parameters,
-                logging,
-            };
-
-            match manager.create_channel(Arc::new(channel_config)).await {
-                Ok(entry) => {
-                    if let Err(e) = entry.connect().await {
-                        tracing::warn!("Ch{} connect: {}", id, e);
+        .map(|item| {
+            let desired = match item.desired() {
+                ChannelDesiredStateObservation::Present { revision, enabled } => {
+                    ChannelDesiredStateResult::Present {
+                        revision: revision.get(),
+                        enabled,
                     }
-                    result_vec.push(id);
-                    tracing::debug!("Ch{} {}d", id, label);
                 },
-                Err(e) => {
-                    errors.push(format!("Failed to {} channel {}: {}", label, id, e));
+                ChannelDesiredStateObservation::Absent { last_revision } => {
+                    ChannelDesiredStateResult::Absent {
+                        last_revision: last_revision.map(aether_ports::ChannelRevision::get),
+                    }
                 },
+            };
+            ChannelReconciliationItemResult {
+                channel_id: item.channel_id().get(),
+                desired,
+                runtime_projection: runtime_projection(item.runtime_projection()),
+                reconciliation_required: item.reconciliation_required(),
             }
-        } else {
-            result_vec.push(id);
-            tracing::debug!("Ch{} {}d (disabled)", id, label);
-        }
-    }
-
-    let result = crate::dto::ReloadConfigResult {
-        total_channels: db_channels.len(),
-        channels_added,
-        channels_updated,
-        channels_removed,
-        errors,
+        })
+        .collect();
+    let completion_audit = match acceptance.completion_audit() {
+        CompletionAuditStatus::Recorded => ChannelCompletionAudit {
+            status: ChannelCompletionAuditState::Recorded,
+            retryable: false,
+            message: None,
+        },
+        CompletionAuditStatus::Incomplete { failure } => {
+            tracing::error!(
+                request_id = acceptance.request_id(),
+                error = %failure,
+                "channel reconciliation was accepted but terminal audit is incomplete; do not retry"
+            );
+            ChannelCompletionAudit {
+                status: ChannelCompletionAuditState::Incomplete,
+                retryable: false,
+                message: Some(
+                    "operation was accepted but its terminal audit is incomplete; do not retry"
+                        .to_string(),
+                ),
+            }
+        },
+    };
+    let scope_name = match scope {
+        ChannelReconciliationScopeResult::All => "all channels",
+        ChannelReconciliationScopeResult::One => "one channel",
     };
 
-    tracing::info!(
-        "Reload: +{} ~{} -{} err:{}",
-        result.channels_added.len(),
-        result.channels_updated.len(),
-        result.channels_removed.len(),
-        result.errors.len()
-    );
+    ChannelReconciliationResponse {
+        success: true,
+        data: ChannelReconciliationResult {
+            request_id: acceptance.request_id().to_string(),
+            scope,
+            channel_id,
+            items,
+            degraded_count: acceptance.degraded_count(),
+            reconciliation_required: acceptance.reconciliation_required(),
+            completion_audit,
+            retryable: acceptance.is_retryable(),
+            message: format!(
+                "runtime reconciliation for {scope_name} accepted; automatic retry is forbidden"
+            ),
+        },
+        metadata: std::collections::HashMap::new(),
+    }
+}
 
-    Ok(Json(SuccessResponse::new(result)))
+const fn runtime_projection(
+    projection: ChannelRuntimeProjection,
+) -> ChannelRuntimeProjectionResult {
+    match projection {
+        ChannelRuntimeProjection::Stopped => ChannelRuntimeProjectionResult::Stopped,
+        ChannelRuntimeProjection::ActivationPending => {
+            ChannelRuntimeProjectionResult::ActivationPending
+        },
+        ChannelRuntimeProjection::Active => ChannelRuntimeProjectionResult::Active,
+        ChannelRuntimeProjection::Degraded => ChannelRuntimeProjectionResult::Degraded,
+        ChannelRuntimeProjection::Removed => ChannelRuntimeProjectionResult::Removed,
+    }
 }
 
 /// Reload the routing cache only (does not touch channels).
@@ -190,27 +244,24 @@ pub async fn reload_routing_handler(
     let start_time = std::time::Instant::now();
     let mut errors = Vec::new();
 
-    // Get routing_cache reference from channel_manager
-    let (c2m_count, m2c_count, c2c_count) = {
-        // Direct access without RwLock (lock-free)
-        let manager = &state.channel_manager;
-
-        // Call the public reload_routing_cache method
-        match ChannelManager::reload_routing_cache(&state.sqlite_pool, &manager.routing_cache).await
-        {
-            Ok(counts) => {
+    let (c2m_count, m2c_count, c2c_count) =
+        match aether_routing::load_routing_maps(&state.sqlite_pool).await {
+            Ok(maps) => {
+                let counts = (maps.c2m.len(), maps.m2c.len(), maps.c2c.len());
+                state
+                    .channel_manager
+                    .routing_cache
+                    .update(maps.c2m, maps.m2c, maps.c2c);
                 // SHM layout is based on channel points, not routing.
-                // No SHM rebuild needed for routing changes.
+                // No SHM rebuild is needed for routing changes.
                 counts
             },
-            Err(e) => {
-                let error_msg = format!("Failed to reload routing cache: {}", e);
-                tracing::error!("{}", error_msg);
-                errors.push(error_msg);
+            Err(error) => {
+                tracing::error!(error = %error, "failed to reload routing cache");
+                errors.push("Failed to reload routing cache".to_string());
                 (0, 0, 0)
             },
-        }
-    };
+        };
 
     let duration_ms = start_time.elapsed().as_millis() as u64;
 

@@ -13,7 +13,10 @@ path = "src/main.rs"
 # Local libraries
 common = { path = "../../libs/common", default-features = false, features = ["sqlite", "axum"] }
 aether-domain = { path = "../../crates/aether-domain" }
+aether-application = { path = "../../crates/aether-application" }
 aether-ports = { path = "../../crates/aether-ports" }
+aether-auth-jwt = { path = "../../extensions/auth-jwt" }
+aether-store-local = { path = "../../extensions/store-local", features = ["sqlite-audit", "sqlite-topology"] }
 aether-shm-bridge = { path = "../../extensions/shm-bridge" }
 
 # Async runtime
@@ -43,16 +46,19 @@ anyhow = { workspace = true }
 # Utilities
 chrono = { workspace = true }
 futures = { workspace = true }
+async-trait = { workspace = true }
 
 # OpenAPI / Swagger UI
 utoipa = { workspace = true }
 utoipa-swagger-ui = { workspace = true, optional = true }
 
 [features]
-swagger-ui = ["utoipa-swagger-ui"]
+swagger-ui = ["utoipa-swagger-ui", "common/openapi"]
 
 [dev-dependencies]
 tempfile = { workspace = true }
+tower = { workspace = true }
+jsonwebtoken = "9"
 
 [lints]
 workspace = true

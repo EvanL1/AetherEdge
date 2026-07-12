@@ -90,7 +90,7 @@ fn unhealthy_json_doctor_is_one_error_envelope_and_exits_nonzero() {
 }
 
 #[test]
-fn json_sync_reports_the_same_reload_attempt_as_human_sync() {
+fn json_sync_reports_offline_atomic_desired_state_semantics() {
     let workspace = TempDir::new().expect("create temporary workspace");
     let data_path = workspace.path().join("data");
     let config_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -106,6 +106,7 @@ fn json_sync_reports_the_same_reload_attempt_as_human_sync() {
             "--db-path",
             data_path.to_str().expect("UTF-8 data path"),
             "sync",
+            "--confirmed",
         ])
         .output()
         .expect("run aether sync");
@@ -118,11 +119,49 @@ fn json_sync_reports_the_same_reload_attempt_as_human_sync() {
     let stdout = String::from_utf8(output.stdout).expect("stdout was not UTF-8");
     let parsed: serde_json::Value = serde_json::from_str(&stdout)
         .unwrap_or_else(|error| panic!("expected one JSON envelope: {error}\n{stdout}"));
-    let reload = parsed
-        .pointer("/data/reload")
-        .unwrap_or_else(|| panic!("sync JSON omitted reload result: {parsed}"));
-    assert!(reload.get("reloaded").is_some());
-    assert!(reload.get("unavailable").is_some());
+    assert_eq!(
+        parsed.pointer("/data/desired_state_atomic"),
+        Some(&serde_json::Value::Bool(true))
+    );
+    assert_eq!(
+        parsed.pointer("/data/runtime_activation"),
+        Some(&serde_json::Value::String(
+            "on_next_service_start".to_string()
+        ))
+    );
+    assert!(parsed.pointer("/data/reload").is_none());
+}
+
+#[test]
+fn configuration_apply_without_confirmation_fails_before_creating_the_database() {
+    let workspace = TempDir::new().expect("create temporary workspace");
+    let data_path = workspace.path().join("data");
+    let config_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .join("config.template");
+    let output = Command::new(env!("CARGO_BIN_EXE_aether"))
+        .args([
+            "--json",
+            "--config-path",
+            config_path.to_str().expect("UTF-8 config path"),
+            "--db-path",
+            data_path.to_str().expect("UTF-8 data path"),
+            "sync",
+        ])
+        .output()
+        .expect("run unconfirmed sync");
+
+    assert!(!output.status.success());
+    assert!(!data_path.join("aether.db").exists());
+    let stdout = String::from_utf8(output.stdout).expect("UTF-8 JSON output");
+    let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("one JSON envelope");
+    assert_eq!(parsed.get("success"), Some(&serde_json::Value::Bool(false)));
+    assert!(
+        parsed
+            .get("error")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|message| message.contains("--confirmed"))
+    );
 }
 
 #[test]

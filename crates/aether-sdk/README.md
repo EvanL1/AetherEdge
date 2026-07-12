@@ -8,6 +8,10 @@ provides authoritative live state, a device-command dispatcher, and the
 mandatory audit sink. This keeps Redis, PostgreSQL, SQLx, web frameworks, and
 protocol drivers out of the SDK's default dependency graph.
 
+The `aether_sdk::pack` facade exposes the versioned, fail-closed domain-pack
+manifest loader. Loading a pack validates compatibility and confined asset
+directories; it never installs or commissions the pack.
+
 For a runnable zero-external-service composition, see the repository's
 [`examples/minimal-gateway`](https://github.com/EvanL1/Aether/tree/main/examples/minimal-gateway).
 

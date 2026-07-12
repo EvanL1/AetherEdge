@@ -21,6 +21,39 @@ components:
     responsibility: Commands, queries, authorization, safety, and audit flow
     verify:
       - cargo test -p aether-application
+  action_routing_application:
+    path: crates/aether-application/src/action_routing.rs
+    responsibility: Governed physical C/A route mutations shared by HTTP, CLI, and MCP
+    verify:
+      - cargo test -p aether-application --test action_routing_application
+      - cargo test -p aether-automation --test test_action_routing_boundary
+  channel_management_application:
+    path: crates/aether-application/src/channel_management.rs
+    responsibility: Confirmed, audited, transport-neutral channel desired-state mutations shared by HTTP, CLI, and MCP
+    verify:
+      - cargo test -p aether-application --test channel_management_application
+      - cargo test -p aether-io --test channel_mutator_contract
+  pack_contract:
+    path: crates/aether-pack
+    responsibility: Versioned fail-closed manifest, compatibility, identifier, commissioning, and pack-root asset validation
+    verify:
+      - cargo test -p aether-pack
+  runtime_catalog:
+    path: libs/aether-runtime-catalog
+    responsibility: Versioned feature-exact runtime metadata, target/adapter derivation, canonical checksums, and shared fail-closed Pack compatibility loading
+    verify:
+      - cargo test -p aether-runtime-catalog
+      - ./scripts/test-runtime-manifest.sh
+  runtime_manifest_schema:
+    path: contracts/runtime/runtime-manifest.v1.schema.json
+    responsibility: Machine-readable closed contract for one concrete Aether runtime composition
+    verify:
+      - uvx --from check-jsonschema check-jsonschema --check-metaschema contracts/runtime/runtime-manifest.v1.schema.json
+  pack_schema:
+    path: contracts/pack/pack-manifest.v1.schema.json
+    responsibility: Machine-readable Pack v1 manifest contract
+    verify:
+      - uvx --from check-jsonschema check-jsonschema --check-metaschema contracts/pack/pack-manifest.v1.schema.json
   data_processing:
     path: crates/aether-application/src/data_processing.rs
     responsibility: Governed frame assembly, processor invocation, untrusted-result validation, and DerivedData stamping
@@ -55,6 +88,11 @@ components:
     responsibility: Zero-external-service state, history, audit, and crash-recoverable outbox adapters
     verify:
       - cargo test -p aether-store-local
+  jwt_auth_adapter:
+    path: extensions/auth-jwt
+    responsibility: Shared fail-closed access-JWT verification and server-owned application permissions for HTTP and CLI command boundaries
+    verify:
+      - cargo test -p aether-auth-jwt
   snapshot_covariates:
     path: extensions/store-local/src/snapshot_covariates.rs
     responsibility: Bounded, reloadable local covariate snapshots with valid-time and issue-time provenance
@@ -72,7 +110,7 @@ components:
       - cargo test -p aether-http-history-query
   shm_bridge:
     path: extensions/shm-bridge
-    responsibility: Transitional read-only adapter from legacy SlotIo to LiveState
+    responsibility: Typed channel manifest plus LiveState, acquisition-writer, and C/A command-sink adapters over the physical SHM data plane
     verify:
       - cargo test -p aether-shm-bridge
   redis_bridge:
@@ -125,6 +163,16 @@ components:
     responsibility: aether-io device protocol runtime
     verify:
       - cargo test -p aether-io --lib
+  governed_channel_adapter:
+    path: services/io/src/channel_mutator.rs
+    responsibility: Local SQLite channel desired-state authority with revision CAS and rebuildable ChannelManager runtime projection
+    verify:
+      - cargo test -p aether-io --test channel_mutator_contract
+  openapi_contracts:
+    path: scripts/check-openapi-contracts.sh
+    responsibility: Generated Swagger/OpenAPI route, security, schema, and failure-response contracts for all six services
+    verify:
+      - ./scripts/check-openapi-contracts.sh
   minimal_gateway_example:
     path: examples/minimal-gateway
     responsibility: Runnable SDK composition with no external services

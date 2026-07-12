@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aether.dev/schemas/pack-evaluation-suite.v1.json",
+  "title": "Aether Pack Evaluation Suite v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "id", "description", "execution", "scenarios"],
+  "properties": {
+    "schema": { "const": "aether.pack.evaluation-suite.v1" },
+    "id": { "$ref": "#/$defs/identifier" },
+    "description": { "type": "string", "minLength": 1 },
+    "execution": { "const": "cargo_test_evidence" },
+    "scenarios": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "expect", "evidence"],
+        "properties": {
+          "id": { "$ref": "#/$defs/identifier" },
+          "expect": { "type": "object", "minProperties": 1 },
+          "evidence": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["command", "test"],
+            "properties": {
+              "command": { "type": "string", "minLength": 1 },
+              "test": { "type": "string", "minLength": 1 }
+            }
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "identifier": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+    }
+  }
+}

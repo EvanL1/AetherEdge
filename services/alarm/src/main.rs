@@ -13,6 +13,7 @@ use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 use tracing::info;
 
+mod alarm_rule_mutation;
 mod broadcast;
 mod config;
 mod db;
@@ -70,6 +71,34 @@ async fn main() -> anyhow::Result<()> {
 
     let broadcaster = Broadcaster::new(http_client, cfg.api_url.clone(), cfg.uplink_url.clone());
 
+    // ── Governed alarm command boundary ──────────────────────────────────────
+    let access_authenticator = Arc::new(
+        aether_auth_jwt::AccessTokenAuthenticator::from_env()
+            .map_err(|error| anyhow::anyhow!("Alarm command authentication: {error}"))?,
+    );
+    let audit: Arc<dyn aether_ports::AuditSink> = Arc::new(
+        aether_store_local::SqliteAuditSink::initialize(db_pool.clone())
+            .await
+            .map_err(|error| anyhow::anyhow!("Alarm command audit: {error}"))?,
+    );
+    let alarm_store = Arc::new(alarm_rule_mutation::SqliteAlarmRuleMutator::new(
+        db_pool.clone(),
+        broadcaster.clone(),
+    ));
+    let mutator: Arc<dyn aether_ports::AlarmRuleMutator> = alarm_store.clone();
+    let resolver: Arc<dyn aether_ports::AlertResolver> = alarm_store;
+    let rule_application = Arc::new(aether_application::AlarmRuleApplication::new(
+        mutator,
+        Arc::clone(&audit),
+        aether_application::SafetyPolicy,
+    ));
+    let alert_resolution_application =
+        Arc::new(aether_application::AlertResolutionApplication::new(
+            resolver,
+            audit,
+            aether_application::SafetyPolicy,
+        ));
+
     let monitor_status = Arc::new(tokio::sync::RwLock::new(MonitorStatus {
         running: false,
         last_check_time: None,
@@ -82,6 +111,9 @@ async fn main() -> anyhow::Result<()> {
         config: Arc::new(cfg.clone()),
         broadcaster,
         monitor_status,
+        rule_application,
+        alert_resolution_application,
+        access_authenticator,
     });
 
     // ── Background tasks ──────────────────────────────────────────────────────

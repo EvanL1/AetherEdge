@@ -35,6 +35,15 @@ pub struct ParameterMetadata {
     pub default_value: Option<Value>,
     /// Type of the parameter.
     pub param_type: ParameterType,
+    /// Inclusive numeric minimum for integer parameters.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub minimum: Option<u64>,
+    /// Inclusive numeric maximum for integer parameters.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub maximum: Option<u64>,
+    /// Minimum UTF-8 string length for string parameters.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub min_length: Option<usize>,
 }
 
 impl ParameterMetadata {
@@ -52,6 +61,9 @@ impl ParameterMetadata {
             required: true,
             default_value: None,
             param_type,
+            minimum: None,
+            maximum: None,
+            min_length: None,
         }
     }
 
@@ -70,7 +82,25 @@ impl ParameterMetadata {
             required: false,
             default_value: Some(default_value),
             param_type,
+            minimum: None,
+            maximum: None,
+            min_length: None,
         }
+    }
+
+    /// Declares an inclusive range for an integer parameter.
+    #[must_use]
+    pub const fn with_integer_range(mut self, minimum: u64, maximum: u64) -> Self {
+        self.minimum = Some(minimum);
+        self.maximum = Some(maximum);
+        self
+    }
+
+    /// Declares a minimum length for a string parameter.
+    #[must_use]
+    pub const fn with_min_length(mut self, minimum: usize) -> Self {
+        self.min_length = Some(minimum);
+        self
     }
 }
 
@@ -166,13 +196,22 @@ fn build_registry() -> ProtocolRegistry {
     #[cfg(feature = "modbus")]
     {
         use crate::protocols::adapters::modbus::ModbusChannel;
-        let modbus_meta = ModbusChannel::metadata();
+        let modbus_tcp = ModbusChannel::tcp_metadata();
+        let modbus_rtu = ModbusChannel::rtu_metadata();
         registry.register(ProtocolMetadata {
             name: "modbus",
             display_name: "Modbus TCP",
             description: "Industrial Modbus TCP protocol",
             protocol_type: "modbus_tcp",
-            drivers: vec![modbus_meta.clone()],
+            drivers: vec![modbus_tcp.clone()],
+            supports_points: true,
+        });
+        registry.register(ProtocolMetadata {
+            name: "modbus_rtu",
+            display_name: "Modbus RTU",
+            description: "Industrial Modbus RTU protocol over a serial device",
+            protocol_type: "modbus_rtu",
+            drivers: vec![modbus_rtu.clone()],
             supports_points: true,
         });
         registry.register(ProtocolMetadata {
@@ -181,7 +220,7 @@ fn build_registry() -> ProtocolRegistry {
             description:
                 "SunSpec information model over Modbus TCP (same transport and point mappings as Modbus)",
             protocol_type: "sunspec_tcp",
-            drivers: vec![modbus_meta.clone()],
+            drivers: vec![modbus_tcp],
             supports_points: true,
         });
         registry.register(ProtocolMetadata {
@@ -190,7 +229,7 @@ fn build_registry() -> ProtocolRegistry {
             description:
                 "SunSpec information model over Modbus RTU (same transport and point mappings as Modbus)",
             protocol_type: "sunspec_rtu",
-            drivers: vec![modbus_meta],
+            drivers: vec![modbus_rtu],
             supports_points: true,
         });
     }

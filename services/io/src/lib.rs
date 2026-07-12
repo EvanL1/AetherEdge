@@ -6,6 +6,7 @@
 #![allow(clippy::result_large_err)]
 
 // Module declarations
+pub mod channel_mutator;
 pub mod error;
 pub mod protocols;
 pub mod utils;
@@ -39,7 +40,6 @@ pub mod core {
     pub mod bootstrap;
     pub mod channels;
     pub mod config;
-    pub mod reload;
 }
 
 pub mod store;
@@ -80,6 +80,7 @@ pub mod runtime {
 
 // Re-export dto at crate root for compatibility
 pub use crate::api::dto;
+pub use channel_mutator::{ChannelRuntimeLifecycle, SqliteChannelMutator};
 
 // Re-export commonly used types
 pub use error::{ErrorExt, IoError, Result};

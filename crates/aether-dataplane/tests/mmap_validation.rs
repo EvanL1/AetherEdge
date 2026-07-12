@@ -135,3 +135,34 @@ fn writer_create_publishes_a_valid_readable_segment() {
     assert_eq!(reader.read_slot(1).expect("written slot").value, 1.0);
     assert_eq!(reader.header().routing_hash, 99);
 }
+
+#[test]
+fn writer_open_existing_validates_manifest_and_shares_the_segment() {
+    let dir = tempfile::tempdir().expect("temporary directory");
+    let path = dir.path().join("existing.shm");
+    let owner = SlotWriter::create(&path, 4, 2, 99).expect("create owner");
+
+    let command_side =
+        SlotWriter::open_existing(&path, 2, 99).expect("open validated existing segment");
+    command_side.set_direct(1, 7.5, 7.5, 1_001);
+
+    assert_eq!(owner.read_slot(1).expect("shared slot").value, 7.5);
+    assert_eq!(command_side.generation(), owner.generation());
+}
+
+#[test]
+fn writer_open_existing_rejects_stale_slot_count_or_layout_hash() {
+    let dir = tempfile::tempdir().expect("temporary directory");
+    let path = dir.path().join("stale.shm");
+    let _owner = SlotWriter::create(&path, 4, 2, 99).expect("create owner");
+
+    for result in [
+        SlotWriter::open_existing(&path, 1, 99),
+        SlotWriter::open_existing(&path, 2, 100),
+    ] {
+        let Err(error) = result else {
+            panic!("stale manifest must fail closed");
+        };
+        assert!(matches!(error, DataplaneError::InvalidLayout(_)));
+    }
+}

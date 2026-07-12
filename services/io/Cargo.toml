@@ -18,11 +18,14 @@ path = "src/main.rs"
 common = { path = "../../libs/common", default-features = false, features = ["sqlite", "axum", "openapi"] }
 errors = { path = "../../libs/errors", default-features = false, features = ["axum-support"] }
 aether-config = { path = "../../libs/aether-config", features = ["openapi"] }
+aether-application = { path = "../../crates/aether-application" }
+aether-auth-jwt = { path = "../../extensions/auth-jwt" }
 aether-domain = { path = "../../crates/aether-domain" }
+aether-ports = { path = "../../crates/aether-ports" }
 aether-model = { path = "../../libs/aether-model" }
 aether-routing = { path = "../../libs/aether-routing" }
-aether-rtdb-shm = { path = "../../libs/aether-rtdb-shm" }
 aether-shm-bridge = { path = "../../extensions/shm-bridge" }
+aether-store-local = { path = "../../extensions/store-local", features = ["sqlite-audit", "sqlite-topology"] }
 
 # Protocol libraries
 voltage_modbus = { version = "0.5.0", optional = true, features = ["rtu"] }
@@ -87,6 +90,9 @@ socketcan = { version = "3.5", optional = true }
 tokio-gpiod = { version = "0.3", optional = true }
 
 [dev-dependencies]
+aether-dataplane = { path = "../../crates/aether-dataplane" }
+aether-rtdb-shm = { path = "../../libs/aether-rtdb-shm" }
+aether-runtime-catalog = { path = "../../libs/aether-runtime-catalog" }
 reqwest = { workspace = true }
 tempfile = { workspace = true }
 tower = { workspace = true }

@@ -13,6 +13,9 @@ use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
 
 // aether-automation imports
+use aether_automation::infra::{
+    application_control::RuleActionApplication, rule_live_state::ShmRuleLiveState,
+};
 #[cfg(feature = "swagger-ui")]
 use aether_automation::rule_routes::RuleApiDoc;
 use aether_automation::{
@@ -20,9 +23,12 @@ use aether_automation::{
     rule_routes::{RuleEngineState, create_rule_routes},
 };
 use aether_calc::MemoryStateStore;
-use aether_rtdb_shm::{PointWatchListener, SubscriptionBitmap, automation_bitmap_path_from_shm};
-use aether_rtdb_shm::{SharedConfig, UnifiedReader, UnifiedReaderHandle, is_shm_available};
-use aether_rules::{PointWatchDispatcher, ShmRuleLiveState, WatchEvent};
+use aether_rules::{PointWatchDispatcher, PointWatchHint, WatchEvent};
+use aether_shm_bridge::{
+    PointWatchEvent, PointWatchEventListener, ShmChannelReader, ShmChannelReaderHandle,
+    SubscriptionBitmap, automation_bitmap_path_from_shm, default_shm_path,
+    point_watch_socket_from_shm,
+};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -71,53 +77,27 @@ async fn main() -> Result<()> {
 
     debug!("Rule scheduler tick_ms: {}", tick_ms);
 
-    // Initialize SharedConfig for shared memory access
-    // Load SharedConfig parameters from database
-    let shm_config = {
-        let mut cfg = SharedConfig::default();
+    let shm_path = default_shm_path();
+    debug!("SHM path: {}", shm_path.display());
 
-        // Helper to load usize value from service_config
-        async fn load_usize(pool: &sqlx::SqlitePool, key: &str) -> Option<usize> {
-            sqlx::query_scalar::<_, String>(
-                "SELECT value FROM service_config WHERE service_name = 'global' AND key = ?",
-            )
-            .bind(key)
-            .fetch_optional(pool)
-            .await
-            .ok()
-            .flatten()
-            .and_then(|s| s.parse().ok())
-        }
-
-        if let Some(v) = load_usize(&sqlite_pool, "shared_memory.max_slots").await {
-            cfg = cfg.with_max_slots(v);
-        }
-
-        debug!("SharedConfig: max_slots={:?}", cfg.max_slots());
-        cfg
-    };
-
-    let channel_health_reader =
-        aether_automation::infra::channel_health::build_reader(&sqlite_pool, shm_config.path())
-            .await
-            .map_err(|error| {
-                AutomationError::DispatchDegraded(format!(
-                    "failed to configure channel-health SHM reader: {error}"
-                ))
-            })?;
+    let topology = aether_store_local::load_sqlite_shm_topology(&sqlite_pool)
+        .await
+        .map_err(|error| {
+            AutomationError::DispatchDegraded(format!(
+                "failed to load the canonical SHM topology from SQLite: {error}"
+            ))
+        })?;
+    let (point_manifest, health_manifest) = topology.into_manifests();
+    let channel_health_reader = aether_automation::infra::channel_health::build_reader(
+        Arc::new(health_manifest),
+        &shm_path,
+    );
     state
         .instance_manager
         .set_channel_health_reader(Arc::new(channel_health_reader));
     info!("Channel-health SHM reader configured");
 
-    // Load channel point counts for SHM layout (routing-independent)
-    let channel_points = aether_rtdb_shm::ChannelPointCounts::load_from_db(&sqlite_pool)
-        .await
-        .map_err(|error| {
-            AutomationError::DispatchDegraded(format!(
-                "failed to load the SHM channel layout from SQLite: {error}"
-            ))
-        })?;
+    let command_manifest = Arc::new(point_manifest);
 
     // Initialize UnifiedReader for cross-process zero-copy reads
     // Simplified: Header + PointSlots only, indexes built from channel points
@@ -129,17 +109,15 @@ async fn main() -> Result<()> {
         let mut retry_count = 0;
 
         loop {
-            if is_shm_available(&shm_config) {
-                // Open reader with RoutingCache (builds indexes from routing)
-                match UnifiedReader::open(&shm_config, &channel_points) {
+            if shm_path.exists() {
+                match ShmChannelReader::open(&shm_path, Arc::clone(&command_manifest)) {
                     Ok(reader) => {
                         info!(
-                            "UnifiedReader opened: {} slots, {} instances, {} channels",
+                            "Typed SHM reader opened: {} slots, {} channels",
                             reader.slot_count(),
-                            reader.instance_ids(&routing_cache).len(),
-                            reader.channel_ids().len()
+                            reader.channel_ids().count()
                         );
-                        break Arc::new(UnifiedReaderHandle::new(Arc::new(reader)));
+                        break Arc::new(ShmChannelReaderHandle::new(Arc::new(reader)));
                     },
                     Err(e) if retry_count < MAX_RETRIES => {
                         let delay_ms = (BASE_DELAY_MS * 2u64.pow(retry_count)).min(MAX_DELAY_MS);
@@ -155,7 +133,7 @@ async fn main() -> Result<()> {
                     },
                     Err(e) => {
                         return Err(AutomationError::DispatchDegraded(format!(
-                            "UnifiedReader unavailable after {MAX_RETRIES} retries: {e}"
+                            "typed SHM reader unavailable after {MAX_RETRIES} retries: {e}"
                         )));
                     },
                 }
@@ -181,52 +159,34 @@ async fn main() -> Result<()> {
         .instance_manager
         .set_live_reader(Arc::clone(&shared_reader));
 
-    // Initialize ActionWriter for M2C actions (Control/Adjustment via SHM).
-    // The type only exposes C/A writes — io's T/S slots are untouchable.
-    let shm_action_writer = Arc::new(
-        aether_rtdb_shm::ActionWriter::open(&shm_config, &channel_points).map_err(|error| {
-            AutomationError::DispatchDegraded(format!(
-                "failed to open the SHM action writer: {error}"
-            ))
-        })?,
-    );
-    info!("ActionWriter opened for M2C via SHM");
-
-    // Configure ShmDispatch with SHM components for M2C via shared memory
-    // ShmDispatch uses ArcSwapOption/OnceLock for delayed initialization
-    // ShmNotifier is shared between ShmDispatch and RuleScheduler for unified M2C dispatch
-    // Held only to keep the Arc alive while ShmDispatch borrows it; rule
-    // engine now consumes ShmDispatch directly, not the raw notifier.
+    // Publish one coherent typed manifest/writer generation. The sink accepts
+    // only domain-level C/A addresses, so IO's acquisition-owned T/S slots are
+    // not representable at this boundary.
     state
         .shm_dispatch
-        .set_writer(Arc::clone(&shm_action_writer), shm_config.clone());
-    info!("ShmDispatch: SHM action writer configured");
+        .open_generation(&shm_path, Arc::clone(&command_manifest))
+        .map_err(|error| {
+            AutomationError::DispatchDegraded(format!(
+                "failed to open the typed SHM command generation: {error}"
+            ))
+        })?;
+    info!("Typed SHM command generation configured");
 
-    // UDS notification is self-healing; the SHM writer above is the required
-    // durable command path, while this notifier may reconnect after io boots.
+    // UDS notification is self-healing. A command receipt is returned only
+    // after the complete command event has been written to this transport;
+    // the receipt is not a physical-device acknowledgement.
     let m2c_socket = std::env::var("AETHER_M2C_SOCKET")
-        .unwrap_or_else(|_| aether_rtdb_shm::DEFAULT_UDS_PATH.to_string());
-    let _shm_notifier: Arc<tokio::sync::Mutex<aether_rtdb_shm::ShmNotifier>> =
-        match aether_rtdb_shm::ShmNotifier::connect(&m2c_socket).await {
-            Ok(notifier) => {
-                let notifier = Arc::new(tokio::sync::Mutex::new(notifier));
-                if state.shm_dispatch.set_notifier(Arc::clone(&notifier)) {
-                    info!("ShmDispatch: ShmNotifier configured for event-driven dispatch");
-                }
-                notifier
-            },
-            Err(e) => {
-                info!(
-                    "ShmNotifier unavailable (UDS listener not ready), will auto-reconnect: {}",
-                    e
-                );
-                let notifier = Arc::new(tokio::sync::Mutex::new(
-                    aether_rtdb_shm::ShmNotifier::disabled(),
-                ));
-                state.shm_dispatch.set_notifier(Arc::clone(&notifier));
-                notifier
-            },
-        };
+        .unwrap_or_else(|_| aether_shm_bridge::DEFAULT_COMMAND_UDS_PATH.to_string());
+    state
+        .shm_dispatch
+        .configure_notifier(&m2c_socket)
+        .await
+        .map_err(|error| {
+            AutomationError::DispatchDegraded(format!(
+                "failed to configure command UDS notifier: {error}"
+            ))
+        })?;
+    info!("Typed command notifier configured for {m2c_socket}; reconnect is automatic");
 
     // Spawn SHM writer auto-rebuild task.
     // When dispatch() detects a generation mismatch (io restarted), it fires
@@ -236,7 +196,7 @@ async fn main() -> Result<()> {
         let rebuild_notify = state.shm_dispatch.rebuild_trigger();
         let rebuild_dispatch = Arc::clone(&state.shm_dispatch);
         let rebuild_pool = sqlite_pool.clone();
-        let rebuild_shm_config = shm_config.clone();
+        let rebuild_shm_path = shm_path.clone();
         let rebuild_reader = shared_reader.clone();
         let rebuild_token = shutdown_token.clone();
         tokio::spawn(async move {
@@ -252,43 +212,38 @@ async fn main() -> Result<()> {
                 let mut retry_count = 0u32;
                 let ok = loop {
                     // Reload channel points (layout may have changed)
-                    let cp = match aether_rtdb_shm::ChannelPointCounts::load_from_db(&rebuild_pool)
+                    let manifest =
+                        match aether_automation::infra::shm_manifest::load_channel_point_manifest(
+                            &rebuild_pool,
+                        )
                         .await
-                    {
-                        Ok(cp) => cp,
-                        Err(e) if retry_count < MAX_RETRIES => {
-                            let delay = (BASE_DELAY_MS * 2u64.pow(retry_count)).min(MAX_DELAY_MS);
-                            info!(
-                                "SHM layout reload retry {}/{} in {}ms: {}",
-                                retry_count + 1,
-                                MAX_RETRIES,
-                                delay,
-                                e
-                            );
-                            tokio::time::sleep(Duration::from_millis(delay)).await;
-                            retry_count += 1;
-                            continue;
-                        },
-                        Err(e) => {
-                            warn!(
-                                "SHM layout reload failed after {} retries: {}",
-                                MAX_RETRIES, e
-                            );
-                            break false;
-                        },
-                    };
-                    match aether_rtdb_shm::ActionWriter::open(&rebuild_shm_config, &cp) {
-                        Ok(writer) => match UnifiedReader::open(&rebuild_shm_config, &cp) {
-                            Ok(reader) => {
-                                let writer = Arc::new(writer);
-                                rebuild_dispatch
-                                    .set_writer(Arc::clone(&writer), rebuild_shm_config.clone());
-                                rebuild_reader.replace(Arc::new(reader));
+                        {
+                            Ok(manifest) => Arc::new(manifest),
+                            Err(e) if retry_count < MAX_RETRIES => {
+                                let delay =
+                                    (BASE_DELAY_MS * 2u64.pow(retry_count)).min(MAX_DELAY_MS);
                                 info!(
-                                    "SHM rebuild: action writer and rule reader restored successfully"
+                                    "SHM layout reload retry {}/{} in {}ms: {}",
+                                    retry_count + 1,
+                                    MAX_RETRIES,
+                                    delay,
+                                    e
                                 );
-                                break true;
+                                tokio::time::sleep(Duration::from_millis(delay)).await;
+                                retry_count += 1;
+                                continue;
                             },
+                            Err(e) => {
+                                warn!(
+                                    "SHM layout reload failed after {} retries: {}",
+                                    MAX_RETRIES, e
+                                );
+                                break false;
+                            },
+                        };
+                    let reader =
+                        match ShmChannelReader::open(&rebuild_shm_path, Arc::clone(&manifest)) {
+                            Ok(reader) => reader,
                             Err(e) if retry_count < MAX_RETRIES => {
                                 let delay =
                                     (BASE_DELAY_MS * 2u64.pow(retry_count)).min(MAX_DELAY_MS);
@@ -301,6 +256,7 @@ async fn main() -> Result<()> {
                                 );
                                 tokio::time::sleep(Duration::from_millis(delay)).await;
                                 retry_count += 1;
+                                continue;
                             },
                             Err(e) => {
                                 warn!(
@@ -309,11 +265,19 @@ async fn main() -> Result<()> {
                                 );
                                 break false;
                             },
+                        };
+                    match rebuild_dispatch.open_generation(&rebuild_shm_path, manifest) {
+                        Ok(()) => {
+                            rebuild_reader.replace(Arc::new(reader));
+                            info!(
+                                "SHM rebuild: typed command writer and rule reader restored successfully"
+                            );
+                            break true;
                         },
                         Err(e) if retry_count < MAX_RETRIES => {
                             let delay = (BASE_DELAY_MS * 2u64.pow(retry_count)).min(MAX_DELAY_MS);
                             info!(
-                                "SHM rebuild retry {}/{} in {}ms: {}",
+                                "SHM command generation retry {}/{} in {}ms: {}",
                                 retry_count + 1,
                                 MAX_RETRIES,
                                 delay,
@@ -324,8 +288,8 @@ async fn main() -> Result<()> {
                         },
                         Err(e) => {
                             warn!(
-                                "SHM rebuild failed after {} retries: {}. \
-                                 Will retry on next generation mismatch.",
+                                "SHM command generation failed after {} retries: {}. \
+                                 A later unavailable command will start a new bounded cycle.",
                                 MAX_RETRIES, e
                             );
                             break false;
@@ -342,25 +306,28 @@ async fn main() -> Result<()> {
     // Spawn SHM canonical-path inode watcher.
     //
     // Step 3 of the SHM decoupling roadmap replaces in-place
-    // reconfigure_existing with `ShmHandle::rebuild_via_swap`: io
+    // reconfigure_existing with `ShmWriterHandle::rebuild_via_swap`: io
     // creates a new SHM file at a staging path, then POSIX-renames it
-    // over the canonical path. automation's existing ActionWriter is still
+    // over the canonical path. automation's existing command mmap is still
     // mmap'd to the *previous* inode (now unlinked but live in memory),
-    // so its `writer.generation()` reads stay constant — the existing
-    // dispatch-time generation-mismatch check never fires for swap-based
-    // reloads.
+    // so its `writer.generation()` reads stay constant. The command sink closes
+    // that blind spot synchronously: every command holds the stable authority
+    // sidecar's shared lease through SHM + UDS + receipt formation and checks
+    // the mapped `(device, inode)` against the canonical path before and after
+    // the transaction. IO holds the exclusive lease throughout publication.
     //
-    // To learn about the swap, periodically `stat(canonical_path)` and
+    // This low-frequency watcher is therefore a recovery accelerator, not a
+    // correctness boundary. It periodically `stat(canonical_path)` and
     // compare the inode against a cached baseline. On change, fire the
     // existing `rebuild_trigger` Notify, which the auto-rebuild task
-    // above already handles end-to-end (ActionWriter::open on the new
-    // inode, swap into ShmDispatch via set_writer).
+    // above already handles end-to-end (validated open on the new inode and
+    // coherent writer/manifest publication).
     {
         use std::os::unix::fs::MetadataExt;
         const WATCH_INTERVAL: Duration = Duration::from_secs(5);
 
-        let watch_notify = state.shm_dispatch.rebuild_trigger();
-        let watch_path = shm_config.path().to_path_buf();
+        let watch_dispatch = Arc::clone(&state.shm_dispatch);
+        let watch_path = shm_path.clone();
         let watch_token = shutdown_token.clone();
 
         tokio::spawn(async move {
@@ -408,7 +375,10 @@ async fn main() -> Result<()> {
                             old, new
                         );
                         last_inode = Some(new);
-                        watch_notify.notify_one();
+                        // The prior mmap still reports its old stable header
+                        // generation after rename, so invalidate it explicitly
+                        // before asking the rebuild loop to reopen the path.
+                        watch_dispatch.invalidate_and_rebuild();
                     },
                     (None, Some(new)) => {
                         info!(
@@ -470,41 +440,30 @@ async fn main() -> Result<()> {
     type PwInitResult = (
         Option<Arc<SubscriptionBitmap>>,
         Option<PointWatchDispatcher>,
-        Option<tokio::sync::mpsc::Receiver<aether_rtdb_shm::PointWatchEvent>>,
+        Option<tokio::sync::mpsc::Receiver<PointWatchEvent>>,
         Option<tokio::sync::mpsc::Receiver<WatchEvent>>,
     );
     let (pw_bitmap, pw_dispatcher, pw_event_rx, pw_watch_rx): PwInitResult = {
-        let bitmap_path = automation_bitmap_path_from_shm(shm_config.path());
+        let bitmap_path = automation_bitmap_path_from_shm(&shm_path);
         match SubscriptionBitmap::open(&bitmap_path) {
             Ok(bitmap) => {
                 let bitmap = Arc::new(bitmap);
 
-                // Listener shutdown via watch channel (matches ShmCommandListener pattern).
-                let (pw_shutdown_tx, pw_shutdown_rx) = tokio::sync::watch::channel(false);
-
                 // event_rx: raw PointWatchEvents forwarded from the UDS socket.
                 let point_watch_socket = std::env::var("AETHER_AUTOMATION_POINT_WATCH_SOCKET")
-                    .unwrap_or_else(|_| {
-                        aether_rtdb_shm::AUTOMATION_POINT_WATCH_UDS_PATH.to_string()
-                    });
+                    .map(PathBuf::from)
+                    .unwrap_or_else(|_| point_watch_socket_from_shm(&shm_path, "automation"));
                 let (listener, event_rx) =
-                    PointWatchListener::new(Some(&point_watch_socket), pw_shutdown_rx);
-                info!("PointWatchListener binding ({point_watch_socket})");
+                    PointWatchEventListener::new(&point_watch_socket, shutdown_token.clone());
+                info!(
+                    "PointWatchListener binding ({})",
+                    point_watch_socket.display()
+                );
 
                 // Spawn the UDS listener run loop (accepts io connection).
-                let shutdown_token_for_pw = shutdown_token.clone();
-                let pw_shutdown_tx = Arc::new(pw_shutdown_tx);
-                let pw_sd = Arc::clone(&pw_shutdown_tx);
                 tokio::spawn(async move {
-                    tokio::select! {
-                        result = listener.run() => {
-                            if let Err(e) = result {
-                                warn!("PointWatchListener exited with error: {}", e);
-                            }
-                        }
-                        _ = shutdown_token_for_pw.cancelled() => {
-                            let _ = pw_sd.send(true);
-                        }
+                    if let Err(error) = listener.run().await {
+                        warn!("PointWatchListener exited with error: {error}");
                     }
                 });
                 // Create dispatcher (empty sub index until rebuild_point_watch).
@@ -529,8 +488,8 @@ async fn main() -> Result<()> {
     };
 
     // Create the rule scheduler with SHM as the live-state authority.
-    // SHM writer enables M2C actions via shared memory.
-    // ShmNotifier enables UDS event notification for immediate dispatch
+    // The shared ControlApplication routes all M2C commands through the typed
+    // SHM + UDS command sink configured above.
     // Stateful calculation memory is intentionally process-local for now.
     let rule_log_root = PathBuf::from("logs/automation");
     let state_store = Arc::new(MemoryStateStore::new());
@@ -538,6 +497,9 @@ async fn main() -> Result<()> {
         Arc::clone(&shared_reader),
         Arc::clone(&routing_cache),
     ));
+    let rule_action_application = Arc::new(RuleActionApplication::new(Arc::clone(
+        &state.control_application,
+    )));
     let mut scheduler = RuleScheduler::with_state_store(
         rule_live_state,
         routing_cache,
@@ -545,10 +507,9 @@ async fn main() -> Result<()> {
         tick_ms,
         rule_log_root,
         state_store,
-        // Share the SAME ShmDispatch instance as automation's HTTP control path.
-        // generation checks + rebuild signals now apply uniformly to both
-        // rule-engine actions and HTTP control writes.
-        Some(Arc::clone(&state.shm_dispatch) as Arc<dyn aether_rtdb_shm::ActionDispatch>),
+        // Both scheduled and manually-triggered rule actions enter the same
+        // mandatory audit + CommandDispatcher path as external control.
+        Some(rule_action_application),
     );
     scheduler.set_max_concurrency(max_concurrency);
 
@@ -566,9 +527,10 @@ async fn main() -> Result<()> {
     // section — async overhead would only add cost on the hot path.
     let pw_dispatcher_arc = pw_dispatcher.map(|d| Arc::new(std::sync::Mutex::new(d)));
 
-    // Build ChannelToSlotIndex once and Arc-share with both the initial rebuild
-    // (below) and the scheduler's reload path (rebuilds on POST /api/scheduler/reload).
-    let pw_channel_slot_index_arc = Arc::new(shm_action_writer.channel_slot_index());
+    // Retain a reloadable view of the exact manifest atomically published with
+    // each command writer generation. PointWatch never caches a stale layout
+    // across IO's canonical-file swaps.
+    let pw_manifest_source = state.shm_dispatch.manifest_source();
 
     // Wire rebuild handles into scheduler so reload_rules can refresh the
     // SubscriptionBitmap + dispatcher index without a service restart.
@@ -576,7 +538,7 @@ async fn main() -> Result<()> {
         scheduler.set_point_watch_rebuild_handles(
             Arc::clone(disp_arc),
             Arc::clone(state.instance_manager.routing_cache()),
-            Arc::clone(&pw_channel_slot_index_arc),
+            pw_manifest_source.clone(),
             Arc::clone(bitmap),
         );
         info!("PointWatch rebuild handles wired into RuleScheduler");
@@ -621,7 +583,13 @@ async fn main() -> Result<()> {
                                 let d = dispatcher_for_bridge
                                     .lock()
                                     .unwrap_or_else(|p| p.into_inner());
-                                d.dispatch(&e);
+                                d.dispatch(PointWatchHint::new(
+                                    e.channel_id(),
+                                    e.point_id(),
+                                    e.value(),
+                                    e.raw(),
+                                    e.timestamp_ms(),
+                                ));
                             }
                             None => break, // listener channel closed
                         }
@@ -635,7 +603,34 @@ async fn main() -> Result<()> {
     }
 
     // Create rule engine state and routes
-    let rule_state = Arc::new(RuleEngineState::new(sqlite_pool, Arc::clone(&scheduler)));
+    let rule_audit = aether_store_local::SqliteAuditSink::initialize(sqlite_pool.clone())
+        .await
+        .map_err(|error| AutomationError::DatabaseError(error.to_string()))?;
+    let rule_audit: Arc<dyn aether_ports::AuditSink> = Arc::new(rule_audit);
+    let rule_application = Arc::new(aether_application::RuleExecutionApplication::new(
+        scheduler.clone(),
+        Arc::clone(&rule_audit),
+        aether_application::SafetyPolicy,
+    ));
+    let rule_mutator: Arc<dyn aether_ports::AutomationRuleMutator> = Arc::new(
+        aether_automation::infra::rule_mutation::SqliteRuleMutator::new(
+            sqlite_pool.clone(),
+            Arc::clone(&scheduler),
+        ),
+    );
+    let rule_mutation_application = Arc::new(aether_application::RuleMutationApplication::new(
+        rule_mutator,
+        rule_audit,
+        aether_application::SafetyPolicy,
+    ));
+    let rule_state = Arc::new(
+        RuleEngineState::new(sqlite_pool, Arc::clone(&scheduler))
+            .with_execution_boundary(rule_application, Arc::clone(&state.control_authenticator))
+            .with_mutation_boundary(
+                rule_mutation_application,
+                Arc::clone(&state.control_authenticator),
+            ),
+    );
     let rule_routes = create_rule_routes(rule_state);
 
     // Merge rule routes into the main app (both on port 6002)
@@ -664,9 +659,7 @@ async fn main() -> Result<()> {
     info!("  GET/POST /api/instances - Instance management");
     info!("  GET /api/products - Product management");
     info!("  GET /api/instances/:id/data - Get instance data");
-    info!("  POST /api/instances/:id/sync - Sync measurement");
-    info!("  POST /api/instances/:id/action - Execute action");
-    info!("  POST /api/instances/sync/all - Sync all instances");
+    info!("  POST /api/instances/:id/action - Accept action into local command plane");
     info!("");
     info!(
         "Rule Engine API endpoints (port {}):",

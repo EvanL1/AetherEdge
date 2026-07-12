@@ -10,12 +10,15 @@ use axum::{
 };
 use serde_json::{Value, json};
 use tracing::error;
+#[cfg(feature = "swagger-ui")]
 use utoipa::OpenApi;
 #[cfg(feature = "swagger-ui")]
 use utoipa_swagger_ui::{Config, SwaggerUi};
 
 use crate::db_config;
-use crate::models::{AlarmBroadcastRequest, CertUploadForm, NetConfig, SystemMetrics};
+#[cfg(feature = "swagger-ui")]
+use crate::models::SystemMetrics;
+use crate::models::{AlarmBroadcastRequest, CertUploadForm, NetConfig};
 use crate::mqtt::do_inst_sync;
 use crate::state::AppState;
 use crate::uplink::enqueue_json;
@@ -67,7 +70,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
 // OpenAPI document (only consumed when swagger-ui feature is enabled)
 // ============================================================================
 
-#[cfg_attr(not(feature = "swagger-ui"), allow(dead_code))]
+#[cfg(feature = "swagger-ui")]
 #[derive(OpenApi)]
 #[openapi(
     paths(
@@ -85,27 +88,111 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         cert_upload,
         cert_info,
         cert_delete,
+        common::admin_api::get_log_level,
+        common::admin_api::set_log_level,
+        common::admin_api::list_log_files,
+        common::admin_api::view_log_file,
     ),
     components(schemas(
         NetConfig,
         AlarmBroadcastRequest,
         CertUploadForm,
         SystemMetrics,
+        crate::models::UplinkDataResponse<NetConfig>,
+        crate::models::AlarmQueuedResponse,
+        common::admin_api::SetLogLevelRequest,
+        common::admin_api::LogLevelResponse,
     )),
     tags(
         (name = "Health",      description = "Health checks and service information"),
         (name = "Alarm",       description = "Alarm broadcast and configuration"),
         (name = "MQTT",        description = "MQTT connection configuration and control"),
         (name = "Certificate", description = "TLS certificate management"),
+        (name = "admin",       description = "Host-local service administration"),
     ),
     info(
-        title = "AetherEMS Network Service",
-        version = "1.0.0",
-        description = "MQTT gateway service: forwards SHM real-time data to the cloud MQTT broker \
-                       and routes cloud-issued read/write commands to local devices."
+        title = "Aether Uplink Service API",
+        version = env!("CARGO_PKG_VERSION"),
+        description = "Internal loopback API for MQTT delivery, certificates, and cloud-to-edge coordination. Device actions are delegated through authenticated automation; direct I/O writes are rejected. Do not expose this service port remotely."
     )
 )]
 pub struct ApiDoc;
+
+#[cfg(all(test, feature = "swagger-ui"))]
+mod openapi_tests {
+    use super::*;
+
+    #[test]
+    fn openapi_metadata_and_admin_routes_match_the_router() {
+        let specification = serde_json::to_value(ApiDoc::openapi()).expect("serialize OpenAPI");
+        assert_eq!(specification["info"]["title"], "Aether Uplink Service API");
+        assert_eq!(specification["info"]["version"], env!("CARGO_PKG_VERSION"));
+        for (path, method) in [
+            ("/api/admin/logs/level", "get"),
+            ("/api/admin/logs/level", "post"),
+            ("/api/admin/logs/files", "get"),
+            ("/api/admin/logs/view", "get"),
+        ] {
+            assert!(
+                specification["paths"][path][method].is_object(),
+                "missing {method} {path}"
+            );
+        }
+        let operation_count = specification["paths"]
+            .as_object()
+            .expect("paths object")
+            .values()
+            .map(|item| {
+                item.as_object()
+                    .expect("path item")
+                    .keys()
+                    .filter(|method| {
+                        matches!(
+                            method.as_str(),
+                            "get"
+                                | "put"
+                                | "post"
+                                | "delete"
+                                | "patch"
+                                | "options"
+                                | "head"
+                                | "trace"
+                        )
+                    })
+                    .count()
+            })
+            .sum::<usize>();
+        assert_eq!(operation_count, 18, "Router/OpenAPI operation drift");
+    }
+
+    #[test]
+    fn openapi_redacts_mqtt_secrets_and_documents_durable_queue_semantics() {
+        let specification = serde_json::to_value(ApiDoc::openapi()).expect("serialize OpenAPI");
+
+        let password_schema =
+            &specification["components"]["schemas"]["NetConfig"]["properties"]["password"];
+        assert!(
+            password_schema.to_string().contains("\"writeOnly\":true"),
+            "password schema must be write-only: {password_schema}"
+        );
+        let mqtt_get = &specification["paths"]["/netApi/mqtt/config"]["get"]["responses"]["200"]["content"]
+            ["application/json"]["schema"];
+        assert!(mqtt_get.to_string().contains("UplinkDataResponse"));
+
+        let alarm = &specification["paths"]["/netApi/alarm/broadcast"]["post"]["responses"];
+        assert!(alarm["200"].to_string().contains("AlarmQueuedResponse"));
+        assert!(
+            alarm["503"]["description"]
+                .as_str()
+                .expect("503 description")
+                .contains("outbox")
+        );
+        assert!(
+            specification["paths"]["/netApi/certificate/upload"]["post"]["responses"]["413"]
+                .is_object()
+        );
+    }
+}
 
 // ============================================================================
 // Root / ping
@@ -178,8 +265,8 @@ async fn health(State(state): State<Arc<AppState>>) -> Json<Value> {
 #[utoipa::path(post, path = "/netApi/alarm/broadcast", tag = "Alarm",
     request_body = AlarmBroadcastRequest,
     responses(
-        (status = 200, description = "Alarm published successfully"),
-        (status = 503, description = "MQTT not connected — publish failed"),
+        (status = 200, description = "Alarm durably queued in the local outbox", body = crate::models::AlarmQueuedResponse),
+        (status = 503, description = "The local durable outbox is full or unavailable"),
     ))]
 async fn alarm_broadcast(
     State(state): State<Arc<AppState>>,
@@ -226,14 +313,15 @@ async fn alarm_config(State(state): State<Arc<AppState>>) -> Json<Value> {
 // MQTT config
 // ============================================================================
 
-/// Retrieve current MQTT configuration (broker, certificate paths, topic prefix, etc.).
+/// Retrieve current MQTT connection and forwarding configuration.
 ///
-/// Read-only. Returns a `NetConfig` object containing broker_host, port,
-/// client_id, TLS flag, certificate filenames, and topic templates. Sensitive
-/// material (e.g. certificate private-key contents) is never included. To
-/// update the configuration use `POST /netApi/mqtt/config`.
+/// Read-only. Returns broker, client, TLS, reconnect, and forwarding settings.
+/// The MQTT password is write-only and is never returned. On update, omit it to
+/// preserve the stored password or send an empty string to clear it. Certificate material
+/// is managed through `/netApi/certificate/*`; topics are derived from device
+/// identity. To update connection settings use `POST /netApi/mqtt/config`.
 #[utoipa::path(get, path = "/netApi/mqtt/config", tag = "MQTT",
-    responses((status = 200, description = "Current MQTT configuration", body = NetConfig)))]
+    responses((status = 200, description = "Current MQTT configuration with password omitted", body = crate::models::UplinkDataResponse<NetConfig>)))]
 async fn mqtt_get_config(State(state): State<Arc<AppState>>) -> Json<Value> {
     let cfg = state.config.read().await.clone();
     Json(json!({ "success": true, "message": "OK", "data": cfg }))
@@ -243,11 +331,11 @@ async fn mqtt_get_config(State(state): State<Arc<AppState>>) -> Json<Value> {
 ///
 /// Persists the new configuration, then disconnects the current MQTT session and
 /// reconnects with the new parameters. There will be a brief MQTT unavailability
-/// window of a few seconds during which in-flight alarms may be lost (subject to
-/// the configured QoS). Use this endpoint to change the broker address,
-/// certificates, or TLS settings. If the new parameters are invalid and the
-/// connection fails, uplink remains in the disconnected state until a correct
-/// configuration is submitted.
+/// window of a few seconds; events already accepted into the local outbox remain
+/// queued. Use this endpoint to change broker, authentication, TLS enablement,
+/// reconnect, and forwarding settings. Certificate files use the dedicated
+/// certificate endpoints. If the new parameters are invalid and the connection
+/// fails, uplink remains disconnected until a correct configuration is submitted.
 #[utoipa::path(post, path = "/netApi/mqtt/config", tag = "MQTT",
     request_body = NetConfig,
     responses(
@@ -258,6 +346,8 @@ async fn mqtt_update_config(
     State(state): State<Arc<AppState>>,
     Json(mut new_cfg): Json<NetConfig>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let current_cfg = state.config.read().await.clone();
+    new_cfg.preserve_write_only_secrets_from(&current_cfg);
     // Without this the in-memory copy bypasses load_config() and chunks(0) can panic.
     new_cfg.normalize();
     if let Err(e) = db_config::save_config(&state.sqlite, &new_cfg).await {
@@ -360,7 +450,8 @@ async fn mqtt_reconnect(State(state): State<Arc<AppState>>) -> Json<Value> {
     ),
     responses(
         (status = 200, description = "Certificate uploaded successfully"),
-        (status = 400, description = "Invalid request — unknown cert_type, empty file, unsupported format, or file exceeds 1 MB"),
+        (status = 400, description = "Invalid request — unknown cert_type, empty file, or unsupported format"),
+        (status = 413, description = "Multipart request exceeds the service body limit"),
         (status = 500, description = "Certificate directory not writable or file write failed"),
     ))]
 async fn cert_upload(

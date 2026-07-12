@@ -7,6 +7,7 @@
 
 use axum::{
     extract::{Path, State},
+    http::HeaderMap,
     response::Json,
 };
 use common::SuccessResponse;
@@ -14,7 +15,7 @@ use serde_json::json;
 use std::sync::Arc;
 
 use crate::app_state::AppState;
-use crate::dto::{SinglePointRoutingRequest, ToggleRoutingRequest};
+use crate::dto::{RoutingMutationConfirmation, SinglePointRoutingRequest, ToggleRoutingRequest};
 use crate::error::AutomationError;
 
 // ============================================================================
@@ -32,7 +33,7 @@ use crate::error::AutomationError;
     get,
     path = "/api/instances/{id}/measurements/{point_id}",
     params(
-        ("id" = u16, Path, description = "Instance ID"),
+        ("id" = u32, Path, description = "Instance ID"),
         ("point_id" = u32, Path, description = "Measurement point ID")
     ),
     responses(
@@ -69,7 +70,7 @@ pub async fn get_measurement_point(
     put,
     path = "/api/instances/{id}/measurements/{point_id}/routing",
     params(
-        ("id" = u16, Path, description = "Instance ID"),
+        ("id" = u32, Path, description = "Instance ID"),
         ("point_id" = u32, Path, description = "Measurement point ID")
     ),
     request_body = crate::dto::SinglePointRoutingRequest,
@@ -121,7 +122,7 @@ pub async fn upsert_measurement_routing(
     delete,
     path = "/api/instances/{id}/measurements/{point_id}/routing",
     params(
-        ("id" = u16, Path, description = "Instance ID"),
+        ("id" = u32, Path, description = "Instance ID"),
         ("point_id" = u32, Path, description = "Measurement point ID")
     ),
     responses(
@@ -179,7 +180,7 @@ pub async fn delete_measurement_routing(
     patch,
     path = "/api/instances/{id}/measurements/{point_id}/routing",
     params(
-        ("id" = u16, Path, description = "Instance ID"),
+        ("id" = u32, Path, description = "Instance ID"),
         ("point_id" = u32, Path, description = "Measurement point ID")
     ),
     request_body = crate::dto::ToggleRoutingRequest,
@@ -247,7 +248,7 @@ pub async fn toggle_measurement_routing(
     get,
     path = "/api/instances/{id}/actions/{point_id}",
     params(
-        ("id" = u16, Path, description = "Instance ID"),
+        ("id" = u32, Path, description = "Instance ID"),
         ("point_id" = u32, Path, description = "Action point ID")
     ),
     responses(
@@ -285,166 +286,181 @@ pub async fn get_action_point(
     put,
     path = "/api/instances/{id}/actions/{point_id}/routing",
     params(
-        ("id" = u16, Path, description = "Instance ID"),
-        ("point_id" = u32, Path, description = "Action point ID")
+        ("id" = u32, Path, description = "Instance ID"),
+        ("point_id" = u32, Path, description = "Action point ID"),
+        ("x-request-id" = Option<String>, Header, description = "Optional UUID audit correlation ID")
     ),
-    request_body = crate::dto::SinglePointRoutingRequest,
+    request_body(
+        content = crate::dto::ActionRoutingUpsertBody,
+        description = "Governed action-route upsert or unbind; confirmed=true is required"
+    ),
     responses(
-        (status = 200, description = "Routing created/updated", body = serde_json::Value,
-            example = json!({"message": "Routing updated for action point 201"})
+        (status = 200, description = "Action-routing mutation accepted. If audit.status=incomplete, retryable=false and the mutation must not be retried.", body = crate::dto::ActionRoutingMutationResponse,
+            example = json!({
+                "success": true,
+                "data": {
+                    "message": "Routing updated for action point 201",
+                    "request_id": "018f0000-0000-7000-8000-000000000007",
+                    "operation": "upsert",
+                    "affected_routes": 1,
+                    "audit": {"status": "recorded", "retryable": false},
+                    "retryable": false
+                }
+            })
         ),
         (status = 400, description = "Invalid routing configuration"),
+        (status = 403, description = "Missing/invalid Bearer credentials or actor lacks automation.routing.manage"),
         (status = 404, description = "Instance not found"),
-        (status = 500, description = "Database error")
+        (status = 422, description = "Explicit confirmation is required"),
+        (status = 503, description = "Mandatory audit, routing storage, or cache publication is unavailable")
     ),
+    security(("bearer_auth" = [])),
     tag = "automation"
 )]
 pub async fn upsert_action_routing(
     State(state): State<Arc<AppState>>,
     Path((id, point_id)): Path<(u32, u32)>,
+    headers: HeaderMap,
     Json(request): Json<SinglePointRoutingRequest>,
 ) -> Result<Json<SuccessResponse<serde_json::Value>>, AutomationError> {
-    // Upsert routing in database
-    state
-        .instance_manager
-        .upsert_action_routing(id, point_id, request)
-        .await
-        .map_err(|e| AutomationError::InvalidData(format!("Failed to upsert routing: {}", e)))?;
-
-    state
-        .instance_manager
-        .refresh_routing()
-        .await
-        .map_err(|e| {
-            AutomationError::InternalError(format!(
-                "Failed to refresh routing after upsert action routing: {}",
-                e
-            ))
-        })?;
-
-    Ok(Json(SuccessResponse::new(json!({
-        "message": format!("Routing updated for action point {}", point_id)
-    }))))
+    let mutation =
+        crate::api::action_routing_boundary::single_point_mutation(id, point_id, &request)?;
+    let acceptance =
+        crate::api::action_routing_boundary::apply(&state, &headers, request.confirmed, mutation)
+            .await?;
+    Ok(Json(SuccessResponse::new(
+        crate::api::action_routing_boundary::response_data(
+            &acceptance,
+            format!("Routing updated for action point {point_id}"),
+        ),
+    )))
 }
 
 /// Delete the M2C routing for a single action point.
 ///
-/// After deletion the action can no longer be dispatched to the device:
-/// `execute_action()` takes the "no-routing" branch — it writes to local
-/// `inst:{id}:A` storage but `dispatch=None`. The point definition is
-/// preserved.
+/// After deletion, the governed command dispatcher fails closed before the
+/// physical sink because no channel target can be resolved. No local value is
+/// stored as a substitute for device dispatch. The point definition remains.
 #[utoipa::path(
     delete,
     path = "/api/instances/{id}/actions/{point_id}/routing",
     params(
-        ("id" = u16, Path, description = "Instance ID"),
-        ("point_id" = u32, Path, description = "Action point ID")
+        ("id" = u32, Path, description = "Instance ID"),
+        ("point_id" = u32, Path, description = "Action point ID"),
+        ("x-request-id" = Option<String>, Header, description = "Optional UUID audit correlation ID")
+    ),
+    request_body(
+        content = crate::dto::ActionRoutingConfirmationBody,
+        description = "Governed action-route deletion; confirmed=true is required"
     ),
     responses(
-        (status = 200, description = "Routing deleted", body = serde_json::Value,
-            example = json!({"message": "Routing deleted for action point 201", "rows_affected": 1})
+        (status = 200, description = "Action-routing mutation accepted. If audit.status=incomplete, retryable=false and the mutation must not be retried.", body = crate::dto::ActionRoutingMutationResponse,
+            example = json!({
+                "success": true,
+                "data": {
+                    "message": "Routing deleted for action point 201",
+                    "request_id": "018f0000-0000-7000-8000-000000000007",
+                    "operation": "delete",
+                    "affected_routes": 1,
+                    "audit": {"status": "recorded", "retryable": false},
+                    "retryable": false
+                }
+            })
         ),
+        (status = 403, description = "Missing/invalid Bearer credentials or actor lacks automation.routing.manage"),
         (status = 404, description = "Instance or routing not found"),
-        (status = 500, description = "Database error")
+        (status = 422, description = "Explicit confirmation is required"),
+        (status = 503, description = "Mandatory audit, routing storage, or cache publication is unavailable")
     ),
+    security(("bearer_auth" = [])),
     tag = "automation"
 )]
 pub async fn delete_action_routing(
     State(state): State<Arc<AppState>>,
     Path((id, point_id)): Path<(u32, u32)>,
+    headers: HeaderMap,
+    Json(request): Json<RoutingMutationConfirmation>,
 ) -> Result<Json<SuccessResponse<serde_json::Value>>, AutomationError> {
-    // Delete routing from database
-    let rows_affected = state
-        .instance_manager
-        .delete_action_routing(id, point_id)
-        .await
-        .map_err(|e| AutomationError::InternalError(format!("Failed to delete routing: {}", e)))?;
-
-    if rows_affected == 0 {
-        return Err(AutomationError::InternalError(format!(
-            "No routing found for action point {} in instance {}",
-            point_id, id
-        )));
-    }
-
-    state
-        .instance_manager
-        .refresh_routing()
-        .await
-        .map_err(|e| {
-            AutomationError::InternalError(format!(
-                "Failed to refresh routing after delete action routing: {}",
-                e
-            ))
-        })?;
-
-    Ok(Json(SuccessResponse::new(json!({
-        "message": format!("Routing deleted for action point {}", point_id),
-        "rows_affected": rows_affected
-    }))))
+    let mutation = aether_ports::ActionRoutingMutation::delete(aether_ports::ActionRouteKey::new(
+        aether_domain::InstanceId::new(id),
+        aether_domain::PointId::new(point_id),
+    ));
+    let acceptance =
+        crate::api::action_routing_boundary::apply(&state, &headers, request.confirmed, mutation)
+            .await?;
+    Ok(Json(SuccessResponse::new(
+        crate::api::action_routing_boundary::response_data(
+            &acceptance,
+            format!("Routing deleted for action point {point_id}"),
+        ),
+    )))
 }
 
 /// Enable or disable the M2C routing for a single action point.
 ///
-/// When disabled, `execute_action()` takes the no-routing branch: the
-/// command is written to local `inst:{id}:A` but **not dispatched** to the
-/// device. Use this to temporarily suppress a control point (e.g. prevent
-/// accidental device triggers during debugging). Re-enabling restores
-/// normal dispatch on the next action.
+/// When disabled, the governed command dispatcher fails closed before the
+/// physical sink; it does not create a local success value. Use this to
+/// suppress a control point temporarily. Re-enabling restores routing for the
+/// next accepted action.
 #[utoipa::path(
     patch,
     path = "/api/instances/{id}/actions/{point_id}/routing",
     params(
-        ("id" = u16, Path, description = "Instance ID"),
-        ("point_id" = u32, Path, description = "Action point ID")
+        ("id" = u32, Path, description = "Instance ID"),
+        ("point_id" = u32, Path, description = "Action point ID"),
+        ("x-request-id" = Option<String>, Header, description = "Optional UUID audit correlation ID")
     ),
-    request_body = crate::dto::ToggleRoutingRequest,
+    request_body(
+        content = crate::dto::ActionRoutingToggleBody,
+        description = "Governed action-route enable/disable; confirmed=true is required"
+    ),
     responses(
-        (status = 200, description = "Routing enabled/disabled", body = serde_json::Value,
-            example = json!({"message": "Routing enabled for action point 201", "rows_affected": 1})
+        (status = 200, description = "Action-routing mutation accepted. If audit.status=incomplete, retryable=false and the mutation must not be retried.", body = crate::dto::ActionRoutingMutationResponse,
+            example = json!({
+                "success": true,
+                "data": {
+                    "message": "Routing enabled for action point 201",
+                    "request_id": "018f0000-0000-7000-8000-000000000007",
+                    "operation": "enable",
+                    "affected_routes": 1,
+                    "audit": {"status": "recorded", "retryable": false},
+                    "retryable": false
+                }
+            })
         ),
+        (status = 403, description = "Missing/invalid Bearer credentials or actor lacks automation.routing.manage"),
         (status = 404, description = "Instance or routing not found"),
-        (status = 500, description = "Database error")
+        (status = 422, description = "Explicit confirmation is required"),
+        (status = 503, description = "Mandatory audit, routing storage, or cache publication is unavailable")
     ),
+    security(("bearer_auth" = [])),
     tag = "automation"
 )]
 pub async fn toggle_action_routing(
     State(state): State<Arc<AppState>>,
     Path((id, point_id)): Path<(u32, u32)>,
+    headers: HeaderMap,
     Json(request): Json<ToggleRoutingRequest>,
 ) -> Result<Json<SuccessResponse<serde_json::Value>>, AutomationError> {
-    // Toggle routing in database
-    let rows_affected = state
-        .instance_manager
-        .toggle_action_routing(id, point_id, request.enabled)
-        .await
-        .map_err(|e| AutomationError::InternalError(format!("Failed to toggle routing: {}", e)))?;
-
-    if rows_affected == 0 {
-        return Err(AutomationError::InternalError(format!(
-            "No routing found for action point {} in instance {}",
-            point_id, id
-        )));
-    }
-
-    state
-        .instance_manager
-        .refresh_routing()
-        .await
-        .map_err(|e| {
-            AutomationError::InternalError(format!(
-                "Failed to refresh routing after toggle action routing: {}",
-                e
-            ))
-        })?;
-
-    let action = if request.enabled {
+    let mutation = aether_ports::ActionRoutingMutation::set_enabled(
+        aether_ports::ActionRouteKey::new(
+            aether_domain::InstanceId::new(id),
+            aether_domain::PointId::new(point_id),
+        ),
+        request.enabled,
+    );
+    let acceptance =
+        crate::api::action_routing_boundary::apply(&state, &headers, request.confirmed, mutation)
+            .await?;
+    let operation = if request.enabled {
         "enabled"
     } else {
         "disabled"
     };
-    Ok(Json(SuccessResponse::new(json!({
-        "message": format!("Routing {} for action point {}", action, point_id),
-        "rows_affected": rows_affected
-    }))))
+    Ok(Json(SuccessResponse::new(
+        crate::api::action_routing_boundary::response_data(
+            &acceptance,
+            format!("Routing {operation} for action point {point_id}"),
+        ),
+    )))
 }

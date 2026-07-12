@@ -49,7 +49,7 @@ urlencoding = "2.1.3"
 url = "2.5.8"
 
 [features]
-swagger-ui = ["utoipa-swagger-ui"]
+swagger-ui = ["utoipa-swagger-ui", "common/openapi"]
 postgres-storage = ["sqlx/postgres"]
 
 [lints]

@@ -8,6 +8,8 @@ rules are defined in:
 - [ADR-0003: Multi-process SHM and event plane](docs/adr/0003-multi-process-shm-event-plane.md)
 - [ADR-0004: Canonical service names](docs/adr/0004-canonical-service-names.md)
 - [ADR-0009: Aether Data Processing](docs/adr/0009-aether-data-processing.md)
+- [ADR-0010: Physical acquisition addresses](docs/adr/0010-physical-acquisition-addresses.md)
+- [ADR-0011: Governed channel desired state](docs/adr/0011-governed-channel-desired-state.md)
 - [Target repository layout](docs/architecture/target-layout.md)
 - [AI invariants](ai/invariants.md)
 - [Capability safety policy](ai/safety-policy.yaml)
@@ -16,11 +18,24 @@ rules are defined in:
 
 The default Cargo graph is already external-service-free. It contains the
 domain, ports, application layer, SDK, local adapters, the physical SHM data
-plane, and the read-only SHM bridge. In particular:
+plane, and typed SHM port adapters. In particular:
 
 - `aether-dataplane` owns mmap layout, seqlock slots, dirty tracking, and
   snapshots without depending on Redis, SQLx, or the legacy service model.
+- `aether-shm-bridge` owns the typed channel manifest, channel-aware readers,
+  generation lifecycle, isolated PointWatch publication, and production
+  `AcquisitionStateWriter` and `DeviceCommandSink` adapters. IO acquisition can
+  represent only T/S writes; automation command transport can represent only
+  C/A writes and returns success only after the local SHM + UDS command plane
+  accepts the frame. Neither writer port is exposed to HTTP, CLI, MCP, or AI
+  clients. The legacy aggregate is test-only in the default service and CLI
+  graphs.
 - `FileOutbox` provides bounded local store-and-forward with crash recovery.
+- Local SQLite is authoritative for commissioned channel desired state. The
+  active protocol runtime is a rebuildable projection, and channel
+  create/update/delete/enable/disable cross the same confirmed, audited
+  `io.channel.manage` application boundary from HTTP, CLI, and MCP. SHM remains
+  authoritative for live point values.
 - Redis and PostgreSQL implementations are optional integrations rather than
   prerequisites of the peripheral service data paths.
 - `aether-alarm`, `aether-api`, `aether-history`, and `aether-uplink` discover logical points from
@@ -29,6 +44,27 @@ plane, and the read-only SHM bridge. In particular:
 - `aether-history` uses embedded SQLite history by default; PostgreSQL/TimescaleDB are
   enabled with the `postgres-storage` feature. `aether-uplink` retains its durable
   local outbox before MQTT.
+- Domain models and knowledge are absent by default. Automation and MCP load
+  them only from manifest-validated Packs explicitly selected by
+  `<AETHER_CONFIG_PATH>/global.yaml`; `packs: []` is the safe empty kernel.
+- The composition-provided `runtime-manifest.json` records the Aether version,
+  target, services, exact IO feature set, derived protocol adapters, and live
+  application capability catalog under a canonical checksum. Automation, MCP,
+  and Pack tooling share its fail-closed loader; there is no synthetic
+  full-distribution fallback.
+
+The remaining kernel migration is narrower but still real:
+
+- many local management mutations have not yet moved behind transport-neutral
+  application commands with declared capability, authorization, and audit
+  contracts. This includes explicit channel/runtime reload and the sensitive
+  full-configuration query, which still depend on the loopback deployment
+  boundary;
+- Energy mappings, rules, evaluations, and Data Processing tasks are isolated
+  Pack assets with closed v1 indexes. The local Kernel CLI can build and
+  atomically install a Pack-only artifact; independently published/signed
+  Aether and AetherEMS artifacts plus downstream consuming CI are still
+  required before repository split.
 
 ## Target runtime
 
@@ -42,7 +78,7 @@ HTTP command APIs.
 An optional single-process composition may exist for tests, simulation, or
 small development profiles. It is not the deployment default and does not
 replace the service binaries. Neither profile requires PostgreSQL; Redis is a
-compatibility mirror while remaining legacy aether-io/aether-automation paths are migrated.
+compatibility mirror and never the live-state authority.
 
 Optional adapters may add Redis state mirroring, PostgreSQL history, MQTT
 uplink, or HTTP APIs. They do not change the source-of-truth rules.

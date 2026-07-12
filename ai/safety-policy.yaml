@@ -46,3 +46,52 @@ capabilities:
     idempotent: false
     confirmation: always
     audit: required
+  automation.rule.execute:
+    kind: command
+    risk: high
+    permission: automation.rule.execute
+    idempotent: false
+    confirmation: always
+    audit: required
+  automation.rule.manage:
+    kind: command
+    risk: high
+    permission: automation.rule.manage
+    idempotent: false
+    confirmation: always
+    audit: required
+  automation.routing.manage:
+    kind: command
+    risk: high
+    permission: automation.routing.manage
+    idempotent: false
+    confirmation: always
+    audit: required
+  io.channel.manage:
+    kind: command
+    risk: high
+    permission: io.channel.manage
+    idempotent: false
+    confirmation: always
+    audit: required
+  io.channel.reconcile:
+    kind: command
+    risk: high
+    permission: io.channel.manage
+    idempotent: false
+    confirmation: always
+    audit: required
+  alarm.rule.manage:
+    kind: command
+    risk: high
+    permission: alarm.rule.manage
+    idempotent: false
+    confirmation: always
+    audit: required
+  alarm.alert.resolve:
+    kind: command
+    risk: high
+    permission: alarm.alert.resolve
+    idempotent: false
+    confirmation: always
+    audit: required

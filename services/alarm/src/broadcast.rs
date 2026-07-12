@@ -8,6 +8,7 @@ use tracing::{debug, warn};
 use crate::db::AlarmCounts;
 use crate::models::AlertRule;
 
+#[derive(Clone)]
 pub struct Broadcaster {
     client: Client,
     api_url: String,

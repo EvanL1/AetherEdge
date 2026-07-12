@@ -10,6 +10,8 @@ pub enum PortErrorKind {
     Unavailable,
     /// An operation exceeded its deadline.
     Timeout,
+    /// A requested commissioned resource does not exist.
+    NotFound,
     /// A device or policy explicitly rejected an operation.
     Rejected,
     /// External data violated its contract.

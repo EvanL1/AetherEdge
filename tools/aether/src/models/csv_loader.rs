@@ -1,7 +1,7 @@
 //! CSV loader for product definitions
 //!
-//! Products are compile-time built-in constants from aether-model crate.
-//! Only list_available_products is retained for development/debugging purposes.
+//! Active Pack and site products are served by automation. This legacy local
+//! directory listing is retained only for development/debugging.
 
 use anyhow::Result;
 use std::fs;
@@ -14,8 +14,8 @@ pub fn list_available_products() -> Result<()> {
 
     if !products_dir.exists() {
         println!("No products directory found");
-        println!("Note: Products are now built-in from aether-model crate.");
-        println!("Use 'aether models products list' to see built-in products.");
+        println!("Active Pack and site products are loaded by aether-automation.");
+        println!("Use 'aether models products list' to see selected products.");
         return Ok(());
     }
 
@@ -40,8 +40,10 @@ pub fn list_available_products() -> Result<()> {
         }
     }
 
-    println!("\nNote: Products are now built-in from aether-model crate.");
-    println!("These CSV files are for reference only.");
+    println!("\nThese legacy CSV files are for reference only.");
+    println!(
+        "Runtime products come from validated active Packs and the configured site directory."
+    );
 
     Ok(())
 }

@@ -34,6 +34,9 @@ pub enum ApplicationError {
     /// The selected task, binding, processor, or limits cannot form a safe route.
     #[error("invalid data-processing configuration: {0}")]
     InvalidProcessingConfiguration(String),
+    /// An I/O channel mutation violated a transport-independent invariant.
+    #[error("invalid channel mutation: {0}")]
+    InvalidChannelMutation(String),
     /// An untrusted processor response failed application validation.
     #[error("invalid processor result: {0}")]
     InvalidProcessorResult(String),
@@ -67,7 +70,10 @@ pub enum ApplicationError {
         /// Processor-advertised maximum size.
         max_bytes: usize,
     },
-    /// A required audit event could not be persisted.
+    /// A required audit event that gates execution could not be persisted.
+    ///
+    /// Terminal audit degradation after a successful non-idempotent operation
+    /// is represented by `AcceptedOutcome`, never by this retryable failure.
     #[error("mandatory audit unavailable: {0}")]
     AuditUnavailable(PortError),
     /// An extension port failed while executing the use case.

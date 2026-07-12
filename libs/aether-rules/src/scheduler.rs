@@ -9,6 +9,7 @@
 //! event-driven IPC); change detection compares against per-rule last-trigger
 //! state guarded by both time and value deadbands.
 
+use crate::RuleActionCommandFacade;
 use crate::error::Result;
 use crate::executor::{RuleExecutionResult, RuleExecutor};
 use crate::live_state::RuleLiveState;
@@ -17,7 +18,6 @@ use crate::repository;
 use crate::types::Rule;
 use aether_calc::StateStore;
 use aether_routing::RoutingCache;
-use aether_rtdb_shm::ActionDispatch;
 use sqlx::SqlitePool;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -257,8 +257,8 @@ pub struct RuleScheduler<S: StateStore = aether_calc::MemoryStateStore> {
     pw_dispatcher:
         Option<Arc<std::sync::Mutex<crate::point_watch_dispatcher::PointWatchDispatcher>>>,
     pw_routing_cache: Option<Arc<RoutingCache>>,
-    pw_channel_slot_index: Option<Arc<aether_rtdb_shm::ChannelToSlotIndex>>,
-    pw_bitmap: Option<Arc<aether_rtdb_shm::SubscriptionBitmap>>,
+    pw_manifest_source: Option<aether_shm_bridge::ChannelPointManifestSource>,
+    pw_bitmap: Option<Arc<aether_shm_bridge::SubscriptionBitmap>>,
 }
 
 impl RuleScheduler<aether_calc::MemoryStateStore> {
@@ -292,7 +292,7 @@ impl RuleScheduler<aether_calc::MemoryStateStore> {
             watch_rx: None,
             pw_dispatcher: None,
             pw_routing_cache: None,
-            pw_channel_slot_index: None,
+            pw_manifest_source: None,
             pw_bitmap: None,
         }
     }
@@ -310,15 +310,15 @@ impl<S: StateStore + 'static> RuleScheduler<S> {
         tick_ms: u64,
         log_root: PathBuf,
         state_store: Arc<S>,
-        action_dispatch: Option<Arc<dyn ActionDispatch>>,
+        action_commands: Option<Arc<dyn RuleActionCommandFacade>>,
     ) -> Self
     where
         L: RuleLiveState + 'static,
     {
         let mut executor =
             RuleExecutor::with_state_store(Arc::clone(&live_state), routing_cache, state_store);
-        if let Some(dispatch) = action_dispatch {
-            executor = executor.with_action_dispatch(dispatch);
+        if let Some(commands) = action_commands {
+            executor = executor.with_action_command_facade(commands);
         }
         Self {
             live_state,
@@ -332,7 +332,7 @@ impl<S: StateStore + 'static> RuleScheduler<S> {
             watch_rx: None,
             pw_dispatcher: None,
             pw_routing_cache: None,
-            pw_channel_slot_index: None,
+            pw_manifest_source: None,
             pw_bitmap: None,
         }
     }
@@ -349,11 +349,11 @@ impl<S: StateStore + 'static> RuleScheduler<S> {
         &self,
         dispatcher: &mut crate::point_watch_dispatcher::PointWatchDispatcher,
         routing_cache: &aether_routing::RoutingCache,
-        channel_slot_index: &aether_rtdb_shm::ChannelToSlotIndex,
-        bitmap: &aether_rtdb_shm::SubscriptionBitmap,
+        manifest: &aether_shm_bridge::ChannelPointManifest,
+        bitmap: &aether_shm_bridge::SubscriptionBitmap,
     ) {
         let rules = self.rules.read().await;
-        dispatcher.rebuild_from_rules(&rules, routing_cache, channel_slot_index, bitmap);
+        dispatcher.rebuild_from_rules(&rules, routing_cache, manifest, bitmap);
     }
 
     /// Attach a PointWatch event receiver.
@@ -378,12 +378,12 @@ impl<S: StateStore + 'static> RuleScheduler<S> {
         &mut self,
         dispatcher: Arc<std::sync::Mutex<crate::point_watch_dispatcher::PointWatchDispatcher>>,
         routing_cache: Arc<RoutingCache>,
-        channel_slot_index: Arc<aether_rtdb_shm::ChannelToSlotIndex>,
-        bitmap: Arc<aether_rtdb_shm::SubscriptionBitmap>,
+        manifest_source: aether_shm_bridge::ChannelPointManifestSource,
+        bitmap: Arc<aether_shm_bridge::SubscriptionBitmap>,
     ) {
         self.pw_dispatcher = Some(dispatcher);
         self.pw_routing_cache = Some(routing_cache);
-        self.pw_channel_slot_index = Some(channel_slot_index);
+        self.pw_manifest_source = Some(manifest_source);
         self.pw_bitmap = Some(bitmap);
     }
 
@@ -438,17 +438,21 @@ impl<S: StateStore + 'static> RuleScheduler<S> {
         info!("Rules reloading");
         let count = self.load_rules().await?;
 
-        if let (Some(disp), Some(routing), Some(slot_idx), Some(bitmap)) = (
+        if let (Some(disp), Some(routing), Some(manifest_source), Some(bitmap)) = (
             &self.pw_dispatcher,
             &self.pw_routing_cache,
-            &self.pw_channel_slot_index,
+            &self.pw_manifest_source,
             &self.pw_bitmap,
         ) {
+            let Some(manifest) = manifest_source.load() else {
+                warn!("PointWatch rebuild skipped: no current SHM manifest generation");
+                return Ok(count);
+            };
             let rules = self.rules.read().await;
             // Mutex poison only indicates a prior holder panicked; the inner
             // dispatcher state is still valid, so recover via into_inner().
             let mut d = disp.lock().unwrap_or_else(|p| p.into_inner());
-            d.rebuild_from_rules(&rules, routing, slot_idx, bitmap);
+            d.rebuild_from_rules(&rules, routing, &manifest, bitmap);
             info!(
                 "PointWatch subscription index rebuilt: {} (ch,pt) pairs subscribed",
                 d.subscription_count()
@@ -994,6 +998,79 @@ impl<S: StateStore + 'static> RuleScheduler<S> {
     }
 }
 
+#[async_trait::async_trait]
+impl<S: StateStore + 'static> aether_ports::AutomationRuleExecutor for RuleScheduler<S> {
+    async fn execute(
+        &self,
+        rule_id: aether_domain::RuleId,
+    ) -> aether_ports::PortResult<aether_ports::RuleExecutionReceipt> {
+        let database_id = i64::try_from(rule_id.get()).map_err(|_| {
+            aether_ports::PortError::new(
+                aether_ports::PortErrorKind::InvalidData,
+                format!("rule id {} exceeds the supported range", rule_id.get()),
+            )
+        })?;
+        let result = self
+            .execute_rule(database_id)
+            .await
+            .map_err(rule_execution_port_error)?;
+        let attempted = u32::try_from(result.actions_executed.len()).map_err(|_| {
+            aether_ports::PortError::new(
+                aether_ports::PortErrorKind::InvalidData,
+                "rule result contains too many action outcomes",
+            )
+        })?;
+        let succeeded = u32::try_from(
+            result
+                .actions_executed
+                .iter()
+                .filter(|action| action.success)
+                .count(),
+        )
+        .map_err(|_| {
+            aether_ports::PortError::new(
+                aether_ports::PortErrorKind::InvalidData,
+                "rule result contains too many successful action outcomes",
+            )
+        })?;
+        if !result.success {
+            return Err(aether_ports::PortError::new(
+                aether_ports::PortErrorKind::Rejected,
+                result
+                    .error
+                    .unwrap_or_else(|| "rule execution did not complete successfully".to_string()),
+            ));
+        }
+        let completed_at = chrono::Utc::now().timestamp_millis().max(0) as u64;
+        Ok(aether_ports::RuleExecutionReceipt::new(
+            rule_id,
+            aether_domain::TimestampMs::new(completed_at),
+            attempted,
+            succeeded,
+        ))
+    }
+}
+
+fn rule_execution_port_error(error: crate::RuleError) -> aether_ports::PortError {
+    use aether_ports::{PortError, PortErrorKind};
+
+    let kind = match error {
+        crate::RuleError::NotFound(_)
+        | crate::RuleError::InvalidFormat(_)
+        | crate::RuleError::ParseError(_)
+        | crate::RuleError::SerializationError(_) => PortErrorKind::InvalidData,
+        crate::RuleError::AlreadyExists(_) => PortErrorKind::Conflict,
+        crate::RuleError::ExecutionError(_)
+        | crate::RuleError::ConditionError(_)
+        | crate::RuleError::ActionError(_)
+        | crate::RuleError::RoutingError(_) => PortErrorKind::Rejected,
+        crate::RuleError::DatabaseError(_) | crate::RuleError::SchedulerError(_) => {
+            PortErrorKind::Unavailable
+        },
+    };
+    PortError::new(kind, error.to_string())
+}
+
 async fn persist_rule_execution(pool: &SqlitePool, result: &RuleExecutionResult) -> Result<()> {
     let payload = serde_json::to_string(result)?;
     sqlx::query(
@@ -1021,8 +1098,24 @@ pub struct SchedulerStatus {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{RuleFlow, RuleNode, RuleWires};
+    use crate::types::{RuleFlow, RuleNode, RuleValueAssignment, RuleVariable, RuleWires};
+    use crate::{RuleActionCommand, RuleActionCommandFacade};
+    use aether_ports::{CommandReceipt, PortError, PortErrorKind, PortResult};
+    use async_trait::async_trait;
+    use serde_json::json;
     use std::collections::HashMap;
+
+    struct FailingActionCommands;
+
+    #[async_trait]
+    impl RuleActionCommandFacade for FailingActionCommands {
+        async fn write_action(&self, _command: RuleActionCommand) -> PortResult<CommandReceipt> {
+            Err(PortError::new(
+                PortErrorKind::Unavailable,
+                "simulated governed action failure",
+            ))
+        }
+    }
 
     #[test]
     fn test_trigger_config_default() {
@@ -1058,6 +1151,153 @@ mod tests {
                 nodes,
             },
         }
+    }
+
+    fn create_action_rule(id: i64, cooldown_ms: u64) -> Rule {
+        let nodes = HashMap::from([
+            (
+                "start".to_string(),
+                RuleNode::Start {
+                    wires: RuleWires {
+                        default: vec!["action".to_string()],
+                    },
+                },
+            ),
+            (
+                "action".to_string(),
+                RuleNode::ChangeValue {
+                    variables: vec![RuleVariable {
+                        name: "TARGET".to_string(),
+                        instance: Some(42),
+                        point_type: Some("action".to_string()),
+                        point: Some(7),
+                        formula: Vec::new(),
+                    }],
+                    rule: vec![RuleValueAssignment {
+                        variables: "TARGET".to_string(),
+                        value: json!(1.0),
+                    }],
+                    wires: RuleWires {
+                        default: vec!["end".to_string()],
+                    },
+                },
+            ),
+            ("end".to_string(), RuleNode::End),
+        ]);
+        Rule {
+            id,
+            name: format!("action-{id}"),
+            description: None,
+            enabled: true,
+            priority: 100,
+            cooldown_ms,
+            trigger_config: Some(r#"{"type":"interval","interval_ms":1}"#.to_string()),
+            flow: RuleFlow {
+                start_node: "start".to_string(),
+                nodes,
+            },
+        }
+    }
+
+    async fn rule_pool(rule: &Rule) -> SqlitePool {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("open scheduler database");
+        sqlx::query(
+            "CREATE TABLE rules (\
+                 id INTEGER PRIMARY KEY,\
+                 name TEXT NOT NULL,\
+                 description TEXT,\
+                 enabled INTEGER NOT NULL,\
+                 priority INTEGER NOT NULL,\
+                 cooldown_ms INTEGER NOT NULL,\
+                 trigger_config TEXT,\
+                 nodes_json TEXT NOT NULL\
+             )",
+        )
+        .execute(&pool)
+        .await
+        .expect("create rules table");
+        sqlx::query(
+            "INSERT INTO rules \
+             (id, name, description, enabled, priority, cooldown_ms, trigger_config, nodes_json) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(rule.id)
+        .bind(&rule.name)
+        .bind(&rule.description)
+        .bind(i64::from(rule.enabled))
+        .bind(i64::from(rule.priority))
+        .bind(i64::try_from(rule.cooldown_ms).expect("test cooldown fits i64"))
+        .bind(&rule.trigger_config)
+        .bind(serde_json::to_string(&rule.flow).expect("serialize test flow"))
+        .execute(&pool)
+        .await
+        .expect("insert action rule");
+        pool
+    }
+
+    fn failing_action_scheduler(
+        pool: SqlitePool,
+        log_root: PathBuf,
+    ) -> RuleScheduler<aether_calc::MemoryStateStore> {
+        RuleScheduler::with_state_store(
+            Arc::new(crate::MemoryRuleLiveState::new()),
+            Arc::new(RoutingCache::new()),
+            pool,
+            1,
+            log_root,
+            Arc::new(aether_calc::MemoryStateStore::new()),
+            Some(Arc::new(FailingActionCommands)),
+        )
+    }
+
+    #[tokio::test]
+    async fn application_rule_port_rejects_failed_action_execution() {
+        use aether_domain::RuleId;
+        use aether_ports::AutomationRuleExecutor;
+
+        let rule = create_action_rule(31, 1_000);
+        let pool = rule_pool(&rule).await;
+        let logs = tempfile::tempdir().expect("temporary rule logs");
+        let scheduler = failing_action_scheduler(pool, logs.path().to_path_buf());
+
+        let error = AutomationRuleExecutor::execute(&scheduler, RuleId::new(31))
+            .await
+            .expect_err("failed device action must fail manual rule execution");
+
+        assert_eq!(error.kind(), PortErrorKind::Rejected);
+        assert!(
+            error
+                .message()
+                .contains("1 of 1 attempted rule actions failed")
+        );
+    }
+
+    #[tokio::test]
+    async fn failed_scheduled_action_does_not_start_cooldown() {
+        let rule = create_action_rule(32, 60_000);
+        let pool = rule_pool(&rule).await;
+        let logs = tempfile::tempdir().expect("temporary rule logs");
+        let scheduler = failing_action_scheduler(pool, logs.path().to_path_buf());
+        scheduler.rules.write().await.push(ScheduledRule {
+            rule: Arc::new(rule),
+            trigger: TriggerConfig::Interval { interval_ms: 1 },
+            last_execution: None,
+            last_cooldown_start: None,
+            onchange_state: OnChangeState::default(),
+        });
+
+        scheduler.tick().await.expect("run scheduler tick");
+
+        let rules = scheduler.rules.read().await;
+        assert!(rules[0].last_execution.is_some());
+        assert!(
+            rules[0].last_cooldown_start.is_none(),
+            "failed action must remain eligible for retry after its interval"
+        );
     }
 
     #[test]
@@ -1237,6 +1477,47 @@ mod tests {
         assert_eq!(payload["success"], true);
         assert_eq!(payload["variable_values"]["soc"], 52.5);
         assert!(error.is_none());
+    }
+
+    #[tokio::test]
+    async fn application_rule_port_classifies_missing_rule_as_invalid_data() {
+        use aether_domain::RuleId;
+        use aether_ports::{AutomationRuleExecutor, PortErrorKind};
+
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("open in-memory sqlite");
+        sqlx::query(
+            "CREATE TABLE rules (\
+                 id INTEGER PRIMARY KEY,\
+                 name TEXT NOT NULL,\
+                 description TEXT,\
+                 enabled INTEGER NOT NULL,\
+                 priority INTEGER NOT NULL,\
+                 cooldown_ms INTEGER NOT NULL,\
+                 trigger_config TEXT,\
+                 nodes_json TEXT NOT NULL\
+             )",
+        )
+        .execute(&pool)
+        .await
+        .expect("create rules table");
+        let log_dir = tempfile::tempdir().expect("temporary rule logs");
+        let scheduler = RuleScheduler::new(
+            Arc::new(crate::MemoryRuleLiveState::new()),
+            Arc::new(RoutingCache::new()),
+            pool,
+            100,
+            log_dir.path().to_path_buf(),
+        );
+
+        let error = AutomationRuleExecutor::execute(&scheduler, RuleId::new(404))
+            .await
+            .expect_err("unknown rule is rejected");
+
+        assert_eq!(error.kind(), PortErrorKind::InvalidData);
     }
 
     // ────────────────────────────────────────────────────────────────────

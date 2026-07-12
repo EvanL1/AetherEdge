@@ -4,6 +4,7 @@
 
 # Build argument for target triple (set by build script)
 ARG TARGET_TRIPLE=aarch64-unknown-linux-musl
+ARG RUNTIME_MANIFEST_PATH=config.template/runtime-manifest.json
 
 FROM alpine:3.19
 
@@ -37,6 +38,8 @@ RUN chmod +x /usr/local/bin/*
 # Copy default configuration from template
 # This provides a working default configuration out-of-the-box
 COPY config.template/ /app/config/
+ARG RUNTIME_MANIFEST_PATH
+COPY ${RUNTIME_MANIFEST_PATH} /app/config/runtime-manifest.json
 
 # Create all necessary directories with proper permissions
 RUN mkdir -p data logs && \

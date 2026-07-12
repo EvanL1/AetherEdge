@@ -17,19 +17,57 @@
 
 #![allow(clippy::disallowed_methods)] // Integration test - unwrap is acceptable
 
+use aether_application::{RuleMutationApplication, SafetyPolicy};
+use aether_automation::infra::{
+    application_control::ControlAuthenticator, rule_mutation::SqliteRuleMutator,
+};
 use aether_automation::rule_routes::{RuleEngineState, create_rule_routes};
+use aether_ports::{
+    AuditRecord, AuditSink, AutomationRuleMutator, PortError, PortErrorKind, PortResult,
+};
 use aether_routing::RoutingCache;
 use aether_rules::{MemoryRuleLiveState, RuleScheduler};
 use anyhow::Result;
+use async_trait::async_trait;
 use axum::{
     body::Body,
     http::{Request, StatusCode},
 };
 use http_body_util::BodyExt;
+use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
+use serde::Serialize;
 use serde_json::json;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tower::ServiceExt;
+
+const JWT_SECRET: &str = "0123456789abcdef0123456789abcdef";
+
+#[derive(Serialize)]
+struct AccessClaims<'a> {
+    user_id: i64,
+    role: &'a str,
+    exp: usize,
+    iat: usize,
+    #[serde(rename = "type")]
+    token_type: &'a str,
+}
+
+fn access_token() -> String {
+    let now = chrono::Utc::now().timestamp();
+    encode(
+        &Header::new(Algorithm::HS256),
+        &AccessClaims {
+            user_id: 7,
+            role: "Engineer",
+            exp: (now + 3_600) as usize,
+            iat: now as usize,
+            token_type: "access",
+        },
+        &EncodingKey::from_secret(JWT_SECRET.as_bytes()),
+    )
+    .unwrap()
+}
 
 /// Create test SQLite database with rules schema
 async fn create_test_database() -> Result<sqlx::SqlitePool> {
@@ -60,6 +98,14 @@ async fn create_test_database() -> Result<sqlx::SqlitePool> {
 
 /// Create a test app router with deterministic in-process live state.
 async fn create_test_app() -> Result<axum::Router> {
+    let (router, _) =
+        create_test_app_with_audit(Arc::new(aether_store_local::MemoryAuditSink::new())).await?;
+    Ok(router)
+}
+
+async fn create_test_app_with_audit(
+    audit: Arc<dyn AuditSink>,
+) -> Result<(axum::Router, sqlx::SqlitePool)> {
     let pool = create_test_database().await?;
     let live_state = Arc::new(MemoryRuleLiveState::new());
 
@@ -79,11 +125,31 @@ async fn create_test_app() -> Result<axum::Router> {
     ));
 
     // Create rule engine state
-    let state = Arc::new(RuleEngineState::new(pool, scheduler));
+    let mutator: Arc<dyn AutomationRuleMutator> =
+        Arc::new(SqliteRuleMutator::new(pool.clone(), Arc::clone(&scheduler)));
+    let application = Arc::new(RuleMutationApplication::new(mutator, audit, SafetyPolicy));
+    let authenticator =
+        Arc::new(ControlAuthenticator::new(JWT_SECRET, None).expect("valid JWT secret"));
+    let state = Arc::new(
+        RuleEngineState::new(pool.clone(), scheduler)
+            .with_mutation_boundary(application, authenticator),
+    );
 
     // Create router
     let router = create_rule_routes(state);
-    Ok(router)
+    Ok((router, pool))
+}
+
+struct FailingAudit;
+
+#[async_trait]
+impl AuditSink for FailingAudit {
+    async fn record(&self, _record: AuditRecord) -> PortResult<()> {
+        Err(PortError::new(
+            PortErrorKind::Unavailable,
+            "audit unavailable",
+        ))
+    }
 }
 
 /// Helper function to make HTTP requests and extract response
@@ -93,8 +159,24 @@ async fn make_request(
     uri: &str,
     body: Option<serde_json::Value>,
 ) -> Result<(StatusCode, serde_json::Value)> {
+    let governed_mutation =
+        method != "GET" && (uri.starts_with("/api/rules") || uri == "/api/scheduler/reload");
     let mut req_builder = Request::builder().method(method).uri(uri);
+    if governed_mutation {
+        req_builder = req_builder
+            .header("authorization", format!("Bearer {}", access_token()))
+            .header("x-request-id", uuid::Uuid::new_v4().to_string());
+    }
 
+    let body = if governed_mutation {
+        let mut body = body.unwrap_or_else(|| json!({}));
+        body.as_object_mut()
+            .expect("governed mutation body must be an object")
+            .insert("confirmed".to_string(), json!(true));
+        Some(body)
+    } else {
+        body
+    };
     let body_bytes = if let Some(json_body) = body {
         req_builder = req_builder.header("content-type", "application/json");
         serde_json::to_vec(&json_body)?
@@ -123,6 +205,95 @@ async fn make_request(
     };
 
     Ok((status, response_json))
+}
+
+async fn raw_mutation_request(
+    app: &axum::Router,
+    method: &str,
+    uri: &str,
+    authenticated: bool,
+    confirmed: bool,
+) -> Result<StatusCode> {
+    let mut request = Request::builder()
+        .method(method)
+        .uri(uri)
+        .header("content-type", "application/json")
+        .header("x-request-id", uuid::Uuid::new_v4().to_string());
+    if authenticated {
+        request = request.header("authorization", format!("Bearer {}", access_token()));
+    }
+    let body = if method == "POST" && uri == "/api/rules" {
+        json!({ "name": "blocked", "confirmed": confirmed })
+    } else if method == "PUT" {
+        json!({ "enabled": true, "confirmed": confirmed })
+    } else {
+        json!({ "confirmed": confirmed })
+    };
+    let response = app
+        .clone()
+        .oneshot(request.body(Body::from(serde_json::to_vec(&body)?))?)
+        .await?;
+    Ok(response.status())
+}
+
+#[tokio::test]
+async fn rule_mutations_require_bearer_and_explicit_confirmation_before_database_effects()
+-> Result<()> {
+    for (method, uri) in [
+        ("POST", "/api/rules"),
+        ("PUT", "/api/rules/7"),
+        ("DELETE", "/api/rules/7"),
+        ("POST", "/api/rules/7/enable"),
+        ("POST", "/api/rules/7/disable"),
+        ("POST", "/api/scheduler/reload"),
+    ] {
+        let (app, pool) =
+            create_test_app_with_audit(Arc::new(aether_store_local::MemoryAuditSink::new()))
+                .await?;
+        sqlx::query(
+            "INSERT INTO rules (id, name, nodes_json, enabled) VALUES (7, 'sentinel', '{}', TRUE)",
+        )
+        .execute(&pool)
+        .await?;
+
+        let denied = raw_mutation_request(&app, method, uri, false, true).await?;
+        let unconfirmed = raw_mutation_request(&app, method, uri, true, false).await?;
+
+        assert_eq!(denied, StatusCode::FORBIDDEN, "{method} {uri}");
+        assert_eq!(
+            unconfirmed,
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "{method} {uri}"
+        );
+        let sentinel: (String, bool) =
+            sqlx::query_as("SELECT name, enabled FROM rules WHERE id = 7")
+                .fetch_one(&pool)
+                .await?;
+        assert_eq!(sentinel, ("sentinel".to_string(), true));
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM rules")
+            .fetch_one(&pool)
+            .await?;
+        assert_eq!(count, 1);
+        let (_, status) = make_request(&app, "GET", "/api/scheduler/status", None).await?;
+        assert_eq!(status["data"]["enabled_rules"], 0, "{method} {uri}");
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn mandatory_audit_failure_prevents_database_mutation_and_scheduler_reload() -> Result<()> {
+    let (app, pool) = create_test_app_with_audit(Arc::new(FailingAudit)).await?;
+
+    let status = raw_mutation_request(&app, "POST", "/api/rules", true, true).await?;
+
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM rules")
+        .fetch_one(&pool)
+        .await?;
+    assert_eq!(count, 0);
+    let (_, scheduler) = make_request(&app, "GET", "/api/scheduler/status", None).await?;
+    assert_eq!(scheduler["data"]["enabled_rules"], 0);
+    Ok(())
 }
 
 // ============================================================================
