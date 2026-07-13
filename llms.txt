@@ -43,7 +43,7 @@ read-only historian directory/identity for `aether-api`; the base
 - [HTTP History Query Extension](extensions/http-history-query/README.md): Optional loopback adapter for an upstream pre-aligned Last/Reject cadence grid
 - [HTTP Data Processor Extension](extensions/http-data-processor/README.md): Optional bounded local/remote HTTP implementation of the DataProcessor port
 - [Data Processing Contract Schemas](contracts/data-processing/README.md): Strict Draft 2020-12 schemas for caller requests, complete frames, processor requests/results, derived data, and errors
-- [Energy Data Processing Assets](packs/energy/data-processing/README.md): Disabled load/PV task declarations, uncommissioned example binding, and v1 fixtures
+- [AetherEMS Energy Data Processing Assets](https://github.com/EvanL1/AetherEMS/blob/main/packs/energy/data-processing/README.md): Energy-owned load/PV task declarations, bindings, and conformance fixtures
 - [AI Component Catalog](ai/catalog.yaml): Machine-readable component ownership, paths, and narrow verification commands
 - [AI Invariants](ai/invariants.md): Source-of-truth, control safety, offline, and dependency invariants
 - [Capability Safety Policy](ai/safety-policy.yaml): Machine-readable risk and authorization policy
@@ -53,11 +53,12 @@ read-only historian directory/identity for `aether-api`; the base
 
 ## Domain Knowledge
 
-- [Energy Storage Primer](docs/domain/ess-primer.md): How ESS concepts - PCS, BMS, SOC, grid interface - map onto Aether products, instances, and points
-- [Energy Pack Product Models](docs/domain/product-models.md): Compatibility pointer to the 13 Energy Pack-owned product models and their point semantics
-- [Control Strategies as Rules](docs/domain/control-strategies.md): Expressing SOC management, peak shaving, and demand control as executable rule flows
-- [Safe Operations for AI Agents](docs/domain/safe-operations.md): Which writes reach real devices, how write gating works, and the operating rules an AI agent must follow
-- [Power Forecasting](docs/domain/power-forecasting.md): Map AetherEMS load and PV data into the request-driven Load-Forecasting processor without creating a second data plane
+- [AetherEMS Energy Storage Primer](https://github.com/EvanL1/AetherEMS/blob/main/packs/energy/knowledge/ess-primer.md): How ESS concepts - PCS, BMS, SOC, grid interface - map onto Aether products, instances, and points
+- [AetherEMS Product Models](https://github.com/EvanL1/AetherEMS/blob/main/packs/energy/knowledge/product-models.md): Energy Pack-owned product models and point semantics
+- [AetherEMS Control Strategies](https://github.com/EvanL1/AetherEMS/blob/main/packs/energy/knowledge/control-strategies.md): Expressing SOC management, peak shaving, and demand control as executable rule flows
+- [Safe Operations for AI Agents](docs/guides/safe-operations.md): Generic query, command, permission, confirmation, idempotency, and audit rules
+- [AetherEMS Safe Operations](https://github.com/EvanL1/AetherEMS/blob/main/packs/energy/knowledge/safe-operations.md): Energy-specific constraints for commands that can reach physical equipment
+- [AetherEMS Power Forecasting](https://github.com/EvanL1/AetherEMS/blob/main/packs/energy/knowledge/power-forecasting.md): Map load and PV data into the request-driven Load-Forecasting processor without creating a second data plane
 
 ## Concepts
 
@@ -78,9 +79,9 @@ read-only historian directory/identity for `aether-api`; the base
 - [Connect AI Assistants](docs/guides/ai-assistants.md): Point Claude or any MCP client at aether mcp, and choose between read-only and write access
 - [Deployment](docs/guides/deployment.md): Run with Docker Compose or build a self-contained installer for edge devices
 - [Data Processors](docs/guides/data-processors.md): Declare data-processing tasks in domain packs and connect request-driven local or remote processors
-- [Data Processing Runtime Template](packs/energy/data-processing/runtime.example.yaml): Synthetic strict composition template for SQLite history, snapshot covariates, audit, and the Load-Forecasting HTTP processor
-- [Load-Forecasting Processor Integration](integrations/load-forecasting/README.md): Add the request-driven /v1/process boundary to the existing Edge-Platform without reverse data reads
-- [Load-Forecasting Deployment](integrations/load-forecasting/deploy/README.md): Commission the digest-pinned, authenticated processor with the production Compose override or an isolated systemd unit
+- [AetherEMS Data Processing Runtime Template](https://github.com/EvanL1/AetherEMS/blob/main/packs/energy/data-processing/runtime.example.yaml): Energy-owned composition template for SQLite history, snapshot covariates, audit, and the Load-Forecasting HTTP processor
+- [AetherEMS Load-Forecasting Processor](https://github.com/EvanL1/AetherEMS/blob/main/processors/load-forecasting/README.md): Request-driven forecasting implementation without reverse data reads
+- [AetherEMS Load-Forecasting Deployment](https://github.com/EvanL1/AetherEMS/blob/main/processors/load-forecasting/deploy/README.md): Commission the digest-pinned, authenticated processor with the production Compose override or an isolated systemd unit
 
 ## Reference
 

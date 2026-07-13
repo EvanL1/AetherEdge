@@ -740,6 +740,44 @@ mod service_gateway_route_tests {
             .expect("read gateway response");
         assert!(String::from_utf8_lossy(&body).contains("UPSTREAM_UNAVAILABLE"));
     }
+
+    #[tokio::test]
+    async fn application_gateway_mutations_are_role_and_confirmation_guarded() {
+        let app = build_router(app_state().await);
+
+        let mut viewer_request = Request::builder()
+            .method("POST")
+            .uri("/api/v1/uplink/mqtt/disconnect")
+            .header("x-aether-confirmed", "true")
+            .body(Body::empty())
+            .expect("valid viewer request");
+        viewer_request
+            .headers_mut()
+            .extend(authorization_headers("Viewer"));
+        let viewer_response = app
+            .clone()
+            .oneshot(viewer_request)
+            .await
+            .expect("viewer gateway response");
+        assert_eq!(viewer_response.status(), StatusCode::FORBIDDEN);
+
+        let mut unconfirmed_request = Request::builder()
+            .method("POST")
+            .uri("/api/v1/uplink/mqtt/disconnect")
+            .body(Body::empty())
+            .expect("valid unconfirmed request");
+        unconfirmed_request
+            .headers_mut()
+            .extend(authorization_headers("Engineer"));
+        let unconfirmed_response = app
+            .oneshot(unconfirmed_request)
+            .await
+            .expect("unconfirmed gateway response");
+        assert_eq!(
+            unconfirmed_response.status(),
+            StatusCode::PRECONDITION_REQUIRED
+        );
+    }
 }
 
 #[cfg(all(test, feature = "swagger-ui"))]

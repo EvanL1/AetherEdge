@@ -137,11 +137,11 @@ describe('rewriteRelativeLinks', () => {
   });
 
   it('preserves an anchor fragment when rewriting an excluded target', () => {
-    const content = '[Safe Operations](../domain/safe-operations.md#some-heading)';
+    const content = '[Safe Operations](../guides/safe-operations.md#some-heading)';
     const syncedSourceSet = new Set(['docs/guides/ai-assistants.md']);
     const out = rewriteRelativeLinks(content, 'docs/guides/ai-assistants.md', syncedSourceSet);
     expect(out).toBe(
-      '[Safe Operations](https://github.com/EvanL1/AetherIot/blob/main/docs/domain/safe-operations.md#some-heading)'
+      '[Safe Operations](https://github.com/EvanL1/AetherIot/blob/main/docs/guides/safe-operations.md#some-heading)'
     );
   });
 
@@ -157,9 +157,9 @@ describe('rewriteRelativeLinks', () => {
     expect(rewriteRelativeLinks(content, 'docs/guides/ai-assistants.md', syncedSourceSet)).toBe(content);
   });
 
-  it('reproduces the real ai-assistants.md -> domain/safe-operations.md case', () => {
+  it('reproduces the real ai-assistants.md -> guides/safe-operations.md case', () => {
     const content =
-      'Before enabling writes, read [Safe Operations for AI Agents](../domain/safe-operations.md), which explains the control envelope.';
+      'Before enabling writes, read [Safe Operations for AI Agents](../guides/safe-operations.md), which explains the control envelope.';
     const syncedSourceSet = new Set([
       'docs/guides/ai-assistants.md',
       'docs/guides/writing-rules.md',
@@ -168,7 +168,7 @@ describe('rewriteRelativeLinks', () => {
     ]);
     const out = rewriteRelativeLinks(content, 'docs/guides/ai-assistants.md', syncedSourceSet);
     expect(out).toBe(
-      'Before enabling writes, read [Safe Operations for AI Agents](https://github.com/EvanL1/AetherIot/blob/main/docs/domain/safe-operations.md), which explains the control envelope.'
+      'Before enabling writes, read [Safe Operations for AI Agents](https://github.com/EvanL1/AetherIot/blob/main/docs/guides/safe-operations.md), which explains the control envelope.'
     );
   });
 
@@ -216,7 +216,7 @@ describe('findBrokenExternalLinks', () => {
   });
 
   it('does not flag a relative link whose resolved target exists on disk, even though it is excluded from the manifest', async () => {
-    const content = '[Safe Operations](../domain/safe-operations.md)';
+    const content = '[Safe Operations](../guides/safe-operations.md)';
     const syncedSourceSet = new Set(['docs/guides/ai-assistants.md']);
     const problems = await findBrokenExternalLinks(content, 'docs/guides/ai-assistants.md', syncedSourceSet);
     expect(problems).toEqual([]);
