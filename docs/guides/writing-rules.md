@@ -49,10 +49,11 @@ and `nodes_json`, the compact topology the engine executes — and the two
 columns are always derived together from the editor document by one
 function. [Rule Engine](../concepts/rule-engine.md) explains why.
 
-## Via a product console
+## Via a downstream application
 
 The independent [AetherEMS](https://github.com/EvanL1/AetherEMS) Console
-provides a Vue Flow rule editor. It edits the complete visual document — nodes
+is an optional energy-domain reference application with a Vue Flow rule editor.
+It edits the complete visual document — nodes
 with canvas positions, labels, edges, and viewport — and submits that document
 through the same authenticated rule command API. AetherIot does not bundle the
 Console or grant it direct SQLite/SHM access. The server derives both stored

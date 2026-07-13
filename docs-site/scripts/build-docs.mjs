@@ -130,9 +130,9 @@ export function renderLlmsIndex(documents, publicBaseUrl) {
   }
 
   return [
-    '# Aether',
+    '# AetherIot',
     '',
-    '> AI-native, industry-neutral IoT edge kernel and SDK.',
+    '> Build reliable edge IoT applications with AI on an industry-neutral, deterministic runtime.',
     '',
     'Documentation pages are available as Markdown. Append `.md` to any document URL or send `Accept: text/markdown`.',
     '',

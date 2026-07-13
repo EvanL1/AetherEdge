@@ -44,9 +44,12 @@ Only `aether-api` is a remote-facing service. It is not a reverse proxy for the
 other five services. The direct io, automation, history, uplink, and alarm
 ports must remain bound to loopback and must not be published from the device.
 
-The optional browser distribution exposes service APIs through an
-authenticated Nginx ingress on port 8080. Use that ingress, or an equivalent
-authenticated reverse proxy, when a remote operator needs a local service API.
+Generated applications and downstream product interfaces may use only the
+authenticated capabilities published by `aether-api`. They must not expose or
+proxy an internal process API when a remote use case is missing; the missing
+query or command must first be added through the shared application boundary.
+Local tools may inspect loopback OpenAPI documents on the edge host, but that
+does not make those ports supported remote interfaces.
 
 Loopback is a deployment boundary, not an identity credential. IO channel
 commissioning plus selected automation and alarm commands authenticate at the

@@ -1,0 +1,4 @@
+interface:
+  display_name: "AetherIot"
+  short_description: "Build safe AI-native IoT edge applications"
+  default_prompt: "Use $aether-iot to build a read-only application against an AetherIot edge runtime."

@@ -1,13 +1,25 @@
 ---
 title: Agent Quickstart
-description: Copy-paste command sequence for an AI agent to install, start, and connect to Aether from zero.
+description: Install the AetherIot Skill, start a safe-empty runtime, and connect an AI agent from zero.
 ---
 
 This page is written for an AI agent driving a shell, not a human reading
 prose. Each step states the command and the exact signal that means "this
 step succeeded, move on."
 
-## 1. Install the `aether` CLI
+## 1. Install the AetherIot Skill
+
+From the application repository where the agent will work:
+
+```bash
+npx skills add EvanL1/AetherIot -s aether-iot
+```
+
+Restart the coding assistant if it does not reload project Skills automatically.
+
+**Success criterion:** the assistant lists `aether-iot` as an available Skill.
+
+## 2. Install the `aether` CLI
 
 Building from a source checkout is the reliable path today (this project has
 not cut a tagged release yet):
@@ -32,7 +44,7 @@ your platform:
 | Windows x86_64 | `aether-windows-x86_64.zip` |
 
 ```bash
-REPO="EvanL1/Aether"
+REPO="EvanL1/AetherIot"
 ASSET="aether-linux-x86_64.tar.gz"   # substitute your platform's asset name
 
 TAG=$(curl -fsSL "https://api.github.com/repos/$REPO/releases/latest" \
@@ -49,7 +61,7 @@ sudo mv aether /usr/local/bin/aether
 
 **Success criterion:** `aether --version` prints a version string and exits 0.
 
-## 2. Plan and apply the first-run configuration
+## 3. Plan and apply the first-run configuration
 
 ```bash
 aether --json setup
@@ -66,7 +78,7 @@ aether setup apply --plan-id <PLAN_ID>
 `"success": true` and exit code 0. This never starts a service or enables a
 device — it only creates the safe-empty configuration and local SQLite state.
 
-## 3. Start the services
+## 4. Start the services
 
 Aether's default deployment is Docker Compose. Generate the two required
 first-start secrets, then bring the stack up:
@@ -88,10 +100,11 @@ aether services start
 
 **Success criterion:** `aether --json services status` reports all requested
 services as running. See [Deployment](/guides/deployment/) if the
-`aetherems:latest` image doesn't exist yet on this machine — it needs to be
-built or loaded before `services start` can succeed.
+the compatibility `aetherems:latest` runtime image doesn't exist yet on this
+machine — it needs to be built or loaded before `services start` can succeed.
+The retained image name does not make the EMS product part of this repository.
 
-## 4. Verify health
+## 5. Verify health
 
 ```bash
 aether --json doctor
@@ -103,14 +116,14 @@ health routes, the SQLite database, the four required config files, and the
 shared-memory segment — a `false`/non-zero result means one of those failed;
 read the JSON `error` field for which one.
 
-## 5. Connect an MCP client
+## 6. Connect an MCP client
 
 ```bash
 claude mcp add aether -- aether mcp
 ```
 
 For a session that needs to issue writes (device control, rule changes) —
-read [Safe Operations for AI Agents](https://github.com/EvanL1/Aether/blob/main/docs/domain/safe-operations.md)
+read [Safe Operations for AI Agents](https://github.com/EvanL1/AetherIot/blob/main/docs/domain/safe-operations.md)
 in the main repo before doing this against real hardware:
 
 ```bash
@@ -118,15 +131,20 @@ claude mcp add aether -- aether mcp --allow-write
 ```
 
 **Success criterion:** the client's `tools/list` response includes
-`channels_list`. The default server registers 23 read-only tools;
-`--allow-write` adds exactly 21 governed writes, for 44 tools total. The five
-channel commissioning tools are `channels_create`, `channels_update`,
-`channels_delete`, `channels_enable`, and `channels_disable`. The flag
-only registers those writes: every invocation still needs `confirmed: true`,
-the signed `AETHER_ACCESS_TOKEN` is sent as a Bearer credential, and the bridge
-adds a request ID. Never automatically retry an incomplete write response.
+`channels_list`. The default server exposes only read tools. `--allow-write`
+registers the current governed write allowlist, but the flag is not command
+confirmation: every invocation still needs `confirmed: true`, the signed
+`AETHER_ACCESS_TOKEN` is sent as a Bearer credential, and the bridge adds a
+request ID. Never automatically retry an incomplete write response.
 For a channel mutation, preserve `request_id`, `resulting_revision`, and
 `reconciliation_required`; successful desired-state commit can still report a
 degraded runtime projection.
 See [Connect AI Assistants](/guides/ai-assistants/) for Claude Desktop config
 and pointing at a remote installation.
+
+Now ask the assistant:
+
+```text
+Get started with AetherIot. Inspect the runtime in read-only mode and explain
+which application capabilities are available before proposing any changes.
+```

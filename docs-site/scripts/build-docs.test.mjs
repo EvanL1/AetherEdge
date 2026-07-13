@@ -63,7 +63,7 @@ describe('renderLlmsIndex', () => {
     ];
 
     const output = renderLlmsIndex(documents, 'https://docs.aetheriot.workers.dev');
-    expect(output).toMatch(/^# Aether\n/);
+    expect(output).toMatch(/^# AetherIot\n/);
     expect(output).toContain('## Start Here');
     expect(output).toContain('## Concepts');
     expect(output).toContain('## Reference');

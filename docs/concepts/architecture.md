@@ -11,8 +11,8 @@ supervised Rust services around a shared-memory hot path. Devices are polled by
 aether-io, values land in SHM, and each real-time consumer resolves its logical
 points from SQLite and reads the segment directly. Optional extensions may
 mirror SHM into an external store, but no default service reads that mirror.
-The frontend is an optional client and is not an
-architecture boundary of the edge kernel.
+Generated applications and downstream product interfaces are optional clients;
+they are not architecture boundaries of the edge kernel.
 
 ```
   Devices ─────► aether-io(:6001) ───── authoritative SHM live state
@@ -57,7 +57,6 @@ configuration does not override them.
 | aether-api | 6005 | API gateway — unified REST API, WebSocket push to browsers, JWT authentication |
 | aether-uplink | 6006 | Network service — MQTT broker integration for the cloud uplink, TLS certificate management |
 | aether-alarm | 6007 | Alarm service — alarm rules, alarm events, notifications |
-| aether-apps | 8080 | Optional Vue.js client (`frontend` profile), not a kernel dependency |
 | aether-redis | 6379 | Optional infrastructure for the separately built Redis `StateMirror` extension (`redis` profile) |
 | TimescaleDB | 5432 | Optional time-series database for historical data, runtime-configured through aether-history |
 
@@ -118,7 +117,7 @@ with the full benchmark in `libs/aether-rtdb-shm/benches/BASELINE.md`.
 | aether-io → device (protocol write) | Field bus (Modbus, IEC 104, etc.) | +5–10 ms; dominates the physical control loop |
 | aether-alarm → aether-api, aether-uplink | HTTP (targets configured via `AETHER_API_URL` / `AETHER_UPLINK_URL`) | local HTTP |
 | aether-uplink → cloud | MQTT | network |
-| aether-api → browsers | WebSocket | network |
+| aether-api → generated/downstream clients | Authenticated HTTP and WebSocket | network |
 | all services ↔ SQLite | In-process configuration discovery (`AETHER_DB_PATH`); aether-history uses a separate embedded history file | local |
 
 The UDS notification channel reconnects automatically with exponential backoff

@@ -11,7 +11,7 @@ export default defineConfig({
       description:
         'Documentation for the AI-native, industry-neutral IoT edge kernel and SDK.',
       social: [
-        { icon: 'github', label: 'GitHub', href: 'https://github.com/EvanL1/Aether' },
+        { icon: 'github', label: 'GitHub', href: 'https://github.com/EvanL1/AetherIot' },
       ],
       sidebar: [
         {

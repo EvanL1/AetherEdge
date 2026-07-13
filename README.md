@@ -6,23 +6,77 @@
 [![Version](https://img.shields.io/badge/version-0.5.0-yellow.svg)](CHANGELOG.md)
 [![Status](https://img.shields.io/badge/status-beta-orange.svg)](CHANGELOG.md)
 
-[中文](README-CN.md) | [Documentation](https://docs.aetheriot.workers.dev/) | [Changelog](CHANGELOG.md) | [llms.txt](https://docs.aetheriot.workers.dev/llms.txt)
+[Get started](docs/guides/getting-started.md) · [Documentation](https://docs.aetheriot.workers.dev/) · [Agent Skill](skills/aether-iot/SKILL.md) · [MCP](docs/guides/ai-assistants.md) · [中文](README-CN.md)
 
-**An AI-native, industry-neutral IoT edge kernel, runtime, and Rust SDK for Linux gateways.**
+**Build reliable edge IoT applications with AI.**
 
-AetherIot connects field devices, keeps authoritative live state in shared memory, runs deterministic
-local rules and alarms, and stores embedded history. Its default runtime works offline without an
-LLM, Redis, PostgreSQL, a cloud service, or a browser.
+AetherIot is an open-source, industry-neutral IoT edge kernel, runtime, and Rust SDK for Linux
+gateways. It connects field devices, keeps authoritative live state in shared memory, runs
+deterministic local rules and alarms, and stores embedded history without requiring Redis,
+PostgreSQL, a cloud service, a browser, or an LLM.
 
-> **Beta:** AetherIot is the industry-neutral kernel, runtime, and SDK. The energy-management
-> implementation and distribution lives independently in
-> [AetherEMS](https://github.com/EvanL1/AetherEMS). Existing Rust crates, binaries, and the CLI
-> retain their `aether-*` / `aether` names for API compatibility. Remaining release work is tracked
-> in [ADR-0007](docs/adr/0007-aether-core-and-ems-distribution.md).
+AI is a client of AetherIot, not part of the hard real-time loop. Agents, CLIs, generated apps, and
+operator interfaces all use the same typed command/query boundary; device control remains
+deny-by-default, explicitly confirmed, and audited.
 
-AetherIot is deliberately headless: it ships no product-specific Web UI, frontend image, or
-frontend system service. The EMS operator console is owned and released by AetherEMS, which uses
-the same authenticated application API as other clients.
+> **Beta:** AetherIot is the industry-neutral Kernel, Runtime, and SDK. Existing crates, binaries,
+> the CLI, and some compatibility artifacts retain their `aether-*` / `aether` names. The official
+> energy-management implementation lives in [AetherEMS](https://github.com/EvanL1/AetherEMS).
+
+## Start with an AI agent
+
+Install the repository's Agent Skill in any compatible coding assistant:
+
+```bash
+npx skills add EvanL1/AetherIot -s aether-iot
+```
+
+Build the CLI and expose the running edge system as read-only MCP tools:
+
+```bash
+cargo build --release -p aether
+claude mcp add aether -- ./target/release/aether mcp
+```
+
+Then ask your assistant:
+
+```text
+Get started with AetherIot. Inspect this repository and generate a read-only
+operations app for the capabilities exposed by my edge runtime.
+```
+
+The Skill supplies the development method and pulls current Markdown from the online docs. MCP
+supplies live, structured capabilities. Write tools are not registered unless the operator starts
+an explicitly write-enabled session, and every write still crosses the server-enforced permission,
+confirmation, validation, and audit boundary.
+
+See [Build Applications with AI](docs/guides/build-applications-with-ai.md) for the client contract
+and [Agent Quickstart](https://docs.aetheriot.workers.dev/agent-quickstart/) for a complete safe-empty
+runtime setup.
+
+## What AetherIot provides
+
+- **Deterministic edge runtime** — six isolated Rust services continue acquisition, rules, alarms,
+  history, and uplink when no AI client is connected.
+- **Local-first data plane** — shared memory is authoritative for live point state; SQLite provides
+  embedded desired state, history, audit, and durable outbox storage.
+- **Machine-readable contracts** — runtime manifests, OpenAPI, capability metadata, Pack manifests,
+  MCP tools, and Markdown documentation give agents facts instead of prompt folklore.
+- **One application boundary** — HTTP, CLI, MCP, and generated clients share governed queries and
+  commands instead of writing SHM or storage directly.
+- **Domain Packs** — industry knowledge, models, mappings, rules, and processing declarations layer
+  over the kernel without becoming core dependencies.
+
+## Headless by design
+
+AetherIot does not ship a generic Web Console. A fixed dashboard cannot express every industry
+Pack, and a browser must never become a second configuration authority. Instead, AetherIot ships
+the contracts, Agent Skill, and development guidance needed to generate or maintain fit-for-purpose
+applications.
+
+User interfaces are downstream clients and reference implementations. They consume published
+application APIs, remain replaceable, and receive no direct SHM, SQLite, or internal-service
+access. The optional AetherEMS Console is one energy-domain implementation of this model.
 
 ## Try the SDK
 
@@ -33,8 +87,8 @@ cargo run -p aether-example-minimal-gateway
 cargo run -p aether-example-energy-gateway
 ```
 
-The first is an empty industry-neutral gateway. The second adds the optional
-[Energy Pack](packs/energy). They are SDK smoke tests, not the supervised production runtime.
+The first is an empty industry-neutral gateway. The second proves a disabled-by-default Energy Pack
+composition. They are SDK smoke tests, not the supervised production runtime.
 
 ## Edge runtime
 
@@ -44,39 +98,8 @@ The first is an empty industry-neutral gateway. The second adds the optional
 | `aether-automation` | Instances, rules, and audited control dispatch |
 | `aether-alarm` | Alarm evaluation and lifecycle |
 | `aether-history` | Embedded history and optional history adapters |
-| `aether-api` | Authenticated management API and WebSocket |
+| `aether-api` | Authenticated remote application API and WebSocket |
 | `aether-uplink` | Cloud/MQTT delivery through a durable local outbox |
-
-Start from the reviewed safe-empty configuration in
-[Getting Started](docs/guides/getting-started.md), then use `aether doctor` for acceptance. The
-browser client, external databases, and cloud connectivity are optional.
-
-## Swagger UI
-
-The built-in interface documentation is generated from each service's Rust OpenAPI contract. It
-is feature-gated; include it in an edge package with:
-
-```bash
-./scripts/build-installer.sh v0.5.0 arm64 -s rust --enable-swagger
-```
-
-| Service | Swagger UI | OpenAPI JSON |
-|---|---|---|
-| `aether-io` | `http://127.0.0.1:6001/docs` | `http://127.0.0.1:6001/openapi.json` |
-| `aether-automation` | `http://127.0.0.1:6002/docs` | `http://127.0.0.1:6002/openapi.json` |
-| `aether-history` | `http://127.0.0.1:6004/docs` | `http://127.0.0.1:6004/openapi.json` |
-| `aether-api` | `http://<edge-host>:6005/docs` | `http://<edge-host>:6005/openapi.json` |
-| `aether-uplink` | `http://127.0.0.1:6006/docs` | `http://127.0.0.1:6006/openapi.json` |
-| `aether-alarm` | `http://127.0.0.1:6007/docs` | `http://127.0.0.1:6007/openapi.json` |
-
-Only `aether-api` is intended for remote access. Keep the other five services on loopback. The
-documentation routes are public and never bypass operation authorization. Governed channel,
-automation, alarm, and Data Processing operations show their authentication, confirmation,
-correlation, accepted/degraded results, and audit contract in Swagger; remaining service-local
-management routes are still migration work.
-Enable Swagger only on a trusted commissioning network.
-
-## Architecture and safety
 
 ```text
 Devices -> aether-io -> authoritative SHM
@@ -89,42 +112,29 @@ domain <- ports <- application <- runtime/interfaces
              `---- extensions
 ```
 
-- SHM is authoritative for current point state; external stores may only mirror it.
-- Only acquisition owns telemetry/status writes. Application interfaces are read-only consumers.
-- Device control is deny-by-default and requires permission, confirmation, validation, and audit.
-- Channel commissioning, external device actions, manual rule execution, and physical
-  action-routing changes share application command boundaries across HTTP, CLI, and MCP; MCP
-  writes additionally require explicit `--allow-write`.
-- AI is outside polling and hard real-time safety loops.
+Only `aether-api` is a remote application boundary. The other process APIs stay on loopback.
+Generated clients must use published application capabilities and must not expose or proxy those
+internal ports.
 
-## Maturity
+## Project status
 
-Available now: a beta, versioned domain/ports/application/data-plane SDK; Pack v1; six service
-binaries; SHM/SQLite/local-outbox operation without external services; SDK examples; optional
-adapters; and OpenAPI contract checks. Point and health SHM planes publish one committed physical
-epoch, while History and Uplink bind one SQLite topology snapshot to that exact epoch. SQLite is
-the single desired-state authority for commissioned topology, protocol mappings, logical routes,
-rules, and instances, with revisioned commands and automatic runtime reconciliation.
-
-Still migrating: supported clients must finish sending explicit channel and rule revisions before
-the remaining revisionless compatibility paths can be removed. Direct test-only instance and
-routing mutation helpers are already gone. The local release workflow validates one
-dependency-ordered catalog of public crates, compiles their
-exact archives in a clean-room consumer, checks established APIs for SemVer compatibility, and
-gates separate attested Kernel, CLI, crate, and Pack artifacts. The physical repository split and
-downstream AetherEMS consuming CI now exist, but no tag has yet established the first independent
-registry/GitHub release or replaced the downstream bootstrap Git pin with signed artifacts. The
-former EMS frontend has moved to AetherEMS as its independently tested Console. See
-[Architecture](ARCHITECTURE.md) for the current facts.
+AetherIot is beta software. The versioned SDK, Pack v1, six-service runtime, coherent point/health
+SHM epochs, embedded local operation, governed commands, MCP interface, and OpenAPI contract checks
+are available. The first independent signed public release and removal of the remaining
+revisionless compatibility paths are still pending. See [Architecture](ARCHITECTURE.md),
+[ADR-0007](docs/adr/0007-aether-core-and-ems-distribution.md), and
+[ADR-0012](docs/adr/0012-agent-first-application-surface.md) for the exact boundaries.
 
 ## Documentation
 
-- [Getting Started](docs/guides/getting-started.md)
+- [Agent Quickstart](https://docs.aetheriot.workers.dev/agent-quickstart/)
+- [Build Applications with AI](docs/guides/build-applications-with-ai.md)
+- [Connect AI Assistants](docs/guides/ai-assistants.md)
 - [Connect Devices](docs/guides/connect-devices.md)
 - [HTTP API and Swagger](docs/reference/http-api.md)
-- [Connect AI Assistants](docs/guides/ai-assistants.md)
 - [Deployment](docs/guides/deployment.md)
-- [Architecture](ARCHITECTURE.md) and [ADR index](docs/adr)
+- [llms.txt](https://docs.aetheriot.workers.dev/llms.txt) and
+  [llms-full.txt](https://docs.aetheriot.workers.dev/llms-full.txt)
 
 ## Development
 

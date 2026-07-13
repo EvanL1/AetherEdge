@@ -1,7 +1,7 @@
 # Aether Documentation
 
 The dual-mode documentation service for
-[Aether](https://github.com/EvanL1/Aether), deployed at
+[AetherIot](https://github.com/EvanL1/AetherIot), deployed at
 [`docs.aetheriot.workers.dev`](https://docs.aetheriot.workers.dev).
 
 - Browsers receive a searchable Astro + Starlight site.

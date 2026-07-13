@@ -1,18 +1,16 @@
-# Aether
+# AetherIot
 
-> AI-native, industry-neutral IoT edge kernel and SDK built in Rust.
+> Build reliable edge IoT applications with AI on an industry-neutral,
+> deterministic Rust runtime.
 > Multi-protocol device acquisition, a sub-millisecond shared-memory data
 > plane, isolated runtime processes, and an MCP server let AI agents query and
 > (with explicit authorization) operate the system. Energy management is an
 > optional domain pack, not a core dependency.
 
-AetherEMS is the official energy distribution layered over Aether. The current
-repository integrates both while the Pack v1 contract lands and legacy asset
-shims are removed for the staged repository split recorded in ADR-0007.
-
-The kernel API and safe default site are industry-neutral. The compatibility
-runtime still embeds the legacy energy model catalog until pack loading is
-complete; those models are not commissioned by default.
+AetherIot is headless. It publishes machine-readable runtime and application
+contracts, an Agent Skill, MCP tools/resources, and online Markdown so AI
+agents can build fit-for-purpose clients without turning a Web UI into a
+second authority. AetherEMS is the independent official energy distribution.
 
 For Data Processing, `as_of` is an event-time frame bound. The current SQLite
 history has no ingestion/source epoch and artifact provenance has no
@@ -27,6 +25,7 @@ read-only historian directory/identity for `aether-api`; the base
 ## AI-native Architecture
 
 - [Canonical Agent Instructions](AGENTS.md): Architecture boundaries, safety rules, Rust conventions, and verification commands
+- [AetherIot Agent Skill](skills/aether-iot/SKILL.md): Contract-first workflow for onboarding, SDK integrations, generated applications, and governed commands
 - [Architecture Entry Point](ARCHITECTURE.md): Target runtime and dependency direction
 - [ADR-0001](docs/adr/0001-ai-native-edge-kernel.md): Decision to migrate to an industry-neutral, external-database-free edge kernel
 - [ADR-0002](docs/adr/0002-dataplane-and-local-outbox.md): Physical SHM extraction, local journal durability, and MQTT delivery boundary
@@ -34,6 +33,7 @@ read-only historian directory/identity for `aether-api`; the base
 - [ADR-0006](docs/adr/0006-installation-and-commissioning.md): Fail-safe installation context, atomic configuration apply, and the boundary between setup and physical-device commissioning
 - [ADR-0007](docs/adr/0007-aether-core-and-ems-distribution.md): Staged separation of the Aether kernel and AetherEMS energy distribution without rewriting Git history
 - [ADR-0009](docs/adr/0009-aether-data-processing.md): Accepted industry-neutral task, processor direction, derived-data authority, opt-in API/sidecar composition, and reserved future runtime decision
+- [ADR-0012](docs/adr/0012-agent-first-application-surface.md): Headless Kernel, Agent Skill, generated-client, and single remote application boundary
 - [Target Repository Layout](docs/architecture/target-layout.md): Core crates, optional extensions, interfaces, and domain packs
 - [Pack Contract Crate](crates/aether-pack/README.md): Versioned manifest loading, release compatibility, required identifiers, fail-safe examples, and pack-root path confinement
 - [SHM Data Plane Crate](crates/aether-dataplane/README.md): Layout ownership, mmap validation, seqlock safety, and compatibility imports
@@ -72,6 +72,7 @@ read-only historian directory/identity for `aether-api`; the base
 ## Guides
 
 - [Getting Started](docs/guides/getting-started.md): Build the workspace, initialize configuration, start services, and verify health
+- [Build Applications with AI](docs/guides/build-applications-with-ai.md): Generate contract-first clients without creating a second state or safety authority
 - [Connect Devices](docs/guides/connect-devices.md): Configure channels, choose protocols, and map device points to instances
 - [Writing Rules](docs/guides/writing-rules.md): Author rules through the HTTP API or the visual flow editor
 - [Connect AI Assistants](docs/guides/ai-assistants.md): Point Claude or any MCP client at aether mcp, and choose between read-only and write access
