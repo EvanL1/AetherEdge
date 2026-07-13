@@ -225,7 +225,7 @@ pub(crate) async fn forward_to_upstream(
     }
 }
 
-fn request_header_allowlist() -> [header::HeaderName; 8] {
+fn request_header_allowlist() -> [header::HeaderName; 9] {
     [
         header::AUTHORIZATION,
         header::ACCEPT,
@@ -234,6 +234,7 @@ fn request_header_allowlist() -> [header::HeaderName; 8] {
         header::IF_NONE_MATCH,
         header::HeaderName::from_static("x-request-id"),
         header::HeaderName::from_static("x-aether-confirmed"),
+        header::HeaderName::from_static("x-aether-expected-revision"),
         header::HeaderName::from_static("idempotency-key"),
     ]
 }
@@ -339,6 +340,7 @@ mod tests {
                     "uri": uri.to_string(),
                     "authorization": header("authorization"),
                     "confirmed": header("x-aether-confirmed"),
+                    "expected_revision": header("x-aether-expected-revision"),
                     "forged_actor": header("x-aether-actor-id"),
                     "body": String::from_utf8_lossy(&body),
                 })),
@@ -364,6 +366,7 @@ mod tests {
             .header("authorization", "Bearer signed-user-token")
             .header("content-type", "application/json")
             .header("x-aether-confirmed", "true")
+            .header("x-aether-expected-revision", "41")
             .header("x-aether-actor-id", "forged-admin")
             .body(Body::from(r#"{"enabled":true}"#))
             .expect("valid gateway request");
@@ -387,6 +390,7 @@ mod tests {
         assert_eq!(payload["uri"], "/api/channels/7?include=points");
         assert_eq!(payload["authorization"], "Bearer signed-user-token");
         assert_eq!(payload["confirmed"], "true");
+        assert_eq!(payload["expected_revision"], "41");
         assert!(payload["forged_actor"].is_null());
         assert_eq!(payload["body"], r#"{"enabled":true}"#);
     }
