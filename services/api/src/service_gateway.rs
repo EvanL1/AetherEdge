@@ -9,7 +9,9 @@ use axum::{
     routing::any,
 };
 use serde_json::json;
+use uuid::Uuid;
 
+use crate::auth::Claims;
 use crate::config::GatewayConfig;
 use crate::state::AppState;
 
@@ -111,14 +113,34 @@ async fn proxy_service(
     state: Arc<AppState>,
     service: ServiceName,
     path: String,
-    request: Request<Body>,
+    mut request: Request<Body>,
 ) -> Response<Body> {
-    if validate_relative_path(&path).is_err() {
+    if validate_relative_path(&path).is_err() || is_internal_admin_path(service, &path) {
         return gateway_error(
             StatusCode::BAD_REQUEST,
             "INVALID_SERVICE_PATH",
             "the internal application path is invalid",
         );
+    }
+    let Some(claims) = request.extensions().get::<Claims>() else {
+        return gateway_error(
+            StatusCode::UNAUTHORIZED,
+            "AUTHENTICATION_REQUIRED",
+            "an authenticated application identity is required",
+        );
+    };
+    if let Err(error) =
+        authorize_service_request(claims, service, &path, request.method(), request.headers())
+    {
+        return error.into_response();
+    }
+    if is_governed_mutation(service, &path, request.method())
+        && !request.headers().contains_key("x-request-id")
+    {
+        let request_id = Uuid::new_v4().to_string();
+        if let Ok(value) = request_id.parse() {
+            request.headers_mut().insert("x-request-id", value);
+        }
     }
     forward_to_upstream(
         &state.service_client,
@@ -127,6 +149,65 @@ async fn proxy_service(
         request,
     )
     .await
+}
+
+fn is_internal_admin_path(service: ServiceName, path: &str) -> bool {
+    matches!(service, ServiceName::Io | ServiceName::Automation)
+        && (path == "api/admin" || path.starts_with("api/admin/"))
+}
+
+fn is_governed_mutation(service: ServiceName, path: &str, method: &Method) -> bool {
+    if matches!(*method, Method::GET | Method::HEAD) {
+        return false;
+    }
+    // History batch-query is a read expressed as POST because its filter can be large.
+    !(service == ServiceName::History && path == "data/batch-query" && *method == Method::POST)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum GatewayAuthorizationError {
+    MutationForbidden,
+    ConfirmationRequired,
+}
+
+impl IntoResponse for GatewayAuthorizationError {
+    fn into_response(self) -> Response<Body> {
+        match self {
+            Self::MutationForbidden => gateway_error(
+                StatusCode::FORBIDDEN,
+                "APPLICATION_MUTATION_FORBIDDEN",
+                "the authenticated role cannot mutate application state",
+            ),
+            Self::ConfirmationRequired => gateway_error(
+                StatusCode::PRECONDITION_REQUIRED,
+                "EXPLICIT_CONFIRMATION_REQUIRED",
+                "application mutations require x-aether-confirmed: true",
+            ),
+        }
+    }
+}
+
+fn authorize_service_request(
+    claims: &Claims,
+    service: ServiceName,
+    path: &str,
+    method: &Method,
+    headers: &HeaderMap,
+) -> Result<(), GatewayAuthorizationError> {
+    if !is_governed_mutation(service, path, method) {
+        return Ok(());
+    }
+    if !matches!(claims.role.as_deref(), Some("Engineer" | "Admin")) {
+        return Err(GatewayAuthorizationError::MutationForbidden);
+    }
+    if headers
+        .get("x-aether-confirmed")
+        .and_then(|value| value.to_str().ok())
+        != Some("true")
+    {
+        return Err(GatewayAuthorizationError::ConfirmationRequired);
+    }
+    Ok(())
 }
 
 pub(crate) fn validate_relative_path(path: &str) -> Result<(), ()> {
@@ -274,7 +355,23 @@ mod tests {
     };
     use serde_json::json;
 
-    use super::{ServiceName, forward_to_upstream, validate_relative_path};
+    use super::{
+        GatewayAuthorizationError, ServiceName, authorize_service_request, forward_to_upstream,
+        is_governed_mutation, is_internal_admin_path, validate_relative_path,
+    };
+    use crate::auth::Claims;
+
+    fn claims(role: &str) -> Claims {
+        Claims {
+            user_id: 7,
+            username: "gateway-test".to_owned(),
+            role: Some(role.to_owned()),
+            token_id: None,
+            exp: usize::MAX,
+            iat: 0,
+            token_type: "access".to_owned(),
+        }
+    }
 
     #[test]
     fn service_names_and_paths_are_closed_to_known_local_targets() {
@@ -316,6 +413,69 @@ mod tests {
         assert!(validate_relative_path("api/channels/../secrets").is_err());
         assert!(validate_relative_path("//attacker.invalid/path").is_err());
         assert!(validate_relative_path("api/%2e%2e/secrets").is_err());
+        assert!(is_internal_admin_path(
+            ServiceName::Io,
+            "api/admin/logs/view"
+        ));
+        assert!(is_internal_admin_path(
+            ServiceName::Automation,
+            "api/admin/logs/level"
+        ));
+        assert!(!is_internal_admin_path(ServiceName::History, "data/query"));
+    }
+
+    #[test]
+    fn application_mutations_require_an_operator_role_and_explicit_confirmation() {
+        let headers = HeaderMap::new();
+        assert!(!is_governed_mutation(
+            ServiceName::History,
+            "data/batch-query",
+            &Method::POST
+        ));
+        assert!(is_governed_mutation(
+            ServiceName::Uplink,
+            "mqtt/config",
+            &Method::POST
+        ));
+
+        let viewer = authorize_service_request(
+            &claims("Viewer"),
+            ServiceName::Uplink,
+            "mqtt/config",
+            &Method::POST,
+            &headers,
+        )
+        .expect_err("Viewer mutation must fail");
+        assert_eq!(viewer, GatewayAuthorizationError::MutationForbidden);
+
+        let engineer = authorize_service_request(
+            &claims("Engineer"),
+            ServiceName::Uplink,
+            "mqtt/config",
+            &Method::POST,
+            &headers,
+        )
+        .expect_err("unconfirmed mutation must fail");
+        assert_eq!(engineer, GatewayAuthorizationError::ConfirmationRequired);
+
+        let mut confirmed = HeaderMap::new();
+        confirmed.insert("x-aether-confirmed", "true".parse().expect("valid header"));
+        authorize_service_request(
+            &claims("Admin"),
+            ServiceName::Uplink,
+            "mqtt/config",
+            &Method::POST,
+            &confirmed,
+        )
+        .expect("confirmed Admin mutation must pass");
+        authorize_service_request(
+            &claims("Viewer"),
+            ServiceName::History,
+            "data/batch-query",
+            &Method::POST,
+            &headers,
+        )
+        .expect("read-only batch query must pass");
     }
 
     #[tokio::test]
