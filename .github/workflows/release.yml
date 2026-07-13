@@ -31,11 +31,12 @@ jobs:
         with:
           components: clippy
 
-      - name: Install Protoc
-        uses: arduino/setup-protoc@v3
-        with:
-          version: "23.x"
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Install release verification tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y protobuf-compiler ripgrep
+          protoc --version
+          rg --version
 
       - name: Install release boundary tools
         run: |
@@ -43,7 +44,7 @@ jobs:
           sudo apt-get install --yes --no-install-recommends ripgrep
 
       - name: Cache Dependencies
-        uses: actions/cache@v4
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.cargo/bin/
@@ -194,7 +195,7 @@ jobs:
           targets: ${{ matrix.target }}
 
       - name: Cache Cargo Dependencies
-        uses: actions/cache@v4
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.cargo/registry/index/
@@ -220,7 +221,8 @@ jobs:
       - name: Install Packaging Tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y makeself
+          sudo apt-get install -y makeself protobuf-compiler
+          protoc --version
 
       - name: Set up QEMU
         if: matrix.arch == 'amd64'
@@ -332,7 +334,7 @@ jobs:
           targets: ${{ matrix.target }}
 
       - name: Cache Cargo Dependencies
-        uses: actions/cache@v4
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.cargo/registry/index/
