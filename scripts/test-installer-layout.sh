@@ -674,42 +674,6 @@ assert_contains "$BARE_METAL_INSTALLER" 'AETHER_BARE_METAL_INSTALLER_FUNCTIONS_O
         || fail "bare-metal installer printed the bootstrap password"
     assert_contains "$bare_bootstrap_env" 'AETHER_ALLOW_PUBLIC_REGISTRATION=false'
 
-    core_bundle="$TEST_ROOT/bare-core-bundle"
-    mkdir -p "$core_bundle"
-    [[ "$(detect_bundled_frontend "$core_bundle")" == false ]] \
-        || fail "a core-only bare-metal bundle was treated as frontend-enabled"
-
-    frontend_bundle="$TEST_ROOT/bare-frontend-bundle"
-    mkdir -p "$frontend_bundle/bin" "$frontend_bundle/apps-dist" "$frontend_bundle/systemd"
-    touch "$frontend_bundle/bin/nginx" \
-        "$frontend_bundle/apps-dist/index.html" \
-        "$frontend_bundle/nginx.conf" \
-        "$frontend_bundle/systemd/aether-apps.service"
-    chmod +x "$frontend_bundle/bin/nginx"
-    [[ "$(detect_bundled_frontend "$frontend_bundle")" == true ]] \
-        || fail "a complete bare-metal frontend bundle was not detected"
-
-    partial_frontend_bundle="$TEST_ROOT/bare-partial-frontend-bundle"
-    mkdir -p "$partial_frontend_bundle/bin"
-    touch "$partial_frontend_bundle/bin/nginx"
-    chmod +x "$partial_frontend_bundle/bin/nginx"
-    if detect_bundled_frontend "$partial_frontend_bundle" >/dev/null; then
-        fail "an incomplete bare-metal frontend bundle was accepted"
-    fi
-
-    empty_frontend_bundle="$TEST_ROOT/bare-empty-frontend-bundle"
-    mkdir -p "$empty_frontend_bundle/apps-dist"
-    if detect_bundled_frontend "$empty_frontend_bundle" >/dev/null; then
-        fail "an empty apps-dist trace was treated as a core-only bundle"
-    fi
-
-    non_executable_frontend_bundle="$TEST_ROOT/bare-non-executable-frontend-bundle"
-    mkdir -p "$non_executable_frontend_bundle/bin"
-    touch "$non_executable_frontend_bundle/bin/nginx"
-    if detect_bundled_frontend "$non_executable_frontend_bundle" >/dev/null; then
-        fail "a non-executable bundled nginx was treated as a core-only bundle"
-    fi
-
     redis_bundle="$TEST_ROOT/bare-redis-bundle"
     mkdir -p "$redis_bundle/bin" "$redis_bundle/systemd"
     touch "$redis_bundle/bin/redis-server" \
@@ -732,47 +696,6 @@ assert_contains "$BARE_METAL_INSTALLER" 'AETHER_BARE_METAL_INSTALLER_FUNCTIONS_O
     touch "$non_executable_redis_bundle/bin/redis-server"
     if detect_bundled_redis "$non_executable_redis_bundle" >/dev/null; then
         fail "a non-executable Redis artifact was treated as a core-only bundle"
-    fi
-
-    symlink_frontend_bundle="$TEST_ROOT/bare-symlink-frontend-bundle"
-    mkdir -p "$symlink_frontend_bundle/bin" \
-        "$symlink_frontend_bundle/apps-dist" \
-        "$symlink_frontend_bundle/systemd" \
-        "$symlink_frontend_bundle/external"
-    touch "$symlink_frontend_bundle/external/nginx" \
-        "$symlink_frontend_bundle/apps-dist/index.html" \
-        "$symlink_frontend_bundle/nginx.conf" \
-        "$symlink_frontend_bundle/systemd/aether-apps.service"
-    chmod +x "$symlink_frontend_bundle/external/nginx"
-    ln -s "$symlink_frontend_bundle/external/nginx" \
-        "$symlink_frontend_bundle/bin/nginx"
-    if detect_bundled_frontend "$symlink_frontend_bundle" >/dev/null; then
-        fail "a symlinked frontend binary was accepted as self-contained"
-    fi
-
-    nested_frontend_assets="$TEST_ROOT/bare-nested-frontend-assets"
-    mkdir -p "$nested_frontend_assets/assets"
-    touch "$nested_frontend_assets/index.html"
-    ln -s / "$nested_frontend_assets/assets/outside"
-    if validate_tree_without_links_or_special_files \
-        "$nested_frontend_assets" "frontend fixture"; then
-        fail "a nested frontend asset symlink was accepted"
-    fi
-
-    web_root_fixture="$TEST_ROOT/bare-web-root"
-    mkdir -p "$web_root_fixture/unowned"
-    printf 'unrelated\n' > "$web_root_fixture/unowned/index.html"
-    if validate_frontend_web_root \
-        "$web_root_fixture/unowned" "$web_root_fixture/marker" false; then
-        fail "bare-metal frontend accepted an unowned non-empty web root"
-    fi
-    touch "$web_root_fixture/marker"
-    validate_frontend_web_root \
-        "$web_root_fixture/unowned" "$web_root_fixture/marker" false
-    ln -s / "$web_root_fixture/symlink"
-    if validate_frontend_web_root \
-        "$web_root_fixture/symlink" "$web_root_fixture/marker" true; then
-        fail "bare-metal frontend accepted a symlinked destructive web root"
     fi
 
     (
@@ -831,9 +754,6 @@ bare_mutation_line=$(grep -nFx 'normalize_root_owned_tree .' "$BARE_METAL_INSTAL
 [[ "$bare_root_guard_line" -lt "$bare_preflight_line" \
     && "$bare_preflight_line" -lt "$bare_mutation_line" ]] \
     || fail "bare-metal footprint preflight must run before host mutation"
-frontend_detection_line=$(grep -nF 'FRONTEND_INCLUDED=$(detect_bundled_frontend .)' "$BARE_METAL_INSTALLER" | head -1 | cut -d: -f1)
-[[ "$frontend_detection_line" -lt "$bare_preflight_line" ]] \
-    || fail "bare-metal optional artifacts must be validated before footprint preflight"
 redis_detection_line=$(grep -nF 'REDIS_INCLUDED=$(detect_bundled_redis .)' "$BARE_METAL_INSTALLER" | head -1 | cut -d: -f1)
 [[ "$redis_detection_line" -lt "$bare_preflight_line" ]] \
     || fail "bare-metal Redis artifacts must be validated before footprint preflight"
@@ -844,7 +764,7 @@ state_snapshot_line=$(grep -nFx 'snapshot_bare_metal_state' "$BARE_METAL_INSTALL
     || fail "bare-metal host-state snapshot is taken after binary publication"
 
 echo "Testing optional static dependency builds require trusted provenance..."
-if INCLUDE_REDIS=1 INCLUDE_NGINX=0 REDIS_VERSION=9.9.9 \
+if INCLUDE_REDIS=1 REDIS_VERSION=9.9.9 \
     REDIS_SHA256=untrusted bash "$STATIC_DEP_BUILDER" arm64 >/dev/null 2>&1; then
     fail "static Redis build accepted an invalid source digest"
 fi
@@ -902,13 +822,6 @@ assert_contains "$ROOT_DIR/scripts/systemd/aether-io.service" 'ExecStart=/opt/ae
 for unit in aether-automation aether-history aether-uplink aether-alarm; do
     assert_contains "$ROOT_DIR/scripts/systemd/${unit}.service" 'Environment=API_HOST=127.0.0.1'
 done
-apps_compose_section=$(awk '
-    /^  apps:/ { in_apps = 1 }
-    in_apps && /^volumes:/ { exit }
-    in_apps { print }
-' "$ROOT_DIR/docker-compose.yml")
-grep -Fq -- 'profiles: ["frontend"]' <<< "$apps_compose_section" \
-    || fail "optional frontend is still part of the default edge-kernel composition"
 assert_not_contains "$ROOT_DIR/scripts/systemd/aether.target" 'aether-apps.service'
 assert_contains "$INSTALLER_BUILDER" 'BUILD_IMAGES="aetherems:latest"'
 assert_not_contains "$INSTALLER_BUILDER" 'BUILD_IMAGES="aetherems:latest,aether-apps:latest"'
@@ -934,12 +847,6 @@ postgres_feature_line=$(grep -nF '"$CARGO_FEATURES" "aether-history/postgres-sto
     && "$timescale_feature_guard_line" -lt "$postgres_feature_line" \
     && "$(grep -Fc 'aether-history/postgres-storage' "$INSTALLER_BUILDER")" == 1 ]] \
     || fail "PostgreSQL history feature is not exclusively guarded by Timescale selection"
-assert_contains "$INSTALLER_BUILDER" 'INCLUDE_FRONTEND_STATIC=0'
-assert_contains "$INSTALLER_BUILDER" 'INCLUDE_NGINX="$INCLUDE_FRONTEND_STATIC"'
-assert_contains "$INSTALLER_BUILDER" 'rm -f "$BM_PKG_DIR/systemd/aether-apps.service"'
-assert_contains "$STATIC_DEP_BUILDER" 'INCLUDE_NGINX="${INCLUDE_NGINX:-0}"'
-assert_contains "$BARE_METAL_INSTALLER" 'FRONTEND_INCLUDED=$(detect_bundled_frontend .)'
-assert_contains "$BARE_METAL_INSTALLER" 'systemctl enable aether-apps.service'
 assert_contains "$BARE_METAL_INSTALLER" 'REDIS_INCLUDED=$(detect_bundled_redis .)'
 assert_contains "$BARE_METAL_INSTALLER" 'systemctl enable aether-redis.service'
 rollback_body=$(awk '
@@ -950,7 +857,7 @@ rollback_body=$(awk '
 if grep -Fq '_INCLUDED' <<< "$rollback_body"; then
     fail "bare-metal rollback derives previous extension state from the incoming bundle"
 fi
-grep -Fq 'for unit in aether-apps.service aether-redis.service aether.target; do' \
+grep -Fq 'for unit in aether-redis.service aether.target; do' \
     <<< "$rollback_body" \
     || fail "bare-metal rollback does not remove newly enabled service state"
 rollback_quiesce_line=$(grep -nF 'quiesce_aether_services_for_rollback' <<< "$rollback_body" | head -1 | cut -d: -f1)
@@ -1034,5 +941,23 @@ assert_not_contains "$ROOT_DIR/.env.example" 'AETHER_CONFIG_PATH=/opt/AetherEdge
 assert_contains "$ROOT_DIR/docs/AETHER_CLI_GUIDE.md" '/etc/aether/install.yaml'
 assert_contains "$ROOT_DIR/docs/AETHER_CLI_GUIDE.md" '/opt/AetherEdge/data/config'
 assert_contains "$ROOT_DIR/docs/guides/deployment.md" '`AETHER_INSTALL_DIR` overrides'
+
+echo "Testing the AetherIot distribution remains headless..."
+[[ ! -e "$ROOT_DIR/apps" ]] || fail "AetherIot restored a product-specific Web UI source tree"
+[[ ! -e "$ROOT_DIR/scripts/systemd/aether-apps.service" ]] \
+    || fail "AetherIot restored the retired EMS console service"
+for headless_owner in \
+    "$ROOT_DIR/docker-compose.yml" \
+    "$ROOT_DIR/scripts/build-installer.sh" \
+    "$ROOT_DIR/scripts/build-static-deps.sh" \
+    "$ROOT_DIR/scripts/install-baremetal.sh" \
+    "$ROOT_DIR/scripts/install.sh" \
+    "$ROOT_DIR/scripts/offline/build-docker-arm64.sh" \
+    "$ROOT_DIR/tools/aether/src/services.rs"; do
+    if grep -En 'aether-apps|apps/(dist|nginx)|FRONTEND_INCLUDED|INCLUDE_FRONTEND|INCLUDE_NGINX' \
+        "$headless_owner"; then
+        fail "AetherIot distribution still owns EMS console integration: $headless_owner"
+    fi
+done
 
 echo "Installer layout tests passed."

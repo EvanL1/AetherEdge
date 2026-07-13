@@ -1,7 +1,7 @@
 ---
 title: Deployment
 description: Run with Docker Compose or build a self-contained installer for edge devices
-updated: 2026-07-11
+updated: 2026-07-13
 ---
 
 # Deployment
@@ -23,11 +23,15 @@ docker compose ps
 ```
 
 The default Compose application starts only the six Rust services, all with
-`network_mode: host`. The web client, Redis, and TimescaleDB start only when
-their explicit `frontend`, `redis`, and `postgres-storage` profiles are
-selected. The base file exposes the forecast sidecar only through the mutable
+`network_mode: host`. Redis and TimescaleDB start only when their explicit
+`redis` and `postgres-storage` profiles are selected. The base file exposes the forecast sidecar only through the mutable
 `data-processing-dev` profile; production requires the explicit override shown
 below.
+
+AetherIot is a headless Kernel distribution. It does not build or install a
+browser client. The EMS operator console belongs to the independent
+[AetherEMS](https://github.com/EvanL1/AetherEMS) distribution and connects
+through the authenticated application API.
 
 | Container | Image | Role |
 |-----------|-------|------|
@@ -40,11 +44,6 @@ below.
 | aether-api | aetherems:latest | REST API, WebSocket, JWT auth |
 | aether-uplink | aetherems:latest | MQTT cloud uplink, TLS certificates |
 | aether-alarm | aetherems:latest | Alarm rules and notifications |
-| aether-apps | aether-apps:latest | Vue.js web UI |
-
-Start the optional browser client with
-`docker compose --profile frontend up -d`; it is not part of the edge-kernel
-acceptance path.
 
 The production forecast profile requires an immutable image built from the
 existing Load-Forecasting service plus Aether's adapter, a commissioned
@@ -117,9 +116,10 @@ policy. The examples also leave CPU, memory, and PID quotas
 deployment-specific; set measured cgroup/systemd limits from a real artifact
 benchmark so processor load cannot starve deterministic services.
 
-The six Rust services share one `aetherems:latest` image, each started with
-its own command. The `aether-apps:latest` image must be pre-built or loaded
-(`docker load < apps.tar.gz`) — the compose file does not build it.
+The six Rust services share one `aetherems:latest` compatibility image, each
+started with its own command. The image name is retained while downstream
+release consumers migrate; it does not imply that this repository owns the EMS
+product or Console.
 
 Host networking does not make the unauthenticated process APIs public: IO,
 automation, history, uplink, and alarm bind only to `127.0.0.1`. Remote clients
@@ -168,12 +168,12 @@ install script:
 - `TARGET` — Rust target triple; defaults to `aarch64-unknown-linux-musl`
   for arm64 and `x86_64-unknown-linux-musl` for amd64
 - `--services` / `-s` — comma-separated subset to include (service names:
-  `aether-io`, `aether-automation`, `aether-history`, `aether-api`, `aether-uplink`, `aether-alarm`, `apps`,
+  `aether-io`, `aether-automation`, `aether-history`, `aether-api`, `aether-uplink`, `aether-alarm`,
   `redis`, `timescaledb`; group shortcut `rust` expands to all six Rust
   services). Every fresh-install package must include the Rust core; select
   extension variants as `-s rust,redis`, `-s rust,timescaledb`, or
-  `-s rust,apps`. The default package contains only the Rust edge-runtime
-  image; frontend and external-store images must be selected explicitly.
+  `-s rust,redis,timescaledb`. The default package contains only the Rust
+  edge-runtime image; external-store images must be selected explicitly.
 - `--enable-swagger` — compile the Rust services with their feature-gated
   Swagger UI enabled
 
@@ -187,8 +187,8 @@ install script:
 
 The script cross-compiles the six services and the `aether` CLI with
 `cargo zigbuild` for the target triple, builds the `aetherems` Docker image
-from those binaries, saves the images with `docker save` (plus the Redis,
-TimescaleDB, and frontend images when selected), and packages the result
+from those binaries, saves the images with `docker save` (plus the Redis and
+TimescaleDB images when selected), and packages the result
 with `makeself` into `release/AetherEdge-<arch>-<version>.run` (subset
 builds via `--services` append a service-list suffix to the file name, and
 `--enable-swagger` appends `-swagger`). The build host needs Docker,
@@ -295,15 +295,13 @@ For edge devices that cannot or should not run Docker,
 package: a self-contained bundle of statically linked binaries and systemd
 units, with zero container runtime dependency on the target machine. It
 contains the six Rust services, the `aether` CLI, and the core systemd units.
-The browser client, static `nginx`, and `aether-apps.service` are included only
-when `apps` is explicitly selected. Static `redis-server`/`redis-cli` and their
-unit are likewise included only when Redis is selected.
-`scripts/build-static-deps.sh` uses `INCLUDE_NGINX=1` and `INCLUDE_REDIS=1`
-for those extension bundles. The core services are grouped by `aether.target`.
-The pinned Redis/nginx releases also pin their source-archive SHA-256 values.
-Overriding either version requires its matching `REDIS_SHA256` or
-`NGINX_SHA256`; a cached binary is reused only with a matching provenance
-marker and after its static ELF linkage and target architecture are checked.
+Static `redis-server`/`redis-cli` and their unit are included only when Redis
+is selected. `scripts/build-static-deps.sh` uses `INCLUDE_REDIS=1` for that
+extension bundle. The core services are grouped by `aether.target`. The pinned
+Redis release also pins its source-archive SHA-256 value. Overriding the version
+requires its matching `REDIS_SHA256`; a cached binary is reused only with a
+matching provenance marker and after its static ELF linkage and target
+architecture are checked.
 
 The bare-metal runtime root is likewise fixed at `/opt/aether`, matching the
 packaged systemd units. `AETHER_INSTALL_DIR` overrides are rejected. Its
@@ -316,22 +314,18 @@ Build:
 # Core-only package (default)
 ./scripts/build-installer.sh --bare-metal [VERSION] [ARCH]
 
-# Core plus the optional browser client
-./scripts/build-installer.sh --bare-metal [VERSION] [ARCH] -s rust,apps
-
-# Core plus optional browser client and Redis mirror infrastructure
-./scripts/build-installer.sh --bare-metal [VERSION] [ARCH] -s rust,apps,redis
+# Core plus optional Redis mirror infrastructure
+./scripts/build-installer.sh --bare-metal [VERSION] [ARCH] -s rust,redis
 ```
 
 This follows the same `[VERSION] [ARCH] [TARGET]` positional convention as
 the Docker build — `--bare-metal` is an added flag, order of the other
 arguments is unchanged. It cross-compiles the same six services plus the
 `aether` CLI and packages them with `makeself` into
-`release/AetherEdge-baremetal-<arch>-<version>.run`. Selecting `apps` also
-builds static nginx and the frontend with `pnpm`, adding `-frontend` to the
-file name; selecting Redis adds `-redis`. A bare-metal package must include
-the Rust core. TimescaleDB is an external bare-metal extension and is not
-bundled by this builder.
+`release/AetherEdge-baremetal-<arch>-<version>.run`. Selecting Redis adds
+`-redis` to the file name. A bare-metal package must include the Rust core.
+TimescaleDB is an external bare-metal extension and is not bundled by this
+builder.
 
 Ship and run as root — the installer refuses to proceed without
 `systemctl` on PATH:
@@ -346,13 +340,12 @@ runs) lays out the install as:
 
 | Path | Contents |
 |------|----------|
-| `/opt/aether/bin/` | Service binaries and `aether` CLI; `nginx` and Redis tools only in explicitly selected extension bundles |
+| `/opt/aether/bin/` | Service binaries and `aether` CLI; Redis tools only in an explicitly selected extension bundle |
 | `/etc/aether/config/` | The activated configuration (from `config.template/` on first install) |
 | `/etc/aether/aether.env` | Explicit config/data/database paths, `AETHER_LOG_DIR`, `RUST_LOG`, and freshly generated secrets (mode 600) |
 | `/etc/aether/install.yaml` | Non-secret installed layout used by the CLI (`config_dir`, `data_dir`, runtime mode, release channel, and enabled packs) |
 | `/etc/aether/script-host/main.py` | The Python script host for aether-io custom transforms (matches the deployed-path lookup in `services/io/src/protocols/core/script_runner.rs`) |
-| `/var/lib/aether/` | Service logs (`logs/`); nginx temp/log directories (`nginx/`) only with the browser client |
-| `/usr/share/nginx/html/` | Optional Web UI static assets; untouched by a core-only package |
+| `/var/lib/aether/` | Service logs (`logs/`) and optional Redis data (`redis/`) |
 
 It also symlinks `aether` onto `/usr/local/bin` and drops a
 `/etc/profile.d/aether.sh` PATH entry, installs the systemd units,
@@ -405,10 +398,9 @@ Uninstall with the script the installer writes:
 ```
 
 It stops and disables `aether.target`, removes the systemd units, the
-`aether` symlink, the PATH entry, and `/opt/aether` itself. It removes
-`/usr/share/nginx/html` only when the optional frontend was installed by this
-installer. `/etc/aether` and `/var/lib/aether` (configuration and runtime
-data) are left in place. Those retained directories intentionally make a later
+`aether` symlink, the PATH entry, and `/opt/aether` itself. `/etc/aether` and
+`/var/lib/aether` (configuration and runtime data) are left in place. Those
+retained directories intentionally make a later
 fresh install fail until an operator has exported, relocated, or removed them.
 
 ## Runtime paths

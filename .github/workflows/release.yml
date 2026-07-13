@@ -388,12 +388,13 @@ jobs:
           ### Package Contents
 
           - **Rust Services**: aether-io (6001), aether-automation (6002), aether-history (6004), aether-api (6005), aether-uplink (6006), aether-alarm (6007)
-          - **Default dependency boundary**: no Redis, PostgreSQL, TimescaleDB, or frontend
+          - **Default dependency boundary**: no Redis, PostgreSQL, TimescaleDB, or product UI
           - **CLI Tool**: aether
 
-          Frontend, Redis mirror, and PostgreSQL/TimescaleDB history artifacts
-          are separate explicit installer builds; they are not included in the
-          default release package.
+          The AetherEMS Console is owned and released by the downstream AetherEMS
+          repository. Redis mirror and PostgreSQL/TimescaleDB history artifacts
+          remain explicit optional extensions; none is included in the default
+          release package.
 
           EOF
 

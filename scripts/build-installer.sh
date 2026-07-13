@@ -8,8 +8,8 @@
 #   --enable-swagger: Enable Swagger UI for feature-gated Rust services
 #
 # Service names: aether-io, aether-automation, aether-history, aether-api,
-# aether-uplink, aether-alarm, apps, redis, timescaledb (canonical
-# aether-apps/aether-redis/aether-timescaledb names are accepted as aliases)
+# aether-uplink, aether-alarm, redis, timescaledb (canonical
+# aether-redis/aether-timescaledb names are accepted as aliases)
 # Service groups: rust (all Rust services), py (the four former Python services)
 #
 # Examples:
@@ -251,9 +251,6 @@ service_to_image() {
         aether-io|aether-automation|aether-history|aether-api|aether-uplink|aether-alarm)
             echo "aetherems:latest"
             ;;
-        aether-apps|apps)
-            echo "aether-apps:latest"
-            ;;
         aether-redis|redis)
             echo "redis:8-alpine"
             ;;
@@ -296,13 +293,13 @@ if [[ -n "$SELECTED_SERVICES" ]]; then
             BUILD_IMAGES=$(add_csv_item "$BUILD_IMAGES" "$image")
         else
             echo -e "${RED}Error: Unknown service '$service'${NC}"
-            echo "Available services: aether-io aether-automation aether-history aether-api aether-uplink aether-alarm apps redis timescaledb"
+            echo "Available services: aether-io aether-automation aether-history aether-api aether-uplink aether-alarm redis timescaledb"
             exit 1
         fi
     done
 else
     # Default edge-kernel distribution contains only the six Rust services.
-    # Frontend and external stores are selected explicitly.
+    # External stores are selected explicitly.
     BUILD_IMAGES="aetherems:latest"
 fi
 
@@ -625,26 +622,13 @@ if csv_contains "$BUILD_IMAGES" "aetherems:latest"; then
 
     if [[ "$BARE_METAL" == 1 ]]; then
         INCLUDE_REDIS_STATIC=0
-        INCLUDE_FRONTEND_STATIC=0
         if csv_contains "$BUILD_IMAGES" "redis:8-alpine"; then
             INCLUDE_REDIS_STATIC=1
         fi
-        if csv_contains "$BUILD_IMAGES" "aether-apps:latest"; then
-            INCLUDE_FRONTEND_STATIC=1
-        fi
-        echo -e "${BLUE}[2/4] Building selected static dependencies...${NC}"
-        INCLUDE_REDIS="$INCLUDE_REDIS_STATIC" \
-            INCLUDE_NGINX="$INCLUDE_FRONTEND_STATIC" \
-            ./scripts/build-static-deps.sh "$ARCH"
+        echo -e "${BLUE}[2/3] Building selected static dependencies...${NC}"
+        INCLUDE_REDIS="$INCLUDE_REDIS_STATIC" ./scripts/build-static-deps.sh "$ARCH"
 
-        if [[ "$INCLUDE_FRONTEND_STATIC" == "1" ]]; then
-            echo -e "${BLUE}[3/4] Building optional frontend assets...${NC}"
-            (cd apps && corepack enable && corepack prepare pnpm@latest --activate && pnpm install --frozen-lockfile && pnpm run build)
-        else
-            echo -e "${BLUE}[3/4] Skipping optional frontend assets.${NC}"
-        fi
-
-        echo -e "${BLUE}[4/4] Packaging bare-metal installer...${NC}"
+        echo -e "${BLUE}[3/3] Packaging bare-metal installer...${NC}"
         BM_PKG_DIR="$BUILD_DIR/baremetal-pkg"
         rm -rf "$BM_PKG_DIR"
         mkdir -p "$BM_PKG_DIR/bin" "$BM_PKG_DIR/systemd" "$BM_PKG_DIR/config.template" "$BM_PKG_DIR/script-host"
@@ -652,23 +636,14 @@ if csv_contains "$BUILD_IMAGES" "aetherems:latest"; then
         for svc in aether aether-io aether-automation aether-history aether-api aether-uplink aether-alarm; do
             cp "target/$TARGET/release/$svc" "$BM_PKG_DIR/bin/$svc"
         done
-        # Keep in sync with scripts/build-static-deps.sh's REDIS_VERSION/NGINX_VERSION defaults.
+        # Keep in sync with scripts/build-static-deps.sh's REDIS_VERSION default.
         if [[ "$INCLUDE_REDIS_STATIC" == "1" ]]; then
             cp "build/cache/static-deps/redis-server-${REDIS_VERSION:-8.0.2}-$ARCH/redis-server" "$BM_PKG_DIR/bin/redis-server"
             cp "build/cache/static-deps/redis-server-${REDIS_VERSION:-8.0.2}-$ARCH/redis-cli" "$BM_PKG_DIR/bin/redis-cli"
         fi
-        if [[ "$INCLUDE_FRONTEND_STATIC" == "1" ]]; then
-            mkdir -p "$BM_PKG_DIR/apps-dist"
-            cp "build/cache/static-deps/nginx-${NGINX_VERSION:-1.27.4}-$ARCH/nginx" "$BM_PKG_DIR/bin/nginx"
-            cp -r apps/dist/. "$BM_PKG_DIR/apps-dist/"
-            cp apps/nginx.conf "$BM_PKG_DIR/nginx.conf"
-        fi
         cp scripts/systemd/*.service scripts/systemd/*.target "$BM_PKG_DIR/systemd/"
         if [[ "$INCLUDE_REDIS_STATIC" != "1" ]]; then
             rm -f "$BM_PKG_DIR/systemd/aether-redis.service"
-        fi
-        if [[ "$INCLUDE_FRONTEND_STATIC" != "1" ]]; then
-            rm -f "$BM_PKG_DIR/systemd/aether-apps.service"
         fi
         cp scripts/install-baremetal.sh "$BM_PKG_DIR/install.sh"
         cp libs/aether-script-host/main.py "$BM_PKG_DIR/script-host/main.py"
@@ -683,9 +658,6 @@ if csv_contains "$BUILD_IMAGES" "aetherems:latest"; then
         chmod +x "$BM_PKG_DIR/bin/"* "$BM_PKG_DIR/install.sh"
 
         BM_VARIANT=""
-        if [[ "$INCLUDE_FRONTEND_STATIC" == "1" ]]; then
-            BM_VARIANT="${BM_VARIANT}-frontend"
-        fi
         if [[ "$INCLUDE_REDIS_STATIC" == "1" ]]; then
             BM_VARIANT="${BM_VARIANT}-redis"
         fi
@@ -741,31 +713,6 @@ else
     echo -e "${BLUE}[2/5] Building Docker images for $ARCH...${NC}"
 fi
 
-# Build Frontend if needed
-if csv_contains "$BUILD_IMAGES" "aether-apps:latest"; then
-    echo -e "${BLUE}Building Frontend (Vue.js)...${NC}"
-    FRONTEND_DOCKERFILE="$ROOT_DIR/apps/Dockerfile"
-    if [[ -f "$FRONTEND_DOCKERFILE" ]]; then
-        echo -e "${BLUE}Building aether-apps:latest for $ARCH...${NC}"
-        if docker build --platform $DOCKER_PLATFORM \
-            -f "$FRONTEND_DOCKERFILE" \
-            -t aether-apps:latest \
-            "$ROOT_DIR/apps"; then
-            docker save aether-apps:latest | gzip > "$BUILD_DIR/docker/apps.tar.gz"
-            sync
-            size=$(ls -lh "$BUILD_DIR/docker/apps.tar.gz" | awk '{print $5}')
-            echo -e "${GREEN}✓ Saved apps.tar.gz ($size)${NC}"
-        else
-            echo -e "${YELLOW}Warning: Frontend build failed, continuing without frontend...${NC}"
-        fi
-    else
-        echo -e "${YELLOW}Warning: Frontend Dockerfile not found at $FRONTEND_DOCKERFILE${NC}"
-        echo -e "${YELLOW}Skipping frontend build...${NC}"
-    fi
-else
-    echo -e "${YELLOW}⊘ Skipping Frontend (not selected)${NC}"
-fi
-
 # Pull official images if needed
 echo -e "${BLUE}Pulling official images...${NC}"
 if csv_contains "$BUILD_IMAGES" "redis:8-alpine"; then
@@ -787,9 +734,6 @@ echo -e "${YELLOW}Verifying Docker images...${NC}"
 EXPECTED_IMAGES=""
 if csv_contains "$BUILD_IMAGES" "aetherems:latest"; then
     EXPECTED_IMAGES=$(add_csv_item "$EXPECTED_IMAGES" "aetherems")
-fi
-if csv_contains "$BUILD_IMAGES" "aether-apps:latest"; then
-    EXPECTED_IMAGES=$(add_csv_item "$EXPECTED_IMAGES" "apps")
 fi
 if csv_contains "$BUILD_IMAGES" "redis:8-alpine"; then
     EXPECTED_IMAGES=$(add_csv_item "$EXPECTED_IMAGES" "aether-redis")

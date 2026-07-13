@@ -62,7 +62,7 @@ docker-compose.override.yml
 **/build/
 **/dist/
 release/
-bin/
+/bin/
 e2e-artifacts/
 variables.env
 release_notes.md

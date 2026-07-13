@@ -1,6 +1,6 @@
 ---
 title: Writing Rules
-description: Author rules through the HTTP API or the visual flow editor
+description: Author rules through the HTTP API or a downstream product console
 updated: 2026-07-10
 ---
 
@@ -8,8 +8,8 @@ updated: 2026-07-10
 
 Rules are Aether's control logic: flows that read measurement points (M),
 evaluate conditions, and write action points (A). They execute inside automation
-(port 6002) and are authored either in the frontend's visual flow editor or
-directly against automation's HTTP API. This guide covers the authoring
+(port 6002) and are authored through the application API, either directly or
+through a downstream product console. This guide covers the authoring
 mechanics; for how the engine schedules and executes rules, see
 [Rule Engine](../concepts/rule-engine.md), and for a worked control
 strategy, see [Control Strategies](../domain/control-strategies.md).
@@ -49,16 +49,15 @@ and `nodes_json`, the compact topology the engine executes — and the two
 columns are always derived together from the editor document by one
 function. [Rule Engine](../concepts/rule-engine.md) explains why.
 
-## Via the visual editor
+## Via a product console
 
-The frontend (port 8080) embeds a Vue Flow rule editor. It edits the
-complete visual document — nodes with canvas positions, labels, edges,
-viewport — and saving hands that document to `PUT /api/rules/{id}`, where
-the server derives both stored representations together. The editor is the
-recommended authoring surface: what you lay out on the canvas is exactly
-the `flow_json` that gets stored, and the execution topology can never
-drift from it (see [Rule Engine](../concepts/rule-engine.md) for the
-invariant).
+The independent [AetherEMS](https://github.com/EvanL1/AetherEMS) Console
+provides a Vue Flow rule editor. It edits the complete visual document — nodes
+with canvas positions, labels, edges, and viewport — and submits that document
+through the same authenticated rule command API. AetherIot does not bundle the
+Console or grant it direct SQLite/SHM access. The server derives both stored
+representations together, so `flow_json` and the execution topology cannot
+drift (see [Rule Engine](../concepts/rule-engine.md) for the invariant).
 
 ## Via the HTTP API
 

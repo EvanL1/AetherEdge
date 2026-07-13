@@ -1734,7 +1734,11 @@ channels:
 
         let syncer = ConfigSyncer::new(&config_path, &database_path);
         let error = syncer.sync_all().await.unwrap_err();
-        assert!(error.to_string().contains("automation.yaml"));
+        let rendered_error = format!("{error:#}");
+        assert!(
+            rendered_error.contains("automation.yaml"),
+            "unexpected error: {rendered_error}"
+        );
 
         let pool =
             sqlx::SqlitePool::connect(&format!("sqlite:{}", database_file.to_string_lossy()))

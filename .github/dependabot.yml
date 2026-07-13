@@ -8,7 +8,19 @@ updates:
       day: monday
       time: "03:00"
       timezone: Asia/Shanghai
-    open-pull-requests-limit: 10
+    # Keep routine maintenance reviewable: one grouped PR per ecosystem.
+    open-pull-requests-limit: 1
+    groups:
+      cargo-maintenance:
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
+    ignore:
+      - dependency-name: "*"
+        update-types:
+          - version-update:semver-major
     rebase-strategy: auto
     commit-message:
       prefix: deps
@@ -21,7 +33,18 @@ updates:
       day: monday
       time: "03:30"
       timezone: Asia/Shanghai
-    open-pull-requests-limit: 10
+    open-pull-requests-limit: 1
+    groups:
+      github-actions-maintenance:
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
+    ignore:
+      - dependency-name: "*"
+        update-types:
+          - version-update:semver-major
     rebase-strategy: auto
     commit-message:
       prefix: ci

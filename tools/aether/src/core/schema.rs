@@ -1471,7 +1471,7 @@ async fn create_triggers(pool: &SqlitePool) -> Result<()> {
     // Action routes are command state. Parent deletion must fail until the
     // governed application command has removed or changed every affected route.
     sqlx::query(
-        "CREATE TRIGGER protect_action_routing_on_control_delete
+        "CREATE TRIGGER IF NOT EXISTS protect_action_routing_on_control_delete
          BEFORE DELETE ON control_points
          FOR EACH ROW
          WHEN EXISTS (
@@ -1488,7 +1488,7 @@ async fn create_triggers(pool: &SqlitePool) -> Result<()> {
     .await?;
 
     sqlx::query(
-        "CREATE TRIGGER protect_action_routing_on_adjustment_delete
+        "CREATE TRIGGER IF NOT EXISTS protect_action_routing_on_adjustment_delete
          BEFORE DELETE ON adjustment_points
          FOR EACH ROW
          WHEN EXISTS (
@@ -1505,7 +1505,7 @@ async fn create_triggers(pool: &SqlitePool) -> Result<()> {
     .await?;
 
     sqlx::query(
-        "CREATE TRIGGER protect_action_routing_on_channel_delete
+        "CREATE TRIGGER IF NOT EXISTS protect_action_routing_on_channel_delete
          BEFORE DELETE ON channels
          FOR EACH ROW
          WHEN EXISTS (SELECT 1 FROM action_routing WHERE channel_id = OLD.channel_id)
@@ -1517,7 +1517,7 @@ async fn create_triggers(pool: &SqlitePool) -> Result<()> {
     .await?;
 
     sqlx::query(
-        "CREATE TRIGGER protect_action_routing_on_instance_delete
+        "CREATE TRIGGER IF NOT EXISTS protect_action_routing_on_instance_delete
          BEFORE DELETE ON instances
          FOR EACH ROW
          WHEN EXISTS (SELECT 1 FROM action_routing WHERE instance_id = OLD.instance_id)
@@ -1604,6 +1604,36 @@ mod tests {
             ],
         ),
     ];
+
+    #[tokio::test]
+    async fn database_initialization_is_repeatable() -> Result<()> {
+        let workspace = TempDir::new()?;
+        let database_file = workspace.path().join("aether.db");
+
+        init_database(&database_file).await?;
+        init_database(&database_file).await?;
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn database_initialization_is_safe_when_repeated_concurrently() -> Result<()> {
+        let workspace = TempDir::new()?;
+        let database_file = workspace.path().join("aether.db");
+        init_database(&database_file).await?;
+
+        let (first, second, third, fourth) = tokio::join!(
+            init_database(&database_file),
+            init_database(&database_file),
+            init_database(&database_file),
+            init_database(&database_file),
+        );
+        for result in [first, second, third, fourth] {
+            result?;
+        }
+
+        Ok(())
+    }
 
     #[tokio::test]
     async fn fresh_v10_database_installs_channel_revision_contract() -> Result<()> {

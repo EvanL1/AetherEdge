@@ -485,7 +485,7 @@ reject_existing_docker_filesystem_footprint() {
     for unit in \
         aether.target aether-io.service aether-automation.service \
         aether-history.service aether-api.service aether-uplink.service \
-        aether-alarm.service aether-apps.service aether-redis.service; do
+        aether-alarm.service aether-redis.service; do
         reject_existing_path "/etc/systemd/system/$unit" "Aether systemd footprint" \
             || return 1
         if command -v systemctl >/dev/null 2>&1 \
@@ -511,7 +511,7 @@ reject_existing_docker_runtime_footprint() {
     local image
 
     reject_existing_docker_container_footprint || return 1
-    for image in aetherems:latest aether-apps:latest; do
+    for image in aetherems:latest; do
         if docker image inspect "$image" >/dev/null 2>&1; then
             echo "Fresh installation refused: Docker image already exists: $image" >&2
             return 1
@@ -844,7 +844,6 @@ declare -A TARBALL_TO_IMAGE=(
     ["aetherems.tar.gz"]="aetherems:latest"
     ["aether-redis.tar.gz"]="redis:8-alpine"
     ["aether-timescaledb.tar.gz"]="timescale/timescaledb:2.25.2-pg17"
-    ["apps.tar.gz"]="aether-apps:latest"
 )
 
 # Per-run rollback state. Pre-existing dependency image IDs are tagged before a
@@ -989,7 +988,7 @@ smart_load_image() {
     # Aether-owned image tags are part of the fresh-runtime footprint. A tag
     # appearing after preflight is a TOCTOU conflict, never an upgrade target.
     case "$image" in
-        aetherems:latest|aether-apps:latest)
+        aetherems:latest)
             if [[ -n "$local_id" ]]; then
                 echo -e "  ${RED}Refusing $basename: Aether image tag appeared after fresh preflight${NC}" >&2
                 return 2
@@ -1087,8 +1086,7 @@ known_aether_containers() {
         aether-uplink \
         aether-alarm \
         aether-redis \
-        aether-timescaledb \
-        aether-apps
+        aether-timescaledb
 }
 
 docker_container_state() {
@@ -2137,7 +2135,6 @@ if [[ "$AUTO_MODE" != true ]]; then
     echo "    - aether-api: 6005     (gateway - Rust)"
     echo "    - aether-uplink: 6006    (network/MQTT - Rust)"
     echo "    - aether-alarm: 6007     (alarm - Rust)"
-    echo "    - Frontend: 8080       (Vue.js + nginx)"
     echo ""
     echo -e "${YELLOW}Important: Configuration Setup Required${NC}"
     echo "  A fail-safe configuration with no commissioned device was activated at:"
@@ -2230,9 +2227,6 @@ add_install_service() {
     && add_install_service aether-redis aether-redis
 [[ -f "docker/aether-timescaledb.tar.gz" ]] \
     && add_install_service timescaledb aether-timescaledb
-[[ -f "docker/apps.tar.gz" ]] \
-    && add_install_service apps aether-apps
-
 echo -e "${GREEN}Starting and validating the complete installed stack...${NC}"
 reject_existing_docker_container_footprint
 CONTAINER_STATE_MUTATED=true

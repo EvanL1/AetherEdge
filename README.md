@@ -1,6 +1,6 @@
-# Aether
+# AetherIot
 
-[![Code Check](https://github.com/EvanL1/Aether/actions/workflows/rust-check.yml/badge.svg)](https://github.com/EvanL1/Aether/actions/workflows/rust-check.yml)
+[![Code Check](https://github.com/EvanL1/AetherIot/actions/workflows/rust-check.yml/badge.svg)](https://github.com/EvanL1/AetherIot/actions/workflows/rust-check.yml)
 [![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-1.90%2B-orange.svg)](https://www.rust-lang.org/)
 [![Version](https://img.shields.io/badge/version-0.5.0-yellow.svg)](CHANGELOG.md)
@@ -10,13 +10,19 @@
 
 **An AI-native, industry-neutral IoT edge kernel, runtime, and Rust SDK for Linux gateways.**
 
-Aether connects field devices, keeps authoritative live state in shared memory, runs deterministic
+AetherIot connects field devices, keeps authoritative live state in shared memory, runs deterministic
 local rules and alarms, and stores embedded history. Its default runtime works offline without an
 LLM, Redis, PostgreSQL, a cloud service, or a browser.
 
-> **Beta:** this repository is the integration workspace for the Aether kernel and the optional
-> AetherEMS energy distribution. The neutral kernel is usable; the remaining compatibility work is
-> tracked in [ADR-0007](docs/adr/0007-aether-core-and-ems-distribution.md).
+> **Beta:** AetherIot is the industry-neutral kernel, runtime, and SDK. The energy-management
+> implementation and distribution lives independently in
+> [AetherEMS](https://github.com/EvanL1/AetherEMS). Existing Rust crates, binaries, and the CLI
+> retain their `aether-*` / `aether` names for API compatibility. Remaining release work is tracked
+> in [ADR-0007](docs/adr/0007-aether-core-and-ems-distribution.md).
+
+AetherIot is deliberately headless: it ships no product-specific Web UI, frontend image, or
+frontend system service. The EMS operator console is owned and released by AetherEMS, which uses
+the same authenticated application API as other clients.
 
 ## Try the SDK
 
@@ -93,15 +99,22 @@ domain <- ports <- application <- runtime/interfaces
 
 ## Maturity
 
-Available now: typed domain/ports/application/data-plane and Pack v1 crates, six service binaries,
-SHM/SQLite/local-outbox operation without external services, SDK examples, optional adapters, and
-OpenAPI contract checks.
+Available now: a beta, versioned domain/ports/application/data-plane SDK; Pack v1; six service
+binaries; SHM/SQLite/local-outbox operation without external services; SDK examples; optional
+adapters; and OpenAPI contract checks. Point and health SHM planes publish one committed physical
+epoch, while History and Uplink bind one SQLite topology snapshot to that exact epoch. SQLite is
+the single desired-state authority for commissioned topology, protocol mappings, logical routes,
+rules, and instances, with revisioned commands and automatic runtime reconciliation.
 
-Still migrating: sensitive channel-configuration queries, instance, point/template/provisioning,
-measurement-routing, history, uplink, and other configuration
-mutations need complete application command/query boundaries; dev-only compatibility shims still
-need removal; and Aether/AetherEMS still need independent signed releases, downstream consuming
-CI, and the actual repository split. See
+Still migrating: supported clients must finish sending explicit channel and rule revisions before
+the remaining revisionless compatibility paths can be removed. Direct test-only instance and
+routing mutation helpers are already gone. The local release workflow validates one
+dependency-ordered catalog of public crates, compiles their
+exact archives in a clean-room consumer, checks established APIs for SemVer compatibility, and
+gates separate attested Kernel, CLI, crate, and Pack artifacts. The physical repository split and
+downstream AetherEMS consuming CI now exist, but no tag has yet established the first independent
+registry/GitHub release or replaced the downstream bootstrap Git pin with signed artifacts. The
+former EMS frontend has moved to AetherEMS as its independently tested Console. See
 [Architecture](ARCHITECTURE.md) for the current facts.
 
 ## Documentation

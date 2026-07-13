@@ -6292,6 +6292,8 @@ dependencies = [
  "log",
  "memchr",
  "mio",
+ "num-bigint",
+ "num-integer",
  "num-traits",
  "once_cell",
  "percent-encoding",
