@@ -8,8 +8,9 @@ updates:
       day: monday
       time: "03:00"
       timezone: Asia/Shanghai
-    # Keep routine maintenance reviewable: one grouped PR per ecosystem.
-    open-pull-requests-limit: 1
+    # Solo mainline development uses direct reviewed commits; dependency
+    # updates are run manually and Dependabot must not create update PRs.
+    open-pull-requests-limit: 0
     groups:
       cargo-maintenance:
         patterns:
@@ -33,7 +34,7 @@ updates:
       day: monday
       time: "03:30"
       timezone: Asia/Shanghai
-    open-pull-requests-limit: 1
+    open-pull-requests-limit: 0
     groups:
       github-actions-maintenance:
         patterns:
