@@ -38,11 +38,6 @@ jobs:
           protoc --version
           rg --version
 
-      - name: Install release boundary tools
-        run: |
-          sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends ripgrep
-
       - name: Cache Dependencies
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
