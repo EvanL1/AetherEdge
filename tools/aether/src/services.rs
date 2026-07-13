@@ -357,15 +357,6 @@ pub async fn handle_command(
                         println!("✓ Services unchanged (no recreation needed)");
                     }
 
-                    // Handle frontend
-                    if changes.frontend_changed {
-                        println!("\nRecreating frontend...");
-                        execute_docker_compose(&["up", "-d", "--force-recreate", "apps"])?;
-                        println!("✓ Frontend recreated");
-                    } else if changes.frontend_targeted {
-                        println!("✓ Frontend unchanged (no recreation needed)");
-                    }
-
                     if changes.timescaledb_targeted {
                         if changes.timescaledb_changed {
                             println!("\n⚠️  PostgreSQL history extension image has changed");
@@ -540,9 +531,7 @@ fn build_docker_compose_args(command: &str, flag: &str, services: Vec<String>) -
 }
 
 fn compose_service_target(service: &str) -> String {
-    if service.eq_ignore_ascii_case("aether-apps") {
-        "apps".to_owned()
-    } else if service.eq_ignore_ascii_case("aether-timescaledb") {
+    if service.eq_ignore_ascii_case("aether-timescaledb") {
         "timescaledb".to_owned()
     } else {
         service.to_owned()
@@ -569,8 +558,6 @@ struct SmartRefreshChanges {
     redis_targeted: bool,
     redis_changed: bool,
     services_changed: bool,
-    frontend_targeted: bool,
-    frontend_changed: bool,
     timescaledb_targeted: bool,
     timescaledb_changed: bool,
 }
@@ -628,9 +615,6 @@ where
     let redis_targeted = extension_is_targeted(target_services, "aether-redis");
     let redis_changed = redis_targeted && image_changed("aether-redis")?;
 
-    let frontend_targeted = extension_is_targeted(target_services, "apps");
-    let frontend_changed = frontend_targeted && image_changed("aether-apps")?;
-
     let timescaledb_targeted = extension_is_targeted(target_services, "timescaledb");
     let timescaledb_changed = timescaledb_targeted && image_changed("aether-timescaledb")?;
 
@@ -638,8 +622,6 @@ where
         redis_targeted,
         redis_changed,
         services_changed,
-        frontend_targeted,
-        frontend_changed,
         timescaledb_targeted,
         timescaledb_changed,
     })
@@ -770,8 +752,6 @@ fn check_container_image_changed(container_name: &str) -> Result<bool> {
     .contains(&container_name)
     {
         "aetherems:latest".to_string()
-    } else if container_name == "aether-apps" {
-        "aether-apps:latest".to_string()
     } else {
         return Ok(false); // Unknown container, assume no change
     };
@@ -1012,7 +992,6 @@ mod tests {
     fn optional_extensions_are_never_implicit_refresh_targets() {
         assert!(!extension_is_targeted(&[], "aether-redis"));
         assert!(!extension_is_targeted(&[], "timescaledb"));
-        assert!(!extension_is_targeted(&[], "apps"));
         assert!(extension_is_targeted(
             &["aether-redis".to_string()],
             "aether-redis"
@@ -1021,13 +1000,10 @@ mod tests {
             &["timescaledb".to_string()],
             "timescaledb"
         ));
-        assert!(extension_is_targeted(&["apps".to_string()], "apps"));
     }
 
     #[test]
     fn optional_container_aliases_map_to_compose_service_names() {
-        assert_eq!(compose_service_target("aether-apps"), "apps");
-        assert_eq!(compose_service_target("apps"), "apps");
         assert_eq!(compose_service_target("aether-timescaledb"), "timescaledb");
         assert_eq!(compose_service_target("aether-io"), "aether-io");
     }

@@ -153,7 +153,9 @@ composition; the other five process APIs listen on `127.0.0.1`:
 | aether-api | 6005 |
 | aether-uplink | 6006 |
 | aether-alarm | 6007 |
-| apps (optional `frontend` profile) | 8080 |
+
+AetherIot intentionally exposes no bundled Web UI. Product consoles such as
+AetherEMS are deployed independently and enter through `aether-api`.
 
 ## First look around
 

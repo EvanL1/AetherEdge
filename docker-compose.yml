@@ -304,30 +304,6 @@ services:
         max-file: "3"
     restart: unless-stopped
 
-  # ============================================
-  # 前端应用
-  # ============================================
-
-  # Vue.js Frontend - Web 管理界面 (端口 8080)
-  apps:
-    profiles: ["frontend"]
-    # Pre-built image required: load via `docker load < apps.tar.gz` or build manually
-    image: aether-apps:latest
-    container_name: aether-apps
-    network_mode: host
-    labels:
-      - "aetherems.role=frontend"
-      - "aetherems.description=Vue.js web management interface"
-    depends_on:
-      - aether-api
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://127.0.0.1:8080/"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 10s
-
 networks:
   # The local processor receives requests through a host-loopback published
   # port but has no default route for outbound frame exfiltration.

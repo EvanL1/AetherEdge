@@ -2,7 +2,10 @@
 
 ## Status
 
-Accepted for staged implementation on 2026-07-11.
+Accepted for staged implementation on 2026-07-11. The physical AetherEMS
+repository split, downstream bootstrap CI, and EMS Console ownership were
+completed on 2026-07-13. The first independent signed publication and
+replacement of the bootstrap Git pin remain incomplete.
 
 ## Context
 
@@ -126,10 +129,12 @@ The staged gates now stand as follows:
    Installation re-verifies the Pack against the installed runtime, publishes
    it below the site's `packs/<id>/<version>` directory, and atomically updates
    `global.yaml`; failure preserves the previous active set and rolls back a
-   newly published directory. What is not yet complete is release evidence:
-   there is no independently published, signed Aether artifact, signed Energy
-   Pack artifact, second repository, or downstream CI consuming both. Those
-   external facts must not be inferred from this workspace implementation.
+   newly published directory. The independent AetherEMS repository now exists,
+   owns the EMS Console, and runs downstream bootstrap CI against a pinned
+   Kernel commit. What is not yet complete is release evidence: there is no
+   independently published, signed Aether artifact or signed Energy Pack
+   artifact, and the downstream pin does not yet consume those artifacts.
+   Those external facts must not be inferred from the repository split alone.
 
 The short pointers under `docs/domain/` and
 `libs/aether-model/src/products/README.md` may be removed after supported
@@ -139,7 +144,8 @@ against `ProductLibrary` exclusively.
 
 ## Extraction criteria
 
-The repositories split only after all of the following are true:
+The temporary bootstrap split becomes a stable independent release boundary
+only after all of the following are true:
 
 1. The pack manifest and loader have a versioned, tested contract.
 2. Energy models no longer resolve through `legacy_assets` paths.

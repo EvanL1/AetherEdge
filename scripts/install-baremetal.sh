@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Bare-metal AetherEMS installer. Packaged by build-installer.sh --bare-metal;
+# Bare-metal AetherIot installer. Packaged by build-installer.sh --bare-metal;
 # this script is what makeself runs after extracting the .run archive.
 set -Eeuo pipefail
 umask 022
@@ -10,7 +10,6 @@ CONFIG_DIR="/etc/aether"
 DATA_DIR="/var/lib/aether"
 INSTALL_CONTEXT_FILE="$CONFIG_DIR/install.yaml"
 SYSTEMD_DIR="/etc/systemd/system"
-WEB_ROOT="/usr/share/nginx/html"
 DOCKER_INSTALL_ROOT="/opt/AetherEdge"
 DOCKER_PROFILE_ENTRY="/etc/profile.d/aetheredge.sh"
 SHM_PATH="/dev/shm/aether-rtdb.shm"
@@ -19,7 +18,6 @@ BINARIES_SWAPPED=false
 BINARY_STAGE=""
 BINARY_BACKUP=""
 BOOTSTRAP_ADMIN_REQUIRED=false
-FRONTEND_INCLUDED=false
 REDIS_INCLUDED=false
 SERVICE_STATE_CAPTURED=false
 STATE_BACKUP_DIR=""
@@ -186,8 +184,7 @@ normalize_root_owned_tree() {
 
 validate_bare_metal_bundle() {
     local bundle_root=$1
-    local frontend_included=$2
-    local redis_included=$3
+    local redis_included=$2
     local binary unit
 
     for directory in bin systemd config.template script-host; do
@@ -218,10 +215,6 @@ validate_bare_metal_bundle() {
         || -L "$bundle_root/script-host/main.py" ]]; then
         echo "ERROR: required bundled script host is missing or unsafe" >&2
         return 1
-    fi
-    if [[ "$frontend_included" == true ]]; then
-        validate_tree_without_links_or_special_files \
-            "$bundle_root/apps-dist" "bundled frontend assets"
     fi
     if [[ "$redis_included" == true ]]; then
         for binary in redis-server redis-cli; do
@@ -286,7 +279,7 @@ reject_existing_bare_metal_footprint() {
     for unit in \
         aether.target aether-io.service aether-automation.service \
         aether-history.service aether-api.service aether-uplink.service \
-        aether-alarm.service aether-apps.service aether-redis.service; do
+        aether-alarm.service aether-redis.service; do
         if [[ -e "$SYSTEMD_DIR/$unit" || -L "$SYSTEMD_DIR/$unit" ]]; then
             echo "ERROR: fresh installation refused; systemd unit exists: $unit" >&2
             return 1
@@ -299,58 +292,13 @@ reject_existing_bare_metal_footprint() {
     if command -v docker >/dev/null 2>&1; then
         for container in \
             aether-io aether-automation aether-history aether-api \
-            aether-uplink aether-alarm aether-redis aether-timescaledb \
-            aether-apps; do
+            aether-uplink aether-alarm aether-redis aether-timescaledb; do
             if docker inspect "$container" >/dev/null 2>&1; then
                 echo "ERROR: fresh installation refused; Docker container exists: $container" >&2
                 return 1
             fi
         done
     fi
-}
-
-detect_bundled_frontend() {
-    local bundle_root=$1
-    local trace_count=0
-    local valid_count=0
-
-    [[ -e "$bundle_root/bin/nginx" || -L "$bundle_root/bin/nginx" ]] \
-        && trace_count=$((trace_count + 1))
-    [[ -e "$bundle_root/apps-dist" || -L "$bundle_root/apps-dist" ]] \
-        && trace_count=$((trace_count + 1))
-    [[ -e "$bundle_root/nginx.conf" || -L "$bundle_root/nginx.conf" ]] \
-        && trace_count=$((trace_count + 1))
-    [[ -e "$bundle_root/systemd/aether-apps.service" \
-        || -L "$bundle_root/systemd/aether-apps.service" ]] \
-        && trace_count=$((trace_count + 1))
-
-    [[ -f "$bundle_root/bin/nginx" && -x "$bundle_root/bin/nginx" \
-        && ! -L "$bundle_root/bin/nginx" ]] \
-        && valid_count=$((valid_count + 1))
-    [[ -d "$bundle_root/apps-dist" && ! -L "$bundle_root/apps-dist" \
-        && -f "$bundle_root/apps-dist/index.html" \
-        && ! -L "$bundle_root/apps-dist/index.html" ]] \
-        && valid_count=$((valid_count + 1))
-    [[ -f "$bundle_root/nginx.conf" && ! -L "$bundle_root/nginx.conf" ]] \
-        && valid_count=$((valid_count + 1))
-    [[ -f "$bundle_root/systemd/aether-apps.service" \
-        && ! -L "$bundle_root/systemd/aether-apps.service" ]] \
-        && valid_count=$((valid_count + 1))
-
-    case "$trace_count:$valid_count" in
-        0:0)
-            printf '%s\n' false
-            ;;
-        4:4)
-            validate_tree_without_links_or_special_files \
-                "$bundle_root/apps-dist" "bundled frontend assets" || return 1
-            printf '%s\n' true
-            ;;
-        *)
-            echo "ERROR: incomplete optional frontend bundle; expected nginx, apps-dist/index.html, nginx.conf, and aether-apps.service" >&2
-            return 1
-            ;;
-    esac
 }
 
 detect_bundled_redis() {
@@ -389,31 +337,6 @@ detect_bundled_redis() {
             return 1
             ;;
     esac
-}
-
-validate_frontend_web_root() {
-    local web_root=$1
-    local ownership_marker=$2
-    local legacy_owned=$3
-
-    # The destination itself must never redirect the destructive replacement.
-    # Some supported hosts expose trusted system ancestors such as /var or
-    # /usr through distribution-managed symlinks, so rejecting every ancestor
-    # would incorrectly make those systems uninstallable.
-    if [[ -L "$web_root" ]]; then
-        echo "ERROR: optional frontend web root is a symlink: $web_root" >&2
-        return 1
-    fi
-    if [[ -e "$web_root" && ! -d "$web_root" ]]; then
-        echo "ERROR: optional frontend web root is not a directory: $web_root" >&2
-        return 1
-    fi
-    if [[ -d "$web_root" && ! -f "$ownership_marker" \
-        && "$legacy_owned" != true \
-        && -n "$(find "$web_root" -mindepth 1 -maxdepth 1 -print -quit)" ]]; then
-        echo "ERROR: refusing to replace a non-empty web root not owned by Aether: $web_root" >&2
-        return 1
-    fi
 }
 
 validate_expected_symlink_if_exists() {
@@ -474,20 +397,10 @@ validate_bare_metal_host_layout() {
             validate_no_symlink_components "$path" "configuration path"
         fi
     done
-    # The browser client is optional. Validate its document root only when the
-    # fresh package explicitly includes the frontend.
-    if [[ "$FRONTEND_INCLUDED" == true ]]; then
-        validate_secure_directory_if_exists "$WEB_ROOT" "frontend web root"
-        if [[ -e "$WEB_ROOT" ]]; then
-            validate_secure_installed_tree "$WEB_ROOT" "installed frontend assets"
-        fi
-    fi
-
     for path in \
         "$CONFIG_DIR/aether.env" "$CONFIG_DIR/install.yaml" \
-        "$CONFIG_DIR/nginx.conf" "$CONFIG_DIR/nginx-site.conf" \
         "$CONFIG_DIR/script-host/main.py" \
-        "$INSTALL_DIR/uninstall.sh" "$INSTALL_DIR/.frontend-installed" \
+        "$INSTALL_DIR/uninstall.sh" \
         /etc/profile.d/aether.sh; do
         validate_secure_regular_file_if_exists "$path" "installer write target"
     done
@@ -495,7 +408,7 @@ validate_bare_metal_host_layout() {
     for unit in \
         aether.target aether-io.service aether-automation.service \
         aether-history.service aether-api.service aether-uplink.service \
-        aether-alarm.service aether-apps.service aether-redis.service; do
+        aether-alarm.service aether-redis.service; do
         validate_secure_regular_file_if_exists \
             "$SYSTEMD_DIR/$unit" "installed systemd unit"
     done
@@ -514,7 +427,7 @@ validate_bare_metal_host_layout() {
         return 1
     fi
 
-    for path in "$DATA_DIR/logs" "$DATA_DIR/redis" "$DATA_DIR/nginx"; do
+    for path in "$DATA_DIR/logs" "$DATA_DIR/redis"; do
         if [[ -e "$path" ]]; then
             validate_secure_installed_tree "$path" "runtime data directory"
         else
@@ -559,7 +472,6 @@ snapshot_bare_metal_state() {
     snapshot_bare_metal_path "$INSTALL_DIR" install-root
     snapshot_bare_metal_path "$CONFIG_DIR" config-root
     snapshot_bare_metal_path "$DATA_DIR" data-root
-    snapshot_bare_metal_path "$WEB_ROOT" web-root
     snapshot_bare_metal_path "$SYSTEMD_DIR/aether.target" systemd-target
     snapshot_bare_metal_path "$SYSTEMD_DIR/aether.target.wants" systemd-wants
     snapshot_bare_metal_path \
@@ -567,15 +479,13 @@ snapshot_bare_metal_state() {
         systemd-multi-user-aether-target
     for unit in \
         aether-io aether-automation aether-history aether-api aether-uplink \
-        aether-alarm aether-apps aether-redis; do
+        aether-alarm aether-redis; do
         snapshot_bare_metal_path \
             "$SYSTEMD_DIR/$unit.service" "systemd-$unit"
     done
     snapshot_bare_metal_path /usr/local/bin/aether cli-symlink
     snapshot_bare_metal_path /etc/profile.d/aether.sh profile-entry
     snapshot_bare_metal_path "$INSTALL_DIR/uninstall.sh" uninstall-script
-    snapshot_bare_metal_path \
-        "$INSTALL_DIR/.frontend-installed" frontend-marker
     for runtime_asset in \
         aether.db aether.db-wal aether.db-shm aether-history.db \
         aether-history.db-wal aether-history.db-shm uplink.outbox; do
@@ -591,7 +501,6 @@ restore_bare_metal_state() {
     [[ "$STATE_SNAPSHOT_CAPTURED" == true \
         && -n "$STATE_BACKUP_DIR" && -d "$STATE_BACKUP_DIR" ]] || return 0
     restore_bare_metal_path "$CONFIG_DIR" config-root || return 1
-    restore_bare_metal_path "$WEB_ROOT" web-root || return 1
     restore_bare_metal_path "$SYSTEMD_DIR/aether.target" systemd-target || return 1
     restore_bare_metal_path "$SYSTEMD_DIR/aether.target.wants" systemd-wants || return 1
     restore_bare_metal_path \
@@ -599,15 +508,13 @@ restore_bare_metal_state() {
         systemd-multi-user-aether-target || return 1
     for unit in \
         aether-io aether-automation aether-history aether-api aether-uplink \
-        aether-alarm aether-apps aether-redis; do
+        aether-alarm aether-redis; do
         restore_bare_metal_path \
             "$SYSTEMD_DIR/$unit.service" "systemd-$unit" || return 1
     done
     restore_bare_metal_path /usr/local/bin/aether cli-symlink || return 1
     restore_bare_metal_path /etc/profile.d/aether.sh profile-entry || return 1
     restore_bare_metal_path "$INSTALL_DIR/uninstall.sh" uninstall-script || return 1
-    restore_bare_metal_path \
-        "$INSTALL_DIR/.frontend-installed" frontend-marker || return 1
     for runtime_asset in \
         aether.db aether.db-wal aether.db-shm aether-history.db \
         aether-history.db-wal aether-history.db-shm uplink.outbox; do
@@ -752,7 +659,6 @@ quiesce_aether_services_for_rollback() {
         aether-api.service
         aether-uplink.service
         aether-alarm.service
-        aether-apps.service
         aether-redis.service
     )
 
@@ -794,9 +700,6 @@ wait_for_bare_metal_services() {
         aether-alarm.service
     )
 
-    if [[ "$FRONTEND_INCLUDED" == true ]]; then
-        units+=(aether-apps.service)
-    fi
     if [[ "$REDIS_INCLUDED" == true ]]; then
         units+=(aether-redis.service)
     fi
@@ -864,7 +767,7 @@ finish_install() {
             if ! systemctl daemon-reload; then
                 rollback_complete=false
             fi
-            for unit in aether-apps.service aether-redis.service aether.target; do
+            for unit in aether-redis.service aether.target; do
                 systemctl disable "$unit" >/dev/null 2>&1 || true
                 if systemctl is-enabled --quiet "$unit"; then
                     rollback_complete=false
@@ -900,10 +803,9 @@ if [[ "${AETHER_BARE_METAL_INSTALLER_FUNCTIONS_ONLY:-false}" == true ]]; then
     return 0 2>/dev/null || exit 0
 fi
 
-FRONTEND_INCLUDED=$(detect_bundled_frontend .)
 REDIS_INCLUDED=$(detect_bundled_redis .)
 
-echo "=== AetherEMS bare-metal installer ==="
+echo "=== AetherIot bare-metal installer ==="
 
 validate_bare_metal_install_dir "$INSTALL_DIR"
 
@@ -913,7 +815,7 @@ if ! command -v systemctl >/dev/null 2>&1; then
     echo "as an alternative on non-systemd systems." >&2
     exit 1
 fi
-validate_bare_metal_bundle . "$FRONTEND_INCLUDED" "$REDIS_INCLUDED"
+validate_bare_metal_bundle . "$REDIS_INCLUDED"
 if [[ ! -f config.template/runtime-manifest.json \
     || -L config.template/runtime-manifest.json ]]; then
     echo "ERROR: bare-metal package is missing a regular runtime manifest" >&2
@@ -926,10 +828,6 @@ if ! bin/aether --json runtime-manifest \
 fi
 reject_existing_bare_metal_footprint
 validate_bare_metal_host_layout
-if [[ "$FRONTEND_INCLUDED" == true ]]; then
-    validate_frontend_web_root \
-        "$WEB_ROOT" "$INSTALL_DIR/.frontend-installed" false
-fi
 # makeself preserves archive ownership when it is executed as root. Take
 # ownership of the validated extraction tree before any packaged artifact is
 # copied into a root-executed location.
@@ -967,22 +865,7 @@ echo "export PATH=\"$INSTALL_DIR/bin:\$PATH\"" > /etc/profile.d/aether.sh
 chown 0:0 /etc/profile.d/aether.sh
 chmod 0644 /etc/profile.d/aether.sh
 
-if [[ "$FRONTEND_INCLUDED" == true ]]; then
-    echo "[3/7] Installing optional web UI assets to $WEB_ROOT ..."
-    # apps/nginx.conf (bundled unmodified as nginx-site.conf, see step 5)
-    # hardcodes this root to stay byte-identical with the container layout.
-    mkdir -p "$WEB_ROOT"
-    find "$WEB_ROOT" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
-    cp -r apps-dist/. "$WEB_ROOT/"
-    normalize_root_owned_tree "$WEB_ROOT"
-    find "$WEB_ROOT" -type d -exec chmod 0755 {} +
-    find "$WEB_ROOT" -type f -exec chmod 0644 {} +
-    touch "$INSTALL_DIR/.frontend-installed"
-    chown 0:0 "$INSTALL_DIR/.frontend-installed"
-    chmod 0644 "$INSTALL_DIR/.frontend-installed"
-else
-    echo "[3/7] Optional web UI not selected; installing the core runtime only."
-fi
+echo "[3/7] Installing the headless kernel package (no bundled Web UI)."
 
 echo "[4/7] Preparing runtime data directories under $DATA_DIR ..."
 mkdir -p "$DATA_DIR/logs"
@@ -993,14 +876,6 @@ if [[ -x "$INSTALL_DIR/bin/redis-server" ]]; then
     chown 0:0 "$DATA_DIR/redis"
     chmod go-w "$DATA_DIR/redis"
 fi
-if [[ "$FRONTEND_INCLUDED" == true ]]; then
-    mkdir -p "$DATA_DIR/nginx/client_body_temp" "$DATA_DIR/nginx/proxy_temp"
-    # nginx opens its compile-time default error log (<prefix>/logs/error.log)
-    # before it finishes parsing our custom error_log directive.
-    mkdir -p "$DATA_DIR/nginx/logs"
-    chown -R 0:0 "$DATA_DIR/nginx"
-    chmod -R go-w "$DATA_DIR/nginx"
-fi
 
 echo "[5/7] Installing configuration to $CONFIG_DIR ..."
 mkdir -p "$CONFIG_DIR"
@@ -1009,51 +884,6 @@ chown 0:0 "$CONFIG_DIR" "$CONFIG_DIR/script-host"
 chmod go-w "$CONFIG_DIR" "$CONFIG_DIR/script-host"
 install -o 0 -g 0 -m 0644 \
     script-host/main.py "$CONFIG_DIR/script-host/main.py"
-
-if [[ "$FRONTEND_INCLUDED" == true ]]; then
-    # The bundled nginx.conf is the server block used by the container image.
-    # A static nginx binary also needs this minimal top-level configuration.
-    install -o 0 -g 0 -m 0644 nginx.conf "$CONFIG_DIR/nginx-site.conf"
-    cat > "$CONFIG_DIR/nginx.conf" <<EOF
-worker_processes auto;
-error_log $DATA_DIR/nginx/error.log warn;
-pid $DATA_DIR/nginx/nginx.pid;
-
-events {
-    worker_connections 1024;
-}
-
-http {
-    types {
-        text/html                            html htm;
-        text/css                             css;
-        application/javascript               js mjs;
-        application/json                     json map;
-        image/svg+xml                        svg;
-        image/png                            png;
-        image/jpeg                           jpg jpeg;
-        image/gif                            gif;
-        image/webp                           webp;
-        image/x-icon                         ico;
-        font/woff                            woff;
-        font/woff2                           woff2;
-        font/ttf                             ttf;
-        application/vnd.ms-fontobject        eot;
-    }
-    default_type application/octet-stream;
-    sendfile on;
-    keepalive_timeout 65;
-
-    access_log $DATA_DIR/nginx/access.log;
-    client_body_temp_path $DATA_DIR/nginx/client_body_temp;
-    proxy_temp_path $DATA_DIR/nginx/proxy_temp;
-
-    include $CONFIG_DIR/nginx-site.conf;
-}
-EOF
-    chown 0:0 "$CONFIG_DIR/nginx.conf"
-    chmod 0644 "$CONFIG_DIR/nginx.conf"
-fi
 
 if [[ ! -e "$CONFIG_DIR/config" ]]; then
     echo "  First install detected: activating config.template/ -> $CONFIG_DIR/config"
@@ -1139,17 +969,14 @@ systemctl daemon-reload
 cat > "$INSTALL_DIR/uninstall.sh" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
-echo "Stopping AetherEMS..."
+echo "Stopping AetherIot..."
 systemctl stop aether.target || true
 systemctl disable aether.target || true
 rm -f $SYSTEMD_DIR/aether-*.service $SYSTEMD_DIR/aether.target
 systemctl daemon-reload
 rm -f /usr/local/bin/aether /etc/profile.d/aether.sh
-if [[ -f "$INSTALL_DIR/.frontend-installed" ]]; then
-    rm -rf "$WEB_ROOT"
-fi
 rm -rf "$INSTALL_DIR"
-echo "AetherEMS removed. Configuration and data preserved at $CONFIG_DIR and $DATA_DIR."
+echo "AetherIot removed. Configuration and data preserved at $CONFIG_DIR and $DATA_DIR."
 echo "Delete those manually if you want a full wipe."
 EOF
 chown 0:0 "$INSTALL_DIR/uninstall.sh"
@@ -1167,9 +994,6 @@ done
 "$INSTALL_DIR/bin/aether" --config-path "$CONFIG_DIR/config" --db-path "$DATA_DIR" init
 "$INSTALL_DIR/bin/aether" --config-path "$CONFIG_DIR/config" --db-path "$DATA_DIR" sync
 
-if [[ "$FRONTEND_INCLUDED" == true ]]; then
-    systemctl enable aether-apps.service
-fi
 if [[ "$REDIS_INCLUDED" == true ]]; then
     systemctl enable aether-redis.service
 fi
@@ -1192,6 +1016,3 @@ echo "=== Install complete ==="
 systemctl --no-pager status aether.target || true
 echo ""
 echo "Check full health with: aether doctor"
-if [[ "$FRONTEND_INCLUDED" == true ]]; then
-    echo "Web UI: http://$(hostname -I 2>/dev/null | awk '{print $1}'):8080"
-fi

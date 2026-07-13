@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 # Cross-compile optional static dependencies for bare-metal Aether installs.
-# Set INCLUDE_NGINX=1 for the browser-client bundle and INCLUDE_REDIS=1 for
-# the Redis extension bundle. Runs on the build machine (still requires Docker
-# when either component is selected); targets
+# Set INCLUDE_REDIS=1 for the Redis extension bundle. Runs on the build machine
+# (still requires Docker when selected); targets
 # get zero new system dependencies. Results are cached under
 # build/cache/static-deps/<name>-<version>-<arch>/ so repeat builds are
 # instant once warm.
@@ -17,23 +16,17 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-# Keep in sync with scripts/build-installer.sh's REDIS_VERSION/NGINX_VERSION defaults
+# Keep in sync with scripts/build-installer.sh's REDIS_VERSION default
 REDIS_VERSION="${REDIS_VERSION:-8.0.2}"
-NGINX_VERSION="${NGINX_VERSION:-1.27.4}"
 ARCH="${1:-arm64}"
 INCLUDE_REDIS="${INCLUDE_REDIS:-0}"
-INCLUDE_NGINX="${INCLUDE_NGINX:-0}"
 REDIS_SHA256="${REDIS_SHA256:-}"
-NGINX_SHA256="${NGINX_SHA256:-}"
 
 # Digests are for the exact release archives downloaded below, not GitHub's
 # separately generated source archives. Version overrides must provide their
 # own independently verified digest through the matching environment variable.
 if [[ -z "$REDIS_SHA256" && "$REDIS_VERSION" == "8.0.2" ]]; then
   REDIS_SHA256="e9296b67b54c91befbcca046d67071c780a1f7c9f9e1ae5ed94773c3bb9b542f"
-fi
-if [[ -z "$NGINX_SHA256" && "$NGINX_VERSION" == "1.27.4" ]]; then
-  NGINX_SHA256="294816f879b300e621fa4edd5353dd1ec00badb056399eceb30de7db64b753b2"
 fi
 
 case "$ARCH" in
@@ -42,9 +35,8 @@ case "$ARCH" in
   *) echo "Usage: $0 [arm64|amd64]" >&2; exit 1 ;;
 esac
 
-if [[ ! "$REDIS_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ \
-    || ! "$NGINX_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-  echo "Redis and nginx versions must use an exact numeric x.y.z release" >&2
+if [[ ! "$REDIS_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  echo "Redis version must use an exact numeric x.y.z release" >&2
   exit 1
 fi
 
@@ -113,7 +105,7 @@ validate_cache_provenance() {
   fi
 }
 
-if [[ "$INCLUDE_REDIS" == "1" || "$INCLUDE_NGINX" == "1" ]]; then
+if [[ "$INCLUDE_REDIS" == "1" ]]; then
   command -v file >/dev/null 2>&1 || {
     echo "The 'file' utility is required to verify static dependency artifacts" >&2
     exit 1
@@ -122,7 +114,6 @@ fi
 
 CACHE_DIR="$(pwd)/build/cache/static-deps"
 REDIS_OUT="$CACHE_DIR/redis-server-$REDIS_VERSION-$ARCH"
-NGINX_OUT="$CACHE_DIR/nginx-$NGINX_VERSION-$ARCH"
 mkdir -p "$CACHE_DIR"
 
 if [[ "$INCLUDE_REDIS" == "1" ]]; then
@@ -167,58 +158,6 @@ if [[ "$INCLUDE_REDIS" == "1" ]]; then
   fi
 else
   echo "Skipping optional redis-server (set INCLUDE_REDIS=1 to include)"
-fi
-
-if [[ "$INCLUDE_NGINX" == "1" ]]; then
-  require_trusted_sha256 "$NGINX_SHA256" NGINX
-  if [[ -e "$NGINX_OUT" || -L "$NGINX_OUT" ]]; then
-    [[ -d "$NGINX_OUT" && ! -L "$NGINX_OUT" ]] || {
-      echo "nginx cache path is not a regular directory: $NGINX_OUT" >&2
-      exit 1
-    }
-    validate_cache_provenance \
-      "$NGINX_OUT/.source-sha256" "$NGINX_SHA256" nginx
-    validate_static_elf "$NGINX_OUT/nginx" "$ARCH" nginx
-    echo "nginx $NGINX_VERSION ($ARCH) cached at $NGINX_OUT"
-  else
-    echo "Building static nginx $NGINX_VERSION for $ARCH..."
-    mkdir -p "$NGINX_OUT"
-    docker run --rm --platform "$DOCKER_PLATFORM" \
-      -e NGINX_VERSION="$NGINX_VERSION" \
-      -e NGINX_SHA256="$NGINX_SHA256" \
-      -v "$NGINX_OUT:/out" \
-      alpine:3.19 sh -c '
-        set -eu
-        apk add --no-cache build-base pcre2-dev zlib-dev zlib-static curl
-        archive=/tmp/nginx.tar.gz
-        curl --proto "=https" --tlsv1.2 -fsSL \
-          "https://nginx.org/download/nginx-${NGINX_VERSION}.tar.gz" \
-          -o "$archive"
-        printf "%s  %s\n" "$NGINX_SHA256" "$archive" | sha256sum -c -
-        tar -xzf "$archive" -C /tmp
-        cd "/tmp/nginx-${NGINX_VERSION}"
-        ./configure \
-          --with-http_auth_request_module \
-          --with-http_v2_module \
-          --without-http_uwsgi_module \
-          --without-http_scgi_module \
-          --without-http_fastcgi_module \
-          --without-mail_pop3_module \
-          --without-mail_imap_module \
-          --without-mail_smtp_module \
-          --with-cc-opt="-static" \
-          --with-ld-opt="-static"
-        make -j$(nproc)
-        cp objs/nginx /out/nginx
-        strip /out/nginx
-      '
-    validate_static_elf "$NGINX_OUT/nginx" "$ARCH" nginx
-    printf '%s\n' "$NGINX_SHA256" > "$NGINX_OUT/.source-sha256"
-    chmod 0444 "$NGINX_OUT/.source-sha256"
-    echo "nginx built: $NGINX_OUT/nginx"
-  fi
-else
-  echo "Skipping optional nginx (set INCLUDE_NGINX=1 to include the browser client)"
 fi
 
 echo 'Requested static dependencies are ready under build/cache/static-deps/'

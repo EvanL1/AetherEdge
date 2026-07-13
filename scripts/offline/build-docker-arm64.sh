@@ -56,7 +56,6 @@ mkdir -p "$OUTPUT_DIR"
 echo -e "${YELLOW}Cleaning up old images...${NC}"
 docker rmi aether-redis:arm64 2>/dev/null && echo "  Removed aether-redis:arm64" || true
 docker rmi aetherems:arm64 2>/dev/null && echo "  Removed aetherems:arm64" || true
-docker rmi aether-apps:arm64 2>/dev/null && echo "  Removed aether-apps:arm64" || true
 # Note: We keep :latest tags as they will be overwritten by new builds
 
 # Function to build and save image
@@ -180,25 +179,9 @@ build_and_save \
     "aetherems:latest" \
     "$OUTPUT_DIR/aetherems.tar.gz"
 
-# Build Frontend (Vue.js)
-echo ""
-echo -e "${BLUE}[3/4] Building Frontend (Vue.js) for ARM64...${NC}"
-
-FRONTEND_DOCKERFILE="$ROOT_DIR/apps/Dockerfile"
-if [[ -f "$FRONTEND_DOCKERFILE" ]]; then
-    build_and_save \
-        "$FRONTEND_DOCKERFILE" \
-        "$ROOT_DIR/apps" \
-        "aether-apps:latest" \
-        "$OUTPUT_DIR/apps.tar.gz"
-else
-    echo -e "${YELLOW}Warning: Frontend Dockerfile not found at $FRONTEND_DOCKERFILE${NC}"
-    echo -e "${YELLOW}Skipping frontend build...${NC}"
-fi
-
 # Copy docker-compose.yml
 echo ""
-echo -e "${BLUE}[4/4] Copying docker-compose.yml...${NC}"
+echo -e "${BLUE}[3/3] Copying docker-compose.yml...${NC}"
 
 if [[ -f "$ROOT_DIR/docker-compose.yml" ]]; then
     cp "$ROOT_DIR/docker-compose.yml" "$OUTPUT_DIR/"
@@ -222,9 +205,6 @@ echo "To load images on ARM64 device:"
 echo "  docker load < aetherems.tar.gz"
 if [[ -f "$OUTPUT_DIR/aether-redis.tar.gz" ]]; then
     echo "  docker load < aether-redis.tar.gz  # optional mirror profile"
-fi
-if [[ -f "$OUTPUT_DIR/apps.tar.gz" ]]; then
-    echo "  docker load < apps.tar.gz"
 fi
 echo ""
 echo "To start services:"

@@ -296,6 +296,21 @@ for package in \
 done
 
 echo "Checking kernel/distribution composition boundary..."
+if [[ -e apps || -e scripts/systemd/aether-apps.service ]]; then
+    echo "ERROR: the headless Kernel repository restored an EMS Console owner"
+    exit 1
+fi
+if rg -n 'aether-apps|apps/(dist|nginx)|FRONTEND_INCLUDED|INCLUDE_FRONTEND|INCLUDE_NGINX' \
+    docker-compose.yml \
+    scripts/build-installer.sh \
+    scripts/build-static-deps.sh \
+    scripts/install-baremetal.sh \
+    scripts/install.sh \
+    scripts/offline/build-docker-arm64.sh \
+    tools/aether/src/services.rs; then
+    echo "ERROR: the Kernel distribution still owns EMS Console integration"
+    exit 1
+fi
 cargo tree -p aether-example-minimal-gateway --edges normal --prefix none > "$dependency_tree"
 if rg -ni '(aether-example-energy-gateway|packs?/energy|aether-ems)' "$dependency_tree"; then
     echo "ERROR: the industry-neutral gateway depends on the energy distribution"

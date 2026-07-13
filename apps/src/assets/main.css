@@ -1,7 +1,0 @@
-@import './styles/tokens.css';
-@import './styles/element/css-vars.css';
-@import './styles/base.css';
-@import './styles/fonts/index.scss';
-@import './styles/element/index.scss';
-@import './styles/vueflow.scss';
-@import './styles/device-monitoring-scroller.scss';
