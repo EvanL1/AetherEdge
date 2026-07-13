@@ -111,7 +111,21 @@ jobs:
             if crate_is_published "$crate"; then
               echo "$crate@$version is already published; continuing idempotently"
             else
-              cargo publish --locked -p "$crate"
+              local attempt log
+              log=$(mktemp)
+              for attempt in {1..5}; do
+                if cargo publish --locked -p "$crate" 2>&1 | tee "$log"; then
+                  break
+                fi
+                if ! grep -Eq '429 Too Many Requests|published too many new crates' "$log" \
+                  || [[ "$attempt" == 5 ]]; then
+                  rm -f "$log"
+                  return 1
+                fi
+                echo "crates.io new-crate rate limit reached; retrying in 75 seconds"
+                sleep 75
+              done
+              rm -f "$log"
             fi
             wait_for_crate "$crate"
           }
