@@ -1,3 +1,5 @@
+#![cfg(feature = "local-runtime")]
+
 use aether_sdk::local::{MemoryAuditSink, MemoryLiveState};
 
 #[test]

@@ -62,6 +62,7 @@ jobs:
           cargo clippy --workspace -- -D warnings
           cargo clippy --workspace --lib --bins -- -D clippy::unwrap_used -D clippy::expect_used
           cargo nextest run
+          cargo nextest run -p aether-edge-sdk --features local-runtime --test local_runtime_facade
           cargo nextest run -p aether-shm-bridge -p aether-redis-bridge -p aether-postgres-history -p aether-example-minimal-gateway -p aether-example-energy-gateway
           cargo nextest run --workspace --lib --bins
 

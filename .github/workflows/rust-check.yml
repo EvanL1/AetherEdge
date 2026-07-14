@@ -128,6 +128,7 @@ jobs:
       - name: Run Edge Kernel Contract Tests
         run: |
           cargo nextest run
+          cargo nextest run -p aether-edge-sdk --features local-runtime --test local_runtime_facade
           cargo nextest run \
             -p aether-shm-bridge \
             -p aether-redis-bridge \
