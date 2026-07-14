@@ -6,6 +6,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 INSTALLER="$ROOT_DIR/tools/aether/install.sh"
+INSTALLER_BUILDER="$ROOT_DIR/scripts/build-installer.sh"
 RELEASE_WORKFLOW="$ROOT_DIR/.github/workflows/release.yml"
 
 fail() {
@@ -17,7 +18,7 @@ assert_file_contains() {
     local file=$1
     local expected=$2
 
-    grep -Fq "$expected" "$file" \
+    grep -Fq -- "$expected" "$file" \
         || fail "$file does not contain required release-integrity rule: $expected"
 }
 
@@ -25,7 +26,7 @@ assert_file_not_contains() {
     local file=$1
     local forbidden=$2
 
-    if grep -Fq "$forbidden" "$file"; then
+    if grep -Fq -- "$forbidden" "$file"; then
         fail "$file contains forbidden release behavior: $forbidden"
     fi
 }
@@ -249,6 +250,11 @@ assert_file_contains "$RELEASE_WORKFLOW" 'release/${{ steps.version.outputs.arti
 assert_file_contains "$RELEASE_WORKFLOW" 'release/AetherEdge-arm64-${{ steps.version.outputs.version }}.run.sha256'
 assert_file_contains "$RELEASE_WORKFLOW" 'release/AetherEdge-amd64-${{ steps.version.outputs.version }}.run.sha256'
 assert_file_contains "$RELEASE_WORKFLOW" '(cd release && sha256sum -c ./*.sha256)'
+
+echo "Testing installer listing cannot be truncated by quiet grep..."
+assert_file_not_contains "$INSTALLER_BUILDER" '--list | grep'
+assert_file_not_contains "$RELEASE_WORKFLOW" '--list | grep'
+assert_file_not_contains "$RELEASE_WORKFLOW" '| grep -Fxq'
 
 echo "Testing the release is source-and-binary only..."
 assert_file_not_contains "$RELEASE_WORKFLOW" 'cargo publish'

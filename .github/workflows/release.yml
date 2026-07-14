@@ -176,8 +176,9 @@ jobs:
           cp LICENSE "$CLI_PACKAGE_DIR/LICENSE"
           cp NOTICE "$CLI_PACKAGE_DIR/NOTICE"
           tar czf "$AETHER_TAR" -C "$CLI_PACKAGE_DIR" aether LICENSE NOTICE
-          tar tzf "$AETHER_TAR" | grep -Fxq LICENSE
-          tar tzf "$AETHER_TAR" | grep -Fxq NOTICE
+          archive_contents=$(tar tzf "$AETHER_TAR")
+          grep -Fxq LICENSE <<< "$archive_contents"
+          grep -Fxq NOTICE <<< "$archive_contents"
           (cd release && sha256sum "$AETHER_TAR_NAME" > "${AETHER_TAR_NAME}.sha256")
           echo "Aether CLI:"
           ls -lh "$AETHER_TAR"
@@ -191,8 +192,9 @@ jobs:
             ls -la release/ || echo "release directory not found"
             exit 1
           fi
-          "$ARTIFACT" --list | grep -Eq '(^|/)LICENSE$'
-          "$ARTIFACT" --list | grep -Eq '(^|/)NOTICE$'
+          installer_contents=$("$ARTIFACT" --list)
+          grep -Eq '(^|/)LICENSE$' <<< "$installer_contents"
+          grep -Eq '(^|/)NOTICE$' <<< "$installer_contents"
           (cd release && sha256sum "$ARTIFACT_NAME" > "${ARTIFACT_NAME}.sha256")
           (cd release && sha256sum -c "${ARTIFACT_NAME}.sha256")
           echo "Build artifacts:"
@@ -280,8 +282,9 @@ jobs:
           cp LICENSE "$CLI_PACKAGE_DIR/LICENSE"
           cp NOTICE "$CLI_PACKAGE_DIR/NOTICE"
           tar czf "aether-${{ matrix.name }}.tar.gz" -C "$CLI_PACKAGE_DIR" aether LICENSE NOTICE
-          tar tzf "aether-${{ matrix.name }}.tar.gz" | grep -Fxq LICENSE
-          tar tzf "aether-${{ matrix.name }}.tar.gz" | grep -Fxq NOTICE
+          archive_contents=$(tar tzf "aether-${{ matrix.name }}.tar.gz")
+          grep -Fxq LICENSE <<< "$archive_contents"
+          grep -Fxq NOTICE <<< "$archive_contents"
           shasum -a 256 aether-${{ matrix.name }}.tar.gz > aether-${{ matrix.name }}.tar.gz.sha256
 
       - name: Package (windows)
@@ -356,22 +359,24 @@ jobs:
         run: |
           set -euo pipefail
           for archive in release/aether-linux-*.tar.gz release/aether-darwin-*.tar.gz; do
-            tar tzf "$archive" | grep -Fxq LICENSE
-            tar tzf "$archive" | grep -Fxq NOTICE
+            archive_contents=$(tar tzf "$archive")
+            grep -Fxq LICENSE <<< "$archive_contents"
+            grep -Fxq NOTICE <<< "$archive_contents"
           done
-          unzip -Z1 release/aether-windows-x86_64.zip | grep -Fxq LICENSE
-          unzip -Z1 release/aether-windows-x86_64.zip | grep -Fxq NOTICE
+          zip_contents=$(unzip -Z1 release/aether-windows-x86_64.zip)
+          grep -Fxq LICENSE <<< "$zip_contents"
+          grep -Fxq NOTICE <<< "$zip_contents"
           for installer in release/AetherEdge-*.run; do
-            bash "$installer" --list | grep -Eq '(^|/)LICENSE$'
-            bash "$installer" --list | grep -Eq '(^|/)NOTICE$'
+            installer_contents=$(bash "$installer" --list)
+            grep -Eq '(^|/)LICENSE$' <<< "$installer_contents"
+            grep -Eq '(^|/)NOTICE$' <<< "$installer_contents"
           done
           for manifest in release/aetheriot-runtime-manifest-*.json; do
             python3 -m json.tool "$manifest" >/dev/null
           done
-          tar tzf "release/aetheriot-source-${GITHUB_REF_NAME}.tar.gz" \
-            | grep -Fxq "AetherIot-${GITHUB_REF_NAME}/LICENSE"
-          tar tzf "release/aetheriot-source-${GITHUB_REF_NAME}.tar.gz" \
-            | grep -Fxq "AetherIot-${GITHUB_REF_NAME}/NOTICE"
+          source_contents=$(tar tzf "release/aetheriot-source-${GITHUB_REF_NAME}.tar.gz")
+          grep -Fxq "AetherIot-${GITHUB_REF_NAME}/LICENSE" <<< "$source_contents"
+          grep -Fxq "AetherIot-${GITHUB_REF_NAME}/NOTICE" <<< "$source_contents"
           (cd release && sha256sum -c ./*.sha256)
 
       - name: Generate signed build provenance

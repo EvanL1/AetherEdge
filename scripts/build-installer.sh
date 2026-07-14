@@ -54,11 +54,16 @@ fi
 
 verify_installer_license() {
     local installer_path="$1"
-    if ! "$installer_path" --list | grep -Eq '(^|/)LICENSE$'; then
+    local installer_contents
+    if ! installer_contents=$("$installer_path" --list); then
+        echo -e "${RED}Error: unable to list installer $installer_path${NC}"
+        return 1
+    fi
+    if ! grep -Eq '(^|/)LICENSE$' <<< "$installer_contents"; then
         echo -e "${RED}Error: LICENSE missing from installer $installer_path${NC}"
         return 1
     fi
-    if ! "$installer_path" --list | grep -Eq '(^|/)NOTICE$'; then
+    if ! grep -Eq '(^|/)NOTICE$' <<< "$installer_contents"; then
         echo -e "${RED}Error: NOTICE missing from installer $installer_path${NC}"
         return 1
     fi
