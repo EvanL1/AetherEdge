@@ -1,5 +1,9 @@
+mod build_support;
+
 use std::path::Path;
 use std::{env, fs};
+
+use build_support::rust_string_literal;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let manifest_dir = env::var("CARGO_MANIFEST_DIR")?;
@@ -41,7 +45,8 @@ fn generate_sunspec_models(
     ];
 
     for (id, path) in entries {
-        lines.push(format!("    ({id}, include_str!(\"{path}\")),"));
+        let path = rust_string_literal(&path);
+        lines.push(format!("    ({id}, include_str!({path})),"));
     }
 
     lines.push("];".to_string());
