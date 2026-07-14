@@ -35,6 +35,8 @@ mod mqtt;
 mod routes;
 mod state;
 mod system_monitor;
+mod telemetry;
+mod trace_context;
 mod uplink;
 
 use crate::config::EnvConfig;
@@ -141,6 +143,11 @@ async fn main() -> anyhow::Result<()> {
         let s = Arc::clone(&state);
         let sd = shutdown.clone();
         tokio::spawn(async move { forwarder::run_system_monitor(s, sd).await });
+    }
+    {
+        let s = Arc::clone(&state);
+        let sd = shutdown.clone();
+        tokio::spawn(async move { telemetry::run_telemetry_reporter(s, sd).await });
     }
     {
         let s = Arc::clone(&state);
