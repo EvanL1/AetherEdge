@@ -2,8 +2,6 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use utoipa::ToSchema;
 
-use crate::trace_context::{self, TraceParent};
-
 // ── MQTT publish payloads ─────────────────────────────────────────────────────
 
 /// Uploaded to `property/{productSN}/{deviceSN}`.
@@ -48,10 +46,6 @@ pub struct ReadRequest {
     pub field: Option<String>,
     #[serde(rename = "msgId")]
     pub msg_id: Option<String>,
-    /// W3C trace context established by the caller (ADR-0016). Echoed on the
-    /// reply so the cloud can attribute latency to a hop.
-    #[serde(default, deserialize_with = "trace_context::deserialize_optional")]
-    pub traceparent: Option<TraceParent>,
 }
 
 /// Single entry inside a `read-reply` property array.
@@ -73,8 +67,6 @@ pub struct ReadReply {
     #[serde(rename = "msgId")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub msg_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub traceparent: Option<TraceParent>,
 }
 
 /// Incoming single-point write request on `write/{productSN}/{deviceSN}`.
@@ -89,10 +81,6 @@ pub struct WriteRequest {
     pub value: serde_json::Value,
     #[serde(rename = "msgId")]
     pub msg_id: Option<String>,
-    /// W3C trace context established by the caller (ADR-0016). Echoed on the
-    /// reply and forwarded on the loopback hop to automation.
-    #[serde(default, deserialize_with = "trace_context::deserialize_optional")]
-    pub traceparent: Option<TraceParent>,
 }
 
 /// Reply to `write-reply/{productSN}/{deviceSN}`.
@@ -103,8 +91,6 @@ pub struct WriteReply {
     #[serde(rename = "msgId")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub msg_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub traceparent: Option<TraceParent>,
 }
 
 // ── inst-sync ─────────────────────────────────────────────────────────────────
@@ -125,8 +111,6 @@ pub struct InstSyncReply {
     pub msg_id: Option<String>,
     pub timestamp: i64,
     pub list: Vec<InstSyncItem>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub traceparent: Option<TraceParent>,
 }
 
 /// Generic command-acknowledgement reply (call-data-reply, call-alarm-reply).
@@ -142,8 +126,6 @@ pub struct CommandReply {
     pub msg_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub traceparent: Option<TraceParent>,
 }
 
 // ── Dynamic service configuration ────────────────────────────────────────────
@@ -173,8 +155,6 @@ fn always_omit_mqtt_password(_: &Option<String>) -> bool {
     "report_batch_size": 50,
     "system_monitor_enabled": true,
     "system_monitor_interval_secs": 10,
-    "telemetry_enabled": false,
-    "telemetry_interval_secs": 30,
     "subscribe_patterns": ["inst:*:M", "inst:*:A"],
     "exclude_patterns": [],
     "alarm_url": "http://localhost:6007",
@@ -262,25 +242,6 @@ pub struct NetConfig {
     #[schema(example = 10, minimum = 1)]
     pub system_monitor_interval_secs: u64,
 
-    // -- Ops telemetry (ADR-0016) --
-    /// Publish acquisition-path telemetry (per-channel connectivity) to the
-    /// `telemetry` topic. Carries no point values.
-    ///
-    /// Off by default, and deliberately so. `telemetry/{productSN}/{deviceSN}`
-    /// is a topic no fielded broker policy grants yet, and a broker that
-    /// answers an unauthorised PUBLISH by closing the connection — AWS IoT Core
-    /// does — would turn this into a reconnect loop that takes property and
-    /// alarm egress down with it. Enable only once the broker policy allows the
-    /// topic. Observability must not become an availability dependency.
-    #[serde(default)]
-    #[schema(example = false)]
-    pub telemetry_enabled: bool,
-
-    /// Telemetry sampling interval in seconds.
-    #[serde(default = "default_telemetry_interval_secs")]
-    #[schema(example = 30, minimum = 1)]
-    pub telemetry_interval_secs: u64,
-
     // -- Live-state source --
     /// Logical group subscription patterns using `*` and `?` glob wildcards.
     ///
@@ -324,18 +285,12 @@ impl Default for NetConfig {
             report_batch_size: 50,
             system_monitor_enabled: true,
             system_monitor_interval_secs: 10,
-            telemetry_enabled: false,
-            telemetry_interval_secs: default_telemetry_interval_secs(),
             subscribe_patterns: vec!["inst:*:M".to_string(), "inst:*:A".to_string()],
             exclude_patterns: vec![],
             alarm_url: "http://localhost:6007".to_string(),
             automation_url: "http://localhost:6002".to_string(),
         }
     }
-}
-
-const fn default_telemetry_interval_secs() -> u64 {
-    30
 }
 
 impl NetConfig {
@@ -347,97 +302,12 @@ impl NetConfig {
         self.report_interval_secs = self.report_interval_secs.max(1);
         self.report_batch_size = self.report_batch_size.max(1);
         self.system_monitor_interval_secs = self.system_monitor_interval_secs.max(1);
-        self.telemetry_interval_secs = self.telemetry_interval_secs.max(1);
     }
 
     pub fn preserve_write_only_secrets_from(&mut self, current: &Self) {
         if self.password.is_none() {
             self.password.clone_from(&current.password);
         }
-    }
-}
-
-/// Trace-context propagation across the cloud↔gateway envelope (ADR-0016).
-///
-/// Every assertion here is a compatibility claim about a wire format that is
-/// already deployed. Fielded gateways talk to clouds that predate this field.
-#[cfg(test)]
-mod envelope_tests {
-    use super::*;
-
-    const TP: &str = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";
-
-    #[test]
-    fn cloud_traceparent_is_accepted_on_write_and_echoed_on_the_reply() {
-        let request: WriteRequest = serde_json::from_value(serde_json::json!({
-            "source": "inst", "device": "3", "data_type": "A",
-            "key": "setpoint", "value": 42.0, "msgId": "m-1", "traceparent": TP
-        }))
-        .expect("request parses");
-
-        let reply = WriteReply {
-            result: "success".to_string(),
-            msg_id: request.msg_id,
-            traceparent: request.traceparent,
-        };
-
-        assert_eq!(
-            serde_json::to_value(&reply).expect("reply serializes"),
-            serde_json::json!({"result": "success", "msgId": "m-1", "traceparent": TP})
-        );
-    }
-
-    /// A cloud deployed before this field exists sends no `traceparent`. The
-    /// request must still parse — adding an observability field may not break an
-    /// existing control path.
-    #[test]
-    fn a_request_without_a_traceparent_still_parses() {
-        let request: WriteRequest = serde_json::from_value(serde_json::json!({
-            "source": "inst", "device": "3", "data_type": "A",
-            "key": "setpoint", "value": 42.0, "msgId": "m-1"
-        }))
-        .expect("legacy request parses");
-
-        assert_eq!(request.traceparent, None);
-
-        let read: ReadRequest = serde_json::from_value(serde_json::json!({
-            "source": "inst", "device": "3", "data_type": "M"
-        }))
-        .expect("legacy read parses");
-        assert_eq!(read.traceparent, None);
-    }
-
-    /// And the reply to such a request must be byte-identical to what that cloud
-    /// already parses. Emitting `"traceparent": null` would be a new key in every
-    /// existing consumer's payload.
-    #[test]
-    fn a_reply_without_a_traceparent_gains_no_new_key() {
-        let reply = WriteReply {
-            result: "success".to_string(),
-            msg_id: Some("m-1".to_string()),
-            traceparent: None,
-        };
-
-        let json = serde_json::to_value(&reply).expect("reply serializes");
-        assert_eq!(
-            json,
-            serde_json::json!({"result": "success", "msgId": "m-1"})
-        );
-        assert!(json.get("traceparent").is_none(), "no null key emitted");
-    }
-
-    /// The malformed case must degrade to "no trace", never to "no command".
-    #[test]
-    fn a_malformed_traceparent_does_not_reject_the_command() {
-        let request: WriteRequest = serde_json::from_value(serde_json::json!({
-            "source": "inst", "device": "3", "data_type": "A",
-            "key": "setpoint", "value": 42.0, "msgId": "m-1",
-            "traceparent": "00-not-hex-01"
-        }))
-        .expect("command still parses");
-
-        assert_eq!(request.traceparent, None);
-        assert_eq!(request.field, "setpoint");
     }
 }
 
@@ -455,7 +325,6 @@ mod config_tests {
             report_interval_secs: 0,
             report_batch_size: 0,
             system_monitor_interval_secs: 0,
-            telemetry_interval_secs: 0,
             ..NetConfig::default()
         };
 
@@ -468,7 +337,6 @@ mod config_tests {
         assert_eq!(cfg.report_interval_secs, 1);
         assert_eq!(cfg.report_batch_size, 1);
         assert_eq!(cfg.system_monitor_interval_secs, 1);
-        assert_eq!(cfg.telemetry_interval_secs, 1);
     }
 
     #[test]

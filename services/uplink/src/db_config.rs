@@ -50,16 +50,6 @@ const DEFAULTS: &[(&str, &str, &str)] = &[
         "System metrics collection interval (s)",
     ),
     (
-        "telemetry_enabled",
-        "false",
-        "Publish acquisition-path telemetry; requires broker policy for the telemetry topic",
-    ),
-    (
-        "telemetry_interval_secs",
-        "30",
-        "Telemetry sampling interval (s)",
-    ),
-    (
         "subscribe_patterns",
         r#"["inst:*:M","inst:*:A"]"#,
         "JSON array of logical SHM group patterns",
@@ -142,8 +132,6 @@ pub async fn load_config(pool: &SqlitePool) -> anyhow::Result<NetConfig> {
         system_monitor_interval_secs: get("system_monitor_interval_secs", "10")
             .parse()
             .unwrap_or(10),
-        telemetry_enabled: get("telemetry_enabled", "false") == "true",
-        telemetry_interval_secs: get("telemetry_interval_secs", "30").parse().unwrap_or(30),
         subscribe_patterns: serde_json::from_str(&get(
             "subscribe_patterns",
             r#"["inst:*:M","inst:*:A"]"#,
@@ -204,14 +192,6 @@ pub async fn save_config(pool: &SqlitePool, cfg: &NetConfig) -> anyhow::Result<(
         (
             "system_monitor_interval_secs",
             Cow::Owned(cfg.system_monitor_interval_secs.to_string()),
-        ),
-        (
-            "telemetry_enabled",
-            Cow::Owned(cfg.telemetry_enabled.to_string()),
-        ),
-        (
-            "telemetry_interval_secs",
-            Cow::Owned(cfg.telemetry_interval_secs.to_string()),
         ),
         (
             "subscribe_patterns",

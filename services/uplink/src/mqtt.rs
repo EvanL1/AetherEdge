@@ -21,14 +21,13 @@ use rumqttc::{
 use serde_json::json;
 use tokio::time::{self, Duration};
 use tokio_util::sync::CancellationToken;
-use tracing::{Instrument, error, info, warn};
+use tracing::{error, info, warn};
 
 use crate::models::{
     CommandReply, InstSyncItem, InstSyncReply, ReadReply, ReadReplyProperty, ReadRequest,
     StatusPayload, WriteReply, WriteRequest,
 };
 use crate::state::AppState;
-use crate::trace_context::{self, TraceParent};
 
 // ── Public entry point ────────────────────────────────────────────────────────
 
@@ -284,50 +283,18 @@ async fn dispatch_message(state: Arc<AppState>, topic: &str, payload: Bytes) {
 
 // ── Command handlers ──────────────────────────────────────────────────────────
 
-/// Correlation identifiers from a body parsed as raw JSON.
-///
-/// Used by the handlers that have no request struct (`call-data`, `call-alarm`,
-/// `inst-sync`) and, on the typed paths, to salvage the ids from a body that
-/// failed *schema* validation — a wrong type or a missing field. That request is
-/// exactly the one whose error reply the caller most needs to correlate. A body
-/// that is not JSON at all yields nothing, which is all that can be done.
-fn correlation_from(payload: &Bytes) -> (Option<String>, Option<TraceParent>) {
-    let Ok(body) = serde_json::from_slice::<serde_json::Value>(payload) else {
-        return (None, None);
-    };
-    let msg_id = body
-        .get("msgId")
-        .and_then(serde_json::Value::as_str)
-        .map(str::to_string);
-    (msg_id, trace_context::from_json(&body))
-}
-
-/// Builds the reply for a body that failed typed deserialization.
-///
-/// An absent `traceparent` is omitted rather than emitted as `null`: a cloud
-/// that predates trace context must keep seeing the reply shape it already
-/// parses, and `json!` would otherwise insert the key unconditionally.
-fn parse_error_reply(payload: &Bytes, error: &serde_json::Error) -> serde_json::Value {
-    let (msg_id, traceparent) = correlation_from(payload);
-    let mut reply = json!({
-        "result": "fail",
-        "error": "json_parse_error",
-        "message": format!("JSON parse error: {error}"),
-        "msgId": msg_id.unwrap_or_else(|| "unknown".to_string()),
-        "timestamp": Utc::now().timestamp(),
-    });
-    if let Some(traceparent) = traceparent {
-        reply["traceparent"] = json!(traceparent);
-    }
-    reply
-}
-
 async fn handle_read(state: Arc<AppState>, payload: Bytes) {
     let req: ReadRequest = match serde_json::from_slice(&payload) {
         Ok(r) => r,
         Err(e) => {
             warn!("Bad read request: {}", e);
-            let err_reply = parse_error_reply(&payload, &e);
+            let err_reply = json!({
+                "result": "fail",
+                "error": "json_parse_error",
+                "message": format!("JSON parse error: {}", e),
+                "msgId": "unknown",
+                "timestamp": Utc::now().timestamp()
+            });
             let _ = publish_json(&state, &state.topics.read_reply, &err_reply).await;
             return;
         },
@@ -365,7 +332,6 @@ async fn handle_read(state: Arc<AppState>, payload: Bytes) {
             value,
         }],
         msg_id: req.msg_id,
-        traceparent: req.traceparent,
     };
 
     if let Err(e) = publish_json(&state, &state.topics.read_reply, &reply).await {
@@ -378,7 +344,13 @@ async fn handle_write(state: Arc<AppState>, payload: Bytes) {
         Ok(r) => r,
         Err(e) => {
             warn!("Bad write request: {}", e);
-            let err_reply = parse_error_reply(&payload, &e);
+            let err_reply = json!({
+                "result": "fail",
+                "error": "json_parse_error",
+                "message": format!("JSON parse error: {}", e),
+                "msgId": "unknown",
+                "timestamp": Utc::now().timestamp()
+            });
             let _ = publish_json(&state, &state.topics.write_reply, &err_reply).await;
             return;
         },
@@ -391,31 +363,13 @@ async fn handle_write(state: Arc<AppState>, payload: Bytes) {
         field,
         value,
         msg_id,
-        traceparent,
     } = req;
 
     let result_str = match numeric_command_value(&value).and_then(|value| {
         resolve_command_target(&source, &device, &data_type).map(|target| (target, value))
     }) {
         Ok((target, value)) => {
-            // The command now fans out across loopback services to a device. This
-            // is the hop whose latency the cloud cannot otherwise attribute, so it
-            // is the one span worth naming.
-            let span = tracing::info_span!(
-                "cloud_command",
-                traceparent = traceparent.as_ref().map_or("-", TraceParent::as_str)
-            );
-            match dispatch_cloud_command(
-                &state,
-                target,
-                &field,
-                value,
-                msg_id.as_deref(),
-                traceparent.as_ref(),
-            )
-            .instrument(span)
-            .await
-            {
+            match dispatch_cloud_command(&state, target, &field, value, msg_id.as_deref()).await {
                 Ok(()) => "success",
                 Err(error) => {
                     error!("Cloud command dispatch failed: {error}");
@@ -432,7 +386,6 @@ async fn handle_write(state: Arc<AppState>, payload: Bytes) {
     let reply = WriteReply {
         result: result_str.to_string(),
         msg_id,
-        traceparent,
     };
 
     if let Err(e) = publish_json(&state, &state.topics.write_reply, &reply).await {
@@ -441,7 +394,13 @@ async fn handle_write(state: Arc<AppState>, payload: Bytes) {
 }
 
 async fn handle_call_data(state: Arc<AppState>, payload: Bytes) {
-    let (msg_id, traceparent) = correlation_from(&payload);
+    let msg_id: Option<String> = serde_json::from_slice::<serde_json::Value>(&payload)
+        .ok()
+        .and_then(|v| {
+            v.get("msgId")
+                .and_then(|r| r.as_str())
+                .map(|s| s.to_string())
+        });
 
     // Reply first, then trigger the upload so the cloud gets an ACK immediately.
     let reply = CommandReply {
@@ -450,7 +409,6 @@ async fn handle_call_data(state: Arc<AppState>, payload: Bytes) {
         timestamp: Utc::now().timestamp(),
         msg_id,
         error: None,
-        traceparent,
     };
     if let Err(e) = publish_json(&state, &state.topics.call_data_reply, &reply).await {
         error!("Failed to publish call-data-reply: {}", e);
@@ -460,7 +418,13 @@ async fn handle_call_data(state: Arc<AppState>, payload: Bytes) {
 }
 
 async fn handle_call_alarm(state: Arc<AppState>, payload: Bytes) {
-    let (msg_id, traceparent) = correlation_from(&payload);
+    let msg_id: Option<String> = serde_json::from_slice::<serde_json::Value>(&payload)
+        .ok()
+        .and_then(|v| {
+            v.get("msgId")
+                .and_then(|r| r.as_str())
+                .map(|s| s.to_string())
+        });
 
     let alarm_url = state.config.read().await.alarm_url.clone();
     let url = format!("{}/alarmApi/call-data", alarm_url);
@@ -493,7 +457,6 @@ async fn handle_call_alarm(state: Arc<AppState>, payload: Bytes) {
         timestamp: Utc::now().timestamp(),
         msg_id,
         error: None,
-        traceparent,
     };
     if let Err(e) = publish_json(&state, &state.topics.call_alarm_reply, &reply).await {
         error!("Failed to publish call-alarm-reply: {}", e);
@@ -501,9 +464,15 @@ async fn handle_call_alarm(state: Arc<AppState>, payload: Bytes) {
 }
 
 async fn handle_inst_sync(state: Arc<AppState>, payload: Bytes) {
-    let (msg_id, traceparent) = correlation_from(&payload);
+    let msg_id: Option<String> = serde_json::from_slice::<serde_json::Value>(&payload)
+        .ok()
+        .and_then(|v| {
+            v.get("msgId")
+                .and_then(|r| r.as_str())
+                .map(|s| s.to_string())
+        });
 
-    if let Err(e) = do_inst_sync(Arc::clone(&state), msg_id, traceparent).await {
+    if let Err(e) = do_inst_sync(Arc::clone(&state), msg_id).await {
         error!("inst-sync failed: {}", e);
     }
 }
@@ -511,11 +480,7 @@ async fn handle_inst_sync(state: Arc<AppState>, payload: Bytes) {
 /// Fetch instance list from automation and publish an `inst-sync-reply`.
 /// `msg_id` is echoed back verbatim; pass the ms-timestamp string for
 /// HTTP-triggered calls.
-pub async fn do_inst_sync(
-    state: Arc<AppState>,
-    msg_id: Option<String>,
-    traceparent: Option<TraceParent>,
-) -> anyhow::Result<()> {
+pub async fn do_inst_sync(state: Arc<AppState>, msg_id: Option<String>) -> anyhow::Result<()> {
     let automation_url = state.config.read().await.automation_url.clone();
     let url = format!("{}/api/instances?page_size=100", automation_url);
 
@@ -562,7 +527,6 @@ pub async fn do_inst_sync(
         msg_id,
         timestamp: Utc::now().timestamp(),
         list,
-        traceparent,
     };
 
     publish_json(&state, &state.topics.inst_sync_reply, &reply).await
@@ -598,7 +562,6 @@ async fn dispatch_cloud_command(
     field: &str,
     value: f64,
     message_id: Option<&str>,
-    traceparent: Option<&TraceParent>,
 ) -> anyhow::Result<()> {
     let config = state.config.read().await.clone();
     let (url, body) = command_request(&config, instance_id, field, value);
@@ -614,11 +577,6 @@ async fn dispatch_cloud_command(
         .json(&body);
     if let Some(message_id) = message_id {
         request = request.header("Idempotency-Key", message_id);
-    }
-    if let Some(traceparent) = traceparent {
-        // Safe as a header value only because `TraceParent` is parsed, not
-        // passed through: the grammar admits no CR/LF (see `trace_context`).
-        request = request.header("traceparent", traceparent.as_str());
     }
     let response = request.send().await?;
     if !response.status().is_success() {
@@ -644,57 +602,7 @@ fn command_request(
 
 #[cfg(test)]
 mod tests {
-    use super::{build_tls, command_request, parse_error_reply, resolve_command_target};
-    use bytes::Bytes;
-
-    const TP: &str = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";
-
-    fn parse_failure() -> serde_json::Error {
-        serde_json::from_str::<super::ReadRequest>("{").expect_err("body is not valid JSON")
-    }
-
-    /// A cloud that predates trace context must keep receiving the exact error
-    /// reply shape it already parses. `json!` inserts keys unconditionally, so an
-    /// absent `traceparent` would otherwise arrive as a new `null` key — the same
-    /// break the typed replies guard against with `skip_serializing_if`.
-    #[test]
-    fn a_parse_error_reply_gains_no_null_traceparent_key() {
-        let payload = Bytes::from_static(br#"{"msgId":"m-1","source":}"#);
-        let reply = parse_error_reply(&payload, &parse_failure());
-
-        assert!(
-            reply.get("traceparent").is_none(),
-            "no null key emitted, got {reply}"
-        );
-    }
-
-    /// The realistic failure: the body is valid JSON but does not satisfy the
-    /// request schema — a wrong type, a missing field. That request is precisely
-    /// the one whose error reply the caller most needs to match up, so the
-    /// correlation ids are salvaged from the raw body rather than thrown away.
-    #[test]
-    fn a_schema_invalid_body_still_yields_its_correlation_ids() {
-        let payload = Bytes::from(format!(
-            r#"{{"msgId":"m-1","traceparent":"{TP}","source":42}}"#
-        ));
-        let reply = parse_error_reply(&payload, &parse_failure());
-
-        assert_eq!(reply["msgId"], "m-1");
-        assert_eq!(reply["traceparent"], TP);
-        assert_eq!(reply["result"], "fail");
-    }
-
-    /// A body that is not JSON at all yields nothing to salvage — there is no
-    /// object to read the ids out of. The reply must still be well formed.
-    #[test]
-    fn a_syntactically_broken_body_still_produces_a_well_formed_error_reply() {
-        let payload = Bytes::from_static(b"not json at all");
-        let reply = parse_error_reply(&payload, &parse_failure());
-
-        assert_eq!(reply["msgId"], "unknown");
-        assert_eq!(reply["result"], "fail");
-        assert!(reply.get("traceparent").is_none());
-    }
+    use super::{build_tls, command_request, resolve_command_target};
     use crate::models::NetConfig;
 
     #[test]

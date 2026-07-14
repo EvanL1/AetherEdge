@@ -687,9 +687,7 @@ async fn inst_sync_push(
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     let msg_id = chrono::Utc::now().timestamp_millis().to_string();
 
-    // Locally triggered, so there is no caller trace context to preserve. The
-    // gateway does not mint one (ADR-0016).
-    do_inst_sync(Arc::clone(&state), Some(msg_id.clone()), None)
+    do_inst_sync(Arc::clone(&state), Some(msg_id.clone()))
         .await
         .map(|_| {
             Json(json!({

@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 use std::time::Duration;
 
-use aether_ports::{ChannelHealthObservation, PortError, PortErrorKind, PortResult};
+use aether_ports::{PortError, PortErrorKind, PortResult};
 use aether_shm_bridge::{
     PhysicalPointAddress, ShmClientConfig, ShmReadTopologyGeneration, SlotSource,
 };
@@ -91,22 +91,6 @@ impl UplinkTopologyGeneration {
     ) -> PortResult<Vec<PropertyEntry>> {
         self.read.validate_layouts()?;
         self.values.collect_entries(patterns, excludes)
-    }
-
-    /// Iterates the channels this generation's health manifest configures.
-    ///
-    /// Deterministic order, so a telemetry pass reports the same channel set
-    /// every tick and a consumer sees a stable series.
-    pub fn channel_ids(&self) -> impl Iterator<Item = u32> + '_ {
-        self.read.channel_health().manifest().channel_ids()
-    }
-
-    /// Reads channel connectivity from the health plane pinned to this generation.
-    ///
-    /// `None` means unconfigured or never observed — deliberately not the same
-    /// claim as offline (ADR-0016).
-    pub fn channel_health(&self, channel_id: u32) -> PortResult<Option<ChannelHealthObservation>> {
-        self.read.channel_health().read_channel(channel_id)
     }
 
     /// Returns the deterministic digest of the one SQLite snapshot used here.
