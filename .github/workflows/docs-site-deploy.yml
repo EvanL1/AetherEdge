@@ -68,9 +68,51 @@ jobs:
             exit 1
           fi
 
+      - name: Normalize Cloudflare API token
+        id: cloudflare-token
+        shell: bash
+        env:
+          RAW_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          trim() {
+            local value=$1
+            value="${value#"${value%%[![:space:]]*}"}"
+            value="${value%"${value##*[![:space:]]}"}"
+            printf '%s' "$value"
+          }
+
+          token=$(trim "$RAW_TOKEN")
+          token=${token#CLOUDFLARE_API_TOKEN=}
+          token=$(trim "$token")
+
+          if (( ${#token} >= 2 )); then
+            first=${token:0:1}
+            last=${token: -1}
+            if [[ ( "$first" == '"' && "$last" == '"' ) \
+              || ( "$first" == "'" && "$last" == "'" ) ]]; then
+              token=${token:1:${#token}-2}
+              token=$(trim "$token")
+            fi
+          fi
+
+          if [[ "${token,,}" == bearer\ * ]]; then
+            token=${token#* }
+            token=$(trim "$token")
+          fi
+
+          if [[ -z "$token" || "$token" =~ [[:space:]] ]]; then
+            echo "CLOUDFLARE_API_TOKEN must resolve to one non-empty token without whitespace." >&2
+            exit 1
+          fi
+
+          echo "::add-mask::$token"
+          printf 'token=%s\n' "$token" >> "$GITHUB_OUTPUT"
+
       - name: Deploy to Cloudflare Workers
         uses: cloudflare/wrangler-action@ebbaa1584979971c8614a24965b4405ff95890e0 # v4.0.0
         with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          apiToken: ${{ steps.cloudflare-token.outputs.token }}
           workingDirectory: docs-site
           command: deploy
