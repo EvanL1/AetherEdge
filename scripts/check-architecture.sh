@@ -296,6 +296,15 @@ if rg -n '\b(Rtdb|RedisRtdb)\b' crates --glob '*.rs'; then
     exit 1
 fi
 
+# ADR-0016: the gateway borrows OpenTelemetry's data model, never its transport.
+# Telemetry leaves on the existing MQTT channel and the cloud terminates it into
+# OTLP. An SDK here would buffer in memory and drop exactly when the link is bad.
+echo "Checking the gateway does not depend on an OpenTelemetry SDK..."
+if rg -n '^\s*opentelemetry' crates services extensions libs tools --glob 'Cargo.toml'; then
+    echo "ERROR: an OpenTelemetry dependency violates ADR-0016; the edge does not speak OTLP"
+    exit 1
+fi
+
 echo "Checking acquisition-writer authority..."
 if rg -n '\bAcquisitionStateWriter\b' \
     services/api services/automation services/alarm services/history services/uplink tools \

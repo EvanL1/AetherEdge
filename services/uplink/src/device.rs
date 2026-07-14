@@ -90,6 +90,8 @@ pub struct Topics {
     pub inst_sync: String,
     /// Reply topic for the device-list sync response.
     pub inst_sync_reply: String,
+    /// Ops telemetry about the acquisition path (ADR-0016). Never point values.
+    pub telemetry: String,
 }
 
 impl Topics {
@@ -113,6 +115,7 @@ impl Topics {
             alarm: f("alarm/{productSN}/{deviceSN}"),
             inst_sync: f("inst-sync/{productSN}/{deviceSN}"),
             inst_sync_reply: f("inst-sync-reply/{productSN}/{deviceSN}"),
+            telemetry: f("telemetry/{productSN}/{deviceSN}"),
         }
     }
 
