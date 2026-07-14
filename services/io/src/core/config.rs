@@ -50,7 +50,6 @@ pub use types::{
     IecMapping,
     IoConfig,
     IoValidator,
-    JSON_POINT_MAPPINGS_TABLE,
     ModbusMapping,
     Point,
     RuntimeChannelConfig,

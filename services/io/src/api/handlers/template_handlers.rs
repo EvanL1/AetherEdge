@@ -11,8 +11,13 @@ use crate::dto::{
     AppError, ApplyTemplateReq, CreateTemplateFromChannelReq, CreateTemplateReq, PointCounts,
     SuccessResponse, TemplateDetail, TemplateListItem, TemplateListQuery, UpdateTemplateReq,
 };
+use crate::point_topology::{
+    PointDefinitionMutation, PointKind, PointTopologyMutation, PointTopologyMutationResult,
+};
 use axum::{
+    Extension,
     extract::{Path, Query, State},
+    http::HeaderMap,
     response::Json,
 };
 use serde_json::json;
@@ -88,12 +93,11 @@ async fn snapshot_channel_points(
 ) -> Result<serde_json::Value, AppError> {
     let mut result = json!({});
 
-    // Telemetry, Control, Adjustment share the same column set
+    // Telemetry and Control share the same column set.
     // Table names are from a compile-time constant array, not user input
     let standard_tables = [
         ("telemetry", "telemetry_points"),
         ("control", "control_points"),
-        ("adjustment", "adjustment_points"),
     ];
 
     for (key, table) in standard_tables {
@@ -184,6 +188,68 @@ async fn snapshot_channel_points(
         result["signal"] = json!(points);
     }
 
+    // Adjustment points carry command constraints which must survive a
+    // template round-trip.
+    {
+        let query = "SELECT point_id, signal_name, scale, offset, unit, data_type, reverse, \
+                     description, min_value, max_value, step \
+                     FROM adjustment_points WHERE channel_id = ? ORDER BY point_id";
+        #[allow(clippy::type_complexity)]
+        let rows: Vec<(
+            i64,
+            String,
+            f64,
+            f64,
+            String,
+            String,
+            bool,
+            String,
+            Option<f64>,
+            Option<f64>,
+            f64,
+        )> = sqlx::query_as(query)
+            .bind(i64::from(channel_id))
+            .fetch_all(pool)
+            .await
+            .map_err(|error| {
+                tracing::error!("Snapshot points adjustment_points: {}", error);
+                AppError::internal_error("Database operation failed")
+            })?;
+        result["adjustment"] = serde_json::Value::Array(
+            rows.into_iter()
+                .map(
+                    |(
+                        point_id,
+                        signal_name,
+                        scale,
+                        offset,
+                        unit,
+                        data_type,
+                        reverse,
+                        description,
+                        minimum,
+                        maximum,
+                        step,
+                    )| {
+                        json!({
+                            "point_id": point_id,
+                            "signal_name": signal_name,
+                            "scale": scale,
+                            "offset": offset,
+                            "unit": unit,
+                            "data_type": data_type,
+                            "reverse": reverse,
+                            "description": description,
+                            "min_value": minimum,
+                            "max_value": maximum,
+                            "step": step,
+                        })
+                    },
+                )
+                .collect(),
+        );
+    }
+
     Ok(result)
 }
 
@@ -236,6 +302,132 @@ async fn snapshot_channel_mappings(
     }
 
     Ok(result)
+}
+
+fn template_point_mutations(
+    points_snapshot: &serde_json::Value,
+    mappings_snapshot: &serde_json::Value,
+    slave_id_override: Option<u8>,
+) -> Result<Vec<(PointKind, PointDefinitionMutation)>, AppError> {
+    let groups = [
+        ("telemetry", PointKind::Telemetry),
+        ("signal", PointKind::Signal),
+        ("control", PointKind::Control),
+        ("adjustment", PointKind::Adjustment),
+    ];
+    let mut result = Vec::new();
+
+    for (group, kind) in groups {
+        let mut mappings = std::collections::HashMap::new();
+        for mapping in mappings_snapshot
+            .get(group)
+            .and_then(serde_json::Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            let point_id = template_point_id(mapping, group)?;
+            mappings.insert(
+                point_id,
+                mapping
+                    .get("protocol_data")
+                    .cloned()
+                    .unwrap_or_else(|| json!({})),
+            );
+        }
+
+        for point in points_snapshot
+            .get(group)
+            .and_then(serde_json::Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            let point_id = template_point_id(point, group)?;
+            let signal_name = point
+                .get("signal_name")
+                .and_then(serde_json::Value::as_str)
+                .ok_or_else(|| {
+                    AppError::bad_request(format!(
+                        "Template {group} point {point_id} is missing signal_name"
+                    ))
+                })?
+                .to_string();
+            let mut protocol_data = mappings.remove(&point_id).unwrap_or_else(|| json!({}));
+            if let Some(slave_id) = slave_id_override
+                && let Some(values) = protocol_data.as_object_mut()
+                && values.contains_key("slave_id")
+            {
+                values.insert("slave_id".to_string(), serde_json::Value::from(slave_id));
+            }
+            let protocol_mapping = if protocol_data
+                .as_object()
+                .is_some_and(serde_json::Map::is_empty)
+                || protocol_data.is_null()
+            {
+                None
+            } else {
+                Some(serde_json::to_string(&protocol_data).map_err(|error| {
+                    AppError::bad_request(format!(
+                        "Template {group} point {point_id} has invalid protocol mapping: {error}"
+                    ))
+                })?)
+            };
+            result.push((
+                kind,
+                PointDefinitionMutation {
+                    point_id,
+                    signal_name,
+                    scale: point
+                        .get("scale")
+                        .and_then(serde_json::Value::as_f64)
+                        .unwrap_or(1.0),
+                    offset: point
+                        .get("offset")
+                        .and_then(serde_json::Value::as_f64)
+                        .unwrap_or(0.0),
+                    unit: point
+                        .get("unit")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or_default()
+                        .to_string(),
+                    reverse: point
+                        .get("reverse")
+                        .and_then(serde_json::Value::as_bool)
+                        .unwrap_or(false),
+                    data_type: point
+                        .get("data_type")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or_default()
+                        .to_string(),
+                    description: point
+                        .get("description")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or_default()
+                        .to_string(),
+                    normal_state: point
+                        .get("normal_state")
+                        .and_then(serde_json::Value::as_i64)
+                        .unwrap_or(0),
+                    minimum: point.get("min_value").and_then(serde_json::Value::as_f64),
+                    maximum: point.get("max_value").and_then(serde_json::Value::as_f64),
+                    step: point
+                        .get("step")
+                        .and_then(serde_json::Value::as_f64)
+                        .unwrap_or(1.0),
+                    protocol_mapping: Some(protocol_mapping),
+                },
+            ));
+        }
+    }
+    Ok(result)
+}
+
+fn template_point_id(value: &serde_json::Value, group: &str) -> Result<u32, AppError> {
+    let raw = value
+        .get("point_id")
+        .and_then(serde_json::Value::as_u64)
+        .ok_or_else(|| AppError::bad_request(format!("Template {group} point_id is invalid")))?;
+    u32::try_from(raw)
+        .map_err(|_| AppError::bad_request(format!("Template {group} point_id exceeds u32")))
 }
 
 // ============================================================================
@@ -741,6 +933,8 @@ pub async fn delete_template(
 pub async fn apply_template(
     Path((template_id, channel_id)): Path<(i64, u32)>,
     State(state): State<AppState>,
+    Extension(boundary): Extension<crate::api::handlers::point_handlers::PointTopologyHttpBoundary>,
+    headers: HeaderMap,
     Json(req): Json<ApplyTemplateReq>,
 ) -> Result<Json<SuccessResponse<serde_json::Value>>, AppError> {
     // 1. Load template
@@ -806,181 +1000,39 @@ pub async fn apply_template(
             AppError::internal_error("Template data is corrupted")
         })?;
 
-    // 3. Apply in a transaction
-    let mut tx = state
-        .sqlite_pool
-        .begin()
-        .await
-        .map_err(|e| AppError::internal_error(format!("Transaction start: {}", e)))?;
-
-    // Table names are from a compile-time constant array, not user input
-    let tables = [
-        ("telemetry", "telemetry_points"),
-        ("signal", "signal_points"),
-        ("control", "control_points"),
-        ("adjustment", "adjustment_points"),
-    ];
-
-    // 3a. Clear existing points if requested
-    if req.clear_existing {
-        for (_, table) in &tables {
-            sqlx::query(&format!("DELETE FROM {} WHERE channel_id = ?", table))
-                .bind(channel_id as i64)
-                .execute(&mut *tx)
-                .await
-                .map_err(|e| AppError::internal_error(format!("Clear {}: {}", table, e)))?;
-        }
+    let points =
+        template_point_mutations(&points_snapshot, &mappings_snapshot, req.slave_id_override)?;
+    let point_count = points.len();
+    if point_count == 0 {
+        return Err(AppError::bad_request(
+            "Template must contain at least one point",
+        ));
     }
-
-    // 3b. Insert points and mappings from template
-    let mut total_inserted = 0usize;
-
-    for (key, table) in &tables {
-        let points = points_snapshot
-            .get(*key)
-            .and_then(|v| v.as_array())
-            .cloned()
-            .unwrap_or_default();
-
-        // Build a lookup map for mappings: point_id → protocol_data
-        let mappings_map: std::collections::HashMap<i64, serde_json::Value> = mappings_snapshot
-            .get(*key)
-            .and_then(|v| v.as_array())
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|m| {
-                        let pid = m.get("point_id")?.as_i64()?;
-                        let pd = m.get("protocol_data").cloned().unwrap_or(json!({}));
-                        Some((pid, pd))
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
-
-        // Use ON CONFLICT DO UPDATE instead of INSERT OR REPLACE to avoid
-        // triggering AFTER DELETE cascade triggers on routing tables
-        let is_signal = *table == "signal_points";
-        let upsert_sql = if is_signal {
-            // signal_points has extra `normal_state` column
-            format!(
-                "INSERT INTO {} \
-                 (channel_id, point_id, signal_name, scale, offset, unit, data_type, reverse, normal_state, description, protocol_mappings) \
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
-                 ON CONFLICT(channel_id, point_id) DO UPDATE SET \
-                   signal_name=excluded.signal_name, scale=excluded.scale, offset=excluded.offset, \
-                   unit=excluded.unit, data_type=excluded.data_type, reverse=excluded.reverse, \
-                   normal_state=excluded.normal_state, description=excluded.description, \
-                   protocol_mappings=excluded.protocol_mappings",
-                table
-            )
-        } else {
-            format!(
-                "INSERT INTO {} \
-                 (channel_id, point_id, signal_name, scale, offset, unit, data_type, reverse, description, protocol_mappings) \
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
-                 ON CONFLICT(channel_id, point_id) DO UPDATE SET \
-                   signal_name=excluded.signal_name, scale=excluded.scale, offset=excluded.offset, \
-                   unit=excluded.unit, data_type=excluded.data_type, reverse=excluded.reverse, \
-                   description=excluded.description, protocol_mappings=excluded.protocol_mappings",
-                table
-            )
-        };
-
-        for point in &points {
-            let point_id = point.get("point_id").and_then(|v| v.as_i64()).unwrap_or(0);
-            let signal_name = point
-                .get("signal_name")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
-            let scale = point.get("scale").and_then(|v| v.as_f64()).unwrap_or(1.0);
-            let offset = point.get("offset").and_then(|v| v.as_f64()).unwrap_or(0.0);
-            let unit = point.get("unit").and_then(|v| v.as_str()).unwrap_or("");
-            let data_type = point
-                .get("data_type")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
-            let reverse = point
-                .get("reverse")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false);
-            let description = point
-                .get("description")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
-
-            // Get protocol mapping and optionally override slave_id
-            let mut protocol_data = mappings_map.get(&point_id).cloned().unwrap_or(json!({}));
-            if let Some(override_id) = req.slave_id_override
-                && let Some(obj) = protocol_data.as_object_mut()
-                && obj.contains_key("slave_id")
-            {
-                obj.insert(
-                    "slave_id".to_string(),
-                    serde_json::Value::Number(override_id.into()),
-                );
-            }
-
-            let pm_json = if protocol_data.as_object().is_some_and(|o| o.is_empty()) {
-                None
-            } else {
-                Some(serde_json::to_string(&protocol_data).unwrap_or_default())
-            };
-
-            if is_signal {
-                let normal_state = point
-                    .get("normal_state")
-                    .and_then(|v| v.as_i64())
-                    .unwrap_or(0);
-
-                sqlx::query(&upsert_sql)
-                    .bind(channel_id as i64)
-                    .bind(point_id)
-                    .bind(signal_name)
-                    .bind(scale)
-                    .bind(offset)
-                    .bind(unit)
-                    .bind(data_type)
-                    .bind(reverse)
-                    .bind(normal_state)
-                    .bind(description)
-                    .bind(&pm_json)
-                    .execute(&mut *tx)
-                    .await
-                    .map_err(|e| {
-                        AppError::internal_error(format!(
-                            "Insert {} point {}: {}",
-                            table, point_id, e
-                        ))
-                    })?;
-            } else {
-                sqlx::query(&upsert_sql)
-                    .bind(channel_id as i64)
-                    .bind(point_id)
-                    .bind(signal_name)
-                    .bind(scale)
-                    .bind(offset)
-                    .bind(unit)
-                    .bind(data_type)
-                    .bind(reverse)
-                    .bind(description)
-                    .bind(&pm_json)
-                    .execute(&mut *tx)
-                    .await
-                    .map_err(|e| {
-                        AppError::internal_error(format!(
-                            "Insert {} point {}: {}",
-                            table, point_id, e
-                        ))
-                    })?;
-            }
-
-            total_inserted += 1;
-        }
-    }
-
-    tx.commit()
-        .await
-        .map_err(|e| AppError::internal_error(format!("Commit: {}", e)))?;
+    let clear_existing = req.clear_existing;
+    let slave_id_override = req.slave_id_override;
+    let acceptance = boundary
+        .mutate(
+            &headers,
+            PointTopologyMutation::Provision {
+                channel_id,
+                replace_existing: clear_existing,
+                upsert_existing: !clear_existing,
+                points,
+            },
+        )
+        .await?;
+    let request_id = acceptance.request_id().to_string();
+    let resulting_revision = acceptance.resulting_revision().get();
+    let completion_audit =
+        crate::api::handlers::point_handlers::completion_audit(acceptance.completion_audit());
+    let total_inserted = match acceptance.into_result() {
+        PointTopologyMutationResult::Provisioned { point_count } => point_count,
+        _ => {
+            return Err(AppError::internal_error(
+                "Point topology application returned an invalid template receipt",
+            ));
+        },
+    };
 
     tracing::info!(
         "Template {} applied to channel {} ({} points)",
@@ -999,8 +1051,12 @@ pub async fn apply_template(
         "template_id": template_id,
         "channel_id": channel_id,
         "points_inserted": total_inserted,
-        "cleared_existing": req.clear_existing,
-        "slave_id_override": req.slave_id_override,
+        "cleared_existing": clear_existing,
+        "slave_id_override": slave_id_override,
+        "request_id": request_id,
+        "resulting_revision": resulting_revision,
+        "completion_audit": completion_audit,
+        "retryable": false,
         "message": format!("Template applied: {} points inserted", total_inserted),
     }))))
 }

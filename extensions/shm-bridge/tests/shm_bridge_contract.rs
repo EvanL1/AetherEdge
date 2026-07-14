@@ -5,8 +5,8 @@ use std::time::Duration;
 use aether_domain::{InstanceId, PointAddress, PointId, PointKind, PointQuality, TimestampMs};
 use aether_ports::LiveState;
 use aether_shm_bridge::{
-    ChannelHealthManifest, ChannelPointManifest, PointSlotResolver, PointWatchEvent,
-    PointWatchEventListener, ReconnectingSlotSource, ShmChannelHealthReader,
+    ChannelHealthManifest, ChannelPointManifest, PhysicalPointAddress, PointSlotResolver,
+    PointWatchEvent, PointWatchEventListener, ReconnectingSlotSource, ShmChannelHealthReader,
     ShmChannelHealthWriter, ShmClientConfig, ShmLiveState, SlotSnapshot, SlotSource,
     StaticSlotResolver, channel_health_path_from_shm, point_watch_socket_for_consumer,
 };
@@ -101,11 +101,46 @@ fn resolver_trait_is_independent_of_legacy_routing_types() {
 fn channel_manifest_preserves_deterministic_padded_layout() {
     let manifest = ChannelPointManifest::from_entries([(1, [3, 0, 1, 1]), (2, [1, 1, 0, 0])]);
 
-    assert_eq!(manifest.slot(1, PointKind::Telemetry, 0), Some(0));
-    assert_eq!(manifest.slot(1, PointKind::Command, 0), Some(4));
-    assert_eq!(manifest.slot(1, PointKind::Action, 0), Some(5));
-    assert_eq!(manifest.slot(2, PointKind::Telemetry, 0), Some(6));
-    assert_eq!(manifest.slot(2, PointKind::Status, 0), Some(7));
+    assert_eq!(
+        manifest.slot_for(PhysicalPointAddress::from_legacy_raw(
+            1,
+            PointKind::Telemetry,
+            0,
+        )),
+        Some(0)
+    );
+    assert_eq!(
+        manifest.slot_for(PhysicalPointAddress::from_legacy_raw(
+            1,
+            PointKind::Command,
+            0,
+        )),
+        Some(4)
+    );
+    assert_eq!(
+        manifest.slot_for(PhysicalPointAddress::from_legacy_raw(
+            1,
+            PointKind::Action,
+            0,
+        )),
+        Some(5)
+    );
+    assert_eq!(
+        manifest.slot_for(PhysicalPointAddress::from_legacy_raw(
+            2,
+            PointKind::Telemetry,
+            0,
+        )),
+        Some(6)
+    );
+    assert_eq!(
+        manifest.slot_for(PhysicalPointAddress::from_legacy_raw(
+            2,
+            PointKind::Status,
+            0,
+        )),
+        Some(7)
+    );
     assert_eq!(manifest.slot_count(), 8);
     assert_ne!(manifest.layout_hash(), 0);
 }

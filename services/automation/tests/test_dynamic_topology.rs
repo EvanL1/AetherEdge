@@ -1,6 +1,5 @@
 //! Coherent automation runtime-topology publication contracts.
 
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use aether_automation::infra::action_routing::SqliteActionRoutingMutator;
@@ -11,12 +10,12 @@ use aether_domain::{
     PointQuality, TimestampMs,
 };
 use aether_ports::{
-    ActionRouteKey, ActionRoutingMutation, AutomationActionRoutingMutator, PortErrorKind,
+    ActionRouteKey, AutomationActionRoutingMutator, LogicalRoutingRevision, PortErrorKind,
+    RevisionedActionRoutingMutation,
 };
-use aether_routing::RoutingCache;
 use aether_shm_bridge::{
     PointWatchEvent, ShmChannelHealthWriterHandle, ShmDeviceCommandSink, ShmRuntimeConfig,
-    ShmWriterHandle,
+    ShmWriterHandle, commit_topology_publication,
 };
 
 async fn create_topology_pool() -> sqlx::SqlitePool {
@@ -72,17 +71,20 @@ async fn partial_physical_publication_retains_the_previous_service_generation() 
     let first = aether_store_local::load_sqlite_live_topology(&pool)
         .await
         .expect("initial topology snapshot");
-    let point_writer = ShmWriterHandle::create_published(
+    let point_writer = ShmWriterHandle::create_published_at_epoch(
         ShmRuntimeConfig::new(&point_path, 256),
         Arc::new(first.point_manifest().clone()),
         None,
+        100,
     )
     .expect("publish initial point plane");
-    let health_writer = ShmChannelHealthWriterHandle::create(
+    let health_writer = ShmChannelHealthWriterHandle::create_at_epoch(
         &health_path,
         Arc::new(first.health_manifest().clone()),
+        100,
     )
     .expect("publish initial health plane");
+    commit_topology_publication(&point_path, &health_path, 100).expect("commit initial topology");
     let first_timestamp = aether_shm_bridge::timestamp_ms();
     point_writer
         .generation()
@@ -94,18 +96,12 @@ async fn partial_physical_publication_retains_the_previous_service_generation() 
         .set_online(10, true, first_timestamp)
         .expect("write initial health");
 
-    let legacy_routing = Arc::new(RoutingCache::from_maps(
-        HashMap::new(),
-        HashMap::new(),
-        HashMap::new(),
-    ));
     let command_sink = Arc::new(ShmDeviceCommandSink::new());
     let topology = AutomationTopologyHandle::new_lazy(
         point_path.clone(),
         health_path.clone(),
         first,
         Arc::clone(&command_sink),
-        Arc::clone(&legacy_routing),
     )
     .expect("compose lazy automation topology");
     assert!(
@@ -159,7 +155,7 @@ async fn partial_physical_publication_retains_the_previous_service_generation() 
         .await
         .expect("replacement topology snapshot");
     point_writer
-        .rebuild(Arc::new(second.point_manifest().clone()))
+        .rebuild_for_publication(Arc::new(second.point_manifest().clone()), 101)
         .expect("publish only replacement point plane");
 
     let error = topology
@@ -171,7 +167,7 @@ async fn partial_physical_publication_retains_the_previous_service_generation() 
     assert!(topology.load().accepts_point_watch_event(old_event));
 
     health_writer
-        .rebuild(Arc::new(second.health_manifest().clone()))
+        .rebuild_for_publication(Arc::new(second.health_manifest().clone()), 101)
         .expect("publish replacement health plane");
     let second_timestamp = aether_shm_bridge::timestamp_ms();
     health_writer
@@ -183,6 +179,8 @@ async fn partial_physical_publication_retains_the_previous_service_generation() 
         .acquisition_writer()
         .commit_batch(&[sample(5, 50.0, second_timestamp)])
         .expect("write replacement point");
+    commit_topology_publication(&point_path, &health_path, 101)
+        .expect("commit replacement topology");
 
     assert!(
         topology
@@ -229,18 +227,6 @@ async fn partial_physical_publication_retains_the_previous_service_generation() 
             .layout_hash(),
         current.point_manifest().layout_hash()
     );
-    assert_eq!(
-        legacy_routing
-            .lookup_c2m_reverse(100, 5)
-            .map(|route| route.0),
-        Some(5)
-    );
-    assert_eq!(
-        legacy_routing
-            .lookup_m2c_by_parts(100, aether_model::PointType::Adjustment, 1)
-            .map(|route| route.channel_id),
-        Some(5)
-    );
 }
 
 #[tokio::test]
@@ -252,25 +238,26 @@ async fn topology_changes_notify_subscription_rebuilders_but_no_ops_do_not() {
     let snapshot = aether_store_local::load_sqlite_live_topology(&pool)
         .await
         .expect("initial topology snapshot");
-    let _point_writer = ShmWriterHandle::create_published(
+    let _point_writer = ShmWriterHandle::create_published_at_epoch(
         ShmRuntimeConfig::new(&point_path, 256),
         Arc::new(snapshot.point_manifest().clone()),
         None,
+        200,
     )
     .expect("publish point plane");
-    let _health_writer = ShmChannelHealthWriterHandle::create(
+    let _health_writer = ShmChannelHealthWriterHandle::create_at_epoch(
         &health_path,
         Arc::new(snapshot.health_manifest().clone()),
+        200,
     )
     .expect("publish health plane");
-    let routing_cache = Arc::new(RoutingCache::new());
+    commit_topology_publication(&point_path, &health_path, 200).expect("commit topology");
     let topology = Arc::new(
         AutomationTopologyHandle::new_lazy(
             point_path,
             health_path,
             snapshot,
             Arc::new(ShmDeviceCommandSink::new()),
-            Arc::clone(&routing_cache),
         )
         .expect("compose topology"),
     );
@@ -339,7 +326,6 @@ async fn topology_changes_notify_subscription_rebuilders_but_no_ops_do_not() {
     // generation before reporting its NotFound result.
     let manager = Arc::new(InstanceManager::new(
         pool.clone(),
-        Arc::clone(&routing_cache),
         Arc::new(ProductLoader::new(pool.clone())),
     ));
     manager
@@ -348,22 +334,16 @@ async fn topology_changes_notify_subscription_rebuilders_but_no_ops_do_not() {
     let mutator = SqliteActionRoutingMutator::new(manager);
     let before_rollback = topology.load();
     let error = mutator
-        .mutate(ActionRoutingMutation::delete(ActionRouteKey::new(
-            InstanceId::new(100),
-            PointId::new(999),
-        )))
+        .mutate_revisioned(RevisionedActionRoutingMutation::delete(
+            ActionRouteKey::new(InstanceId::new(100), PointId::new(999)),
+            LogicalRoutingRevision::new(1),
+        ))
         .await
         .expect_err("missing action route");
     assert_eq!(error.kind(), PortErrorKind::NotFound);
     let restored = topology.load();
     assert!(Arc::ptr_eq(&restored, &before_rollback));
     assert!(restored.action_route(100, 1).is_some());
-    assert_eq!(
-        routing_cache
-            .lookup_m2c_by_parts(100, aether_model::PointType::Adjustment, 1)
-            .map(|route| route.channel_id),
-        Some(10)
-    );
     changes
         .changed()
         .await

@@ -21,6 +21,7 @@ use crate::error::AutomationError;
 #[derive(Debug, Deserialize)]
 pub struct ConfirmQuery {
     pub confirm: Option<bool>,
+    pub expected_revision: Option<u64>,
 }
 
 #[derive(Debug, Serialize)]
@@ -86,6 +87,14 @@ pub async fn get_all_routing_handler(
     .fetch_all(&state.instance_manager.pool)
     .await
     .map_err(|e| AutomationError::InternalError(format!("Failed to query action routing: {}", e)))?;
+    let logical_routing_revision: i64 = sqlx::query_scalar(
+        "SELECT revision FROM configuration_revisions WHERE scope = 'logical_routing'",
+    )
+    .fetch_one(&state.instance_manager.pool)
+    .await
+    .map_err(|error| {
+        AutomationError::InternalError(format!("Failed to query logical-routing revision: {error}"))
+    })?;
 
     let measurement_entries: Vec<RoutingEntry> = measurement_routing
         .into_iter()
@@ -149,7 +158,8 @@ pub async fn get_all_routing_handler(
         "total": {
             "measurement": measurement_entries.len(),
             "action": action_entries.len()
-        }
+        },
+        "logical_routing_revision": logical_routing_revision
     });
 
     Ok(Json(SuccessResponse::new(result)))
@@ -163,10 +173,11 @@ pub async fn get_all_routing_handler(
     path = "/api/routing",
     params(
         ("confirm" = Option<bool>, Query, description = "Confirmation flag (must be true)"),
+        ("expected_revision" = u64, Query, description = "Current shared logical-routing revision"),
         ("x-request-id" = Option<String>, Header, description = "Optional UUID audit correlation ID")
     ),
     responses(
-        (status = 200, description = "All routing deleted", body = Value),
+        (status = 422, description = "Mixed measurement+action deletion is disabled until one transaction can own both planes"),
         (status = 403, description = "Missing/invalid Bearer credentials or actor lacks automation.routing.manage"),
         (status = 422, description = "Explicit confirmation is required"),
         (status = 503, description = "Mandatory audit, routing storage, or cache publication is unavailable")
@@ -175,49 +186,12 @@ pub async fn get_all_routing_handler(
     tag = "automation"
 )]
 pub async fn delete_all_routing_handler(
-    State(state): State<Arc<AppState>>,
+    State(_state): State<Arc<AppState>>,
     Query(params): Query<ConfirmQuery>,
-    headers: HeaderMap,
+    _headers: HeaderMap,
 ) -> Result<Json<SuccessResponse<Value>>, AutomationError> {
-    let acceptance = crate::api::action_routing_boundary::apply(
-        &state,
-        &headers,
-        params.confirm.unwrap_or(false),
-        aether_ports::ActionRoutingMutation::delete_all(),
-    )
-    .await?;
-
-    let measurement_result = sqlx::query("DELETE FROM measurement_routing")
-        .execute(&state.instance_manager.pool)
-        .await
-        .map_err(|e| {
-            AutomationError::InternalError(format!("Failed to delete measurement routing: {}", e))
-        })?;
-
-    state
-        .instance_manager
-        .refresh_routing()
-        .await
-        .map_err(|e| {
-            AutomationError::InternalError(format!(
-                "Failed to refresh routing after delete_all: {}",
-                e
-            ))
-        })?;
-
-    let result = json!({
-        "deleted": {
-            "measurement": measurement_result.rows_affected(),
-            "action": acceptance.affected_routes()
-        },
-        "request_id": acceptance.request_id(),
-        "audit": crate::infra::application_control::completion_audit_response(
-            acceptance.completion_audit()
-        ),
-        "retryable": acceptance.is_retryable()
-    });
-
-    Ok(Json(SuccessResponse::new(result)))
+    let _expected = required_revision(params.expected_revision)?;
+    Err(mixed_delete_disabled("all routing"))
 }
 
 /// Get routing by channel ID
@@ -317,10 +291,11 @@ pub async fn get_routing_by_channel_handler(
     params(
         ("instance_name" = String, Path, description = "Instance name"),
         ("confirm" = Option<bool>, Query, description = "Confirmation flag (must be true)"),
+        ("expected_revision" = u64, Query, description = "Current shared logical-routing revision"),
         ("x-request-id" = Option<String>, Header, description = "Optional UUID audit correlation ID")
     ),
     responses(
-        (status = 200, description = "Instance routing deleted", body = Value),
+        (status = 422, description = "Mixed measurement+action deletion is disabled until one transaction can own both planes"),
         (status = 403, description = "Missing/invalid Bearer credentials or actor lacks automation.routing.manage"),
         (status = 404, description = "Instance not found"),
         (status = 422, description = "Explicit confirmation is required"),
@@ -330,59 +305,15 @@ pub async fn get_routing_by_channel_handler(
     tag = "automation"
 )]
 pub async fn delete_instance_routing_handler(
-    State(state): State<Arc<AppState>>,
+    State(_state): State<Arc<AppState>>,
     Path(instance_name): Path<String>,
     Query(params): Query<ConfirmQuery>,
-    headers: HeaderMap,
+    _headers: HeaderMap,
 ) -> Result<Json<SuccessResponse<Value>>, AutomationError> {
-    let instance_id = state
-        .instance_manager
-        .get_instance_id(&instance_name)
-        .await
-        .map_err(|_| AutomationError::InstanceNotFound(instance_name.clone()))?;
-    let acceptance = crate::api::action_routing_boundary::apply(
-        &state,
-        &headers,
-        params.confirm.unwrap_or(false),
-        aether_ports::ActionRoutingMutation::delete_actions_for_instance(
-            aether_domain::InstanceId::new(instance_id),
-        ),
-    )
-    .await?;
-
-    let measurement_result = sqlx::query("DELETE FROM measurement_routing WHERE instance_name = ?")
-        .bind(&instance_name)
-        .execute(&state.instance_manager.pool)
-        .await
-        .map_err(|e| {
-            AutomationError::InternalError(format!("Failed to delete measurement routing: {}", e))
-        })?;
-
-    state
-        .instance_manager
-        .refresh_routing()
-        .await
-        .map_err(|e| {
-            AutomationError::InternalError(format!(
-                "Failed to refresh routing after delete instance routing: {}",
-                e
-            ))
-        })?;
-
-    let result = json!({
-        "instance_name": instance_name,
-        "deleted": {
-            "measurement": measurement_result.rows_affected(),
-            "action": acceptance.affected_routes()
-        },
-        "request_id": acceptance.request_id(),
-        "audit": crate::infra::application_control::completion_audit_response(
-            acceptance.completion_audit()
-        ),
-        "retryable": acceptance.is_retryable()
-    });
-
-    Ok(Json(SuccessResponse::new(result)))
+    let _expected = required_revision(params.expected_revision)?;
+    Err(mixed_delete_disabled(&format!(
+        "routing for instance {instance_name}"
+    )))
 }
 
 /// Delete all routing for a channel
@@ -394,10 +325,11 @@ pub async fn delete_instance_routing_handler(
     params(
         ("channel_id" = u32, Path, description = "Channel ID"),
         ("confirm" = Option<bool>, Query, description = "Confirmation flag (must be true)"),
+        ("expected_revision" = u64, Query, description = "Current shared logical-routing revision"),
         ("x-request-id" = Option<String>, Header, description = "Optional UUID audit correlation ID")
     ),
     responses(
-        (status = 200, description = "Channel routing deleted", body = Value),
+        (status = 422, description = "Mixed measurement+action deletion is disabled until one transaction can own both planes"),
         (status = 403, description = "Missing/invalid Bearer credentials or actor lacks automation.routing.manage"),
         (status = 422, description = "Explicit confirmation is required"),
         (status = 503, description = "Mandatory audit, routing storage, or cache publication is unavailable")
@@ -406,52 +338,29 @@ pub async fn delete_instance_routing_handler(
     tag = "automation"
 )]
 pub async fn delete_channel_routing_handler(
-    State(state): State<Arc<AppState>>,
+    State(_state): State<Arc<AppState>>,
     Path(channel_id): Path<u32>,
     Query(params): Query<ConfirmQuery>,
-    headers: HeaderMap,
+    _headers: HeaderMap,
 ) -> Result<Json<SuccessResponse<Value>>, AutomationError> {
-    let acceptance = crate::api::action_routing_boundary::apply(
-        &state,
-        &headers,
-        params.confirm.unwrap_or(false),
-        aether_ports::ActionRoutingMutation::delete_actions_for_channel(
-            aether_domain::ChannelId::new(channel_id),
-        ),
-    )
-    .await?;
+    let _expected = required_revision(params.expected_revision)?;
+    Err(mixed_delete_disabled(&format!(
+        "routing for channel {channel_id}"
+    )))
+}
 
-    let uplink_result = sqlx::query("DELETE FROM measurement_routing WHERE channel_id = ?")
-        .bind(channel_id)
-        .execute(&state.instance_manager.pool)
-        .await
-        .map_err(|e| {
-            AutomationError::InternalError(format!("Failed to delete uplink routing: {}", e))
-        })?;
+fn mixed_delete_disabled(scope: &str) -> AutomationError {
+    AutomationError::InvalidRouting(format!(
+        "mixed measurement+action deletion for {scope} is disabled until both planes can commit in one SQLite transaction; use plane-specific governed endpoints"
+    ))
+}
 
-    state
-        .instance_manager
-        .refresh_routing()
-        .await
-        .map_err(|e| {
-            AutomationError::InternalError(format!(
-                "Failed to refresh routing after delete channel routing: {}",
-                e
-            ))
-        })?;
-
-    let result = json!({
-        "channel_id": channel_id,
-        "deleted": {
-            "uplink": uplink_result.rows_affected(),
-            "downlink": acceptance.affected_routes()
-        },
-        "request_id": acceptance.request_id(),
-        "audit": crate::infra::application_control::completion_audit_response(
-            acceptance.completion_audit()
-        ),
-        "retryable": acceptance.is_retryable()
-    });
-
-    Ok(Json(SuccessResponse::new(result)))
+fn required_revision(
+    revision: Option<u64>,
+) -> Result<aether_ports::LogicalRoutingRevision, AutomationError> {
+    crate::api::measurement_routing_boundary::revision(revision.ok_or_else(|| {
+        AutomationError::InvalidRouting(
+            "expected_revision is required for logical-routing CAS".to_string(),
+        )
+    })?)
 }

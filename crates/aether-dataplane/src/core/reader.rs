@@ -110,6 +110,13 @@ impl SlotReader {
         self.header_atomic().snapshot()
     }
 
+    /// Returns the opaque cross-plane publication identity stored in the
+    /// physical header, or zero for an uncoordinated file.
+    #[inline]
+    pub fn publication_epoch(&self) -> u64 {
+        self.header_atomic().publication_epoch()
+    }
+
     #[inline]
     fn header_atomic(&self) -> &UnifiedHeader {
         // SAFETY: mmap region starts with a valid UnifiedHeader.

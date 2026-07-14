@@ -1,8 +1,9 @@
 //! JSON Payload Mapping Engine for MQTT/HTTP Protocols
 //!
 //! Extracts data points from JSON payloads using JSONPath expressions.
-//! Mappings are loaded from the `json_point_mappings` database table,
-//! so new devices can be integrated without code changes.
+//! Mappings are loaded from the canonical inline `protocol_mappings` column
+//! on the four physical point tables, so new devices can be integrated
+//! without a second mapping authority.
 //!
 //! Features:
 //! - JSONPath-based value extraction (RFC 9535 via `serde_json_path`)
@@ -16,7 +17,7 @@ use serde::{Deserialize, Serialize};
 use serde_json_path::JsonPath;
 use sqlx::SqlitePool;
 use std::sync::Arc;
-use tracing::{debug, trace, warn};
+use tracing::{debug, trace};
 
 use super::data::{DataBatch, DataPoint, Value};
 use super::error::{GatewayError, Result};
@@ -83,15 +84,11 @@ pub struct JsonMappingConfig {
 // Database row for SQLx (runtime query)
 // ============================================================================
 
-/// Raw row from `json_point_mappings` table.
+/// Raw inline mapping row from one physical point table.
 #[derive(Debug, sqlx::FromRow)]
 struct MappingRow {
     point_id: i64,
-    point_type: String,
-    json_path: String,
-    data_type: Option<String>,
-    scale: Option<f64>,
-    offset: Option<f64>,
+    protocol_mappings: Option<String>,
 }
 
 // ============================================================================
@@ -125,35 +122,43 @@ impl JsonMapper {
         }
     }
 
-    /// Load mapper from the `json_point_mappings` database table.
+    /// Load one complete mapping generation from the four physical point tables.
     ///
-    /// Queries all mapping rows for the given channel and pre-compiles
-    /// their JSONPath expressions. Invalid rows are logged and skipped
-    /// to avoid one bad mapping breaking the entire channel.
+    /// All reads share one SQLite transaction/snapshot. Any malformed mapping
+    /// rejects the generation, preventing a partially configured channel from
+    /// becoming active.
     pub async fn from_database(pool: &SqlitePool, channel_id: u32) -> Result<Self> {
-        let rows = sqlx::query_as::<_, MappingRow>(
-            "SELECT point_id, point_type, json_path, data_type, scale, offset \
-             FROM json_point_mappings WHERE channel_id = ?",
-        )
-        .bind(channel_id)
-        .fetch_all(pool)
-        .await
-        .map_err(|e| GatewayError::Config(format!("Failed to load JSON mappings: {e}")))?;
-
-        let mut mappings = Vec::with_capacity(rows.len());
-        for row in &rows {
-            match Self::compile_row(row) {
-                Ok(m) => mappings.push(m),
-                Err(e) => {
-                    warn!(
-                        channel_id,
-                        point_id = row.point_id,
-                        error = %e,
-                        "Skipping invalid JSON mapping"
-                    );
-                },
+        let mut transaction = pool.begin().await.map_err(|error| {
+            GatewayError::Config(format!("Failed to begin JSON mapping snapshot: {error}"))
+        })?;
+        let mut mappings = Vec::new();
+        for (table, point_type) in [
+            ("telemetry_points", PointType::Telemetry),
+            ("signal_points", PointType::Signal),
+            ("control_points", PointType::Control),
+            ("adjustment_points", PointType::Adjustment),
+        ] {
+            let rows = sqlx::query_as::<_, MappingRow>(&format!(
+                "SELECT point_id, protocol_mappings FROM {table} \
+                 WHERE channel_id = ? ORDER BY point_id"
+            ))
+            .bind(i64::from(channel_id))
+            .fetch_all(&mut *transaction)
+            .await
+            .map_err(|error| {
+                GatewayError::Config(format!(
+                    "Failed to load JSON mappings from {table}: {error}"
+                ))
+            })?;
+            for row in &rows {
+                if let Some(mapping) = Self::compile_row(row, point_type)? {
+                    mappings.push(mapping);
+                }
             }
         }
+        transaction.commit().await.map_err(|error| {
+            GatewayError::Config(format!("Failed to complete JSON mapping snapshot: {error}"))
+        })?;
 
         debug!(
             channel_id,
@@ -252,29 +257,86 @@ impl JsonMapper {
     // === Private helpers ===
 
     /// Compile a single database row into a `CompiledMapping`.
-    fn compile_row(row: &MappingRow) -> Result<CompiledMapping> {
-        let point_type = PointType::from_str(&row.point_type).ok_or_else(|| {
-            GatewayError::Config(format!("Invalid point_type: {}", row.point_type))
-        })?;
-
-        let json_path = compile_path(&row.json_path)?;
-
-        let data_type = match row.data_type.as_deref() {
-            Some("int") | Some("integer") => JsonDataType::Int,
-            Some("bool") | Some("boolean") => JsonDataType::Bool,
-            Some("string") | Some("str") => JsonDataType::String,
-            _ => JsonDataType::Float,
+    fn compile_row(row: &MappingRow, point_type: PointType) -> Result<Option<CompiledMapping>> {
+        let Some(raw_mapping) = row.protocol_mappings.as_deref() else {
+            return Ok(None);
         };
-
-        #[allow(clippy::cast_possible_truncation)]
-        Ok(CompiledMapping {
-            point_id: row.point_id as u32,
+        if raw_mapping.trim().is_empty() {
+            return Ok(None);
+        }
+        let value: serde_json::Value = serde_json::from_str(raw_mapping).map_err(|error| {
+            invalid_stored_mapping(row.point_id, format!("invalid JSON: {error}"))
+        })?;
+        if value.is_null() || value.as_object().is_some_and(serde_json::Map::is_empty) {
+            return Ok(None);
+        }
+        let values = value.as_object().ok_or_else(|| {
+            invalid_stored_mapping(row.point_id, "mapping must be an object or null")
+        })?;
+        for field in values.keys() {
+            if !matches!(
+                field.as_str(),
+                "json_path" | "data_type" | "scale" | "offset" | "description"
+            ) {
+                return Err(invalid_stored_mapping(
+                    row.point_id,
+                    format!("unsupported field {field}"),
+                ));
+            }
+        }
+        let path = values
+            .get("json_path")
+            .and_then(serde_json::Value::as_str)
+            .filter(|path| !path.trim().is_empty())
+            .ok_or_else(|| invalid_stored_mapping(row.point_id, "json_path must be nonblank"))?;
+        let json_path = compile_path(path)
+            .map_err(|error| invalid_stored_mapping(row.point_id, error.to_string()))?;
+        let data_type = match values.get("data_type") {
+            None => JsonDataType::Float,
+            Some(serde_json::Value::String(value)) if value == "float" => JsonDataType::Float,
+            Some(serde_json::Value::String(value))
+                if matches!(value.as_str(), "int" | "integer") =>
+            {
+                JsonDataType::Int
+            },
+            Some(serde_json::Value::String(value))
+                if matches!(value.as_str(), "bool" | "boolean") =>
+            {
+                JsonDataType::Bool
+            },
+            Some(serde_json::Value::String(value))
+                if matches!(value.as_str(), "string" | "str") =>
+            {
+                JsonDataType::String
+            },
+            _ => {
+                return Err(invalid_stored_mapping(
+                    row.point_id,
+                    "data_type must be float, int, bool, or string",
+                ));
+            },
+        };
+        let scale = finite_mapping_number(values, row.point_id, "scale", 1.0)?;
+        let offset = finite_mapping_number(values, row.point_id, "offset", 0.0)?;
+        if values
+            .get("description")
+            .is_some_and(|description| !description.is_string())
+        {
+            return Err(invalid_stored_mapping(
+                row.point_id,
+                "description must be a string",
+            ));
+        }
+        let point_id = u32::try_from(row.point_id)
+            .map_err(|_| invalid_stored_mapping(row.point_id, "point_id must be a u32"))?;
+        Ok(Some(CompiledMapping {
+            point_id,
             point_type,
             json_path,
             data_type,
-            scale: row.scale.unwrap_or(1.0),
-            offset: row.offset.unwrap_or(0.0),
-        })
+            scale,
+            offset,
+        }))
     }
 
     /// Extract a single data point from JSON using a compiled mapping.
@@ -329,6 +391,27 @@ pub type SharedJsonMapper = Arc<JsonMapper>;
 fn compile_path(path_str: &str) -> Result<JsonPath> {
     JsonPath::parse(path_str)
         .map_err(|e| GatewayError::Config(format!("Invalid JSONPath '{path_str}': {e}")))
+}
+
+fn finite_mapping_number(
+    values: &serde_json::Map<String, serde_json::Value>,
+    point_id: i64,
+    field: &str,
+    default: f64,
+) -> Result<f64> {
+    let Some(value) = values.get(field) else {
+        return Ok(default);
+    };
+    value
+        .as_f64()
+        .filter(|value| value.is_finite())
+        .ok_or_else(|| invalid_stored_mapping(point_id, format!("{field} must be a finite number")))
+}
+
+fn invalid_stored_mapping(point_id: i64, reason: impl std::fmt::Display) -> GatewayError {
+    GatewayError::Config(format!(
+        "Invalid JSON mapping for point {point_id}: {reason}"
+    ))
 }
 
 /// Convert a raw JSON value to a `Value` with optional linear scaling.
@@ -437,6 +520,82 @@ mod tests {
             device_id_path: None,
             script_runner: None,
         }
+    }
+
+    #[tokio::test]
+    async fn database_load_rejects_the_complete_generation_when_any_mapping_is_invalid() {
+        let pool = SqlitePool::connect("sqlite::memory:")
+            .await
+            .expect("in-memory SQLite");
+        for table in [
+            "telemetry_points",
+            "signal_points",
+            "control_points",
+            "adjustment_points",
+        ] {
+            sqlx::query(&format!(
+                "CREATE TABLE {table} (\
+                 channel_id INTEGER NOT NULL, point_id INTEGER NOT NULL, \
+                 protocol_mappings TEXT)"
+            ))
+            .execute(&pool)
+            .await
+            .expect("point schema");
+        }
+        sqlx::query(
+            "INSERT INTO telemetry_points (channel_id, point_id, protocol_mappings) \
+             VALUES (7, 1, '{\"json_path\":\"$.valid\",\"data_type\":\"float\"}'), \
+                    (7, 2, '{\"json_path\":\"invalid[[[\",\"data_type\":\"float\"}')",
+        )
+        .execute(&pool)
+        .await
+        .expect("mapping rows");
+
+        let error = JsonMapper::from_database(&pool, 7)
+            .await
+            .expect_err("a partial mapping generation must fail closed");
+
+        assert!(error.to_string().contains("point 2"));
+        assert!(error.to_string().contains("Invalid JSONPath"));
+    }
+
+    #[tokio::test]
+    async fn database_load_reads_all_four_inline_point_planes() {
+        let pool = SqlitePool::connect("sqlite::memory:")
+            .await
+            .expect("in-memory SQLite");
+        for (table, point_id) in [
+            ("telemetry_points", 1),
+            ("signal_points", 2),
+            ("control_points", 3),
+            ("adjustment_points", 4),
+        ] {
+            sqlx::query(&format!(
+                "CREATE TABLE {table} (\
+                 channel_id INTEGER NOT NULL, point_id INTEGER NOT NULL, \
+                 protocol_mappings TEXT)"
+            ))
+            .execute(&pool)
+            .await
+            .expect("point schema");
+            sqlx::query(&format!(
+                "INSERT INTO {table} (channel_id, point_id, protocol_mappings) \
+                 VALUES (7, {point_id}, '{{\"json_path\":\"$.value{point_id}\"}}')"
+            ))
+            .execute(&pool)
+            .await
+            .expect("inline mapping");
+        }
+
+        let mapper = JsonMapper::from_database(&pool, 7)
+            .await
+            .expect("complete inline generation");
+
+        assert_eq!(mapper.len(), 4);
+        assert_eq!(mapper.mappings[0].point_type, PointType::Telemetry);
+        assert_eq!(mapper.mappings[1].point_type, PointType::Signal);
+        assert_eq!(mapper.mappings[2].point_type, PointType::Control);
+        assert_eq!(mapper.mappings[3].point_type, PointType::Adjustment);
     }
 
     #[test]

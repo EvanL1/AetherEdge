@@ -53,12 +53,20 @@ jobs:
       - name: Install cargo-nextest
         uses: taiki-e/install-action@nextest
 
+      - name: Install cargo-semver-checks
+        run: cargo install cargo-semver-checks --version 0.46.0 --locked
+
       - name: Quick Quality Check
         run: |
           ./scripts/test-release-integrity.sh
+          ./scripts/test-extraction-readiness.sh
+          ./scripts/check-extraction-readiness.sh --local-only
           cargo fmt --all -- --check
           ./scripts/check-architecture.sh
           ./scripts/check-open-source-readiness.sh
+          ./scripts/test-public-crate-release.sh
+          ./scripts/check-public-crate-release.sh
+          ./scripts/check-public-api-compatibility.sh
           cargo clippy --workspace -- -D warnings
           cargo clippy --workspace --lib --bins -- -D clippy::unwrap_used -D clippy::expect_used
           cargo nextest run
@@ -73,6 +81,11 @@ jobs:
     name: Build ${{ matrix.arch }} Installer
     runs-on: ${{ matrix.runner }}
     needs: pre-check
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+      artifact-metadata: write
     strategy:
       fail-fast: false
       matrix:
@@ -163,7 +176,12 @@ jobs:
       - name: Build Installer
         run: |
           chmod +x scripts/build-installer.sh
-          ./scripts/build-installer.sh "${{ steps.version.outputs.version }}" "${{ matrix.arch }}" "${{ matrix.target }}"
+          AETHEREMS_IO_FEATURES="$(<distributions/aetherems/runtime-io-features.txt)"
+          ./scripts/build-installer.sh \
+            "${{ steps.version.outputs.version }}" \
+            "${{ matrix.arch }}" \
+            "${{ matrix.target }}" \
+            --io-features="$AETHEREMS_IO_FEATURES"
 
       - name: Package Standalone Aether CLI
         run: |
@@ -182,6 +200,34 @@ jobs:
           (cd release && sha256sum "$AETHER_TAR_NAME" > "${AETHER_TAR_NAME}.sha256")
           echo "Aether CLI:"
           ls -lh "$AETHER_TAR"
+
+      - name: Build Energy Pack-only Artifact
+        id: energy_pack
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.version.outputs.version }}"
+          ENERGY_PACK_ARCHIVE_NAME="aetherems-energy-pack-${{ matrix.target }}-${VERSION}.tar.gz"
+          ENERGY_PACK_WORK_DIR="$(mktemp -d)"
+          trap 'rm -rf "$ENERGY_PACK_WORK_DIR"' EXIT
+          AETHER_CLI="$PWD/target/${{ matrix.target }}/release/aether" \
+            ./scripts/build-pack-artifact.sh \
+              packs/energy \
+              build/installer/runtime/runtime-manifest.json \
+              "$ENERGY_PACK_WORK_DIR/energy.bundle"
+          tar czf "release/$ENERGY_PACK_ARCHIVE_NAME" \
+            -C "$ENERGY_PACK_WORK_DIR" energy.bundle
+          tar tzf "release/$ENERGY_PACK_ARCHIVE_NAME" > "$ENERGY_PACK_WORK_DIR/inventory"
+          grep -Fxq energy.bundle/pack-artifact.json "$ENERGY_PACK_WORK_DIR/inventory"
+          grep -Fxq energy.bundle/pack/pack.yaml "$ENERGY_PACK_WORK_DIR/inventory"
+          if grep -Eq '(^|/)(aether|aether-(io|automation|history|api|uplink|alarm))(\.exe)?$|Cargo\.toml$|\.rs$' \
+            "$ENERGY_PACK_WORK_DIR/inventory"; then
+            echo "ERROR: Energy Pack artifact contains Kernel code or an executable" >&2
+            exit 1
+          fi
+          (cd release && sha256sum "$ENERGY_PACK_ARCHIVE_NAME" > "${ENERGY_PACK_ARCHIVE_NAME}.sha256")
+          (cd release && sha256sum -c "${ENERGY_PACK_ARCHIVE_NAME}.sha256")
+          echo "archive_name=$ENERGY_PACK_ARCHIVE_NAME" >> "$GITHUB_OUTPUT"
 
       - name: Verify Build Artifacts
         run: |
@@ -212,10 +258,25 @@ jobs:
           python3 -m json.tool "release/$name" >/dev/null
           (cd release && sha256sum "$name" > "$name.sha256")
 
+      - name: Attest Kernel runtime
+        uses: actions/attest@v4
+        with:
+          subject-path: release/${{ steps.version.outputs.artifact_name }}
+
+      - name: Attest Linux CLI
+        uses: actions/attest@v4
+        with:
+          subject-path: release/aether-linux-${{ matrix.zig_arch }}.tar.gz
+
+      - name: Attest Energy Pack
+        uses: actions/attest@v4
+        with:
+          subject-path: release/${{ steps.energy_pack.outputs.archive_name }}
+
       - name: Upload Installer
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.arch }}-installer
+          name: ${{ matrix.arch }}-kernel-runtime
           path: |
             release/${{ steps.version.outputs.artifact_name }}
             release/${{ steps.version.outputs.artifact_name }}.sha256
@@ -232,6 +293,17 @@ jobs:
             release/aether-linux-${{ matrix.zig_arch }}.tar.gz
             release/aether-linux-${{ matrix.zig_arch }}.tar.gz.sha256
           retention-days: 7
+          if-no-files-found: error
+
+      - name: Upload Energy Pack
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.arch }}-energy-pack
+          path: |
+            release/${{ steps.energy_pack.outputs.archive_name }}
+            release/${{ steps.energy_pack.outputs.archive_name }}.sha256
+          retention-days: 7
+          if-no-files-found: error
 
   # ============================================================================
   # Job 3: Build Aether CLI for macOS / Windows
@@ -240,6 +312,11 @@ jobs:
     name: Build Aether (${{ matrix.name }})
     runs-on: ${{ matrix.os }}
     needs: pre-check
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+      artifact-metadata: write
     strategy:
       fail-fast: false
       matrix:
@@ -306,6 +383,11 @@ jobs:
           $checksum = (Get-FileHash "aether-${{ matrix.name }}.zip" -Algorithm SHA256).Hash.ToLower() + "  aether-${{ matrix.name }}.zip`n"
           [System.IO.File]::WriteAllText("$PWD/aether-${{ matrix.name }}.zip.sha256", $checksum, [System.Text.Encoding]::ASCII)
 
+      - name: Attest Aether CLI
+        uses: actions/attest@v4
+        with:
+          subject-path: aether-${{ matrix.name }}.${{ matrix.archive }}
+
       - name: Upload Aether CLI
         uses: actions/upload-artifact@v4
         with:
@@ -315,12 +397,48 @@ jobs:
           retention-days: 7
 
   # ============================================================================
-  # Job 4: Create GitHub Release
+  # Job 4: Publish versioned public Rust crates
+  # ============================================================================
+  publish-crates:
+    name: Publish and attest public Rust crates
+    runs-on: ubuntu-latest
+    needs: [build, aether-extra]
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@1.90.0
+
+      - name: Verify packaged public crates in a clean-room consumer
+        run: |
+          ./scripts/test-public-crate-release.sh
+          ./scripts/check-public-crate-release.sh
+
+      - name: Publish public crates in dependency order
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: ./scripts/publish-public-crates.sh --execute
+
+      - name: Attest public crate archives
+        uses: actions/attest@v4
+        with:
+          subject-path: target/package/*.crate
+
+  # ============================================================================
+  # Job 5: Create GitHub Release
   # ============================================================================
   release:
     name: Create GitHub Release
     runs-on: ubuntu-latest
-    needs: [build, aether-extra]
+    needs: [build, aether-extra, publish-crates]
     permissions:
       contents: write
       id-token: write
@@ -381,6 +499,11 @@ jobs:
           source_contents=$(tar tzf "release/aetheriot-source-${GITHUB_REF_NAME}.tar.gz")
           grep -Fxq "AetherIot-${GITHUB_REF_NAME}/LICENSE" <<< "$source_contents"
           grep -Fxq "AetherIot-${GITHUB_REF_NAME}/NOTICE" <<< "$source_contents"
+          for pack in release/aetherems-energy-pack-*.tar.gz; do
+            pack_contents=$(tar tzf "$pack")
+            grep -Fxq energy.bundle/pack-artifact.json <<< "$pack_contents"
+            grep -Fxq energy.bundle/pack/pack.yaml <<< "$pack_contents"
+          done
           (cd release && sha256sum -c ./*.sha256)
 
       - name: Generate signed build provenance
@@ -394,6 +517,7 @@ jobs:
             release/*.zip
             release/aetheriot-runtime-manifest-*.json
             release/aetheriot-source-*.tar.gz
+            release/aetherems-energy-pack-*.tar.gz
 
       - name: Package provenance bundle
         shell: bash
@@ -442,6 +566,19 @@ jobs:
           Every source archive, binary, installer, and runtime manifest has an adjacent
           SHA-256 file. GitHub's Sigstore-backed artifact attestation can be
           verified with \`gh attestation verify <asset> -R EvanL1/AetherIot\`.
+
+          ### AetherEMS Energy Pack (Pack-only)
+
+          | Kernel target | File |
+          |---------------|------|
+          | Linux ARM64 musl | \`aetherems-energy-pack-aarch64-unknown-linux-musl-${VERSION}.tar.gz\` |
+          | Linux AMD64 musl | \`aetherems-energy-pack-x86_64-unknown-linux-musl-${VERSION}.tar.gz\` |
+
+          Energy Pack archives contain only closed Pack metadata and declarative
+          Pack data. They contain no Kernel executable or Rust source and are
+          bound to the matching target-specific \`runtime-manifest.json\`.
+          Release archives have SHA-256 sidecars and GitHub build-provenance
+          attestations verifiable with \`gh attestation verify\`.
 
           ### Quick Start
 
@@ -524,6 +661,10 @@ jobs:
             release/aetheriot-runtime-manifest-amd64-${{ steps.version.outputs.version }}.json.sha256
             release/aetheriot-${{ github.ref_name }}-provenance.sigstore.json
             release/aetheriot-${{ github.ref_name }}-provenance.sigstore.json.sha256
+            release/aetherems-energy-pack-aarch64-unknown-linux-musl-${{ steps.version.outputs.version }}.tar.gz
+            release/aetherems-energy-pack-aarch64-unknown-linux-musl-${{ steps.version.outputs.version }}.tar.gz.sha256
+            release/aetherems-energy-pack-x86_64-unknown-linux-musl-${{ steps.version.outputs.version }}.tar.gz
+            release/aetherems-energy-pack-x86_64-unknown-linux-musl-${{ steps.version.outputs.version }}.tar.gz.sha256
           fail_on_unmatched_files: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

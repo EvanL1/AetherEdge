@@ -10,12 +10,13 @@ use aether_domain::{
 };
 use aether_ports::{
     ActionRoute, ActionRouteKey, ActionRoutingMutation, ActionRoutingMutationReceipt, AuditOutcome,
-    AuditRecord, AuditSink, AutomationActionRoutingMutator, PortError, PortErrorKind, PortResult,
+    AuditRecord, AuditSink, AutomationActionRoutingMutator, LogicalRoutingRevision, PortError,
+    PortErrorKind, PortResult, RevisionedActionRoutingMutation,
 };
 use async_trait::async_trait;
 
 struct RecordingMutator {
-    mutations: Mutex<Vec<ActionRoutingMutation>>,
+    mutations: Mutex<Vec<RevisionedActionRoutingMutation>>,
     events: Arc<Mutex<Vec<&'static str>>>,
     failure: Option<PortError>,
     publication_failure: Option<PortError>,
@@ -62,6 +63,16 @@ impl AutomationActionRoutingMutator for RecordingMutator {
         &self,
         mutation: ActionRoutingMutation,
     ) -> PortResult<ActionRoutingMutationReceipt> {
+        Err(PortError::new(
+            PortErrorKind::InvalidData,
+            format!("unexpected legacy mutation: {}", mutation.kind().as_str()),
+        ))
+    }
+
+    async fn mutate_revisioned(
+        &self,
+        mutation: RevisionedActionRoutingMutation,
+    ) -> PortResult<ActionRoutingMutationReceipt> {
         let kind = mutation.kind();
         let target = mutation.target();
         self.events.lock().expect("event lock").push("mutate");
@@ -70,14 +81,20 @@ impl AutomationActionRoutingMutator for RecordingMutator {
             return Err(failure.clone());
         }
         if let Some(failure) = &self.publication_failure {
-            return Ok(ActionRoutingMutationReceipt::commands_revoked(
+            return Ok(ActionRoutingMutationReceipt::commands_revoked_at_revision(
                 kind,
                 target,
                 1,
+                LogicalRoutingRevision::new(9),
                 failure.clone(),
             ));
         }
-        Ok(ActionRoutingMutationReceipt::new(kind, target, 1))
+        Ok(ActionRoutingMutationReceipt::new_at_revision(
+            kind,
+            target,
+            1,
+            LogicalRoutingRevision::new(9),
+        ))
     }
 }
 
@@ -145,8 +162,8 @@ fn route() -> ActionRoute {
     ActionRoute::new(route_key(), destination, true)
 }
 
-fn mutation() -> ActionRoutingMutation {
-    ActionRoutingMutation::upsert(route())
+fn mutation() -> RevisionedActionRoutingMutation {
+    RevisionedActionRoutingMutation::upsert(route(), LogicalRoutingRevision::new(8))
 }
 
 fn context(permission: bool, confirmed: bool) -> RequestContext {
@@ -195,13 +212,17 @@ async fn authorized_mutation_is_attempt_audited_before_the_port_and_terminal_aud
     let application = ActionRoutingApplication::new(mutator.clone(), audit.clone(), SafetyPolicy);
 
     let acceptance = application
-        .mutate(&context(true, true), mutation())
+        .mutate_revisioned(&context(true, true), mutation())
         .await
         .expect("governed action-route mutation succeeds");
 
     assert_eq!(acceptance.kind(), mutation().kind());
     assert_eq!(acceptance.route_key(), Some(route_key()));
     assert_eq!(acceptance.affected_routes(), 1);
+    assert_eq!(
+        acceptance.resulting_revision(),
+        LogicalRoutingRevision::new(9)
+    );
     assert_eq!(acceptance.request_id(), "action-routing-1");
     assert!(acceptance.completion_audit().is_recorded());
     assert!(!acceptance.is_retryable());
@@ -222,6 +243,18 @@ async fn authorized_mutation_is_attempt_audited_before_the_port_and_terminal_aud
             .expect("audit detail")
             .contains("instance_id=7; action_id=11")
     );
+    assert!(
+        records[0]
+            .detail()
+            .expect("audit detail")
+            .contains("expected_revision=8")
+    );
+    assert!(
+        records[1]
+            .detail()
+            .expect("terminal audit detail")
+            .contains("resulting_revision=9")
+    );
 }
 
 #[tokio::test]
@@ -233,7 +266,9 @@ async fn denied_or_unconfirmed_mutation_is_rejected_and_never_reaches_the_port()
         let application =
             ActionRoutingApplication::new(mutator.clone(), audit.clone(), SafetyPolicy);
 
-        let result = application.mutate(&request_context, mutation()).await;
+        let result = application
+            .mutate_revisioned(&request_context, mutation())
+            .await;
 
         assert!(matches!(
             result,
@@ -256,7 +291,9 @@ async fn attempted_audit_must_succeed_before_the_mutation_port_runs() {
     let audit = Arc::new(RecordingAudit::failing_on(Arc::clone(&events), 1));
     let application = ActionRoutingApplication::new(mutator.clone(), audit, SafetyPolicy);
 
-    let result = application.mutate(&context(true, true), mutation()).await;
+    let result = application
+        .mutate_revisioned(&context(true, true), mutation())
+        .await;
 
     assert!(matches!(result, Err(ApplicationError::AuditUnavailable(_))));
     assert!(mutator.mutations.lock().expect("mutation lock").is_empty());
@@ -270,7 +307,9 @@ async fn port_failure_is_returned_as_typed_application_error_and_failed_audited(
     let audit = Arc::new(RecordingAudit::successful(Arc::clone(&events)));
     let application = ActionRoutingApplication::new(mutator, audit, SafetyPolicy);
 
-    let result = application.mutate(&context(true, true), mutation()).await;
+    let result = application
+        .mutate_revisioned(&context(true, true), mutation())
+        .await;
 
     match result {
         Err(ApplicationError::Port(error)) => {
@@ -294,7 +333,7 @@ async fn committed_but_revoked_runtime_is_a_non_retryable_accepted_outcome() {
     let application = ActionRoutingApplication::new(mutator, audit.clone(), SafetyPolicy);
 
     let acceptance = application
-        .mutate(&context(true, true), mutation())
+        .mutate_revisioned(&context(true, true), mutation())
         .await
         .expect("durably committed routing must not be returned as a retryable error");
 
@@ -321,7 +360,7 @@ async fn terminal_audit_failure_returns_non_retryable_accepted_outcome() {
     let application = ActionRoutingApplication::new(mutator.clone(), audit, SafetyPolicy);
 
     let acceptance = application
-        .mutate(&context(true, true), mutation())
+        .mutate_revisioned(&context(true, true), mutation())
         .await
         .expect("an accepted non-idempotent mutation must not be reported retryable");
 
@@ -352,7 +391,7 @@ async fn runtime_degradation_and_terminal_audit_failure_are_both_preserved() {
     let application = ActionRoutingApplication::new(mutator, audit, SafetyPolicy);
 
     let acceptance = application
-        .mutate(&context(true, true), mutation())
+        .mutate_revisioned(&context(true, true), mutation())
         .await
         .expect("both post-commit degradations remain an accepted outcome");
 

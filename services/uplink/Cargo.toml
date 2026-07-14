@@ -15,7 +15,7 @@ common = { path = "../../libs/common", default-features = false, features = ["sq
 aether-application = { path = "../../crates/aether-application" }
 aether-domain = { path = "../../crates/aether-domain" }
 aether-ports = { path = "../../crates/aether-ports" }
-aether-store-local = { path = "../../extensions/store-local" }
+aether-store-local = { path = "../../extensions/store-local", features = ["sqlite-topology"] }
 aether-shm-bridge = { path = "../../extensions/shm-bridge" }
 
 # Async runtime
@@ -47,6 +47,7 @@ tracing = { workspace = true }
 chrono = { workspace = true }
 bytes = { workspace = true }
 regex = { workspace = true }
+arc-swap = "1.7"
 
 # MQTT TLS uses rumqttc's maintained native-tls backend. The rustls backend in
 # rumqttc 0.25.1 pins a vulnerable rustls-webpki release.

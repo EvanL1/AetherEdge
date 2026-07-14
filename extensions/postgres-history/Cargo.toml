@@ -1,13 +1,12 @@
 [package]
 name = "aether-postgres-history"
 version.workspace = true
-publish = false
 edition = "2024"
 rust-version = "1.90"
 description = "Optional PostgreSQL history sink for Aether"
 license.workspace = true
 repository.workspace = true
-documentation = "https://docs.aetheriot.workers.dev/extensions/postgres-history"
+documentation = "https://docs.rs/aether-postgres-history"
 readme = "README.md"
 keywords = ["iot", "edge", "postgresql", "history"]
 categories = ["embedded", "database"]

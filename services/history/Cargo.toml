@@ -15,6 +15,7 @@ common = { path = "../../libs/common", default-features = false, features = ["sq
 aether-domain = { path = "../../crates/aether-domain" }
 aether-ports = { path = "../../crates/aether-ports" }
 aether-shm-bridge = { path = "../../extensions/shm-bridge" }
+aether-store-local = { path = "../../extensions/store-local", features = ["sqlite-topology"] }
 
 # Async runtime
 tokio = { workspace = true }
@@ -41,6 +42,7 @@ tracing = { workspace = true }
 chrono = { workspace = true }
 async-trait = { workspace = true }
 regex = { workspace = true }
+arc-swap = "1.7"
 
 # OpenAPI / Swagger UI
 utoipa = { workspace = true }
@@ -51,6 +53,9 @@ url = "2.5.8"
 [features]
 swagger-ui = ["utoipa-swagger-ui", "common/openapi"]
 postgres-storage = ["sqlx/postgres"]
+
+[dev-dependencies]
+tempfile = { workspace = true }
 
 [lints]
 workspace = true

@@ -43,7 +43,6 @@ pub struct BuiltinProduct {
     pub actions: Vec<PointDef>,
 }
 
-static KERNEL_PRODUCTS: &[BuiltinProduct] = &[];
 const MAX_PRODUCT_JSON_BYTES: u64 = 1024 * 1024;
 
 fn product_json_paths(directory: &Path) -> Result<Vec<std::path::PathBuf>> {
@@ -110,34 +109,6 @@ fn read_product(path: &Path) -> Result<BuiltinProduct> {
     serde_json::from_str(&content).with_context(|| format!("JSON parse error: {}", path.display()))
 }
 
-/// Returns the empty kernel compatibility catalog.
-pub fn get_builtin_products() -> &'static [BuiltinProduct] {
-    KERNEL_PRODUCTS
-}
-
-/// Looks up the empty kernel compatibility catalog.
-pub fn get_builtin_product(name: &str) -> Option<&'static BuiltinProduct> {
-    KERNEL_PRODUCTS.iter().find(|p| p.name == name)
-}
-
-/// Returns no implicit product names.
-pub fn get_product_names() -> Vec<&'static str> {
-    KERNEL_PRODUCTS.iter().map(|p| p.name.as_str()).collect()
-}
-
-/// Returns false because the kernel has no implicit products.
-pub fn product_exists(name: &str) -> bool {
-    KERNEL_PRODUCTS.iter().any(|p| p.name == name)
-}
-
-/// Returns no implicit child products.
-pub fn get_child_products(parent_name: &str) -> Vec<&'static BuiltinProduct> {
-    KERNEL_PRODUCTS
-        .iter()
-        .filter(|p| p.parent_name.as_deref() == Some(parent_name))
-        .collect()
-}
-
 /// Runtime product library assembled from explicitly selected directories.
 ///
 /// Later directories override earlier directories by product name. This lets a
@@ -148,7 +119,7 @@ pub fn get_child_products(parent_name: &str) -> Vec<&'static BuiltinProduct> {
 /// let lib = ProductLibrary::load(Some(Path::new("config/products")))?;
 /// let battery = lib.get("Battery").expect("Battery product");
 /// ```
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct ProductLibrary {
     products: Vec<BuiltinProduct>,
 }
@@ -199,13 +170,6 @@ impl ProductLibrary {
             }
         }
         Ok(Self { products })
-    }
-
-    /// Creates an empty library for backward-compatible callers.
-    pub fn builtin_only() -> Self {
-        Self {
-            products: Vec::new(),
-        }
     }
 
     /// Get all products
@@ -294,22 +258,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_kernel_builtin_product_catalog_is_empty() {
-        let products = get_builtin_products();
-        assert!(products.is_empty(), "kernel must not embed a domain pack");
-    }
-
-    #[test]
-    fn test_kernel_builtin_queries_return_no_energy_products() {
-        assert!(get_builtin_product("Battery").is_none());
-        assert!(get_product_names().is_empty());
-        assert!(!product_exists("Battery"));
-        assert!(get_child_products("Station").is_empty());
-    }
-
-    #[test]
     fn test_product_library_default_is_empty() {
-        let lib = ProductLibrary::builtin_only();
+        let lib = ProductLibrary::default();
         assert!(lib.is_empty());
         assert_eq!(lib.len(), 0);
     }

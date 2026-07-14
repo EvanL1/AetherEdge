@@ -5,7 +5,7 @@ use std::sync::Arc;
 use aether_domain::PointKind;
 use aether_ports::{
     ActionRoutingMutation, ActionRoutingTarget, AuditOutcome, AuditRecord, AuditSink,
-    AutomationActionRoutingMutator,
+    AutomationActionRoutingMutator, RevisionedActionRoutingMutation,
 };
 
 use crate::{
@@ -41,9 +41,29 @@ impl ActionRoutingApplication {
         context: &RequestContext,
         mutation: ActionRoutingMutation,
     ) -> Result<ActionRoutingMutationAcceptance, ApplicationError> {
+        self.mutate_inner(context, PendingActionRoutingMutation::Legacy(mutation))
+            .await
+    }
+
+    /// Authorizes, audits, and applies one revision-fenced routing mutation.
+    pub async fn mutate_revisioned(
+        &self,
+        context: &RequestContext,
+        command: RevisionedActionRoutingMutation,
+    ) -> Result<ActionRoutingMutationAcceptance, ApplicationError> {
+        self.mutate_inner(context, PendingActionRoutingMutation::Revisioned(command))
+            .await
+    }
+
+    async fn mutate_inner(
+        &self,
+        context: &RequestContext,
+        command: PendingActionRoutingMutation,
+    ) -> Result<ActionRoutingMutationAcceptance, ApplicationError> {
+        let mutation = command.mutation();
         let kind = mutation.kind();
         let target = mutation.target();
-        let mutation_detail = mutation_audit_detail(&mutation);
+        let mutation_detail = mutation_audit_detail(&mutation, command.expected_revision());
 
         if let Err(error) = self.policy.authorize(MANAGE_ROUTING_CAPABILITY, context) {
             self.record_audit(
@@ -68,22 +88,30 @@ impl ActionRoutingApplication {
         )
         .await?;
 
-        match self.mutator.mutate(mutation).await {
+        let result = match command {
+            PendingActionRoutingMutation::Legacy(mutation) => self.mutator.mutate(mutation).await,
+            PendingActionRoutingMutation::Revisioned(command) => {
+                self.mutator.mutate_revisioned(command).await
+            },
+        };
+        match result {
             Ok(receipt) => {
                 let runtime = receipt.runtime_status();
                 let completion_detail = runtime.failure().map_or_else(
                     || {
                         format!(
-                            "{mutation_detail}; affected_routes={}; runtime_status={}; reconciliation_required={}",
+                            "{mutation_detail}; affected_routes={}; resulting_revision={}; runtime_status={}; reconciliation_required={}",
                             receipt.affected_routes(),
+                            receipt.resulting_revision().get(),
                             runtime.as_str(),
                             runtime.reconciliation_required()
                         )
                     },
                     |failure| {
                         format!(
-                            "{mutation_detail}; affected_routes={}; runtime_status={}; reconciliation_required={}; runtime_failure={failure}",
+                            "{mutation_detail}; affected_routes={}; resulting_revision={}; runtime_status={}; reconciliation_required={}; runtime_failure={failure}",
                             receipt.affected_routes(),
+                            receipt.resulting_revision().get(),
                             runtime.as_str(),
                             runtime.reconciliation_required()
                         )
@@ -166,6 +194,27 @@ impl ActionRoutingApplication {
     }
 }
 
+enum PendingActionRoutingMutation {
+    Legacy(ActionRoutingMutation),
+    Revisioned(RevisionedActionRoutingMutation),
+}
+
+impl PendingActionRoutingMutation {
+    const fn mutation(&self) -> ActionRoutingMutation {
+        match self {
+            Self::Legacy(mutation) => *mutation,
+            Self::Revisioned(command) => command.mutation(),
+        }
+    }
+
+    const fn expected_revision(&self) -> Option<u64> {
+        match self {
+            Self::Legacy(_) => None,
+            Self::Revisioned(command) => Some(command.expected_revision().get()),
+        }
+    }
+}
+
 fn target_audit_detail(target: ActionRoutingTarget) -> String {
     match target {
         ActionRoutingTarget::Route(key) => format!(
@@ -183,27 +232,38 @@ fn target_audit_detail(target: ActionRoutingTarget) -> String {
     }
 }
 
-fn mutation_audit_detail(mutation: &ActionRoutingMutation) -> String {
+fn mutation_audit_detail(
+    mutation: &ActionRoutingMutation,
+    expected_revision: Option<u64>,
+) -> String {
+    let expected =
+        expected_revision.map_or_else(|| "legacy".to_string(), |value| value.to_string());
     match mutation {
-        ActionRoutingMutation::Upsert { route } => {
+        ActionRoutingMutation::Upsert { route, .. } => {
             let destination = route.destination();
             format!(
-                "destination_channel_id={}; destination_kind={}; destination_point_id={}; enabled={}",
+                "expected_revision={expected}; destination_channel_id={}; destination_kind={}; destination_point_id={}; enabled={}",
                 destination.channel_id().get(),
                 point_kind_name(destination.kind()),
                 destination.point_id().get(),
                 route.enabled()
             )
         },
-        ActionRoutingMutation::SetEnabled { enabled, .. } => format!("enabled={enabled}"),
-        ActionRoutingMutation::Delete { .. } => "delete=true".to_string(),
+        ActionRoutingMutation::SetEnabled { enabled, .. } => {
+            format!("expected_revision={expected}; enabled={enabled}")
+        },
+        ActionRoutingMutation::Delete { .. } => {
+            format!("expected_revision={expected}; delete=true")
+        },
         ActionRoutingMutation::DeleteActionsForInstance { .. } => {
-            "delete_scope=instance_actions".to_string()
+            format!("expected_revision={expected}; delete_scope=instance_actions")
         },
         ActionRoutingMutation::DeleteActionsForChannel { .. } => {
-            "delete_scope=channel_actions".to_string()
+            format!("expected_revision={expected}; delete_scope=channel_actions")
         },
-        ActionRoutingMutation::DeleteAllActions => "delete_scope=all_actions".to_string(),
+        ActionRoutingMutation::DeleteAllActions => {
+            format!("expected_revision={expected}; delete_scope=all_actions")
+        },
     }
 }
 

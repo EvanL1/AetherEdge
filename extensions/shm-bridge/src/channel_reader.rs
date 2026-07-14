@@ -71,7 +71,9 @@ impl ShmChannelReader {
                 "raw SHM reader has no channel manifest",
             ));
         };
-        let Some(slot) = manifest.slot(channel_id, kind, point_id) else {
+        let Some(slot) = manifest.slot_for(PhysicalPointAddress::from_legacy_raw(
+            channel_id, kind, point_id,
+        )) else {
             return Ok(None);
         };
         self.read_physical_slot(slot)

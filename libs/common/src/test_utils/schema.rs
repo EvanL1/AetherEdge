@@ -317,6 +317,36 @@ pub const MEASUREMENT_ROUTING_TABLE: &str = r#"
     )
 "#;
 
+/// Shared compare-and-set heads for authoritative configuration aggregates.
+pub const CONFIGURATION_REVISIONS_TABLE: &str = r#"
+    CREATE TABLE IF NOT EXISTS configuration_revisions (
+        scope TEXT NOT NULL PRIMARY KEY CHECK (length(trim(scope)) > 0),
+        revision INTEGER NOT NULL
+            CHECK (TYPEOF(revision) = 'integer' AND revision >= 1),
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+"#;
+
+/// Ensures canonical CAS heads exist for online configuration aggregates.
+pub async fn initialize_configuration_revisions(pool: &SqlitePool) -> Result<()> {
+    sqlx::query(CONFIGURATION_REVISIONS_TABLE)
+        .execute(pool)
+        .await?;
+    sqlx::query(
+        "INSERT INTO configuration_revisions (scope, revision) \
+         VALUES ('logical_routing', 1) ON CONFLICT(scope) DO NOTHING",
+    )
+    .execute(pool)
+    .await?;
+    sqlx::query(
+        "INSERT INTO configuration_revisions (scope, revision) \
+         VALUES ('automation_rules', 1) ON CONFLICT(scope) DO NOTHING",
+    )
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
 /// Action routing table DDL (matches automation::config::ActionRoutingRecord)
 pub const ACTION_ROUTING_TABLE: &str = r#"
     CREATE TABLE IF NOT EXISTS action_routing (
@@ -335,6 +365,307 @@ pub const ACTION_ROUTING_TABLE: &str = r#"
         CHECK(channel_type IN ('C','A'))
     )
 "#;
+
+// ============================================================================
+// Logical Routing Integrity Triggers
+// ============================================================================
+
+/// Names of the routing-integrity triggers installed in the unified database.
+///
+/// Production initialization drops these names before reinstalling them so an
+/// already initialized database cannot retain an older trigger definition.
+pub const LOGICAL_ROUTING_INTEGRITY_TRIGGER_NAMES: &[&str] = &[
+    "validate_measurement_routing_target_on_insert",
+    "validate_measurement_routing_target_on_update",
+    "validate_action_routing_target_on_insert",
+    "validate_action_routing_target_on_update",
+    "protect_measurement_routing_on_telemetry_delete",
+    "protect_measurement_routing_on_telemetry_identity_update",
+    "protect_measurement_routing_on_signal_delete",
+    "protect_measurement_routing_on_signal_identity_update",
+    "protect_action_routing_on_control_delete",
+    "protect_action_routing_on_control_identity_update",
+    "protect_action_routing_on_adjustment_delete",
+    "protect_action_routing_on_adjustment_identity_update",
+    "protect_measurement_routing_on_channel_delete",
+    "protect_measurement_routing_on_instance_delete",
+    "protect_action_routing_on_channel_delete",
+    "protect_action_routing_on_instance_delete",
+];
+
+/// Canonical DDL for the logical-routing integrity triggers.
+///
+/// Exposed for the unified-schema migration that must temporarily remove and
+/// restore these triggers while rebuilding physical point tables.
+pub const LOGICAL_ROUTING_INTEGRITY_TRIGGERS: &[&str] = &[
+    r#"
+    CREATE TRIGGER IF NOT EXISTS validate_measurement_routing_target_on_insert
+    BEFORE INSERT ON measurement_routing
+    FOR EACH ROW
+    WHEN NOT EXISTS (
+             SELECT 1 FROM instances
+             WHERE instance_id = NEW.instance_id
+               AND instance_name = NEW.instance_name
+         )
+      OR NEW.channel_id IS NULL
+      OR NEW.channel_type IS NULL
+      OR NEW.channel_point_id IS NULL
+      OR (NEW.channel_type = 'T' AND NOT EXISTS (
+             SELECT 1 FROM telemetry_points
+             WHERE channel_id = NEW.channel_id AND point_id = NEW.channel_point_id
+         ))
+      OR (NEW.channel_type = 'S' AND NOT EXISTS (
+             SELECT 1 FROM signal_points
+             WHERE channel_id = NEW.channel_id AND point_id = NEW.channel_point_id
+         ))
+      OR NEW.channel_type NOT IN ('T', 'S')
+    BEGIN
+        SELECT RAISE(ABORT, 'measurement route requires a matching instance and T/S physical target');
+    END
+    "#,
+    r#"
+    CREATE TRIGGER IF NOT EXISTS validate_measurement_routing_target_on_update
+    BEFORE UPDATE OF instance_id, instance_name, measurement_id, channel_id, channel_type, channel_point_id
+    ON measurement_routing
+    FOR EACH ROW
+    WHEN NOT EXISTS (
+             SELECT 1 FROM instances
+             WHERE instance_id = NEW.instance_id
+               AND instance_name = NEW.instance_name
+         )
+      OR NEW.channel_id IS NULL
+      OR NEW.channel_type IS NULL
+      OR NEW.channel_point_id IS NULL
+      OR (NEW.channel_type = 'T' AND NOT EXISTS (
+             SELECT 1 FROM telemetry_points
+             WHERE channel_id = NEW.channel_id AND point_id = NEW.channel_point_id
+         ))
+      OR (NEW.channel_type = 'S' AND NOT EXISTS (
+             SELECT 1 FROM signal_points
+             WHERE channel_id = NEW.channel_id AND point_id = NEW.channel_point_id
+         ))
+      OR NEW.channel_type NOT IN ('T', 'S')
+    BEGIN
+        SELECT RAISE(ABORT, 'measurement route requires a matching instance and T/S physical target');
+    END
+    "#,
+    r#"
+    CREATE TRIGGER IF NOT EXISTS validate_action_routing_target_on_insert
+    BEFORE INSERT ON action_routing
+    FOR EACH ROW
+    WHEN NOT EXISTS (
+             SELECT 1 FROM instances
+             WHERE instance_id = NEW.instance_id
+               AND instance_name = NEW.instance_name
+         )
+      OR NEW.channel_id IS NULL
+      OR NEW.channel_type IS NULL
+      OR NEW.channel_point_id IS NULL
+      OR (NEW.channel_type = 'C' AND NOT EXISTS (
+             SELECT 1 FROM control_points
+             WHERE channel_id = NEW.channel_id AND point_id = NEW.channel_point_id
+         ))
+      OR (NEW.channel_type = 'A' AND NOT EXISTS (
+             SELECT 1 FROM adjustment_points
+             WHERE channel_id = NEW.channel_id AND point_id = NEW.channel_point_id
+         ))
+      OR NEW.channel_type NOT IN ('C', 'A')
+    BEGIN
+        SELECT RAISE(ABORT, 'action route requires a matching instance and C/A physical target');
+    END
+    "#,
+    r#"
+    CREATE TRIGGER IF NOT EXISTS validate_action_routing_target_on_update
+    BEFORE UPDATE OF instance_id, instance_name, action_id, channel_id, channel_type, channel_point_id
+    ON action_routing
+    FOR EACH ROW
+    WHEN NOT EXISTS (
+             SELECT 1 FROM instances
+             WHERE instance_id = NEW.instance_id
+               AND instance_name = NEW.instance_name
+         )
+      OR NEW.channel_id IS NULL
+      OR NEW.channel_type IS NULL
+      OR NEW.channel_point_id IS NULL
+      OR (NEW.channel_type = 'C' AND NOT EXISTS (
+             SELECT 1 FROM control_points
+             WHERE channel_id = NEW.channel_id AND point_id = NEW.channel_point_id
+         ))
+      OR (NEW.channel_type = 'A' AND NOT EXISTS (
+             SELECT 1 FROM adjustment_points
+             WHERE channel_id = NEW.channel_id AND point_id = NEW.channel_point_id
+         ))
+      OR NEW.channel_type NOT IN ('C', 'A')
+    BEGIN
+        SELECT RAISE(ABORT, 'action route requires a matching instance and C/A physical target');
+    END
+    "#,
+    r#"
+    CREATE TRIGGER IF NOT EXISTS protect_measurement_routing_on_telemetry_delete
+    BEFORE DELETE ON telemetry_points
+    FOR EACH ROW
+    WHEN EXISTS (
+        SELECT 1 FROM measurement_routing
+        WHERE channel_id = OLD.channel_id
+          AND channel_type = 'T'
+          AND channel_point_id = OLD.point_id
+    )
+    BEGIN
+        SELECT RAISE(ABORT, 'use the governed measurement-routing command before deleting a measurement target');
+    END
+    "#,
+    r#"
+    CREATE TRIGGER IF NOT EXISTS protect_measurement_routing_on_telemetry_identity_update
+    BEFORE UPDATE OF channel_id, point_id ON telemetry_points
+    FOR EACH ROW
+    WHEN (NEW.channel_id IS NOT OLD.channel_id OR NEW.point_id IS NOT OLD.point_id)
+     AND EXISTS (
+        SELECT 1 FROM measurement_routing
+        WHERE channel_id = OLD.channel_id
+          AND channel_type = 'T'
+          AND channel_point_id = OLD.point_id
+    )
+    BEGIN
+        SELECT RAISE(ABORT, 'use the governed measurement-routing command before changing a measurement target identity');
+    END
+    "#,
+    r#"
+    CREATE TRIGGER IF NOT EXISTS protect_measurement_routing_on_signal_delete
+    BEFORE DELETE ON signal_points
+    FOR EACH ROW
+    WHEN EXISTS (
+        SELECT 1 FROM measurement_routing
+        WHERE channel_id = OLD.channel_id
+          AND channel_type = 'S'
+          AND channel_point_id = OLD.point_id
+    )
+    BEGIN
+        SELECT RAISE(ABORT, 'use the governed measurement-routing command before deleting a measurement target');
+    END
+    "#,
+    r#"
+    CREATE TRIGGER IF NOT EXISTS protect_measurement_routing_on_signal_identity_update
+    BEFORE UPDATE OF channel_id, point_id ON signal_points
+    FOR EACH ROW
+    WHEN (NEW.channel_id IS NOT OLD.channel_id OR NEW.point_id IS NOT OLD.point_id)
+     AND EXISTS (
+        SELECT 1 FROM measurement_routing
+        WHERE channel_id = OLD.channel_id
+          AND channel_type = 'S'
+          AND channel_point_id = OLD.point_id
+    )
+    BEGIN
+        SELECT RAISE(ABORT, 'use the governed measurement-routing command before changing a measurement target identity');
+    END
+    "#,
+    r#"
+    CREATE TRIGGER IF NOT EXISTS protect_action_routing_on_control_delete
+    BEFORE DELETE ON control_points
+    FOR EACH ROW
+    WHEN EXISTS (
+        SELECT 1 FROM action_routing
+        WHERE channel_id = OLD.channel_id
+          AND channel_type = 'C'
+          AND channel_point_id = OLD.point_id
+    )
+    BEGIN
+        SELECT RAISE(ABORT, 'use the governed action-routing command before deleting an action target');
+    END
+    "#,
+    r#"
+    CREATE TRIGGER IF NOT EXISTS protect_action_routing_on_control_identity_update
+    BEFORE UPDATE OF channel_id, point_id ON control_points
+    FOR EACH ROW
+    WHEN (NEW.channel_id IS NOT OLD.channel_id OR NEW.point_id IS NOT OLD.point_id)
+     AND EXISTS (
+        SELECT 1 FROM action_routing
+        WHERE channel_id = OLD.channel_id
+          AND channel_type = 'C'
+          AND channel_point_id = OLD.point_id
+    )
+    BEGIN
+        SELECT RAISE(ABORT, 'use the governed action-routing command before changing an action target identity');
+    END
+    "#,
+    r#"
+    CREATE TRIGGER IF NOT EXISTS protect_action_routing_on_adjustment_delete
+    BEFORE DELETE ON adjustment_points
+    FOR EACH ROW
+    WHEN EXISTS (
+        SELECT 1 FROM action_routing
+        WHERE channel_id = OLD.channel_id
+          AND channel_type = 'A'
+          AND channel_point_id = OLD.point_id
+    )
+    BEGIN
+        SELECT RAISE(ABORT, 'use the governed action-routing command before deleting an action target');
+    END
+    "#,
+    r#"
+    CREATE TRIGGER IF NOT EXISTS protect_action_routing_on_adjustment_identity_update
+    BEFORE UPDATE OF channel_id, point_id ON adjustment_points
+    FOR EACH ROW
+    WHEN (NEW.channel_id IS NOT OLD.channel_id OR NEW.point_id IS NOT OLD.point_id)
+     AND EXISTS (
+        SELECT 1 FROM action_routing
+        WHERE channel_id = OLD.channel_id
+          AND channel_type = 'A'
+          AND channel_point_id = OLD.point_id
+    )
+    BEGIN
+        SELECT RAISE(ABORT, 'use the governed action-routing command before changing an action target identity');
+    END
+    "#,
+    r#"
+    CREATE TRIGGER IF NOT EXISTS protect_measurement_routing_on_channel_delete
+    BEFORE DELETE ON channels
+    FOR EACH ROW
+    WHEN EXISTS (SELECT 1 FROM measurement_routing WHERE channel_id = OLD.channel_id)
+    BEGIN
+        SELECT RAISE(ABORT, 'use the governed measurement-routing command before deleting a measurement channel');
+    END
+    "#,
+    r#"
+    CREATE TRIGGER IF NOT EXISTS protect_measurement_routing_on_instance_delete
+    BEFORE DELETE ON instances
+    FOR EACH ROW
+    WHEN EXISTS (SELECT 1 FROM measurement_routing WHERE instance_id = OLD.instance_id)
+    BEGIN
+        SELECT RAISE(ABORT, 'use the governed measurement-routing command before deleting a measurement instance');
+    END
+    "#,
+    r#"
+    CREATE TRIGGER IF NOT EXISTS protect_action_routing_on_channel_delete
+    BEFORE DELETE ON channels
+    FOR EACH ROW
+    WHEN EXISTS (SELECT 1 FROM action_routing WHERE channel_id = OLD.channel_id)
+    BEGIN
+        SELECT RAISE(ABORT, 'use the governed action-routing command before deleting an action channel');
+    END
+    "#,
+    r#"
+    CREATE TRIGGER IF NOT EXISTS protect_action_routing_on_instance_delete
+    BEFORE DELETE ON instances
+    FOR EACH ROW
+    WHEN EXISTS (SELECT 1 FROM action_routing WHERE instance_id = OLD.instance_id)
+    BEGIN
+        SELECT RAISE(ABORT, 'use the governed action-routing command before deleting an action instance');
+    END
+    "#,
+];
+
+/// Installs fail-closed referential integrity for the logical-routing tables.
+///
+/// Call this only after `channels`, all four physical point tables,
+/// `instances`, and both routing tables have been created. The split IO and
+/// automation test-schema helpers cannot install it independently because
+/// neither owns that complete unified schema.
+pub async fn install_logical_routing_integrity_triggers(pool: &SqlitePool) -> Result<()> {
+    for trigger in LOGICAL_ROUTING_INTEGRITY_TRIGGERS {
+        sqlx::query(trigger).execute(pool).await?;
+    }
+    Ok(())
+}
 
 /// Instance property values table DDL
 ///
@@ -455,6 +786,7 @@ pub async fn init_automation_schema(pool: &SqlitePool) -> Result<()> {
     // Routing tables
     sqlx::query(MEASUREMENT_ROUTING_TABLE).execute(pool).await?;
     sqlx::query(ACTION_ROUTING_TABLE).execute(pool).await?;
+    initialize_configuration_revisions(pool).await?;
 
     // Instance property values (one row per property)
     sqlx::query(INSTANCE_PROPERTIES_TABLE).execute(pool).await?;
@@ -478,6 +810,7 @@ pub async fn init_rules_schema(pool: &SqlitePool) -> Result<()> {
     // Rule chains table (Vue Flow format)
     sqlx::query(RULE_CHAINS_TABLE).execute(pool).await?;
     sqlx::query(RULE_HISTORY_TABLE).execute(pool).await?;
+    initialize_configuration_revisions(pool).await?;
 
     Ok(())
 }
@@ -742,6 +1075,56 @@ mod tests {
             "Expected at least 6 tables, found {}",
             result.0
         );
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>(
+                "SELECT revision FROM configuration_revisions \
+                 WHERE scope = 'logical_routing'",
+            )
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn logical_routing_trigger_helper_rejects_a_missing_physical_target() {
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        init_automation_schema(&pool).await.unwrap();
+        init_io_schema(&pool).await.unwrap();
+        install_logical_routing_integrity_triggers(&pool)
+            .await
+            .unwrap();
+
+        sqlx::query(
+            "INSERT INTO instances (instance_id, instance_name, product_name) \
+             VALUES (7, 'fixture', 'ExampleDevice')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO channels (channel_id, name, protocol, enabled) \
+             VALUES (3, 'fixture-channel', 'virtual', 0)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let error = sqlx::query(
+            "INSERT INTO measurement_routing \
+             (instance_id, instance_name, measurement_id, channel_id, channel_type, channel_point_id) \
+             VALUES (7, 'fixture', 1, 3, 'T', 99)",
+        )
+        .execute(&pool)
+        .await
+        .expect_err("routing integrity must reject a missing physical point");
+        assert!(
+            error
+                .to_string()
+                .contains("matching instance and T/S physical target"),
+            "unexpected error: {error}"
+        );
     }
 
     #[tokio::test]
@@ -761,6 +1144,16 @@ mod tests {
             result.0 >= 4,
             "Expected at least 4 tables, found {}",
             result.0
+        );
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>(
+                "SELECT revision FROM configuration_revisions \
+                 WHERE scope = 'automation_rules'",
+            )
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+            1
         );
     }
 }

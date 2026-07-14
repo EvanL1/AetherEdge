@@ -4,7 +4,8 @@ use aether_domain::{ChannelCommandAddress, ChannelId, InstanceId, PointId, Point
 use aether_ports::{
     ActionRoute, ActionRouteKey, ActionRoutingMutation, ActionRoutingMutationKind,
     ActionRoutingMutationReceipt, ActionRoutingRuntimeStatus, ActionRoutingTarget,
-    AutomationActionRoutingMutator, PortError, PortErrorKind,
+    AutomationActionRoutingMutator, LogicalRoutingRevision, PortError, PortErrorKind,
+    RevisionedActionRoutingMutation,
 };
 
 fn route_key() -> ActionRouteKey {
@@ -33,25 +34,28 @@ fn action_route_preserves_typed_source_destination_and_enabled_state() {
 
 #[test]
 fn one_mutation_type_covers_upsert_delete_toggle_and_delete_all() {
-    let upsert = ActionRoutingMutation::upsert(route());
+    let expected = LogicalRoutingRevision::new(7);
+    let upsert = RevisionedActionRoutingMutation::upsert(route(), expected);
     assert_eq!(upsert.kind(), ActionRoutingMutationKind::Upsert);
+    assert_eq!(upsert.expected_revision(), expected);
     assert_eq!(upsert.route_key(), Some(route_key()));
     assert_eq!(upsert.target(), ActionRoutingTarget::Route(route_key()));
     assert_eq!(upsert.route(), Some(&route()));
 
-    let delete = ActionRoutingMutation::delete(route_key());
+    let delete = RevisionedActionRoutingMutation::delete(route_key(), expected);
     assert_eq!(delete.kind(), ActionRoutingMutationKind::Delete);
     assert_eq!(delete.route_key(), Some(route_key()));
 
-    let enable = ActionRoutingMutation::set_enabled(route_key(), true);
+    let enable = RevisionedActionRoutingMutation::set_enabled(route_key(), true, expected);
     assert_eq!(enable.kind(), ActionRoutingMutationKind::Enable);
     assert_eq!(enable.route_key(), Some(route_key()));
 
-    let disable = ActionRoutingMutation::set_enabled(route_key(), false);
+    let disable = RevisionedActionRoutingMutation::set_enabled(route_key(), false, expected);
     assert_eq!(disable.kind(), ActionRoutingMutationKind::Disable);
     assert_eq!(disable.route_key(), Some(route_key()));
 
-    let delete_instance = ActionRoutingMutation::delete_actions_for_instance(InstanceId::new(7));
+    let delete_instance =
+        RevisionedActionRoutingMutation::delete_actions_for_instance(InstanceId::new(7), expected);
     assert_eq!(
         delete_instance.kind(),
         ActionRoutingMutationKind::DeleteActionsForInstance
@@ -61,7 +65,8 @@ fn one_mutation_type_covers_upsert_delete_toggle_and_delete_all() {
         ActionRoutingTarget::Instance(InstanceId::new(7))
     );
 
-    let delete_channel = ActionRoutingMutation::delete_actions_for_channel(ChannelId::new(3));
+    let delete_channel =
+        RevisionedActionRoutingMutation::delete_actions_for_channel(ChannelId::new(3), expected);
     assert_eq!(
         delete_channel.kind(),
         ActionRoutingMutationKind::DeleteActionsForChannel
@@ -71,7 +76,7 @@ fn one_mutation_type_covers_upsert_delete_toggle_and_delete_all() {
         ActionRoutingTarget::Channel(ChannelId::new(3))
     );
 
-    let delete_all = ActionRoutingMutation::delete_all();
+    let delete_all = RevisionedActionRoutingMutation::delete_all(expected);
     assert_eq!(
         delete_all.kind(),
         ActionRoutingMutationKind::DeleteAllActions
@@ -81,27 +86,48 @@ fn one_mutation_type_covers_upsert_delete_toggle_and_delete_all() {
 }
 
 #[test]
+fn legacy_action_routing_constructors_remain_revisionless() {
+    let mutations = [
+        ActionRoutingMutation::upsert(route()),
+        ActionRoutingMutation::delete(route_key()),
+        ActionRoutingMutation::set_enabled(route_key(), true),
+        ActionRoutingMutation::delete_actions_for_instance(InstanceId::new(7)),
+        ActionRoutingMutation::delete_actions_for_channel(ChannelId::new(3)),
+        ActionRoutingMutation::delete_all(),
+    ];
+
+    assert_eq!(mutations[0].kind(), ActionRoutingMutationKind::Upsert);
+    assert_eq!(
+        mutations[5].kind(),
+        ActionRoutingMutationKind::DeleteAllActions
+    );
+}
+
+#[test]
 fn mutation_receipt_preserves_operation_target_and_affected_count() {
-    let receipt = ActionRoutingMutationReceipt::new(
+    let receipt = ActionRoutingMutationReceipt::new_at_revision(
         ActionRoutingMutationKind::Delete,
         ActionRoutingTarget::Route(route_key()),
         1,
+        LogicalRoutingRevision::new(8),
     );
 
     assert_eq!(receipt.kind(), ActionRoutingMutationKind::Delete);
     assert_eq!(receipt.route_key(), Some(route_key()));
     assert_eq!(receipt.target(), ActionRoutingTarget::Route(route_key()));
     assert_eq!(receipt.affected_routes(), 1);
+    assert_eq!(receipt.resulting_revision(), LogicalRoutingRevision::new(8));
     assert!(receipt.runtime_status().is_published());
     assert!(!receipt.runtime_status().reconciliation_required());
 }
 
 #[test]
 fn committed_receipt_can_report_fail_closed_runtime_degradation_without_becoming_an_error() {
-    let receipt = ActionRoutingMutationReceipt::commands_revoked(
+    let receipt = ActionRoutingMutationReceipt::commands_revoked_at_revision(
         ActionRoutingMutationKind::Upsert,
         ActionRoutingTarget::Route(route_key()),
         1,
+        LogicalRoutingRevision::new(8),
         PortError::new(
             PortErrorKind::Unavailable,
             "physical topology is incomplete",
@@ -109,6 +135,7 @@ fn committed_receipt_can_report_fail_closed_runtime_degradation_without_becoming
     );
 
     assert_eq!(receipt.runtime_status().as_str(), "commands_revoked");
+    assert_eq!(receipt.resulting_revision(), LogicalRoutingRevision::new(8));
     assert!(receipt.runtime_status().reconciliation_required());
     assert_eq!(
         receipt

@@ -1,19 +1,16 @@
-//! SQLite and runtime-cache adapter for governed action-routing mutations.
+//! SQLite and coherent-runtime adapter for governed action-routing mutations.
 
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use aether_domain::PointKind;
 use aether_ports::{
-    ActionRoutingMutation, ActionRoutingMutationReceipt, AutomationActionRoutingMutator, PortError,
-    PortErrorKind, PortResult,
+    ActionRoutingMutation, ActionRoutingMutationReceipt, AutomationActionRoutingMutator,
+    LogicalRoutingRevision, PortError, PortErrorKind, PortResult, RevisionedActionRoutingMutation,
 };
 use async_trait::async_trait;
-use common::FourRemote;
 
 use crate::infra::runtime_topology::ActionRoutingMutationLease;
 use crate::instance_manager::InstanceManager;
-use crate::routing_loader::ActionRoutingRow;
 
 /// Applies governed action-routing changes to SQLite and publishes the exact
 /// committed view to the in-process command dispatcher.
@@ -23,22 +20,26 @@ pub struct SqliteActionRoutingMutator {
 
 impl SqliteActionRoutingMutator {
     /// Creates an adapter over automation's authoritative configuration and
-    /// atomically swappable routing cache.
+    /// atomically swappable service topology.
     #[must_use]
     pub fn new(manager: Arc<InstanceManager>) -> Self {
         Self { manager }
     }
 
-    async fn validate_upsert(&self, route: aether_ports::ActionRoute) -> PortResult<String> {
+    async fn validate_upsert(
+        &self,
+        transaction: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+        route: aether_ports::ActionRoute,
+    ) -> PortResult<String> {
         let key = route.key();
         let destination = route.destination();
         let instance_id = key.instance_id().get();
         let action_id = key.action_id().get();
         let channel_id = destination.channel_id().get();
         let channel_point_id = destination.point_id().get();
-        let (four_remote, physical_table) = match destination.kind() {
-            PointKind::Command => (FourRemote::Control, "control_points"),
-            PointKind::Action => (FourRemote::Adjustment, "adjustment_points"),
+        let (channel_type, physical_table) = match destination.kind() {
+            PointKind::Command => ("C", "control_points"),
+            PointKind::Action => ("A", "adjustment_points"),
             PointKind::Telemetry | PointKind::Status => {
                 return Err(PortError::new(
                     PortErrorKind::InvalidData,
@@ -47,11 +48,11 @@ impl SqliteActionRoutingMutator {
             },
         };
 
-        let instance_name = sqlx::query_scalar::<_, String>(
-            "SELECT instance_name FROM instances WHERE instance_id = ?",
+        let (instance_name, product_name) = sqlx::query_as::<_, (String, String)>(
+            "SELECT instance_name, product_name FROM instances WHERE instance_id = ?",
         )
         .bind(i64::from(instance_id))
-        .fetch_optional(self.manager.pool())
+        .fetch_optional(&mut **transaction)
         .await
         .map_err(|error| storage_error("validate action-route instance", error))?
         .ok_or_else(|| {
@@ -61,37 +62,30 @@ impl SqliteActionRoutingMutator {
             )
         })?;
 
-        let validation = self
+        let product = self
             .manager
-            .validate_action_routing(
-                &ActionRoutingRow {
-                    action_id,
-                    channel_id: Some(channel_id as i32),
-                    channel_type: Some(four_remote),
-                    channel_point_id: Some(channel_point_id),
-                },
-                &instance_name,
-            )
-            .await
+            .product_loader()
+            .get_product(&product_name)
             .map_err(|error| {
                 tracing::error!(
                     instance_id,
                     action_id,
                     error = %error,
-                    "action-route model validation failed"
+                    "action-route product validation failed"
                 );
                 PortError::new(
-                    PortErrorKind::Unavailable,
-                    "action-route model validation is unavailable",
+                    PortErrorKind::InvalidData,
+                    "instance product is unavailable from the active Pack set",
                 )
             })?;
-        if !validation.is_valid {
+        if !product
+            .actions
+            .iter()
+            .any(|action| action.action_id == action_id)
+        {
             return Err(PortError::new(
                 PortErrorKind::InvalidData,
-                format!(
-                    "logical action route is not valid for instance {instance_id}: {}",
-                    validation.errors.join("; ")
-                ),
+                format!("action point {action_id} is not declared by instance {instance_id}"),
             ));
         }
 
@@ -100,7 +94,7 @@ impl SqliteActionRoutingMutator {
         let physical_exists = sqlx::query_scalar::<_, i64>(&physical_sql)
             .bind(i64::from(channel_id))
             .bind(i64::from(channel_point_id))
-            .fetch_optional(self.manager.pool())
+            .fetch_optional(&mut **transaction)
             .await
             .map_err(|error| storage_error("validate physical action-route target", error))?
             .is_some();
@@ -109,7 +103,7 @@ impl SqliteActionRoutingMutator {
                 PortErrorKind::InvalidData,
                 format!(
                     "physical action target {channel_id}:{}:{channel_point_id} is not configured",
-                    four_remote.as_str()
+                    channel_type
                 ),
             ));
         }
@@ -138,33 +132,16 @@ impl SqliteActionRoutingMutator {
             };
         }
 
-        // Compatibility path for tests that intentionally compose no
-        // production runtime topology.
-        match aether_routing::load_routing_maps(self.manager.pool()).await {
-            Ok(maps) => {
-                self.manager
-                    .routing_cache()
-                    .update(maps.c2m, maps.m2c, maps.c2c);
-                Ok(())
-            },
-            Err(error) => {
-                // Continuing with the previous M2C view after a committed
-                // topology change could dispatch to the wrong physical point.
-                // Revoke every local route until a complete snapshot can be
-                // loaded again.
-                self.manager
-                    .routing_cache()
-                    .update(HashMap::new(), HashMap::new(), HashMap::new());
-                tracing::error!(
-                    error = %error,
-                    "committed action routing could not be published; routing cache revoked"
-                );
-                Err(PortError::new(
+        self.manager
+            .refresh_routing()
+            .await
+            .map(|_| ())
+            .map_err(|error| {
+                PortError::new(
                     PortErrorKind::Unavailable,
-                    "committed action routing could not be published; command routing is disabled",
-                ))
-            },
-        }
+                    format!("committed action routing validation failed: {error}"),
+                )
+            })
     }
 }
 
@@ -174,16 +151,36 @@ impl AutomationActionRoutingMutator for SqliteActionRoutingMutator {
         &self,
         mutation: ActionRoutingMutation,
     ) -> PortResult<ActionRoutingMutationReceipt> {
+        let revision = sqlx::query_scalar::<_, i64>(
+            "SELECT revision FROM configuration_revisions WHERE scope = 'logical_routing'",
+        )
+        .fetch_one(self.manager.pool())
+        .await
+        .map_err(|error| storage_error("read logical-routing revision", error))?;
+        let revision = LogicalRoutingRevision::new(u64::try_from(revision).map_err(|_| {
+            PortError::new(
+                PortErrorKind::Permanent,
+                "logical-routing revision became negative",
+            )
+        })?);
+        self.mutate_revisioned(RevisionedActionRoutingMutation::new(mutation, revision))
+            .await
+    }
+
+    async fn mutate_revisioned(
+        &self,
+        mutation: RevisionedActionRoutingMutation,
+    ) -> PortResult<ActionRoutingMutationReceipt> {
         let kind = mutation.kind();
         let target = mutation.target();
-        let upsert_instance_name = match mutation {
-            ActionRoutingMutation::Upsert { route } => Some(self.validate_upsert(route).await?),
-            ActionRoutingMutation::Delete { .. }
-            | ActionRoutingMutation::SetEnabled { .. }
-            | ActionRoutingMutation::DeleteActionsForInstance { .. }
-            | ActionRoutingMutation::DeleteActionsForChannel { .. }
-            | ActionRoutingMutation::DeleteAllActions => None,
-        };
+        let expected = mutation.expected_revision();
+        let mutation = mutation.mutation();
+        if expected.get() == 0 || expected.get() >= i64::MAX as u64 {
+            return Err(PortError::new(
+                PortErrorKind::InvalidData,
+                "expected logical-routing revision must be in 1..i64::MAX",
+            ));
+        }
 
         // Production revokes M2C before opening the mutation transaction and
         // retains the refresh lease through commit + publication. Therefore a
@@ -203,10 +200,31 @@ impl AutomationActionRoutingMutator for SqliteActionRoutingMutator {
                 .await
                 .map_err(|error| storage_error("begin action-routing mutation", error))?;
 
+            let resulting_revision = sqlx::query_scalar::<_, i64>(
+                "UPDATE configuration_revisions \
+                 SET revision = revision + 1, updated_at = CURRENT_TIMESTAMP \
+                 WHERE scope = 'logical_routing' AND revision = ? \
+                 RETURNING revision",
+            )
+            .bind(expected.get() as i64)
+            .fetch_optional(&mut *transaction)
+            .await
+            .map_err(|error| storage_error("compare logical-routing revision", error))?
+            .ok_or_else(|| {
+                PortError::new(
+                    PortErrorKind::Conflict,
+                    format!(
+                        "logical routing changed concurrently; expected revision {}",
+                        expected.get()
+                    ),
+                )
+            })?;
+
             let affected_routes = match mutation {
                 ActionRoutingMutation::Upsert { route } => {
                     let key = route.key();
                     let destination = route.destination();
+                    let instance_name = self.validate_upsert(&mut transaction, route).await?;
                     let channel_type = match destination.kind() {
                         PointKind::Command => "C",
                         PointKind::Action => "A",
@@ -231,7 +249,7 @@ impl AutomationActionRoutingMutator for SqliteActionRoutingMutator {
                        updated_at = CURRENT_TIMESTAMP",
                     )
                     .bind(i64::from(key.instance_id().get()))
-                    .bind(upsert_instance_name.as_deref())
+                    .bind(instance_name)
                     .bind(i64::from(key.action_id().get()))
                     .bind(i64::from(destination.channel_id().get()))
                     .bind(channel_type)
@@ -302,11 +320,11 @@ impl AutomationActionRoutingMutator for SqliteActionRoutingMutator {
                 ));
             }
 
-            Ok((transaction, affected_routes))
+            Ok((transaction, affected_routes, resulting_revision))
         }
         .await;
 
-        let (transaction, affected_routes) = match staged_mutation {
+        let (transaction, affected_routes, resulting_revision) = match staged_mutation {
             Ok(staged) => staged,
             Err(error) => {
                 if let Some(topology_lease) = topology_lease.take() {
@@ -327,16 +345,27 @@ impl AutomationActionRoutingMutator for SqliteActionRoutingMutator {
             .await
             .map_err(|error| storage_error("commit action-routing mutation", error))?;
 
+        let resulting_revision = aether_ports::LogicalRoutingRevision::new(
+            u64::try_from(resulting_revision).map_err(|_| {
+                PortError::new(
+                    PortErrorKind::Permanent,
+                    "logical-routing revision became negative",
+                )
+            })?,
+        );
+
         match self.publish_committed_routes(topology_lease).await {
-            Ok(()) => Ok(ActionRoutingMutationReceipt::new(
+            Ok(()) => Ok(ActionRoutingMutationReceipt::new_at_revision(
                 kind,
                 target,
                 affected_routes,
+                resulting_revision,
             )),
-            Err(failure) => Ok(ActionRoutingMutationReceipt::commands_revoked(
+            Err(failure) => Ok(ActionRoutingMutationReceipt::commands_revoked_at_revision(
                 kind,
                 target,
                 affected_routes,
+                resulting_revision,
                 failure,
             )),
         }

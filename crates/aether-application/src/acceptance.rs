@@ -5,8 +5,9 @@ use aether_ports::{
     ActionRouteKey, ActionRoutingMutationKind, ActionRoutingMutationReceipt, ActionRoutingTarget,
     AlarmRuleMutationReceipt, AlertResolutionReceipt, ChannelMutationKind, ChannelMutationReceipt,
     ChannelReconciliationItem, ChannelReconciliationReceipt, ChannelReconciliationScope,
-    ChannelRevision, ChannelRuntimeProjection, CommandReceipt, PortError, RuleExecutionReceipt,
-    RuleMutationReceipt,
+    ChannelRevision, ChannelRuntimeProjection, CommandReceipt, LogicalRoutingRevision,
+    MeasurementRouteKey, MeasurementRoutingMutationKind, MeasurementRoutingMutationReceipt,
+    MeasurementRoutingTarget, PortError, RuleExecutionReceipt, RuleMutationReceipt,
 };
 
 /// Persistence state of the terminal audit event for an accepted operation.
@@ -159,11 +160,23 @@ impl AcceptedOutcome<RuleMutationReceipt> {
         self.receipt.kind()
     }
 
+    /// Returns the authoritative automation-rules revision after commit.
+    #[must_use]
+    pub const fn resulting_revision(&self) -> aether_ports::AutomationRulesRevision {
+        self.receipt.resulting_revision()
+    }
+
     /// Returns whether the active scheduler was refreshed or stopped
     /// fail-closed after the accepted mutation.
     #[must_use]
     pub const fn scheduler_refresh(&self) -> &aether_ports::RuleSchedulerRefreshStatus {
         self.receipt.scheduler_refresh()
+    }
+
+    /// Returns the complete runtime state, including PointWatch degradation.
+    #[must_use]
+    pub const fn runtime_status(&self) -> &aether_ports::RuleRuntimeStatus {
+        self.receipt.runtime_status()
     }
 }
 
@@ -195,10 +208,57 @@ impl AcceptedOutcome<ActionRoutingMutationReceipt> {
         self.receipt.affected_routes()
     }
 
+    /// Returns the authoritative shared logical-routing revision after commit.
+    #[must_use]
+    pub const fn resulting_revision(&self) -> LogicalRoutingRevision {
+        self.receipt.resulting_revision()
+    }
+
     /// Returns whether the committed routes were published or commands were
     /// revoked fail-closed pending reconciliation.
     #[must_use]
     pub const fn runtime_status(&self) -> &aether_ports::ActionRoutingRuntimeStatus {
+        self.receipt.runtime_status()
+    }
+}
+
+/// Accepted measurement-routing management outcome with terminal audit state.
+pub type MeasurementRoutingMutationAcceptance = AcceptedOutcome<MeasurementRoutingMutationReceipt>;
+
+impl AcceptedOutcome<MeasurementRoutingMutationReceipt> {
+    /// Returns the applied mutation kind.
+    #[must_use]
+    pub const fn kind(&self) -> MeasurementRoutingMutationKind {
+        self.receipt.kind()
+    }
+
+    /// Returns the affected logical route key.
+    #[must_use]
+    pub const fn route_key(&self) -> Option<MeasurementRouteKey> {
+        self.receipt.route_key()
+    }
+
+    /// Returns the typed affected scope.
+    #[must_use]
+    pub const fn target(&self) -> MeasurementRoutingTarget {
+        self.receipt.target()
+    }
+
+    /// Returns the number of affected routes.
+    #[must_use]
+    pub const fn affected_routes(&self) -> u64 {
+        self.receipt.affected_routes()
+    }
+
+    /// Returns the authoritative revision after commit.
+    #[must_use]
+    pub const fn resulting_revision(&self) -> LogicalRoutingRevision {
+        self.receipt.resulting_revision()
+    }
+
+    /// Returns whether runtime publication succeeded or measurement routes were revoked.
+    #[must_use]
+    pub const fn runtime_status(&self) -> &aether_ports::MeasurementRoutingRuntimeStatus {
         self.receipt.runtime_status()
     }
 }

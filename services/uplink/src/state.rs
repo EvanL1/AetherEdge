@@ -7,6 +7,7 @@ use tokio::sync::{Mutex, Notify, RwLock};
 
 use crate::config::EnvConfig;
 use crate::device::{DeviceIdentity, Topics};
+use crate::live_values::UplinkTopologyHandle;
 use crate::models::NetConfig;
 
 /// Shared application state.
@@ -17,6 +18,8 @@ pub struct AppState {
     pub outbox: Arc<dyn DurableOutbox>,
     /// Static env config.
     pub env: Arc<EnvConfig>,
+    /// Atomically replaceable SQLite + committed point/health read generation.
+    pub live_topology: Arc<UplinkTopologyHandle>,
     /// Dynamic config reloaded from `uplink_config`.
     pub config: Arc<RwLock<NetConfig>>,
     /// Resolved device identity (product SN + device SN).

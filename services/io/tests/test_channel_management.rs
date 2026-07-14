@@ -83,9 +83,13 @@ async fn create_test_app() -> Result<axum::Router> {
     let channel_reconciliation =
         Arc::new(aether_application::ChannelReconciliationApplication::new(
             reconciler,
-            audit,
+            Arc::clone(&audit),
             aether_application::SafetyPolicy,
         ));
+    let point_topology = Arc::new(aether_io::point_topology::PointTopologyApplication::new(
+        pool.clone(),
+        audit,
+    ));
     let access_authenticator = Arc::new(
         aether_auth_jwt::AccessTokenAuthenticator::new(TEST_JWT_SECRET)
             .expect("valid test access-token secret"),
@@ -96,6 +100,7 @@ async fn create_test_app() -> Result<axum::Router> {
         command_tx_cache,
         channel_management,
         channel_reconciliation,
+        point_topology,
         access_authenticator,
     );
     Ok(router)

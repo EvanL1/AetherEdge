@@ -2,7 +2,8 @@
 
 ## Status
 
-Accepted and implemented on 2026-07-10.
+Accepted and implemented on 2026-07-10. Compatibility aggregate removal
+completed on 2026-07-13 after ADR-0012 rolling conformance passed.
 
 ## Context
 
@@ -20,14 +21,15 @@ uplink data survives network outages and process restarts.
 1. `aether-dataplane` owns the business-neutral physical SHM implementation:
    header/layout math, atomic slots, mmap reader/writer, dirty bitmap, path
    helpers, and tear-resistant snapshots.
-2. `aether-rtdb-shm::core` becomes a compatibility re-export. The typed
+2. During the staged migration, `aether-rtdb-shm::core` became a compatibility
+   re-export. The typed
    `ChannelPointManifest` in `aether-shm-bridge` is the sole implementation of
    deterministic T/S/C/A slot allocation, reverse attribution, and the layout
    hash. The legacy SQLite count loader stays at the composition boundary;
    `ChannelPointCounts`, `ChannelLayout`, `ChannelToSlotIndex`, and
    `ReverseSlotIndex` are temporary compatibility projections. Instance,
-   routing, and action adapters remain in the legacy crate until migrated
-   separately.
+   routing, and action adapters remained in the legacy crate until migrated
+   separately. That aggregate and all of these projections are now removed.
 3. Public mmap constructors validate mapped length, declared capacity, and
    live slot count before any pointer dereference and return typed
    `DataplaneError` values. Read-only consumers receive a `HeaderSnapshot`,
@@ -74,11 +76,10 @@ PUBACK events before claiming broker-confirmed crash durability.
 - The edge SDK has a real offline queue without requiring SQLite or another
   database engine.
 - Legacy services can migrate one data path at a time behind stable ports.
-- `ShmHandle` publishes the typed acquisition writer, formal manifest, legacy
-  writer, and compatibility indexes in one `ArcSwap` generation. Production
-  io expands and deduplicates C2C routes before one typed batch commit, while
-  PointWatch receives the committed domain address rather than consulting a
-  stale reverse index after rebuild.
+- Production IO publishes the typed acquisition writer with its formal
+  manifest. It expands and deduplicates C2C routes before one typed batch
+  commit, while PointWatch receives the committed domain address rather than
+  consulting a stale reverse index after rebuild.
 - Corruption, double writers, capacity exhaustion, and retryability produce
   explicit errors rather than silent fallback.
 
@@ -87,17 +88,14 @@ PUBACK events before claiming broker-confirmed crash durability.
 - The journal format and recovery logic become code that the project must
   maintain and fuzz.
 - `fs2` is required for portable advisory file locking.
-- The legacy SHM aggregation crate temporarily re-exports the new crate while
-  business adapters are still split out.
-- `UnifiedWriter`, its raw index, and `write_channel_batch_direct` remain for
-  compatibility tests, benchmarks, action-side code, and staged consumer
-  migration. They are no longer on production io's acquisition-write path.
+- The staged migration temporarily carried a legacy aggregation crate and
+  duplicate compatibility tests; that cost ended with its removal.
 - MQTT broker-level acknowledgement remains follow-up work.
 
 ## Compatibility shim removal criteria
 
-The channel-layout shims in `aether-rtdb-shm` may be removed when all of the
-following are true:
+The channel-layout shims in `aether-rtdb-shm` were removed after all of the
+following became true:
 
 1. io and automation construct and consume `ChannelPointManifest` directly,
    and the SQLite manifest loader has moved to a composition/configuration
@@ -115,15 +113,21 @@ following are true:
    tests and benchmarks migrate to domain batches; retain the fixed-generation
    constructor only while testkit/in-process compositions require it.
 
+Closure evidence is the ADR-0012 four-quadrant compatibility matrix, the
+frozen `legacy_v4_reader_accepts_new_io_segment_during_io_first_rolling_upgrade`
+fixture, the inverse epoch-zero rejection contract, typed manifest/acquisition
+writer contracts, and the architecture gate that rejects restoration of the
+retired crate. All legacy tests and benchmarks were either migrated to the
+typed contracts or removed with the APIs they exclusively exercised.
+
 ## Verification
 
 ```bash
 cargo test -p aether-dataplane
 cargo test -p aether-shm-bridge --test channel_manifest_contract
 cargo test -p aether-shm-bridge --test acquisition_writer_contract
-cargo test -p aether-rtdb-shm --lib
 cargo test -p aether-io --test test_shm_store
-cargo test -p aether-rtdb-shm --lib shm_handle::tests
+cargo test -p aether-io --test test_shm_listener
 cargo test -p aether-store-local
 cargo test -p aether-application --test outbox_forwarder
 cargo check -p aether-uplink

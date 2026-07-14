@@ -1,6 +1,10 @@
 # aether-edge-sdk
 
-Stable public facade for embedding the Aether AI-native IoT edge kernel.
+Versioned beta facade for embedding the Aether AI-native IoT edge kernel.
+
+The API is release-gated for packaging and SemVer compatibility, but the first
+independent registry release has not yet been completed. Until then, consume it
+from a pinned repository revision rather than assuming crates.io availability.
 
 The Rust library target is imported as `aether_sdk`. `AetherBuilder` has no
 concrete infrastructure defaults. A host explicitly

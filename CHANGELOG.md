@@ -14,9 +14,9 @@ authoritative live-state plane.
 
 ### Added
 
-- Source-only `aether-domain`, `aether-ports`, `aether-application`,
-  `aether-dataplane`, and adapter crates behind the single supported
-  `aether-edge-sdk` facade.
+- Public `aether-domain`, `aether-ports`, `aether-application`, `aether-edge-sdk`,
+  `aether-dataplane`, and `aether-testkit` crates with explicit capability
+  boundaries and package-ready metadata.
 - Zero-external-service local adapters and a runnable `minimal-gateway`
   composition.
 - Optional `redis-bridge` and `postgres-history` extensions; neither is in the
@@ -39,6 +39,10 @@ authoritative live-state plane.
   loopback-only upstream validation.
 - A versioned source archive plus checksummed runtime/CLI assets and signed
   GitHub build-provenance attestations in the release pipeline.
+- One dependency-ordered public-crate catalog with exact archive assembly,
+  clean-room consumer compilation, registry-baseline SemVer checks, protected
+  tag publication, digest-verified partial-release resume, and build-provenance
+  attestations.
 
 ### Changed
 
@@ -60,9 +64,25 @@ authoritative live-state plane.
 - AetherIot is headless: domain UIs and the Energy Pack are maintained by the
   independent AetherEMS distribution and consume only the remote application
   gateway.
+- History and Uplink now bind a single SQLite topology snapshot to the exact
+  committed point/health SHM epoch; protocol mappings remain IO-only and
+  logical routes remain separate application configuration.
+- Removed direct test-only `InstanceManager` lifecycle, property, and logical
+  routing mutation helpers; tests now enter the same revisioned, audited
+  application boundaries as online clients.
+- Channel update, delete, enable, and disable now require an explicit desired-
+  state revision in the first-party CLI and MCP schemas; missing CAS tokens
+  fail before any HTTP request while the separately tracked server shim remains
+  available only for unmigrated browser and downstream clients.
 
 ### Fixed
 
+- Allocated coordinated point/health publication epochs from the durable
+  witness and both canonical headers while holding the topology authority;
+  commits now reject durable epoch reuse across IO restarts.
+- Pinned retained SHM read generations to the exact point/health writer pair,
+  so an anomalous same-epoch replacement cannot be mistaken for a Uplink
+  no-op or silently repin an already published service generation.
 - Serialized canonical SHM replacement against acquisition and command
   transactions with cross-process authority leases and inode/generation
   validation, so a replaced mapping cannot return a successful write receipt.
@@ -74,10 +94,20 @@ authoritative live-state plane.
   incomplete instead of returning a misleading retryable error.
 - Removed stale `EvanL1/Aether` install and documentation URLs and made the
   two legacy Redis pool contracts run explicitly in extension CI.
+- The scheduled cross-process topology soak now kills IO writers inside the
+  point-only publication window and enforces file, descriptor, and RSS bounds
+  while proving fail-closed reads and subsequent automatic recovery.
 
 ### Breaking
 
 - Removed all compatibility aliases for the former service and binary names.
+- Removed the generic `aether services reload` fan-out, which could not carry
+  per-aggregate authentication, confirmation, revision, or audit context;
+  channel convergence uses the governed channel command and offline imports
+  activate through supervised service restart.
+- Removed the raw-ID `ChannelPointManifest::slot(channel_id, kind, point_id)`
+  compatibility API. SHM consumers now resolve a typed
+  `PhysicalPointAddress` with `slot_for`.
 - Removed Redis-backed live-state APIs and fallback behavior from the core
   runtime. A missing or invalid SHM layout now fails closed.
 - The source release version is now `0.5.0`; downstream Rust users consume the

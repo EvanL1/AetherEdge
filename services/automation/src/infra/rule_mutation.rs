@@ -5,7 +5,8 @@ use std::sync::Arc;
 use aether_calc::StateStore;
 use aether_domain::RuleId;
 use aether_ports::{
-    AutomationRuleMutator, PortError, PortErrorKind, PortResult, RuleMutation, RuleMutationReceipt,
+    AutomationRuleMutator, AutomationRulesRevision, PortError, PortErrorKind, PortResult,
+    RevisionedRuleMutation, RuleMutation, RuleMutationReceipt,
 };
 use aether_rules::{RuleScheduler, TriggerConfig};
 use async_trait::async_trait;
@@ -13,6 +14,11 @@ use serde_json::Value;
 use sqlx::SqlitePool;
 
 use crate::infra::runtime_topology::{AutomationTopologyHandle, PointWatchReadiness};
+
+enum RuleRuntimeRefresh {
+    Refreshed,
+    PointWatchGated(PortError),
+}
 
 /// Owns durable rule mutation and the corresponding scheduler refresh.
 pub struct SqliteRuleMutator<S: StateStore> {
@@ -50,37 +56,99 @@ impl<S: StateStore + 'static> SqliteRuleMutator<S> {
         self
     }
 
-    async fn reload_scheduler(&self) -> aether_rules::Result<usize> {
+    async fn reload_scheduler(&self) -> PortResult<RuleRuntimeRefresh> {
         let (Some(topology), Some(readiness), Some(manifest_source)) = (
             &self.topology,
             &self.point_watch_readiness,
             &self.manifest_source,
         ) else {
-            return self.scheduler.reload_rules().await;
+            return self
+                .scheduler
+                .reload_rules()
+                .await
+                .map(|_| RuleRuntimeRefresh::Refreshed)
+                .map_err(scheduler_reload_error);
         };
 
         let _rebuild = readiness.lock_rebuild().await;
         let view = Arc::clone(topology).pin_command().await;
         readiness.mark_unready();
-        let result = self.scheduler.reload_rules().await;
-        if result.is_ok() {
-            let generation = view.generation();
-            let manifest_matches = manifest_source.load().is_some_and(|manifest| {
-                manifest.layout_hash() == generation.point_manifest().layout_hash()
-                    && manifest.slot_count() == generation.point_manifest().slot_count()
-            });
-            if manifest_matches {
-                readiness.mark_ready(generation.sequence());
-            }
+        self.scheduler
+            .reload_rules()
+            .await
+            .map_err(scheduler_reload_error)?;
+        let generation = view.generation();
+        generation.rebuild_point_watch(&self.scheduler).await;
+        let manifest_matches = manifest_source.load().is_some_and(|manifest| {
+            manifest.layout_hash() == generation.point_manifest().layout_hash()
+                && manifest.slot_count() == generation.point_manifest().slot_count()
+        });
+        if manifest_matches {
+            readiness.mark_ready(generation.sequence());
+            Ok(RuleRuntimeRefresh::Refreshed)
+        } else {
+            Ok(RuleRuntimeRefresh::PointWatchGated(PortError::new(
+                PortErrorKind::Unavailable,
+                "PointWatch subscription publication does not match the active topology generation",
+            )))
         }
-        result
     }
 }
 
 #[async_trait]
 impl<S: StateStore + 'static> AutomationRuleMutator for SqliteRuleMutator<S> {
     async fn mutate(&self, mutation: RuleMutation) -> PortResult<RuleMutationReceipt> {
+        let revision = sqlx::query_scalar::<_, i64>(
+            "SELECT revision FROM configuration_revisions WHERE scope = 'automation_rules'",
+        )
+        .fetch_one(&self.pool)
+        .await
+        .map_err(database_error)?;
+        let revision = AutomationRulesRevision::new(u64::try_from(revision).map_err(|_| {
+            PortError::new(
+                PortErrorKind::Permanent,
+                "automation-rules revision became negative",
+            )
+        })?);
+        self.mutate_revisioned(RevisionedRuleMutation::new(mutation, revision))
+            .await
+    }
+
+    async fn mutate_revisioned(
+        &self,
+        mutation: RevisionedRuleMutation,
+    ) -> PortResult<RuleMutationReceipt> {
         let kind = mutation.kind();
+        let expected = mutation.expected_revision();
+        let mutation = mutation.into_mutation();
+        if expected.get() == 0 || expected.get() >= i64::MAX as u64 {
+            return Err(PortError::new(
+                PortErrorKind::InvalidData,
+                "expected automation-rules revision must be in 1..i64::MAX",
+            ));
+        }
+
+        let mut transaction = self.pool.begin().await.map_err(database_error)?;
+        let resulting_revision = sqlx::query_scalar::<_, i64>(
+            "UPDATE configuration_revisions \
+             SET revision = revision + 1, updated_at = CURRENT_TIMESTAMP \
+             WHERE scope = 'automation_rules' AND revision = ? \
+             RETURNING revision",
+        )
+        .bind(expected.get() as i64)
+        .fetch_optional(&mut *transaction)
+        .await
+        .map_err(database_error)?
+        .ok_or_else(|| {
+            PortError::new(
+                PortErrorKind::Conflict,
+                format!(
+                    "automation rules changed concurrently; expected revision {}",
+                    expected.get()
+                ),
+            )
+        })?;
+
         let rule_id = match mutation {
             RuleMutation::Create { name, description } => {
                 let result = sqlx::query(
@@ -90,7 +158,7 @@ impl<S: StateStore + 'static> AutomationRuleMutator for SqliteRuleMutator<S> {
                 )
                 .bind(name)
                 .bind(description)
-                .execute(&self.pool)
+                .execute(&mut *transaction)
                 .await
                 .map_err(database_error)?;
                 let id = u64::try_from(result.last_insert_rowid()).map_err(|_| {
@@ -99,7 +167,7 @@ impl<S: StateStore + 'static> AutomationRuleMutator for SqliteRuleMutator<S> {
                         "SQLite returned a negative rule identifier",
                     )
                 })?;
-                RuleId::new(id)
+                Some(RuleId::new(id))
             },
             RuleMutation::Update {
                 rule_id,
@@ -204,11 +272,11 @@ impl<S: StateStore + 'static> AutomationRuleMutator for SqliteRuleMutator<S> {
                 }
                 let result = query
                     .bind(database_id)
-                    .execute(&self.pool)
+                    .execute(&mut *transaction)
                     .await
                     .map_err(database_error)?;
                 require_affected_rule(result.rows_affected(), rule_id)?;
-                rule_id
+                Some(rule_id)
             },
             RuleMutation::SetEnabled { rule_id, enabled } => {
                 let result = sqlx::query(
@@ -216,50 +284,53 @@ impl<S: StateStore + 'static> AutomationRuleMutator for SqliteRuleMutator<S> {
                 )
                 .bind(enabled)
                 .bind(database_rule_id(rule_id)?)
-                .execute(&self.pool)
+                .execute(&mut *transaction)
                 .await
                 .map_err(database_error)?;
                 require_affected_rule(result.rows_affected(), rule_id)?;
-                rule_id
+                Some(rule_id)
             },
             RuleMutation::Delete { rule_id } => {
                 let result = sqlx::query("DELETE FROM rules WHERE id = ?")
                     .bind(database_rule_id(rule_id)?)
-                    .execute(&self.pool)
+                    .execute(&mut *transaction)
                     .await
                     .map_err(database_error)?;
                 require_affected_rule(result.rows_affected(), rule_id)?;
-                rule_id
+                Some(rule_id)
             },
-            RuleMutation::Reload => {
-                return match self.reload_scheduler().await {
-                    Ok(_) => Ok(RuleMutationReceipt::reload()),
-                    Err(error) => {
-                        self.scheduler.stop();
-                        Ok(RuleMutationReceipt::scheduler_stopped(
-                            None,
-                            kind,
-                            PortError::new(
-                                PortErrorKind::Unavailable,
-                                format!("rule scheduler reload failed: {error}"),
-                            ),
-                        ))
-                    },
-                };
-            },
+            RuleMutation::Reload => None,
         };
 
+        transaction.commit().await.map_err(database_error)?;
+        let resulting_revision = aether_ports::AutomationRulesRevision::new(
+            u64::try_from(resulting_revision).map_err(|_| {
+                PortError::new(
+                    PortErrorKind::Permanent,
+                    "automation-rules revision became negative",
+                )
+            })?,
+        );
+
         match self.reload_scheduler().await {
-            Ok(_) => Ok(RuleMutationReceipt::new(rule_id, kind)),
-            Err(error) => {
-                self.scheduler.stop();
-                Ok(RuleMutationReceipt::scheduler_stopped(
-                    Some(rule_id),
+            Ok(RuleRuntimeRefresh::Refreshed) => match rule_id {
+                Some(rule_id) => Ok(RuleMutationReceipt::new_at_revision(
+                    rule_id,
                     kind,
-                    PortError::new(
-                        PortErrorKind::Unavailable,
-                        format!("rule scheduler reload failed: {error}"),
-                    ),
+                    resulting_revision,
+                )),
+                None => Ok(RuleMutationReceipt::reload_at_revision(resulting_revision)),
+            },
+            Ok(RuleRuntimeRefresh::PointWatchGated(failure)) => Ok(
+                RuleMutationReceipt::point_watch_gated(rule_id, kind, resulting_revision, failure),
+            ),
+            Err(failure) => {
+                self.scheduler.stop();
+                Ok(RuleMutationReceipt::scheduler_stopped_at_revision(
+                    rule_id,
+                    kind,
+                    resulting_revision,
+                    failure,
                 ))
             },
         }
@@ -289,5 +360,12 @@ fn database_error(error: sqlx::Error) -> PortError {
     PortError::new(
         PortErrorKind::Unavailable,
         format!("rule database mutation failed: {error}"),
+    )
+}
+
+fn scheduler_reload_error(error: aether_rules::RuleError) -> PortError {
+    PortError::new(
+        PortErrorKind::Unavailable,
+        format!("rule scheduler reload failed: {error}"),
     )
 }

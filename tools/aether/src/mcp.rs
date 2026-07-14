@@ -558,9 +558,9 @@ struct ChannelsUpdateParams {
     channel_id: u32,
     /// Partial update body -- only fields present are changed
     body: Value,
-    /// Optional desired-state compare-and-set revision (minimum 1)
+    /// Required desired-state compare-and-set revision from the latest channel read (minimum 1)
     #[schemars(range(min = 1))]
-    expected_revision: Option<u64>,
+    expected_revision: u64,
     /// Explicitly confirms this high-risk channel commissioning mutation.
     confirmed: bool,
 }
@@ -569,9 +569,9 @@ struct ChannelsUpdateParams {
 struct ChannelMutationIdParams {
     /// Channel ID
     channel_id: u32,
-    /// Optional desired-state compare-and-set revision (minimum 1)
+    /// Required desired-state compare-and-set revision from the latest channel read (minimum 1)
     #[schemars(range(min = 1))]
-    expected_revision: Option<u64>,
+    expected_revision: u64,
     /// Explicitly confirms this high-risk channel commissioning mutation.
     confirmed: bool,
 }
@@ -749,7 +749,7 @@ impl AetherMcp {
     }
 
     #[tool(
-        description = "Update a communication channel through the authenticated, explicitly confirmed, and audited io.channel.manage application command. This is a high-risk, non-idempotent commissioning mutation; expected_revision is an optional compare-and-set guard. Success may report a degraded runtime projection or incomplete completion audit: inspect request_id, resulting_revision, and reconciliation_required. Clients must not automatically retry.",
+        description = "Update a communication channel through the authenticated, explicitly confirmed, and audited io.channel.manage application command. This is a high-risk, non-idempotent commissioning mutation; expected_revision from the latest channel read is required as a compare-and-set guard. Success may report a degraded runtime projection or incomplete completion audit: inspect request_id, resulting_revision, and reconciliation_required. Clients must not automatically retry.",
         annotations(read_only_hint = false)
     )]
     async fn channels_update(
@@ -758,7 +758,7 @@ impl AetherMcp {
     ) -> CallToolResult {
         to_call_result(
             self.channels
-                .update_channel(p.channel_id, p.body, p.confirmed, p.expected_revision)
+                .update_channel(p.channel_id, p.body, p.confirmed, Some(p.expected_revision))
                 .await,
         )
     }
@@ -773,7 +773,7 @@ impl AetherMcp {
     ) -> CallToolResult {
         to_call_result(
             self.channels
-                .delete_channel(p.channel_id, p.confirmed, p.expected_revision)
+                .delete_channel(p.channel_id, p.confirmed, Some(p.expected_revision))
                 .await,
         )
     }
@@ -788,7 +788,7 @@ impl AetherMcp {
     ) -> CallToolResult {
         to_call_result(
             self.channels
-                .set_enabled(p.channel_id, true, p.confirmed, p.expected_revision)
+                .set_enabled(p.channel_id, true, p.confirmed, Some(p.expected_revision))
                 .await,
         )
     }
@@ -803,7 +803,7 @@ impl AetherMcp {
     ) -> CallToolResult {
         to_call_result(
             self.channels
-                .set_enabled(p.channel_id, false, p.confirmed, p.expected_revision)
+                .set_enabled(p.channel_id, false, p.confirmed, Some(p.expected_revision))
                 .await,
         )
     }
@@ -1214,6 +1214,21 @@ mod tests {
             crate::rules::RuleClient::with_access_token(base, "signed-access-token").unwrap();
         server.routing = RoutingClient::with_access_token(base, "signed-access-token").unwrap();
         server
+    }
+
+    async fn mock_rules_revision(server: &MockServer) {
+        Mock::given(method("GET"))
+            .and(path("/api/rules"))
+            .and(query_param("page", "1"))
+            .and(query_param("page_size", "1"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("x-aether-configuration-revision", "7")
+                    .set_body_json(serde_json::json!({"data": {"list": []}})),
+            )
+            .expect(1)
+            .mount(server)
+            .await;
     }
 
     /// Mutations deliberately absent from the production MCP catalog. A name
@@ -2174,7 +2189,7 @@ mod tests {
             .channels_update(Parameters(ChannelsUpdateParams {
                 channel_id: 1001,
                 body: serde_json::json!({ "description": "updated" }),
-                expected_revision: Some(7),
+                expected_revision: 7,
                 confirmed: true,
             }))
             .await;
@@ -2202,7 +2217,7 @@ mod tests {
         let result = mcp
             .channels_delete(Parameters(ChannelMutationIdParams {
                 channel_id: 1001,
-                expected_revision: Some(7),
+                expected_revision: 7,
                 confirmed: true,
             }))
             .await;
@@ -2231,7 +2246,7 @@ mod tests {
         let result = mcp
             .channels_enable(Parameters(ChannelMutationIdParams {
                 channel_id: 1001,
-                expected_revision: Some(7),
+                expected_revision: 7,
                 confirmed: true,
             }))
             .await;
@@ -2253,7 +2268,7 @@ mod tests {
         let result = mcp
             .channels_disable(Parameters(ChannelMutationIdParams {
                 channel_id: 1001,
-                expected_revision: Some(8),
+                expected_revision: 8,
                 confirmed: true,
             }))
             .await;
@@ -2367,25 +2382,25 @@ mod tests {
             mcp.channels_update(Parameters(ChannelsUpdateParams {
                 channel_id: 1001,
                 body: serde_json::json!({"name": "blocked"}),
-                expected_revision: None,
+                expected_revision: 7,
                 confirmed: false,
             }))
             .await,
             mcp.channels_delete(Parameters(ChannelMutationIdParams {
                 channel_id: 1001,
-                expected_revision: None,
+                expected_revision: 7,
                 confirmed: false,
             }))
             .await,
             mcp.channels_enable(Parameters(ChannelMutationIdParams {
                 channel_id: 1001,
-                expected_revision: None,
+                expected_revision: 7,
                 confirmed: false,
             }))
             .await,
             mcp.channels_disable(Parameters(ChannelMutationIdParams {
                 channel_id: 1001,
-                expected_revision: None,
+                expected_revision: 7,
                 confirmed: false,
             }))
             .await,
@@ -2427,11 +2442,15 @@ mod tests {
     #[tokio::test]
     async fn rules_enable_and_disable_hit_their_own_paths() {
         let enable_server = MockServer::start().await;
+        mock_rules_revision(&enable_server).await;
         Mock::given(method("POST"))
             .and(path("/api/rules/9/enable"))
             .and(header("authorization", "Bearer signed-access-token"))
             .and(header_exists("x-request-id"))
-            .and(body_json(serde_json::json!({ "confirmed": true })))
+            .and(body_json(serde_json::json!({
+                "confirmed": true,
+                "expected_revision": 7
+            })))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
             .expect(1)
             .mount(&enable_server)
@@ -2446,11 +2465,15 @@ mod tests {
         assert_ne!(result.is_error, Some(true), "{result:?}");
 
         let disable_server = MockServer::start().await;
+        mock_rules_revision(&disable_server).await;
         Mock::given(method("POST"))
             .and(path("/api/rules/9/disable"))
             .and(header("authorization", "Bearer signed-access-token"))
             .and(header_exists("x-request-id"))
-            .and(body_json(serde_json::json!({ "confirmed": true })))
+            .and(body_json(serde_json::json!({
+                "confirmed": true,
+                "expected_revision": 7
+            })))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
             .expect(1)
             .mount(&disable_server)
@@ -2471,13 +2494,15 @@ mod tests {
     #[tokio::test]
     async fn rules_create_posts_the_name_and_description() {
         let server = MockServer::start().await;
+        mock_rules_revision(&server).await;
         Mock::given(method("POST"))
             .and(path("/api/rules"))
             .and(header("authorization", "Bearer signed-access-token"))
             .and(header_exists("x-request-id"))
             .and(body_json(serde_json::json!({
                 "name": "new-rule",
-                "confirmed": true
+                "confirmed": true,
+                "expected_revision": 7
             })))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({ "id": 10 })))
             .expect(1)
@@ -2502,13 +2527,15 @@ mod tests {
     #[tokio::test]
     async fn rules_update_uses_put_on_the_rule_id() {
         let server = MockServer::start().await;
+        mock_rules_revision(&server).await;
         Mock::given(method("PUT"))
             .and(path("/api/rules/9"))
             .and(header("authorization", "Bearer signed-access-token"))
             .and(header_exists("x-request-id"))
             .and(body_json(serde_json::json!({
                 "name": "renamed",
-                "confirmed": true
+                "confirmed": true,
+                "expected_revision": 7
             })))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({ "id": 9 })))
             .expect(1)
@@ -2530,11 +2557,15 @@ mod tests {
     #[tokio::test]
     async fn rules_delete_uses_delete_on_the_rule_id() {
         let server = MockServer::start().await;
+        mock_rules_revision(&server).await;
         Mock::given(method("DELETE"))
             .and(path("/api/rules/9"))
             .and(header("authorization", "Bearer signed-access-token"))
             .and(header_exists("x-request-id"))
-            .and(body_json(serde_json::json!({ "confirmed": true })))
+            .and(body_json(serde_json::json!({
+                "confirmed": true,
+                "expected_revision": 7
+            })))
             .respond_with(
                 ResponseTemplate::new(200).set_body_json(serde_json::json!({ "success": true })),
             )
@@ -3057,5 +3088,23 @@ mod tests {
             .await;
 
         assert_ne!(result.is_error, Some(true), "{result:?}");
+    }
+
+    #[test]
+    fn channel_mutation_mcp_schemas_require_expected_revision() {
+        for schema in [
+            serde_json::to_value(schemars::schema_for!(ChannelsUpdateParams)).unwrap(),
+            serde_json::to_value(schemars::schema_for!(ChannelMutationIdParams)).unwrap(),
+        ] {
+            let required = schema["required"]
+                .as_array()
+                .expect("object schema must declare required properties");
+            assert!(
+                required
+                    .iter()
+                    .any(|property| property == "expected_revision"),
+                "expected_revision must be mandatory in MCP mutation schema: {schema}"
+            );
+        }
     }
 }

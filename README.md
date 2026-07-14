@@ -87,14 +87,10 @@ cargo run -p aether-example-minimal-gateway
 cargo run -p aether-example-energy-gateway
 ```
 
-Downstream Rust applications consume one facade from a versioned source
-release. Internal workspace crates are implementation boundaries, not
-independently supported registry packages:
-
-```toml
-[dependencies]
-aether-sdk = { package = "aether-edge-sdk", git = "https://github.com/EvanL1/AetherIot.git", tag = "v0.5.0", features = ["local-runtime"] }
-```
+The release workflow treats the domain, ports, application, data-plane, SDK,
+testkit, and supported adapter crates as independently publishable packages.
+Until the first `0.5.0` publication is complete, these workspace examples are
+the source-level SDK contract.
 
 The first is an empty industry-neutral gateway. The second proves a disabled-by-default Energy Pack
 composition. They are SDK smoke tests, not the supervised production runtime.
@@ -134,6 +130,17 @@ revisionless compatibility paths are still pending. See [Architecture](ARCHITECT
 [ADR-0007](docs/adr/0007-aether-core-and-ems-distribution.md), and
 [ADR-0012](docs/adr/0012-agent-first-application-surface.md), and
 [ADR-0013](docs/adr/0013-single-sdk-source-release.md) for the exact boundaries.
+
+Point and health SHM planes publish one committed physical epoch, while History
+and Uplink bind one SQLite topology snapshot to that exact epoch. SQLite is the
+desired-state authority for commissioned topology, protocol mappings, logical
+routes, rules, and instances, with revisioned commands and automatic runtime
+reconciliation. The local release gate validates a dependency-ordered catalog
+of public crates, compiles exact archives in a clean-room consumer, checks
+established APIs for SemVer compatibility, and keeps Kernel, CLI, crate, and
+Pack artifacts independently attested. The physical AetherEMS split and its
+downstream bootstrap CI exist, but no tag has yet established the first signed
+registry/GitHub release or replaced the bootstrap Git pin.
 
 ## Documentation
 

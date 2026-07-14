@@ -81,13 +81,9 @@ cargo run -p aether-example-minimal-gateway
 cargo run -p aether-example-energy-gateway
 ```
 
-下游 Rust 应用只消费版本化源码发行中的单一 façade。workspace 内部 crate 是实现边界，不是
-可独立支持的 registry 产品：
-
-```toml
-[dependencies]
-aether-sdk = { package = "aether-edge-sdk", git = "https://github.com/EvanL1/AetherIot.git", tag = "v0.5.0", features = ["local-runtime"] }
-```
+发布流程把 domain、ports、application、data-plane、SDK、testkit 与受支持 adapter crate
+视为可独立发布的软件包。在首次完成 `0.5.0` 发布前，这些 workspace 示例就是源码级 SDK
+契约。
 
 前者是行业中立的空网关；后者验证默认禁用的 Energy Pack 组合。它们是 SDK 冒烟测试，不是
 受监管的生产运行时。
@@ -125,6 +121,13 @@ AetherIot 当前为 beta。版本化 SDK、Pack v1、六服务 Runtime、point/h
 [ADR-0007](docs/adr/0007-aether-core-and-ems-distribution.md)与
 [ADR-0012](docs/adr/0012-agent-first-application-surface.md)、
 [ADR-0013](docs/adr/0013-single-sdk-source-release.md)。
+
+Point 与 health 两个 SHM 平面发布同一个已提交物理 epoch，History 与 Uplink 把同一份
+SQLite topology 快照绑定到该 epoch。SQLite 是已投运 topology、协议 mapping、逻辑 route、
+规则与 instance 的期望状态权威，并通过带 revision 的命令自动协调运行时。本地发布门禁会
+按依赖顺序校验公共 crate，在 clean-room consumer 中编译精确归档，检查既有 API 的 SemVer
+兼容性，并分别证明 Kernel、CLI、crate 与 Pack 产物。AetherEMS 物理拆仓及其下游 bootstrap
+CI 已落地，但尚无 tag 建立首次签名 registry/GitHub 发行，也尚未替换 bootstrap Git pin。
 
 ## 文档
 

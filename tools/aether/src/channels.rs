@@ -75,7 +75,7 @@ pub enum ChannelCommands {
         description: Option<String>,
         /// Compare-and-set guard for the current desired-state revision
         #[arg(long)]
-        expected_revision: Option<u64>,
+        expected_revision: u64,
         /// Explicitly confirm this high-risk commissioning change
         #[arg(long)]
         confirmed: bool,
@@ -93,7 +93,7 @@ pub enum ChannelCommands {
         force: bool,
         /// Compare-and-set guard for the current desired-state revision
         #[arg(long)]
-        expected_revision: Option<u64>,
+        expected_revision: u64,
         /// Explicitly confirm this high-risk commissioning change
         #[arg(long)]
         confirmed: bool,
@@ -106,7 +106,7 @@ pub enum ChannelCommands {
         channel_id: u32,
         /// Compare-and-set guard for the current desired-state revision
         #[arg(long)]
-        expected_revision: Option<u64>,
+        expected_revision: u64,
         /// Explicitly confirm this high-risk commissioning change
         #[arg(long)]
         confirmed: bool,
@@ -119,7 +119,7 @@ pub enum ChannelCommands {
         channel_id: u32,
         /// Compare-and-set guard for the current desired-state revision
         #[arg(long)]
-        expected_revision: Option<u64>,
+        expected_revision: u64,
         /// Explicitly confirm this high-risk commissioning change
         #[arg(long)]
         confirmed: bool,
@@ -346,7 +346,7 @@ pub async fn handle_command(cmd: ChannelCommands, base_url: &str, json: bool) ->
                     channel_id,
                     Value::Object(body),
                     confirmed,
-                    expected_revision,
+                    Some(expected_revision),
                 )
                 .await?;
             print_mutation_receipt(&result, json)?;
@@ -357,7 +357,7 @@ pub async fn handle_command(cmd: ChannelCommands, base_url: &str, json: bool) ->
             expected_revision,
             confirmed,
         } => {
-            client.validate_mutation(confirmed, expected_revision)?;
+            client.validate_mutation(confirmed, Some(expected_revision))?;
             if !force && !json {
                 println!("Delete channel {}? [y/N]", channel_id);
                 let mut input = String::new();
@@ -368,7 +368,7 @@ pub async fn handle_command(cmd: ChannelCommands, base_url: &str, json: bool) ->
                 }
             }
             let result = client
-                .delete_channel(channel_id, confirmed, expected_revision)
+                .delete_channel(channel_id, confirmed, Some(expected_revision))
                 .await?;
             print_mutation_receipt(&result, json)?;
         },
@@ -378,7 +378,7 @@ pub async fn handle_command(cmd: ChannelCommands, base_url: &str, json: bool) ->
             confirmed,
         } => {
             let data = client
-                .set_enabled(channel_id, true, confirmed, expected_revision)
+                .set_enabled(channel_id, true, confirmed, Some(expected_revision))
                 .await?;
             print_mutation_receipt(&data, json)?;
         },
@@ -388,7 +388,7 @@ pub async fn handle_command(cmd: ChannelCommands, base_url: &str, json: bool) ->
             confirmed,
         } => {
             let data = client
-                .set_enabled(channel_id, false, confirmed, expected_revision)
+                .set_enabled(channel_id, false, confirmed, Some(expected_revision))
                 .await?;
             print_mutation_receipt(&data, json)?;
         },
@@ -929,7 +929,7 @@ impl ChannelClient {
             .put(format!("{}/api/channels/{}", self.base_url, channel_id))
             .json(&body);
         let response = self
-            .governed_request(request, confirmed, expected_revision)?
+            .governed_revisioned_request(request, confirmed, expected_revision)?
             .send()
             .await?;
 
@@ -954,7 +954,7 @@ impl ChannelClient {
             .client
             .delete(format!("{}/api/channels/{}", self.base_url, channel_id));
         let response = self
-            .governed_request(request, confirmed, expected_revision)?
+            .governed_revisioned_request(request, confirmed, expected_revision)?
             .send()
             .await?;
 
@@ -984,7 +984,7 @@ impl ChannelClient {
             ))
             .json(&serde_json::json!({ "enabled": enabled }));
         let resp = self
-            .governed_request(request, confirmed, expected_revision)?
+            .governed_revisioned_request(request, confirmed, expected_revision)?
             .send()
             .await?;
 
@@ -1025,6 +1025,23 @@ impl ChannelClient {
             request = request.header("x-aether-expected-revision", revision.to_string());
         }
         Ok(request)
+    }
+
+    fn governed_revisioned_request(
+        &self,
+        request: reqwest::RequestBuilder,
+        confirmed: bool,
+        expected_revision: Option<u64>,
+    ) -> Result<reqwest::RequestBuilder> {
+        let revision = expected_revision.ok_or_else(|| {
+            anyhow::anyhow!(
+                "online channel mutations require --expected-revision from the latest channel read"
+            )
+        })?;
+        if revision == 0 {
+            anyhow::bail!("--expected-revision must be at least 1");
+        }
+        self.governed_request(request, confirmed, Some(revision))
     }
 
     pub(crate) async fn mappings(&self, channel_id: u32) -> Result<Value> {
@@ -1334,7 +1351,7 @@ mod tests {
     }
 
     #[test]
-    fn lifecycle_commands_parse_optional_expected_revision_and_confirmation() {
+    fn lifecycle_commands_parse_expected_revision_and_confirmation() {
         let cli = ChannelCli::try_parse_from([
             "channels",
             "delete",
@@ -1355,9 +1372,31 @@ mod tests {
             } => {
                 assert!(force);
                 assert!(confirmed, "--force must not replace --confirmed");
-                assert_eq!(expected_revision, Some(7));
+                assert_eq!(expected_revision, 7);
             },
             _ => panic!("expected delete command"),
+        }
+    }
+
+    #[test]
+    fn channel_mutation_cli_rejects_a_missing_expected_revision() {
+        for args in [
+            vec![
+                "channels",
+                "update",
+                "1001",
+                "--name",
+                "meter-2",
+                "--confirmed",
+            ],
+            vec!["channels", "delete", "1001", "--force", "--confirmed"],
+            vec!["channels", "enable", "1001", "--confirmed"],
+            vec!["channels", "disable", "1001", "--confirmed"],
+        ] {
+            let error = ChannelCli::try_parse_from(args)
+                .err()
+                .expect("online channel mutations must require a CAS revision");
+            assert!(error.to_string().contains("--expected-revision"), "{error}");
         }
     }
 
@@ -1423,7 +1462,7 @@ mod tests {
                 _ => panic!("expected governed channel mutation"),
             };
             assert!(confirmed);
-            assert_eq!(expected_revision, Some(7));
+            assert_eq!(expected_revision, 7);
         }
     }
 
@@ -1531,11 +1570,16 @@ mod tests {
                 )
                 .await,
             authenticated
-                .update_channel(1001, serde_json::json!({ "name": "blocked" }), false, None)
+                .update_channel(
+                    1001,
+                    serde_json::json!({ "name": "blocked" }),
+                    false,
+                    Some(1),
+                )
                 .await,
-            authenticated.delete_channel(1001, false, None).await,
-            authenticated.set_enabled(1001, true, false, None).await,
-            authenticated.set_enabled(1001, false, false, None).await,
+            authenticated.delete_channel(1001, false, Some(1)).await,
+            authenticated.set_enabled(1001, true, false, Some(1)).await,
+            authenticated.set_enabled(1001, false, false, Some(1)).await,
         ];
         assert!(unconfirmed.iter().all(Result::is_err), "{unconfirmed:?}");
         assert!(
@@ -1565,11 +1609,18 @@ mod tests {
                 )
                 .await,
             unauthenticated
-                .update_channel(1001, serde_json::json!({ "name": "blocked" }), true, None)
+                .update_channel(
+                    1001,
+                    serde_json::json!({ "name": "blocked" }),
+                    true,
+                    Some(1),
+                )
                 .await,
-            unauthenticated.delete_channel(1001, true, None).await,
-            unauthenticated.set_enabled(1001, true, true, None).await,
-            unauthenticated.set_enabled(1001, false, true, None).await,
+            unauthenticated.delete_channel(1001, true, Some(1)).await,
+            unauthenticated.set_enabled(1001, true, true, Some(1)).await,
+            unauthenticated
+                .set_enabled(1001, false, true, Some(1))
+                .await,
         ];
         assert!(
             unauthenticated_results.iter().all(Result::is_err),
@@ -1591,6 +1642,32 @@ mod tests {
             .to_string();
         assert!(error.contains("at least 1"), "{error}");
 
+        assert!(server.received_requests().await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn channel_mutation_fails_before_http_without_an_expected_revision() {
+        let server = MockServer::start().await;
+        let client =
+            ChannelClient::with_access_token(&server.uri(), "signed-access-token").unwrap();
+
+        let results = [
+            client
+                .update_channel(1001, serde_json::json!({ "name": "blocked" }), true, None)
+                .await,
+            client.delete_channel(1001, true, None).await,
+            client.set_enabled(1001, true, true, None).await,
+        ];
+
+        assert!(results.iter().all(Result::is_err), "{results:?}");
+        assert!(
+            results.iter().all(|result| result
+                .as_ref()
+                .unwrap_err()
+                .to_string()
+                .contains("--expected-revision")),
+            "{results:?}"
+        );
         assert!(server.received_requests().await.unwrap().is_empty());
     }
 
@@ -1799,7 +1876,10 @@ mod tests {
 
         let client =
             ChannelClient::with_access_token(&server.uri(), "signed-access-token").unwrap();
-        client.set_enabled(1001, false, true, None).await.unwrap();
+        client
+            .set_enabled(1001, false, true, Some(1))
+            .await
+            .unwrap();
     }
 
     #[tokio::test]
@@ -1821,7 +1901,7 @@ mod tests {
         let client =
             ChannelClient::with_access_token(&server.uri(), "signed-access-token").unwrap();
         let err = client
-            .set_enabled(9, true, true, None)
+            .set_enabled(9, true, true, Some(1))
             .await
             .unwrap_err()
             .to_string();

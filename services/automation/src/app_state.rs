@@ -4,11 +4,14 @@
 
 use std::sync::Arc;
 
-use aether_application::{ActionRoutingApplication, ControlApplication};
+use aether_application::{
+    ActionRoutingApplication, ControlApplication, MeasurementRoutingApplication,
+};
 
 use crate::config::AutomationConfig;
 use crate::error::AutomationError;
 use crate::infra::application_control::ControlAuthenticator;
+use crate::instance_configuration::InstanceConfigurationApplication;
 use crate::instance_manager::InstanceManager;
 use aether_shm_bridge::ShmDeviceCommandSink;
 
@@ -26,6 +29,12 @@ pub struct AppState {
     /// Shared authenticated and audited physical action-routing use case.
     pub action_routing_application: Arc<ActionRoutingApplication>,
 
+    /// Shared authenticated, audited, revision-fenced measurement-routing use case.
+    pub measurement_routing_application: Arc<MeasurementRoutingApplication>,
+
+    /// Shared authenticated, audited, revision-fenced instance desired-state use case.
+    pub instance_configuration_application: Arc<InstanceConfigurationApplication>,
+
     /// Verifies JWT and service credentials before constructing command actors.
     pub control_authenticator: Arc<ControlAuthenticator>,
 
@@ -40,6 +49,8 @@ impl AppState {
         instance_manager: Arc<InstanceManager>,
         control_application: Arc<ControlApplication>,
         action_routing_application: Arc<ActionRoutingApplication>,
+        measurement_routing_application: Arc<MeasurementRoutingApplication>,
+        instance_configuration_application: Arc<InstanceConfigurationApplication>,
         control_authenticator: Arc<ControlAuthenticator>,
         shm_dispatch: Arc<ShmDeviceCommandSink>,
     ) -> Self {
@@ -48,6 +59,8 @@ impl AppState {
             instance_manager,
             control_application,
             action_routing_application,
+            measurement_routing_application,
+            instance_configuration_application,
             control_authenticator,
             shm_dispatch,
         }

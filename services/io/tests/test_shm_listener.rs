@@ -11,7 +11,7 @@ use std::time::Duration;
 use aether_io::core::channels::ShmCommandListener;
 use aether_io::core::channels::types::ChannelCommand;
 use aether_model::PointType;
-use aether_rtdb_shm::ShmNotification;
+use aether_shm_bridge::DeviceCommandFrame;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::mpsc;
 use tokio::time::timeout;
@@ -51,7 +51,7 @@ fn start_listener(
 /// Helper: write a raw ShmNotification to a UDS socket at `path`.
 ///
 /// Connects once, sends the bytes, then drops the connection.
-async fn send_notification(path: &str, notif: ShmNotification) {
+async fn send_notification(path: &str, notif: DeviceCommandFrame) {
     let mut stream = tokio::net::UnixStream::connect(path)
         .await
         .expect("UDS connect failed");
@@ -61,6 +61,28 @@ async fn send_notification(path: &str, notif: ShmNotification) {
         .expect("UDS write failed");
     // Flush and drop so the listener sees EOF
     stream.flush().await.ok();
+}
+
+fn command_frame(
+    channel_id: u32,
+    point_type: PointType,
+    point_id: u32,
+    value: f64,
+    timestamp_ms: u64,
+    expires_at_ms: u64,
+    producer_id: u64,
+    sequence: u64,
+) -> DeviceCommandFrame {
+    let mut bytes = [0_u8; DeviceCommandFrame::SIZE];
+    bytes[0..4].copy_from_slice(&channel_id.to_ne_bytes());
+    bytes[4..8].copy_from_slice(&point_id.to_ne_bytes());
+    bytes[8] = point_type as u8;
+    bytes[16..24].copy_from_slice(&value.to_bits().to_ne_bytes());
+    bytes[24..32].copy_from_slice(&timestamp_ms.to_ne_bytes());
+    bytes[32..40].copy_from_slice(&expires_at_ms.to_ne_bytes());
+    bytes[40..48].copy_from_slice(&producer_id.to_ne_bytes());
+    bytes[48..56].copy_from_slice(&sequence.to_ne_bytes());
+    DeviceCommandFrame::from_bytes(&bytes)
 }
 
 /// Helper: wait for the listener socket to become ready (poll up to 200 ms).
@@ -90,7 +112,7 @@ async fn test_listener_receives_control_command() {
     let (shutdown_tx, _handle) = start_listener(&uds_path, senders);
     wait_for_listener(&uds_path).await;
 
-    let notif = ShmNotification::new(
+    let notif = command_frame(
         1001,                  // channel_id
         PointType::Control,    // point_type
         42,                    // point_id
@@ -132,7 +154,7 @@ async fn test_listener_receives_adjustment_command() {
     let (shutdown_tx, _handle) = start_listener(&uds_path, senders);
     wait_for_listener(&uds_path).await;
 
-    let notif = ShmNotification::new(
+    let notif = command_frame(
         2001,
         PointType::Adjustment,
         7,
@@ -177,7 +199,7 @@ async fn test_listener_ignores_unknown_channel() {
     let (shutdown_tx, _handle) = start_listener(&uds_path, senders);
     wait_for_listener(&uds_path).await;
 
-    let notif = ShmNotification::new(9999, PointType::Control, 1, 1.0, 0, u64::MAX, 42, 1);
+    let notif = command_frame(9999, PointType::Control, 1, 1.0, 0, u64::MAX, 42, 1);
     send_notification(&uds_path, notif).await;
 
     // Give the listener some time to process the notification
@@ -210,7 +232,7 @@ async fn test_listener_dedup_same_sequence() {
     let producer_id = 0x1111_2222_3333_4444u64;
     let seq = 5u64;
 
-    let notif_first = ShmNotification::new(
+    let notif_first = command_frame(
         1001,
         PointType::Control,
         10,
@@ -220,7 +242,7 @@ async fn test_listener_dedup_same_sequence() {
         producer_id,
         seq,
     );
-    let notif_dup = ShmNotification::new(
+    let notif_dup = command_frame(
         1001,
         PointType::Control,
         10,
@@ -277,18 +299,7 @@ async fn test_listener_rejects_nan_value() {
     let (shutdown_tx, _handle) = start_listener(&uds_path, senders);
     wait_for_listener(&uds_path).await;
 
-    // Craft a notification with NaN stored in value_bits
-    let nan_notif = ShmNotification {
-        channel_id: 1001,
-        point_id: 5,
-        point_type: PointType::Control as u8,
-        _padding: [0; 7],
-        value_bits: f64::NAN.to_bits(),
-        timestamp_ms: 1234,
-        expires_at_ms: u64::MAX,
-        producer_id: 99,
-        seq: 1,
-    };
+    let nan_notif = command_frame(1001, PointType::Control, 5, f64::NAN, 1234, u64::MAX, 99, 1);
     send_notification(&uds_path, nan_notif).await;
 
     // Give the listener time to process
@@ -318,7 +329,7 @@ async fn test_listener_rejects_expired_command() {
         .duration_since(std::time::UNIX_EPOCH)
         .expect("system clock")
         .as_millis() as u64;
-    let expired = ShmNotification::new(
+    let expired = command_frame(
         1001,
         PointType::Control,
         5,

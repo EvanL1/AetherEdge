@@ -8,6 +8,11 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 INSTALLER="$ROOT_DIR/tools/aether/install.sh"
 INSTALLER_BUILDER="$ROOT_DIR/scripts/build-installer.sh"
 RELEASE_WORKFLOW="$ROOT_DIR/.github/workflows/release.yml"
+PUBLIC_CRATE_CATALOG="$ROOT_DIR/scripts/public-crates.txt"
+PUBLIC_CRATE_CHECKER="$ROOT_DIR/scripts/check-public-crate-release.sh"
+PUBLIC_CRATE_PUBLISHER="$ROOT_DIR/scripts/publish-public-crates.sh"
+PUBLIC_API_CHECKER="$ROOT_DIR/scripts/check-public-api-compatibility.sh"
+PUBLIC_ARCHIVE_VERIFIER="$ROOT_DIR/scripts/verify-published-crate-archive.sh"
 
 fail() {
     echo "FAIL: $*" >&2
@@ -244,6 +249,8 @@ run_installer_case unsupported-windows-arm64 MINGW64_NT arm64 sha256sum "$MATCHI
 echo "Testing full installer checksums remain in the release workflow..."
 # The following arguments are literal GitHub Actions and shell snippets.
 assert_file_contains "$RELEASE_WORKFLOW" './scripts/test-release-integrity.sh'
+assert_file_contains "$RELEASE_WORKFLOW" './scripts/test-extraction-readiness.sh'
+assert_file_contains "$RELEASE_WORKFLOW" './scripts/check-extraction-readiness.sh --local-only'
 assert_file_contains "$RELEASE_WORKFLOW" 'sha256sum "$ARTIFACT_NAME" > "${ARTIFACT_NAME}.sha256"'
 assert_file_contains "$RELEASE_WORKFLOW" 'sha256sum "$AETHER_TAR_NAME" > "${AETHER_TAR_NAME}.sha256"'
 assert_file_contains "$RELEASE_WORKFLOW" 'release/${{ steps.version.outputs.artifact_name }}.sha256'
@@ -260,34 +267,54 @@ assert_file_not_contains "$INSTALLER_BUILDER" '--list | grep'
 assert_file_not_contains "$RELEASE_WORKFLOW" '--list | grep'
 assert_file_not_contains "$RELEASE_WORKFLOW" '| grep -Fxq'
 
-echo "Testing the release is source-and-binary only..."
-assert_file_not_contains "$RELEASE_WORKFLOW" 'cargo publish'
-assert_file_not_contains "$RELEASE_WORKFLOW" 'CARGO_REGISTRY_TOKEN'
-assert_file_not_contains "$RELEASE_WORKFLOW" 'publish-crates'
+echo "Testing the source release remains part of the independently attested payload..."
 assert_file_contains "$RELEASE_WORKFLOW" 'aetheriot-source-${GITHUB_REF_NAME}.tar.gz'
 assert_file_contains "$RELEASE_WORKFLOW" 'release/aetheriot-source-*.tar.gz'
 assert_file_contains "$RELEASE_WORKFLOW" 'release/aetheriot-source-${{ github.ref_name }}.tar.gz.sha256'
 
-echo "Testing workspace implementation crates cannot be published..."
-private_manifests=(
-    crates/aether-application/Cargo.toml
-    crates/aether-data-processing/Cargo.toml
-    crates/aether-dataplane/Cargo.toml
-    crates/aether-domain/Cargo.toml
-    crates/aether-pack/Cargo.toml
-    crates/aether-ports/Cargo.toml
-    crates/aether-sdk/Cargo.toml
-    crates/aether-testkit/Cargo.toml
-    extensions/http-data-processor/Cargo.toml
-    extensions/http-history-query/Cargo.toml
-    extensions/postgres-history/Cargo.toml
-    extensions/redis-bridge/Cargo.toml
-    extensions/shm-bridge/Cargo.toml
-    extensions/sqlite-history-query/Cargo.toml
-    extensions/store-local/Cargo.toml
-)
-for manifest in "${private_manifests[@]}"; do
-    assert_file_contains "$ROOT_DIR/$manifest" 'publish = false'
-done
+echo "Testing Kernel, CLI, and Energy Pack releases remain independent and attested..."
+assert_file_contains "$RELEASE_WORKFLOW" 'name: ${{ matrix.arch }}-kernel-runtime'
+assert_file_contains "$RELEASE_WORKFLOW" 'name: aether-linux-${{ matrix.zig_arch }}'
+assert_file_contains "$RELEASE_WORKFLOW" 'name: ${{ matrix.arch }}-energy-pack'
+assert_file_contains "$RELEASE_WORKFLOW" './scripts/build-pack-artifact.sh'
+assert_file_contains "$RELEASE_WORKFLOW" 'aetherems-energy-pack-${{ matrix.target }}-${VERSION}.tar.gz'
+assert_file_contains "$RELEASE_WORKFLOW" 'distributions/aetherems/runtime-io-features.txt'
+assert_file_contains "$RELEASE_WORKFLOW" 'io-features="$AETHEREMS_IO_FEATURES"'
+assert_file_contains "$RELEASE_WORKFLOW" 'sha256sum "$ENERGY_PACK_ARCHIVE_NAME" > "${ENERGY_PACK_ARCHIVE_NAME}.sha256"'
+assert_file_contains "$RELEASE_WORKFLOW" 'uses: actions/attest@v4'
+assert_file_contains "$RELEASE_WORKFLOW" 'attestations: write'
+assert_file_contains "$RELEASE_WORKFLOW" 'id-token: write'
+[[ "$(grep -Fc 'artifact-metadata: write' "$RELEASE_WORKFLOW")" == 3 ]] \
+    || fail "every artifact-attestation job must grant artifact-metadata: write"
+assert_file_contains "$RELEASE_WORKFLOW" 'subject-path: release/${{ steps.version.outputs.artifact_name }}'
+assert_file_contains "$RELEASE_WORKFLOW" 'subject-path: release/aether-linux-${{ matrix.zig_arch }}.tar.gz'
+assert_file_contains "$RELEASE_WORKFLOW" 'subject-path: release/${{ steps.energy_pack.outputs.archive_name }}'
+
+echo "Testing public Rust crates are independently verified, published, and attested..."
+[[ -s "$PUBLIC_CRATE_CATALOG" ]] || fail "public crate catalog is missing"
+[[ -x "$PUBLIC_CRATE_CHECKER" ]] || fail "public crate release checker is missing or not executable"
+[[ -x "$PUBLIC_CRATE_PUBLISHER" ]] || fail "public crate publisher is missing or not executable"
+[[ -x "$PUBLIC_API_CHECKER" ]] || fail "public API compatibility checker is missing or not executable"
+[[ -x "$PUBLIC_ARCHIVE_VERIFIER" ]] || fail "published crate archive verifier is missing or not executable"
+assert_file_contains "$RELEASE_WORKFLOW" './scripts/test-public-crate-release.sh'
+assert_file_contains "$RELEASE_WORKFLOW" './scripts/check-public-crate-release.sh'
+assert_file_contains "$RELEASE_WORKFLOW" 'cargo install cargo-semver-checks --version 0.46.0 --locked'
+assert_file_contains "$RELEASE_WORKFLOW" './scripts/check-public-api-compatibility.sh'
+assert_file_contains "$PUBLIC_CRATE_PUBLISHER" 'verify-published-crate-archive.sh'
+assert_file_contains "$RELEASE_WORKFLOW" 'publish-crates:'
+assert_file_contains "$RELEASE_WORKFLOW" 'CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}'
+assert_file_contains "$RELEASE_WORKFLOW" './scripts/publish-public-crates.sh --execute'
+assert_file_contains "$RELEASE_WORKFLOW" 'subject-path: target/package/*.crate'
+assert_file_contains "$RELEASE_WORKFLOW" 'needs: [build, aether-extra, publish-crates]'
+
+echo "Testing runtime-manifest binary source survives clean checkouts..."
+RUNTIME_MANIFEST_SOURCE="$ROOT_DIR/libs/aether-runtime-catalog/src/bin/aether-runtime-manifest.rs"
+[[ -s "$RUNTIME_MANIFEST_SOURCE" ]] \
+    || fail "runtime-manifest binary source is missing"
+if git -C "$ROOT_DIR" check-ignore -q "$RUNTIME_MANIFEST_SOURCE"; then
+    fail "runtime-manifest binary source is ignored"
+fi
+assert_file_contains "$ROOT_DIR/.gitignore" '!**/src/bin/'
+assert_file_contains "$ROOT_DIR/.gitignore" '!**/src/bin/**'
 
 echo "Release integrity tests passed."

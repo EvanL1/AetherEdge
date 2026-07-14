@@ -1,13 +1,12 @@
 [package]
 name = "aether-redis-bridge"
 version.workspace = true
-publish = false
 edition = "2024"
 rust-version = "1.90"
 description = "Optional Redis live-state mirror for Aether"
 license.workspace = true
 repository.workspace = true
-documentation = "https://docs.aetheriot.workers.dev/extensions/redis-bridge"
+documentation = "https://docs.rs/aether-redis-bridge"
 readme = "README.md"
 keywords = ["iot", "edge", "redis", "gateway"]
 categories = ["embedded", "database"]

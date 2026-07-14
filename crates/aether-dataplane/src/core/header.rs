@@ -63,7 +63,11 @@ pub struct UnifiedHeader {
     /// Writer generation counter — bumped on every create/reconfigure.
     /// Readers observe odd values to detect a reconfigure-in-progress window.
     pub writer_generation: AtomicU64,
-    /// Reserved for future use
+    /// Reserved bytes retained for source and layout compatibility.
+    ///
+    /// Coordinated writers encode their opaque publication epoch here. Legacy
+    /// readers continue to treat these bytes as reserved, while new readers
+    /// access them through [`Self::publication_epoch`].
     pub _reserved: [u8; 8],
 }
 
@@ -94,6 +98,13 @@ pub struct HeaderSnapshot {
 }
 
 impl UnifiedHeader {
+    /// Returns the cross-plane publication identity encoded in the reserved
+    /// header bytes, or zero for an uncoordinated file.
+    #[must_use]
+    pub fn publication_epoch(&self) -> u64 {
+        u64::from_ne_bytes(self._reserved)
+    }
+
     /// Copies the current header values into a non-mutable view.
     #[must_use]
     pub fn snapshot(&self) -> HeaderSnapshot {

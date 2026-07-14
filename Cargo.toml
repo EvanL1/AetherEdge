@@ -47,7 +47,6 @@ members = [
     "libs/aether-model",
     # libs/aether-protocols removed - protocols are now in io
     "libs/aether-rtdb",
-    "libs/aether-rtdb-shm",
     "libs/aether-routing",
     "libs/aether-runtime-catalog",
     "libs/aether-rules",

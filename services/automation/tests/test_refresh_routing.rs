@@ -1,14 +1,12 @@
-//! Tests for refresh_routing() — local routing cache refresh
+//! Tests for refresh_routing() — authoritative route reconciliation
 //!
-//! After the SHM/routing decoupling, refresh_routing() is a pure local operation:
-//! load routes from SQLite → update in-memory RoutingCache. No io HTTP call,
-//! no SHM rebuild.
+//! Without a composed runtime topology it validates/counts SQLite routes but
+//! never publishes a second mutable routing owner.
 
 #![allow(clippy::disallowed_methods)] // test code — unwrap is acceptable
 
 use aether_automation::instance_manager::InstanceManager;
 use aether_automation::product_loader::ProductLoader;
-use aether_routing::RoutingCache;
 use common::ReloadableService;
 use sqlx::SqlitePool;
 use std::sync::Arc;
@@ -30,9 +28,8 @@ async fn create_test_db() -> (TempDir, SqlitePool) {
 }
 
 fn make_manager(pool: SqlitePool) -> InstanceManager {
-    let routing_cache = Arc::new(RoutingCache::new());
     let product_loader = Arc::new(ProductLoader::new(pool.clone()));
-    InstanceManager::new(pool, routing_cache, product_loader)
+    InstanceManager::new(pool, product_loader)
 }
 
 async fn insert_action_routing(pool: &SqlitePool) {
@@ -67,21 +64,14 @@ async fn insert_action_routing(pool: &SqlitePool) {
 // refresh_routing() tests
 // ============================================================================
 
-/// After inserting routing data into SQLite, refresh_routing() must:
-/// - Load routes from SQLite into the RoutingCache
-/// - Return Ok(count) where count > 0
-/// - The RoutingCache must now contain the loaded M2C entry
+/// After inserting routing data into SQLite, refresh_routing() validates the
+/// authoritative rows and reports their count without creating a cache.
 #[tokio::test]
-async fn test_refresh_routing_updates_cache() {
+async fn test_refresh_routing_reports_authoritative_route_count() {
     let (_tmp, pool) = create_test_db().await;
     insert_action_routing(&pool).await;
 
     let manager = make_manager(pool);
-
-    assert!(
-        manager.routing_cache().lookup_m2c("1:A:1").is_none(),
-        "Cache should be empty before refresh"
-    );
 
     let result = manager.refresh_routing().await;
 
@@ -93,11 +83,6 @@ async fn test_refresh_routing_updates_cache() {
     assert!(
         result.unwrap() > 0,
         "route count must be > 0 after inserting a row"
-    );
-
-    assert!(
-        manager.routing_cache().lookup_m2c("1:A:1").is_some(),
-        "RoutingCache must hold the M2C route after refresh"
     );
 }
 

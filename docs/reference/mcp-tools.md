@@ -1,7 +1,7 @@
 ---
 title: MCP Tools Reference
 description: All MCP tools grouped by domain, with parameters and write-safety markers
-updated: 2026-07-12
+updated: 2026-07-13
 ---
 
 # MCP Tools Reference
@@ -151,7 +151,7 @@ Delete a communication channel through the authenticated, explicitly confirmed, 
 |---|---|---|---|
 | `channel_id` | integer | yes | Channel ID |
 | `confirmed` | boolean | yes | Explicitly confirms this high-risk channel commissioning mutation. |
-| `expected_revision` | integer/null | no | Optional desired-state compare-and-set revision (minimum 1) |
+| `expected_revision` | integer | yes | Required desired-state compare-and-set revision from the latest channel read (minimum 1) |
 
 ### `channels_disable` (**WRITE**)
 
@@ -161,7 +161,7 @@ Disable a communication channel through the authenticated, explicitly confirmed,
 |---|---|---|---|
 | `channel_id` | integer | yes | Channel ID |
 | `confirmed` | boolean | yes | Explicitly confirms this high-risk channel commissioning mutation. |
-| `expected_revision` | integer/null | no | Optional desired-state compare-and-set revision (minimum 1) |
+| `expected_revision` | integer | yes | Required desired-state compare-and-set revision from the latest channel read (minimum 1) |
 
 ### `channels_enable` (**WRITE**)
 
@@ -171,7 +171,7 @@ Enable a communication channel through the authenticated, explicitly confirmed, 
 |---|---|---|---|
 | `channel_id` | integer | yes | Channel ID |
 | `confirmed` | boolean | yes | Explicitly confirms this high-risk channel commissioning mutation. |
-| `expected_revision` | integer/null | no | Optional desired-state compare-and-set revision (minimum 1) |
+| `expected_revision` | integer | yes | Required desired-state compare-and-set revision from the latest channel read (minimum 1) |
 
 ### `channels_list` (read-only)
 
@@ -230,14 +230,14 @@ List points on a channel that have no protocol address mapping (points not wired
 
 ### `channels_update` (**WRITE**)
 
-Update a communication channel through the authenticated, explicitly confirmed, and audited io.channel.manage application command. This is a high-risk, non-idempotent commissioning mutation; expected_revision is an optional compare-and-set guard. Success may report a degraded runtime projection or incomplete completion audit: inspect request_id, resulting_revision, and reconciliation_required. Clients must not automatically retry.
+Update a communication channel through the authenticated, explicitly confirmed, and audited io.channel.manage application command. This is a high-risk, non-idempotent commissioning mutation; expected_revision from the latest channel read is required as a compare-and-set guard. Success may report a degraded runtime projection or incomplete completion audit: inspect request_id, resulting_revision, and reconciliation_required. Clients must not automatically retry.
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
 | `body` | - | yes | Partial update body -- only fields present are changed |
 | `channel_id` | integer | yes | Channel ID |
 | `confirmed` | boolean | yes | Explicitly confirms this high-risk channel commissioning mutation. |
-| `expected_revision` | integer/null | no | Optional desired-state compare-and-set revision (minimum 1) |
+| `expected_revision` | integer | yes | Required desired-state compare-and-set revision from the latest channel read (minimum 1) |
 
 
 ## history

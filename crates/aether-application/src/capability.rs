@@ -190,6 +190,21 @@ pub const MANAGE_ROUTING_CAPABILITY: CapabilityDescriptor = CapabilityDescriptor
     false,
 );
 
+/// Commission, rename, configure, or delete a logical device instance.
+///
+/// Instance hierarchy changes alter desired logical topology and can
+/// invalidate later automation assumptions. They therefore use a distinct,
+/// explicitly confirmed and durably audited high-risk permission.
+pub const MANAGE_INSTANCE_CAPABILITY: CapabilityDescriptor = CapabilityDescriptor::new(
+    "automation.instance.manage",
+    OperationKind::Command,
+    RiskLevel::High,
+    "automation.instance.manage",
+    ConfirmationPolicy::Always,
+    AuditPolicy::Required,
+    false,
+);
+
 /// Create, edit, enable, disable, or delete an I/O channel.
 ///
 /// Channel commissioning changes acquisition and device-control connectivity.
@@ -283,12 +298,13 @@ pub const PROCESS_DATA_CAPABILITY: CapabilityDescriptor = CapabilityDescriptor::
     false,
 );
 
-const CAPABILITY_CATALOG: [CapabilityDescriptor; 12] = [
+const CAPABILITY_CATALOG: [CapabilityDescriptor; 13] = [
     READ_POINT_CAPABILITY,
     WRITE_POINT_CAPABILITY,
     EXECUTE_RULE_CAPABILITY,
     MANAGE_RULE_CAPABILITY,
     MANAGE_ROUTING_CAPABILITY,
+    MANAGE_INSTANCE_CAPABILITY,
     MANAGE_CHANNEL_CAPABILITY,
     RECONCILE_CHANNELS_CAPABILITY,
     MANAGE_ALARM_RULE_CAPABILITY,

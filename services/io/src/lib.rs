@@ -6,8 +6,10 @@
 #![allow(clippy::result_large_err)]
 
 // Module declarations
+pub mod automatic_reconciliation;
 pub mod channel_mutator;
 pub mod error;
+pub mod point_topology;
 pub mod protocols;
 pub mod utils;
 

@@ -16,7 +16,6 @@ use crate::{RuleActionCommand, RuleActionCommandFacade};
 use aether_calc::{CalcEngine, MemoryStateStore, StateStore};
 use aether_domain::{InstanceId, PointId};
 use aether_model::{ValidationConfig, validate_value};
-use aether_routing::RoutingCache;
 use serde::Serialize;
 use std::borrow::Cow;
 use std::collections::HashMap;
@@ -278,7 +277,7 @@ pub struct RuleExecutor<S: StateStore = MemoryStateStore> {
 
 impl RuleExecutor<MemoryStateStore> {
     /// Create with default MemoryStateStore
-    pub fn new<L>(live_state: Arc<L>, _routing_cache: Arc<RoutingCache>) -> Self
+    pub fn new<L>(live_state: Arc<L>) -> Self
     where
         L: RuleLiveState + 'static,
     {
@@ -292,11 +291,7 @@ impl RuleExecutor<MemoryStateStore> {
 
 impl<S: StateStore> RuleExecutor<S> {
     /// Create with custom state store
-    pub fn with_state_store<L>(
-        live_state: Arc<L>,
-        _routing_cache: Arc<RoutingCache>,
-        state_store: Arc<S>,
-    ) -> Self
+    pub fn with_state_store<L>(live_state: Arc<L>, state_store: Arc<S>) -> Self
     where
         L: RuleLiveState + 'static,
     {

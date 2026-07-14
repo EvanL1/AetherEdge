@@ -47,6 +47,7 @@ dependencies = [
  "schemars 1.2.1",
  "serde",
  "serde_json",
+ "serde_json_path",
  "serde_yaml_ng",
  "sha2",
  "sqlx",
@@ -173,8 +174,6 @@ dependencies = [
  "aether-model",
  "aether-pack",
  "aether-ports",
- "aether-routing",
- "aether-rtdb-shm",
  "aether-rules",
  "aether-runtime-catalog",
  "aether-shm-bridge",
@@ -319,7 +318,9 @@ dependencies = [
  "aether-domain",
  "aether-ports",
  "aether-shm-bridge",
+ "aether-store-local",
  "anyhow",
+ "arc-swap",
  "async-trait",
  "axum",
  "chrono",
@@ -328,6 +329,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sqlx",
+ "tempfile",
  "tokio",
  "tokio-util",
  "tower-http",
@@ -399,7 +401,6 @@ dependencies = [
  "aether-model",
  "aether-ports",
  "aether-routing",
- "aether-rtdb-shm",
  "aether-runtime-catalog",
  "aether-shm-bridge",
  "aether-store-local",
@@ -538,30 +539,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "aether-rtdb-shm"
-version = "0.5.0"
-dependencies = [
- "aether-dataplane",
- "aether-domain",
- "aether-model",
- "aether-routing",
- "aether-rules",
- "aether-shm-bridge",
- "anyhow",
- "arc-swap",
- "async-trait",
- "bytemuck",
- "criterion",
- "memmap2",
- "rustc-hash",
- "sqlx",
- "tempfile",
- "tokio",
- "tokio-util",
- "tracing",
-]
-
-[[package]]
 name = "aether-rules"
 version = "0.5.0"
 dependencies = [
@@ -570,7 +547,6 @@ dependencies = [
  "aether-domain",
  "aether-model",
  "aether-ports",
- "aether-routing",
  "aether-shm-bridge",
  "anyhow",
  "async-trait",
@@ -701,6 +677,7 @@ dependencies = [
  "aether-shm-bridge",
  "aether-store-local",
  "anyhow",
+ "arc-swap",
  "async-trait",
  "axum",
  "bytes",
@@ -1234,26 +1211,6 @@ name = "bumpalo"
 version = "3.19.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5dd9dc738b7a8311c7ade152424974d8115f2cdad61e8dab8dac9f2362298510"
-
-[[package]]
-name = "bytemuck"
-version = "1.25.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d6aedf8ae72766347502cf3cb4f41cf5e9cc37d28bee90f1fdaaae15f9cf9424"
-dependencies = [
- "bytemuck_derive",
-]
-
-[[package]]
-name = "bytemuck_derive"
-version = "1.10.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f9abbd1bc6865053c427f7198e6af43bfdedc55ab791faed4fbd361d789575ff"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.118",
-]
 
 [[package]]
 name = "byteorder"

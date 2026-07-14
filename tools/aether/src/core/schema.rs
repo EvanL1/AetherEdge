@@ -14,39 +14,13 @@ use common::test_utils::schema::{
     CHANNEL_REVISION_DELETE_EXHAUSTED_TRIGGER, CHANNEL_REVISION_DELETE_TOMBSTONE_TRIGGER,
     CHANNEL_REVISION_EXHAUSTED_TRIGGER, CHANNEL_REVISION_INSERT_ADVANCE_TRIGGER,
     CHANNEL_REVISION_INSERT_GUARD_TRIGGER, CHANNEL_REVISION_TOMBSTONES_TABLE,
-    CHANNEL_TEMPLATES_TABLE, CHANNELS_TABLE, CONTROL_POINTS_TABLE, INSTANCE_PROPERTIES_TABLE,
-    INSTANCES_TABLE, MEASUREMENT_ROUTING_TABLE, SERVICE_CONFIG_TABLE, SIGNAL_POINTS_TABLE,
-    SYNC_METADATA_TABLE, TELEMETRY_POINTS_TABLE,
+    CHANNEL_TEMPLATES_TABLE, CHANNELS_TABLE, CONFIGURATION_REVISIONS_TABLE, CONTROL_POINTS_TABLE,
+    INSTANCE_PROPERTIES_TABLE, INSTANCES_TABLE, LOGICAL_ROUTING_INTEGRITY_TRIGGER_NAMES,
+    LOGICAL_ROUTING_INTEGRITY_TRIGGERS, MEASUREMENT_ROUTING_TABLE, SERVICE_CONFIG_TABLE,
+    SIGNAL_POINTS_TABLE, SYNC_METADATA_TABLE, TELEMETRY_POINTS_TABLE,
 };
 
 use super::file_utils;
-
-// ============================================================================
-// JSON Point Mappings DDL (MQTT/HTTP protocol support)
-// ============================================================================
-
-/// JSON point mappings table DDL for MQTT/HTTP protocols
-///
-/// This table enables configuration-driven device integration:
-/// - MQTT devices publish JSON payloads with vendor-specific formats
-/// - HTTP devices return JSON responses with custom schemas
-/// - JSONPath expressions extract values without code changes
-const JSON_POINT_MAPPINGS_TABLE: &str = r#"
-    CREATE TABLE IF NOT EXISTS json_point_mappings (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        channel_id INTEGER NOT NULL REFERENCES channels(channel_id) ON DELETE CASCADE,
-        point_id INTEGER NOT NULL,
-        point_type TEXT NOT NULL,
-        json_path TEXT NOT NULL,
-        data_type TEXT DEFAULT 'float',
-        scale REAL DEFAULT 1.0,
-        offset REAL DEFAULT 0.0,
-        description TEXT,
-        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-        updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
-        UNIQUE(channel_id, point_id, point_type)
-    )
-"#;
 
 // ============================================================================
 // Rules DDL (defined locally since rules are managed by aether)
@@ -102,7 +76,7 @@ const RULE_HISTORY_TABLE: &str = r#"
 //   3. Add `if current < N { migrate_vN(&mut conn).await?; }` in run_migrations()
 
 /// Current schema structure version — increment when adding migrations
-pub(crate) const SCHEMA_VERSION: i32 = 10;
+pub(crate) const SCHEMA_VERSION: i32 = 12;
 
 /// Run pending schema migrations based on `PRAGMA user_version`
 ///
@@ -164,6 +138,18 @@ async fn run_migrations(pool: &SqlitePool) -> Result<()> {
         migrate_v10(&mut conn)
             .await
             .context("Migration v10 failed")?;
+    }
+
+    if current < 11 {
+        migrate_v11(&mut conn)
+            .await
+            .context("Migration v11 failed")?;
+    }
+
+    if current < 12 {
+        migrate_v12(&mut conn)
+            .await
+            .context("Migration v12 failed")?;
     }
 
     sqlx::query(&format!("PRAGMA user_version = {SCHEMA_VERSION}"))
@@ -943,6 +929,17 @@ async fn migrate_v7_in_transaction(conn: &mut SqliteConnection) -> Result<()> {
         return Ok(());
     }
 
+    // Any trigger that references a point table makes SQLite reparse that
+    // dependency while the table is being rebuilt. Remove the canonical
+    // integrity layer inside this same transaction and restore it after all
+    // four identities are stable; rollback restores the original definitions
+    // if any rebuild step fails.
+    for trigger in LOGICAL_ROUTING_INTEGRITY_TRIGGER_NAMES {
+        sqlx::query(&format!("DROP TRIGGER IF EXISTS {trigger}"))
+            .execute(&mut *conn)
+            .await?;
+    }
+
     // Check each staging name immediately before it is used. If a later table
     // is stale, earlier rebuilds have already happened inside this transaction;
     // the outer rollback must restore every live table and its data.
@@ -1004,6 +1001,10 @@ async fn migrate_v7_in_transaction(conn: &mut SqliteConnection) -> Result<()> {
             migration.table
         );
         ensure_point_foreign_keys_valid(conn, migration.table).await?;
+    }
+
+    for trigger in LOGICAL_ROUTING_INTEGRITY_TRIGGERS {
+        sqlx::query(trigger).execute(&mut *conn).await?;
     }
 
     Ok(())
@@ -1136,6 +1137,297 @@ async fn migrate_v10(conn: &mut sqlx::pool::PoolConnection<Sqlite>) -> Result<()
     transaction.commit().await?;
     info!("Migration v10: channel revision tombstone and ABA guards installed");
     Ok(())
+}
+
+/// v11: Add one shared CAS head for the complete logical-routing aggregate.
+async fn migrate_v11(conn: &mut sqlx::pool::PoolConnection<Sqlite>) -> Result<()> {
+    let mut transaction = conn.begin().await?;
+    sqlx::query(CONFIGURATION_REVISIONS_TABLE)
+        .execute(&mut *transaction)
+        .await?;
+    sqlx::query(
+        "INSERT INTO configuration_revisions (scope, revision) \
+         VALUES ('logical_routing', 1) ON CONFLICT(scope) DO NOTHING",
+    )
+    .execute(&mut *transaction)
+    .await?;
+    transaction.commit().await?;
+    info!("Migration v11: logical-routing CAS head installed");
+    Ok(())
+}
+
+#[derive(Debug, sqlx::FromRow)]
+struct LegacyJsonPointMappingRow {
+    id: i64,
+    channel_id: i64,
+    point_id: i64,
+    point_type: String,
+    json_path: String,
+    data_type: Option<String>,
+    scale: Option<f64>,
+    offset: Option<f64>,
+    description: Option<String>,
+}
+
+/// v12: Merge the legacy MQTT/HTTP mapping table into point-owned inline JSON.
+///
+/// The migration takes an immediate write transaction, validates every legacy
+/// row and any pre-existing inline value, then drops the old table only after
+/// the complete generation is represented in the four point tables.
+async fn migrate_v12(conn: &mut sqlx::pool::PoolConnection<Sqlite>) -> Result<()> {
+    if !sqlite_table_exists(conn, "json_point_mappings").await? {
+        info!("Migration v12: no legacy JSON mapping table present");
+        return Ok(());
+    }
+
+    let mut transaction = conn
+        .begin_with("BEGIN IMMEDIATE")
+        .await
+        .context("begin Migration v12 immediate transaction")?;
+    let migration_result = migrate_v12_in_transaction(&mut transaction).await;
+    match migration_result {
+        Ok(()) => {
+            transaction.commit().await?;
+            info!("Migration v12: inline JSON mapping authority installed");
+            Ok(())
+        },
+        Err(error) => match transaction.rollback().await {
+            Ok(()) => Err(error),
+            Err(rollback_error) => Err(anyhow!(
+                "Migration v12 failed: {error:#}; rollback also failed: {rollback_error}"
+            )),
+        },
+    }
+}
+
+async fn migrate_v12_in_transaction(conn: &mut SqliteConnection) -> Result<()> {
+    let rows = sqlx::query_as::<_, LegacyJsonPointMappingRow>(
+        "SELECT id, channel_id, point_id, point_type, json_path, data_type, \
+                scale, offset, description \
+         FROM json_point_mappings ORDER BY id",
+    )
+    .fetch_all(&mut *conn)
+    .await?;
+
+    for row in rows {
+        migrate_legacy_json_mapping(conn, &row).await?;
+    }
+
+    sqlx::query("DROP TABLE json_point_mappings")
+        .execute(&mut *conn)
+        .await?;
+    Ok(())
+}
+
+async fn migrate_legacy_json_mapping(
+    conn: &mut SqliteConnection,
+    row: &LegacyJsonPointMappingRow,
+) -> Result<()> {
+    ensure!(
+        u32::try_from(row.channel_id).is_ok(),
+        "legacy JSON mapping row {} has channel_id outside u32",
+        row.id
+    );
+    ensure!(
+        u32::try_from(row.point_id).is_ok(),
+        "legacy JSON mapping row {} has point_id outside u32",
+        row.id
+    );
+    let protocol: String = sqlx::query_scalar("SELECT protocol FROM channels WHERE channel_id = ?")
+        .bind(row.channel_id)
+        .fetch_optional(&mut *conn)
+        .await?
+        .with_context(|| {
+            format!(
+                "legacy JSON mapping row {} references missing channel {}",
+                row.id, row.channel_id
+            )
+        })?;
+    ensure!(
+        matches!(
+            protocol.trim().to_ascii_lowercase().as_str(),
+            "mqtt" | "http"
+        ),
+        "legacy JSON mapping row {} targets non-JSON protocol `{protocol}`",
+        row.id
+    );
+
+    let point_table = match row.point_type.trim().to_ascii_uppercase().as_str() {
+        "T" => "telemetry_points",
+        "S" => "signal_points",
+        "C" => "control_points",
+        "A" => "adjustment_points",
+        other => bail!(
+            "legacy JSON mapping row {} has invalid point_type `{other}`",
+            row.id
+        ),
+    };
+    let existing_row: Option<Option<String>> = sqlx::query_scalar::<_, Option<String>>(&format!(
+        "SELECT protocol_mappings FROM {point_table} WHERE channel_id = ? AND point_id = ?"
+    ))
+    .bind(row.channel_id)
+    .bind(row.point_id)
+    .fetch_optional(&mut *conn)
+    .await?;
+    let existing = existing_row.with_context(|| {
+        format!(
+            "legacy JSON mapping row {} references missing {} point {}:{}",
+            row.id, row.point_type, row.channel_id, row.point_id
+        )
+    })?;
+
+    let canonical = canonical_legacy_json_mapping(row)?;
+    if let Some(existing) = existing.as_deref()
+        && !existing.trim().is_empty()
+    {
+        let existing_value: serde_json::Value =
+            serde_json::from_str(existing).with_context(|| {
+                format!(
+                    "legacy JSON mapping row {} conflicts with invalid inline JSON",
+                    row.id
+                )
+            })?;
+        if !existing_value.is_null()
+            && !existing_value
+                .as_object()
+                .is_some_and(serde_json::Map::is_empty)
+        {
+            let normalized_existing = canonical_inline_json_mapping(&existing_value)
+                .with_context(|| format!("validate inline JSON for legacy row {}", row.id))?;
+            ensure!(
+                normalized_existing == canonical,
+                "legacy JSON mapping row {} conflicts with non-equivalent inline protocol_mappings",
+                row.id
+            );
+        }
+    }
+
+    let serialized = serde_json::to_string(&canonical)?;
+    let updated = sqlx::query(&format!(
+        "UPDATE {point_table} SET protocol_mappings = ? WHERE channel_id = ? AND point_id = ?"
+    ))
+    .bind(serialized)
+    .bind(row.channel_id)
+    .bind(row.point_id)
+    .execute(&mut *conn)
+    .await?;
+    ensure!(
+        updated.rows_affected() == 1,
+        "legacy JSON mapping row {} was not durably represented inline",
+        row.id
+    );
+    Ok(())
+}
+
+fn canonical_legacy_json_mapping(row: &LegacyJsonPointMappingRow) -> Result<serde_json::Value> {
+    let data_type = canonical_json_mapping_data_type(row.data_type.as_deref())
+        .with_context(|| format!("legacy JSON mapping row {} has invalid data_type", row.id))?;
+    let scale = finite_legacy_mapping_number(row.scale.unwrap_or(1.0), row.id, "scale")?;
+    let offset = finite_legacy_mapping_number(row.offset.unwrap_or(0.0), row.id, "offset")?;
+    ensure!(
+        !row.json_path.trim().is_empty(),
+        "legacy JSON mapping row {} has blank json_path",
+        row.id
+    );
+    serde_json_path::JsonPath::parse(&row.json_path).with_context(|| {
+        format!(
+            "legacy JSON mapping row {} has invalid JSONPath `{}`",
+            row.id, row.json_path
+        )
+    })?;
+
+    let mut mapping = serde_json::Map::new();
+    mapping.insert("json_path".to_string(), row.json_path.clone().into());
+    mapping.insert("data_type".to_string(), data_type.into());
+    mapping.insert("scale".to_string(), scale.into());
+    mapping.insert("offset".to_string(), offset.into());
+    if let Some(description) = &row.description {
+        mapping.insert("description".to_string(), description.clone().into());
+    }
+    Ok(mapping.into())
+}
+
+fn canonical_inline_json_mapping(value: &serde_json::Value) -> Result<serde_json::Value> {
+    let values = value
+        .as_object()
+        .context("inline JSON mapping must be an object")?;
+    for field in values.keys() {
+        ensure!(
+            matches!(
+                field.as_str(),
+                "json_path" | "data_type" | "scale" | "offset" | "description"
+            ),
+            "unsupported inline JSON mapping field `{field}`"
+        );
+    }
+    let json_path = values
+        .get("json_path")
+        .and_then(serde_json::Value::as_str)
+        .filter(|path| !path.trim().is_empty())
+        .context("inline json_path must be a nonblank string")?;
+    serde_json_path::JsonPath::parse(json_path)
+        .with_context(|| format!("invalid inline JSONPath `{json_path}`"))?;
+    let data_type = match values.get("data_type") {
+        None => canonical_json_mapping_data_type(None)?,
+        Some(value) => canonical_json_mapping_data_type(Some(
+            value
+                .as_str()
+                .context("inline data_type must be a string")?,
+        ))?,
+    };
+    let scale = inline_finite_mapping_number(values, "scale", 1.0)?;
+    let offset = inline_finite_mapping_number(values, "offset", 0.0)?;
+    let description = values
+        .get("description")
+        .map(|value| {
+            value
+                .as_str()
+                .context("inline description must be a string")
+        })
+        .transpose()?;
+
+    let mut canonical = serde_json::Map::new();
+    canonical.insert("json_path".to_string(), json_path.into());
+    canonical.insert("data_type".to_string(), data_type.into());
+    canonical.insert("scale".to_string(), scale.into());
+    canonical.insert("offset".to_string(), offset.into());
+    if let Some(description) = description {
+        canonical.insert("description".to_string(), description.into());
+    }
+    Ok(canonical.into())
+}
+
+fn canonical_json_mapping_data_type(value: Option<&str>) -> Result<&'static str> {
+    match value.unwrap_or("float") {
+        "float" => Ok("float"),
+        "int" | "integer" => Ok("int"),
+        "bool" | "boolean" => Ok("bool"),
+        "string" | "str" => Ok("string"),
+        other => bail!("unsupported JSON mapping data_type `{other}`"),
+    }
+}
+
+fn finite_legacy_mapping_number(value: f64, row_id: i64, field: &str) -> Result<f64> {
+    ensure!(
+        value.is_finite(),
+        "legacy JSON mapping row {row_id} has non-finite {field}"
+    );
+    Ok(value)
+}
+
+fn inline_finite_mapping_number(
+    values: &serde_json::Map<String, serde_json::Value>,
+    field: &str,
+    default: f64,
+) -> Result<f64> {
+    let Some(value) = values.get(field) else {
+        return Ok(default);
+    };
+    let value = value
+        .as_f64()
+        .with_context(|| format!("inline {field} must be a number"))?;
+    ensure!(value.is_finite(), "inline {field} must be finite");
+    Ok(value)
 }
 
 async fn sqlite_table_exists(conn: &mut SqliteConnection, table: &str) -> Result<bool> {
@@ -1287,6 +1579,15 @@ pub async fn init_database(db_path: impl AsRef<Path>) -> Result<()> {
     // === Shared tables ===
     sqlx::query(SERVICE_CONFIG_TABLE).execute(&pool).await?;
     sqlx::query(SYNC_METADATA_TABLE).execute(&pool).await?;
+    sqlx::query(CONFIGURATION_REVISIONS_TABLE)
+        .execute(&pool)
+        .await?;
+    sqlx::query(
+        "INSERT INTO configuration_revisions (scope, revision) \
+         VALUES ('logical_routing', 1) ON CONFLICT(scope) DO NOTHING",
+    )
+    .execute(&pool)
+    .await?;
 
     // === Channel & Point tables ===
     sqlx::query(CHANNELS_TABLE).execute(&pool).await?;
@@ -1297,11 +1598,6 @@ pub async fn init_database(db_path: impl AsRef<Path>) -> Result<()> {
     sqlx::query(SIGNAL_POINTS_TABLE).execute(&pool).await?;
     sqlx::query(CONTROL_POINTS_TABLE).execute(&pool).await?;
     sqlx::query(ADJUSTMENT_POINTS_TABLE).execute(&pool).await?;
-
-    // === JSON point mappings table (MQTT/HTTP protocols) ===
-    sqlx::query(JSON_POINT_MAPPINGS_TABLE)
-        .execute(&pool)
-        .await?;
 
     // === Channel templates table ===
     sqlx::query(CHANNEL_TEMPLATES_TABLE).execute(&pool).await?;
@@ -1361,13 +1657,6 @@ async fn create_indexes(pool: &SqlitePool) -> Result<()> {
     .execute(pool)
     .await?;
 
-    // JSON point mappings indexes (for MQTT/HTTP protocols)
-    sqlx::query(
-        "CREATE INDEX IF NOT EXISTS idx_json_point_mappings_channel ON json_point_mappings(channel_id)",
-    )
-    .execute(pool)
-    .await?;
-
     // Instance routing indexes
     sqlx::query(
         "CREATE INDEX IF NOT EXISTS idx_measurement_routing_instance ON measurement_routing(instance_id)",
@@ -1422,112 +1711,106 @@ async fn create_triggers(pool: &SqlitePool) -> Result<()> {
         .execute(pool)
         .await?;
 
-    // When a telemetry point is deleted, remove corresponding measurement_routing records
-    sqlx::query(
-        "CREATE TRIGGER IF NOT EXISTS cleanup_routing_on_telemetry_delete
-         AFTER DELETE ON telemetry_points
-         FOR EACH ROW
-         BEGIN
-             DELETE FROM measurement_routing
-             WHERE channel_id = OLD.channel_id
-               AND channel_type = 'T'
-               AND channel_point_id = OLD.point_id;
-         END",
-    )
-    .execute(pool)
-    .await?;
+    // Validation reads and trigger replacement must share one write-intent
+    // transaction. A deferred transaction lets concurrent initializers all
+    // acquire read locks and then fail while upgrading to a writer; IMMEDIATE
+    // serializes that upgrade through SQLite's configured busy timeout.
+    let mut transaction = pool
+        .begin_with("BEGIN IMMEDIATE")
+        .await
+        .context("begin logical-routing trigger transaction")?;
+    validate_existing_logical_routing(&mut transaction).await?;
 
-    // When a signal point is deleted, remove corresponding measurement_routing records
-    sqlx::query(
-        "CREATE TRIGGER IF NOT EXISTS cleanup_routing_on_signal_delete
-         AFTER DELETE ON signal_points
-         FOR EACH ROW
-         BEGIN
-             DELETE FROM measurement_routing
-             WHERE channel_id = OLD.channel_id
-               AND channel_type = 'S'
-               AND channel_point_id = OLD.point_id;
-         END",
-    )
-    .execute(pool)
-    .await?;
-
-    // Legacy action cleanup triggers changed governed command state as a side
-    // effect of deleting a target. Replace them even on an already initialized
-    // database; measurement cleanup remains configuration-owned.
+    // Legacy point cleanup triggers silently changed the logical-routing
+    // aggregate without its CAS/audit boundary. Remove them even from an
+    // already initialized database; governed point deletion now rejects a
+    // referenced T/S point until routing authority removes the route.
     for trigger in [
+        "cleanup_routing_on_telemetry_delete",
+        "cleanup_routing_on_signal_delete",
         "cleanup_routing_on_control_delete",
         "cleanup_routing_on_adjustment_delete",
-        "protect_action_routing_on_control_delete",
-        "protect_action_routing_on_adjustment_delete",
-        "protect_action_routing_on_channel_delete",
-        "protect_action_routing_on_instance_delete",
-    ] {
+    ]
+    .into_iter()
+    .chain(LOGICAL_ROUTING_INTEGRITY_TRIGGER_NAMES.iter().copied())
+    {
         sqlx::query(&format!("DROP TRIGGER IF EXISTS {trigger}"))
-            .execute(pool)
+            .execute(&mut *transaction)
             .await?;
     }
 
-    // Action routes are command state. Parent deletion must fail until the
-    // governed application command has removed or changed every affected route.
-    sqlx::query(
-        "CREATE TRIGGER IF NOT EXISTS protect_action_routing_on_control_delete
-         BEFORE DELETE ON control_points
-         FOR EACH ROW
-         WHEN EXISTS (
-             SELECT 1 FROM action_routing
-             WHERE channel_id = OLD.channel_id
-               AND channel_type = 'C'
-               AND channel_point_id = OLD.point_id
-         )
-         BEGIN
-             SELECT RAISE(ABORT, 'use the governed action-routing command before deleting an action target');
-         END",
-    )
-    .execute(pool)
-    .await?;
+    // Routing is a separate governed aggregate. Direct SQL may not create a
+    // dangling/mistyped target or let parent/point foreign-key actions mutate
+    // routing without its CAS and audit boundary.
+    for trigger in LOGICAL_ROUTING_INTEGRITY_TRIGGERS {
+        sqlx::query(trigger).execute(&mut *transaction).await?;
+    }
 
-    sqlx::query(
-        "CREATE TRIGGER IF NOT EXISTS protect_action_routing_on_adjustment_delete
-         BEFORE DELETE ON adjustment_points
-         FOR EACH ROW
-         WHEN EXISTS (
-             SELECT 1 FROM action_routing
-             WHERE channel_id = OLD.channel_id
-               AND channel_type = 'A'
-               AND channel_point_id = OLD.point_id
-         )
-         BEGIN
-             SELECT RAISE(ABORT, 'use the governed action-routing command before deleting an action target');
-         END",
-    )
-    .execute(pool)
-    .await?;
+    transaction.commit().await?;
 
-    sqlx::query(
-        "CREATE TRIGGER IF NOT EXISTS protect_action_routing_on_channel_delete
-         BEFORE DELETE ON channels
-         FOR EACH ROW
-         WHEN EXISTS (SELECT 1 FROM action_routing WHERE channel_id = OLD.channel_id)
-         BEGIN
-             SELECT RAISE(ABORT, 'use the governed action-routing command before deleting an action channel');
-         END",
-    )
-    .execute(pool)
-    .await?;
+    Ok(())
+}
 
-    sqlx::query(
-        "CREATE TRIGGER IF NOT EXISTS protect_action_routing_on_instance_delete
-         BEFORE DELETE ON instances
-         FOR EACH ROW
-         WHEN EXISTS (SELECT 1 FROM action_routing WHERE instance_id = OLD.instance_id)
-         BEGIN
-             SELECT RAISE(ABORT, 'use the governed action-routing command before deleting an action instance');
-         END",
+async fn validate_existing_logical_routing(
+    transaction: &mut sqlx::Transaction<'_, Sqlite>,
+) -> Result<()> {
+    let invalid_measurement_routes: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM measurement_routing AS route \
+         WHERE NOT EXISTS (\
+                   SELECT 1 FROM instances \
+                   WHERE instance_id = route.instance_id \
+                     AND instance_name = route.instance_name\
+               ) \
+            OR route.channel_id IS NULL \
+            OR route.channel_type IS NULL \
+            OR route.channel_point_id IS NULL \
+            OR (route.channel_type = 'T' AND NOT EXISTS (\
+                   SELECT 1 FROM telemetry_points \
+                   WHERE channel_id = route.channel_id \
+                     AND point_id = route.channel_point_id\
+               )) \
+            OR (route.channel_type = 'S' AND NOT EXISTS (\
+                   SELECT 1 FROM signal_points \
+                   WHERE channel_id = route.channel_id \
+                     AND point_id = route.channel_point_id\
+               )) \
+            OR route.channel_type NOT IN ('T', 'S')",
     )
-    .execute(pool)
+    .fetch_one(&mut **transaction)
     .await?;
+    ensure!(
+        invalid_measurement_routes == 0,
+        "logical-routing integrity validation found {invalid_measurement_routes} invalid measurement route(s); repair them through the governed measurement-routing command before initialization"
+    );
 
+    let invalid_action_routes: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM action_routing AS route \
+         WHERE NOT EXISTS (\
+                   SELECT 1 FROM instances \
+                   WHERE instance_id = route.instance_id \
+                     AND instance_name = route.instance_name\
+               ) \
+            OR route.channel_id IS NULL \
+            OR route.channel_type IS NULL \
+            OR route.channel_point_id IS NULL \
+            OR (route.channel_type = 'C' AND NOT EXISTS (\
+                   SELECT 1 FROM control_points \
+                   WHERE channel_id = route.channel_id \
+                     AND point_id = route.channel_point_id\
+               )) \
+            OR (route.channel_type = 'A' AND NOT EXISTS (\
+                   SELECT 1 FROM adjustment_points \
+                   WHERE channel_id = route.channel_id \
+                     AND point_id = route.channel_point_id\
+               )) \
+            OR route.channel_type NOT IN ('C', 'A')",
+    )
+    .fetch_one(&mut **transaction)
+    .await?;
+    ensure!(
+        invalid_action_routes == 0,
+        "logical-routing integrity validation found {invalid_action_routes} invalid action route(s); repair them through the governed action-routing command before initialization"
+    );
     Ok(())
 }
 
@@ -1540,6 +1823,286 @@ mod tests {
     use tempfile::TempDir;
 
     use super::*;
+
+    const LEGACY_JSON_POINT_MAPPINGS_TABLE: &str = r#"
+        CREATE TABLE json_point_mappings (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            channel_id INTEGER NOT NULL REFERENCES channels(channel_id) ON DELETE CASCADE,
+            point_id INTEGER NOT NULL,
+            point_type TEXT NOT NULL,
+            json_path TEXT NOT NULL,
+            data_type TEXT DEFAULT 'float',
+            scale REAL DEFAULT 1.0,
+            offset REAL DEFAULT 0.0,
+            description TEXT,
+            UNIQUE(channel_id, point_id, point_type)
+        )
+    "#;
+
+    async fn legacy_json_mapping_pool() -> Result<SqlitePool> {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await?;
+        sqlx::query(CHANNELS_TABLE).execute(&pool).await?;
+        for ddl in [
+            TELEMETRY_POINTS_TABLE,
+            SIGNAL_POINTS_TABLE,
+            CONTROL_POINTS_TABLE,
+            ADJUSTMENT_POINTS_TABLE,
+        ] {
+            sqlx::query(ddl).execute(&pool).await?;
+        }
+        sqlx::query(LEGACY_JSON_POINT_MAPPINGS_TABLE)
+            .execute(&pool)
+            .await?;
+        sqlx::query("PRAGMA user_version = 11")
+            .execute(&pool)
+            .await?;
+        Ok(pool)
+    }
+
+    #[tokio::test]
+    async fn migrate_v12_atomically_moves_every_json_mapping_inline_and_drops_legacy_table()
+    -> Result<()> {
+        let pool = legacy_json_mapping_pool().await?;
+        sqlx::query(
+            "INSERT INTO channels (channel_id, name, protocol, enabled, config) \
+             VALUES (7, 'mqtt-channel', 'mqtt', 0, '{}')",
+        )
+        .execute(&pool)
+        .await?;
+        for (table, point_id) in [
+            ("telemetry_points", 1_i64),
+            ("signal_points", 2),
+            ("control_points", 3),
+            ("adjustment_points", 4),
+        ] {
+            sqlx::query(&format!(
+                "INSERT INTO {table} (channel_id, point_id, signal_name) \
+                 VALUES (7, ?, 'legacy')"
+            ))
+            .bind(point_id)
+            .execute(&pool)
+            .await?;
+        }
+        sqlx::query(
+            "INSERT INTO json_point_mappings \
+             (channel_id, point_id, point_type, json_path, data_type, scale, offset, description) \
+             VALUES (7, 1, 'T', '$.telemetry', 'float', 0.1, -1.0, 'power'), \
+                    (7, 2, 'S', '$.signal', 'boolean', 1.0, 0.0, NULL), \
+                    (7, 3, 'C', '$.control', 'integer', 2.0, 1.0, NULL), \
+                    (7, 4, 'A', '$.adjustment', 'str', 1.0, 0.0, NULL)",
+        )
+        .execute(&pool)
+        .await?;
+
+        run_migrations(&pool).await?;
+
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM sqlite_master \
+                 WHERE type = 'table' AND name = 'json_point_mappings'",
+            )
+            .fetch_one(&pool)
+            .await?,
+            0
+        );
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("PRAGMA user_version")
+                .fetch_one(&pool)
+                .await?,
+            12
+        );
+        let telemetry: String = sqlx::query_scalar(
+            "SELECT protocol_mappings FROM telemetry_points \
+             WHERE channel_id = 7 AND point_id = 1",
+        )
+        .fetch_one(&pool)
+        .await?;
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&telemetry)?,
+            serde_json::json!({
+                "json_path": "$.telemetry",
+                "data_type": "float",
+                "scale": 0.1,
+                "offset": -1.0,
+                "description": "power"
+            })
+        );
+        for (table, point_id, expected_type) in [
+            ("signal_points", 2_i64, "bool"),
+            ("control_points", 3, "int"),
+            ("adjustment_points", 4, "string"),
+        ] {
+            let mapping: String = sqlx::query_scalar(&format!(
+                "SELECT protocol_mappings FROM {table} \
+                 WHERE channel_id = 7 AND point_id = ?"
+            ))
+            .bind(point_id)
+            .fetch_one(&pool)
+            .await?;
+            assert_eq!(
+                serde_json::from_str::<serde_json::Value>(&mapping)?["data_type"],
+                expected_type
+            );
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn migrate_v12_rolls_back_all_rows_on_non_equivalent_inline_conflict() -> Result<()> {
+        let pool = legacy_json_mapping_pool().await?;
+        sqlx::query(
+            "INSERT INTO channels (channel_id, name, protocol, enabled, config) \
+             VALUES (7, 'http-channel', 'http', 0, '{}')",
+        )
+        .execute(&pool)
+        .await?;
+        sqlx::query(
+            "INSERT INTO telemetry_points \
+             (channel_id, point_id, signal_name, protocol_mappings) \
+             VALUES (7, 1, 'first', NULL), \
+                    (7, 2, 'conflict', '{\"json_path\":\"$.new\"}')",
+        )
+        .execute(&pool)
+        .await?;
+        sqlx::query(
+            "INSERT INTO json_point_mappings \
+             (channel_id, point_id, point_type, json_path) \
+             VALUES (7, 1, 'T', '$.first'), (7, 2, 'T', '$.old')",
+        )
+        .execute(&pool)
+        .await?;
+
+        let error = run_migrations(&pool)
+            .await
+            .expect_err("conflicting authority must fail closed");
+
+        assert!(format!("{error:#}").contains("non-equivalent inline"));
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("PRAGMA user_version")
+                .fetch_one(&pool)
+                .await?,
+            11
+        );
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM json_point_mappings")
+                .fetch_one(&pool)
+                .await?,
+            2
+        );
+        let first: Option<String> = sqlx::query_scalar(
+            "SELECT protocol_mappings FROM telemetry_points \
+             WHERE channel_id = 7 AND point_id = 1",
+        )
+        .fetch_one(&pool)
+        .await?;
+        assert!(first.is_none(), "earlier row must roll back with conflict");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn migrate_v12_rejects_non_json_protocol_without_dropping_legacy_rows() -> Result<()> {
+        let pool = legacy_json_mapping_pool().await?;
+        sqlx::query(
+            "INSERT INTO channels (channel_id, name, protocol, enabled, config) \
+             VALUES (7, 'modbus-channel', 'modbus_tcp', 0, '{}')",
+        )
+        .execute(&pool)
+        .await?;
+        sqlx::query(
+            "INSERT INTO telemetry_points (channel_id, point_id, signal_name) \
+             VALUES (7, 1, 'wrong-protocol')",
+        )
+        .execute(&pool)
+        .await?;
+        sqlx::query(
+            "INSERT INTO json_point_mappings \
+             (channel_id, point_id, point_type, json_path) \
+             VALUES (7, 1, 'T', '$.value')",
+        )
+        .execute(&pool)
+        .await?;
+
+        let error = run_migrations(&pool)
+            .await
+            .expect_err("non-JSON protocol mapping must fail closed");
+
+        assert!(format!("{error:#}").contains("non-JSON protocol"));
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM json_point_mappings")
+                .fetch_one(&pool)
+                .await?,
+            1
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn fresh_schema_has_no_legacy_json_mapping_table() -> Result<()> {
+        let workspace = TempDir::new()?;
+        let database_file = workspace.path().join("aether.db");
+        init_database(&database_file).await?;
+        let pool = SqlitePoolOptions::new()
+            .connect_with(common::bootstrap_database::sqlite_connect_options(
+                database_file.to_str().unwrap_or_default(),
+            ))
+            .await?;
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM sqlite_master \
+                 WHERE type = 'table' AND name = 'json_point_mappings'",
+            )
+            .fetch_one(&pool)
+            .await?,
+            0
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn migrate_v11_installs_one_stable_logical_routing_cas_head() -> Result<()> {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await?;
+        sqlx::query("PRAGMA user_version = 10")
+            .execute(&pool)
+            .await?;
+
+        run_migrations(&pool).await?;
+
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>(
+                "SELECT revision FROM configuration_revisions \
+                 WHERE scope = 'logical_routing'",
+            )
+            .fetch_one(&pool)
+            .await?,
+            1
+        );
+        sqlx::query(
+            "UPDATE configuration_revisions SET revision = 7 \
+             WHERE scope = 'logical_routing'",
+        )
+        .execute(&pool)
+        .await?;
+        let mut connection = pool.acquire().await?;
+        migrate_v11(&mut connection).await?;
+        drop(connection);
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>(
+                "SELECT revision FROM configuration_revisions \
+                 WHERE scope = 'logical_routing'",
+            )
+            .fetch_one(&pool)
+            .await?,
+            7,
+            "idempotent migration must not reset the authority head"
+        );
+        Ok(())
+    }
 
     const POINT_TABLE_COLUMNS: [(&str, &[&str]); 4] = [
         (
@@ -1757,6 +2320,22 @@ mod tests {
                 "unexpected error: {error}"
             );
 
+            let error = sqlx::query(&format!(
+                "UPDATE {point_table} SET point_id = point_id + 1000 \
+                 WHERE channel_id = 7 AND point_id = ?"
+            ))
+            .bind(point_id)
+            .execute(&pool)
+            .await
+            .err()
+            .context("action target identity update unexpectedly bypassed governance")?;
+            assert!(
+                error
+                    .to_string()
+                    .contains("governed action-routing command"),
+                "unexpected error: {error}"
+            );
+
             let route_count: i64 = sqlx::query_scalar(
                 "SELECT COUNT(*) FROM action_routing \
                  WHERE instance_id = 1 AND action_id = ?",
@@ -1795,6 +2374,286 @@ mod tests {
             .await?;
         assert_eq!(route_count, 2);
 
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn measurement_targets_and_parents_fail_closed_for_direct_sql() -> Result<()> {
+        let workspace = TempDir::new()?;
+        let database_file = workspace.path().join("aether.db");
+        init_database(&database_file).await?;
+        let pool = SqlitePoolOptions::new()
+            .connect_with(common::bootstrap_database::sqlite_connect_options(
+                database_file.to_str().unwrap_or_default(),
+            ))
+            .await?;
+
+        for statement in [
+            "INSERT INTO channels (channel_id, name, protocol, enabled, config) \
+             VALUES (8, 'measurement-channel', 'virtual', 0, '{}')",
+            "INSERT INTO instances (instance_id, instance_name, product_name) \
+             VALUES (2, 'measurement-instance', 'ExampleDevice')",
+            "INSERT INTO telemetry_points (point_id, channel_id, signal_name) \
+             VALUES (201, 8, 'temperature')",
+            "INSERT INTO signal_points (point_id, channel_id, signal_name) \
+             VALUES (202, 8, 'running')",
+        ] {
+            sqlx::query(statement).execute(&pool).await?;
+        }
+
+        for (instance_name, channel_type, point_id) in [
+            ("measurement-instance", "T", 999_i64),
+            ("measurement-instance", "T", 202_i64),
+            ("wrong-instance-name", "S", 202_i64),
+        ] {
+            let error = sqlx::query(
+                "INSERT INTO measurement_routing \
+                 (instance_id, instance_name, channel_id, channel_type, channel_point_id, measurement_id) \
+                 VALUES (2, ?, 8, ?, ?, 99)",
+            )
+            .bind(instance_name)
+            .bind(channel_type)
+            .bind(point_id)
+            .execute(&pool)
+            .await
+            .err()
+            .context("invalid measurement route unexpectedly bypassed target validation")?;
+            assert!(
+                error
+                    .to_string()
+                    .contains("matching instance and T/S physical target"),
+                "unexpected error: {error}"
+            );
+        }
+
+        sqlx::query(
+            "INSERT INTO measurement_routing \
+             (instance_id, instance_name, channel_id, channel_type, channel_point_id, measurement_id) \
+             VALUES (2, 'measurement-instance', 8, 'T', 201, 1), \
+                    (2, 'measurement-instance', 8, 'S', 202, 2)",
+        )
+        .execute(&pool)
+        .await?;
+
+        let error = sqlx::query(
+            "UPDATE measurement_routing SET channel_point_id = 202 \
+             WHERE instance_id = 2 AND measurement_id = 1",
+        )
+        .execute(&pool)
+        .await
+        .err()
+        .context("mistyped measurement target update unexpectedly succeeded")?;
+        assert!(
+            error
+                .to_string()
+                .contains("matching instance and T/S physical target"),
+            "unexpected error: {error}"
+        );
+
+        for (statement, expected_context) in [
+            (
+                "UPDATE telemetry_points SET point_id = 301 \
+                 WHERE channel_id = 8 AND point_id = 201",
+                "changing a measurement target identity",
+            ),
+            (
+                "DELETE FROM signal_points WHERE channel_id = 8 AND point_id = 202",
+                "deleting a measurement target",
+            ),
+            (
+                "DELETE FROM channels WHERE channel_id = 8",
+                "deleting a measurement channel",
+            ),
+            (
+                "DELETE FROM instances WHERE instance_id = 2",
+                "deleting a measurement instance",
+            ),
+        ] {
+            let error = sqlx::query(statement)
+                .execute(&pool)
+                .await
+                .err()
+                .context("measurement routing parent mutation unexpectedly succeeded")?;
+            assert!(
+                error.to_string().contains(expected_context),
+                "unexpected error: {error}"
+            );
+        }
+
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM measurement_routing")
+                .fetch_one(&pool)
+                .await?,
+            2
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn action_route_direct_sql_requires_the_matching_physical_kind() -> Result<()> {
+        let workspace = TempDir::new()?;
+        let database_file = workspace.path().join("aether.db");
+        init_database(&database_file).await?;
+        let pool = SqlitePoolOptions::new()
+            .connect_with(common::bootstrap_database::sqlite_connect_options(
+                database_file.to_str().unwrap_or_default(),
+            ))
+            .await?;
+
+        for statement in [
+            "INSERT INTO channels (channel_id, name, protocol, enabled, config) \
+             VALUES (9, 'action-channel', 'virtual', 0, '{}')",
+            "INSERT INTO instances (instance_id, instance_name, product_name) \
+             VALUES (3, 'action-instance', 'ExampleDevice')",
+            "INSERT INTO adjustment_points (point_id, channel_id, signal_name) \
+             VALUES (301, 9, 'setpoint')",
+        ] {
+            sqlx::query(statement).execute(&pool).await?;
+        }
+
+        let error = sqlx::query(
+            "INSERT INTO action_routing \
+             (instance_id, instance_name, action_id, channel_id, channel_type, channel_point_id) \
+             VALUES (3, 'action-instance', 1, 9, 'C', 301)",
+        )
+        .execute(&pool)
+        .await
+        .err()
+        .context("mistyped action target unexpectedly bypassed target validation")?;
+        assert!(
+            error
+                .to_string()
+                .contains("matching instance and C/A physical target"),
+            "unexpected error: {error}"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn repeated_initialization_replaces_stale_routing_triggers() -> Result<()> {
+        let workspace = TempDir::new()?;
+        let database_file = workspace.path().join("aether.db");
+        init_database(&database_file).await?;
+        let pool = SqlitePoolOptions::new()
+            .connect_with(common::bootstrap_database::sqlite_connect_options(
+                database_file.to_str().unwrap_or_default(),
+            ))
+            .await?;
+
+        sqlx::query("DROP TRIGGER validate_measurement_routing_target_on_insert")
+            .execute(&pool)
+            .await?;
+        sqlx::query(
+            "CREATE TRIGGER validate_measurement_routing_target_on_insert \
+             BEFORE INSERT ON measurement_routing BEGIN SELECT 1; END",
+        )
+        .execute(&pool)
+        .await?;
+        sqlx::query(
+            "CREATE TRIGGER cleanup_routing_on_telemetry_delete \
+             AFTER DELETE ON telemetry_points BEGIN DELETE FROM measurement_routing; END",
+        )
+        .execute(&pool)
+        .await?;
+
+        init_database(&database_file).await?;
+
+        let trigger_sql: String = sqlx::query_scalar(
+            "SELECT sql FROM sqlite_master \
+             WHERE type = 'trigger' AND name = 'validate_measurement_routing_target_on_insert'",
+        )
+        .fetch_one(&pool)
+        .await?;
+        assert!(trigger_sql.contains("matching instance and T/S physical target"));
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM sqlite_master \
+                 WHERE type = 'trigger' AND name = 'cleanup_routing_on_telemetry_delete'",
+            )
+            .fetch_one(&pool)
+            .await?,
+            0
+        );
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger' \
+                 AND name IN (\
+                    'validate_measurement_routing_target_on_insert',\
+                    'validate_measurement_routing_target_on_update',\
+                    'validate_action_routing_target_on_insert',\
+                    'validate_action_routing_target_on_update',\
+                    'protect_measurement_routing_on_telemetry_delete',\
+                    'protect_measurement_routing_on_telemetry_identity_update',\
+                    'protect_measurement_routing_on_signal_delete',\
+                    'protect_measurement_routing_on_signal_identity_update',\
+                    'protect_action_routing_on_control_delete',\
+                    'protect_action_routing_on_control_identity_update',\
+                    'protect_action_routing_on_adjustment_delete',\
+                    'protect_action_routing_on_adjustment_identity_update',\
+                    'protect_measurement_routing_on_channel_delete',\
+                    'protect_measurement_routing_on_instance_delete',\
+                    'protect_action_routing_on_channel_delete',\
+                    'protect_action_routing_on_instance_delete'\
+                 )",
+            )
+            .fetch_one(&pool)
+            .await?,
+            LOGICAL_ROUTING_INTEGRITY_TRIGGER_NAMES.len() as i64
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn initialization_rejects_preexisting_invalid_routes_without_changing_triggers()
+    -> Result<()> {
+        let workspace = TempDir::new()?;
+        let database_file = workspace.path().join("aether.db");
+        init_database(&database_file).await?;
+        let pool = SqlitePoolOptions::new()
+            .connect_with(common::bootstrap_database::sqlite_connect_options(
+                database_file.to_str().unwrap_or_default(),
+            ))
+            .await?;
+
+        for statement in [
+            "INSERT INTO channels (channel_id, name, protocol, enabled, config) \
+             VALUES (10, 'legacy-channel', 'virtual', 0, '{}')",
+            "INSERT INTO instances (instance_id, instance_name, product_name) \
+             VALUES (4, 'legacy-instance', 'ExampleDevice')",
+            "DROP TRIGGER validate_measurement_routing_target_on_insert",
+            "CREATE TRIGGER cleanup_routing_on_telemetry_delete \
+             AFTER DELETE ON telemetry_points BEGIN DELETE FROM measurement_routing; END",
+            "INSERT INTO measurement_routing \
+             (instance_id, instance_name, measurement_id, channel_id, channel_type, channel_point_id) \
+             VALUES (4, 'legacy-instance', 1, 10, 'T', 404)",
+        ] {
+            sqlx::query(statement).execute(&pool).await?;
+        }
+
+        let error = init_database(&database_file)
+            .await
+            .err()
+            .context("invalid legacy route unexpectedly passed initialization")?;
+        assert!(
+            format!("{error:#}").contains("invalid measurement route"),
+            "unexpected error: {error:#}"
+        );
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM measurement_routing")
+                .fetch_one(&pool)
+                .await?,
+            1
+        );
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM sqlite_master \
+                 WHERE type = 'trigger' AND name = 'cleanup_routing_on_telemetry_delete'",
+            )
+            .fetch_one(&pool)
+            .await?,
+            1,
+            "failed validation must not partially replace the trigger set"
+        );
         Ok(())
     }
 
@@ -2140,9 +2999,11 @@ mod tests {
 
         // Simulate the governed route-removal command before deleting its
         // channel; v7's assertion here concerns point-table FK behavior.
-        sqlx::query("DELETE FROM action_routing")
-            .execute(&pool)
-            .await?;
+        for routing_table in ["measurement_routing", "action_routing"] {
+            sqlx::query(&format!("DELETE FROM {routing_table}"))
+                .execute(&pool)
+                .await?;
+        }
         sqlx::query("DELETE FROM channels WHERE channel_id = 7")
             .execute(&pool)
             .await?;
@@ -2191,7 +3052,7 @@ mod tests {
             sqlx::query_scalar::<_, i64>("PRAGMA user_version")
                 .fetch_one(&pool)
                 .await?,
-            10
+            SCHEMA_VERSION as i64
         );
         assert_eq!(
             sqlx::query_scalar::<_, i64>("SELECT revision FROM channels WHERE channel_id = 7")
@@ -2291,7 +3152,7 @@ mod tests {
             sqlx::query_scalar::<_, i64>("PRAGMA user_version")
                 .fetch_one(&pool)
                 .await?,
-            10
+            SCHEMA_VERSION as i64
         );
         assert_eq!(
             sqlx::query_scalar::<_, i64>("SELECT revision FROM channels WHERE channel_id = 7")

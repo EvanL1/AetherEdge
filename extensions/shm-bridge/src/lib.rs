@@ -13,6 +13,7 @@ mod manifest;
 mod point_watch;
 mod read_topology;
 mod runtime;
+mod topology_commit;
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -53,6 +54,11 @@ pub use manifest::{
 pub use point_watch::PointWatchPublisher;
 pub use read_topology::{ShmReadTopologyGeneration, ShmReadTopologyHandle};
 pub use runtime::{ShmRuntimeConfig, ShmWriterGeneration, ShmWriterHandle};
+pub use topology_commit::{
+    TopologyPublicationCommit, TopologyPublicationGuard, begin_topology_publication,
+    commit_topology_publication, publish_topology_generation, read_topology_publication_commit,
+    topology_commit_path_from_shm, validate_topology_publication,
+};
 
 /// Business-neutral value read from one legacy SHM slot.
 #[derive(Debug, Clone, Copy, PartialEq)]

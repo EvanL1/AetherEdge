@@ -167,12 +167,11 @@ AetherIot/
 │   ├── uplink/         # 网络服务 (MQTT, Rust)
 │   └── alarm/       # 告警管理 (Rust)
 │
-├── libs/                    # 13 个共享 Rust 库
+├── libs/                    # 12 个共享 Rust 库
 │   ├── aether-core/       # 核心类型与编解码器（no_std）
 │   ├── aether-model/      # 数据模型、产品定义
 │   ├── aether-routing/    # 数据流路由
 │   ├── aether-rtdb/       # 遗留可选镜像抽象（非实时权威面）
-│   ├── aether-rtdb-shm/   # 共享内存 RTDB（零拷贝）
 │   ├── aether-shm/        # 共享内存读写器
 │   ├── aether-infra/      # 遗留基础设施辅助层（SQLite 与可选外部存储）
 │   ├── aether-calc/       # 表达式求值引擎
@@ -245,11 +244,12 @@ vim data/config/io/io.yaml
 # 2. 验证配置（不实际同步）
 ./target/release/aether sync --dry-run
 
-# 3. 同步到数据库
+# 3. 停止配置 owner，再同步到数据库
+./target/release/aether services stop aether-io aether-automation
 ./target/release/aether sync
 
-# 4. 热加载服务
-curl -X POST http://localhost:6001/api/channels/reload
+# 4. 重新启动；新 desired state 在启动时投影到 runtime
+./target/release/aether services start aether-io aether-automation
 ```
 
 ### 数据库操作

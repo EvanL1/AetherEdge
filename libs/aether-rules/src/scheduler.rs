@@ -14,10 +14,10 @@ use crate::error::Result;
 use crate::executor::{RuleExecutionResult, RuleExecutor};
 use crate::live_state::RuleLiveState;
 use crate::logger::RuleLoggerManager;
+use crate::point_watch_dispatcher::MeasurementRouteBinding;
 use crate::repository;
 use crate::types::Rule;
 use aether_calc::StateStore;
-use aether_routing::RoutingCache;
 use sqlx::SqlitePool;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -251,13 +251,8 @@ pub struct RuleScheduler<S: StateStore = aether_calc::MemoryStateStore> {
     /// rebuilds the subscription index after loading. None in test mode or
     /// when PointWatch isn't wired in.
     ///
-    /// `pw_routing_cache` is stored separately from `routing_cache` because the
-    /// latter is only retained when SHM is available (gates SHM reverse lookup),
-    /// while PointWatch rebuild needs routing regardless of SHM presence.
     pw_dispatcher:
         Option<Arc<std::sync::Mutex<crate::point_watch_dispatcher::PointWatchDispatcher>>>,
-    pw_routing_cache: Option<Arc<RoutingCache>>,
-    pw_manifest_source: Option<aether_shm_bridge::ChannelPointManifestSource>,
     pw_bitmap: Option<Arc<aether_shm_bridge::SubscriptionBitmap>>,
 }
 
@@ -266,23 +261,16 @@ impl RuleScheduler<aether_calc::MemoryStateStore> {
     ///
     /// # Arguments
     /// * `live_state` - authoritative live-state reader
-    /// * `routing_cache` - Routing cache for M2C route lookups
     /// * `pool` - SQLite pool for rule persistence
     /// * `tick_ms` - Scheduler tick interval in milliseconds
     /// * `log_root` - Root directory for rule log files (e.g., "logs/automation")
-    pub fn new<L>(
-        live_state: Arc<L>,
-        routing_cache: Arc<RoutingCache>,
-        pool: SqlitePool,
-        tick_ms: u64,
-        log_root: PathBuf,
-    ) -> Self
+    pub fn new<L>(live_state: Arc<L>, pool: SqlitePool, tick_ms: u64, log_root: PathBuf) -> Self
     where
         L: RuleLiveState + 'static,
     {
         Self {
             live_state: Arc::clone(&live_state) as Arc<dyn RuleLiveState>,
-            executor: Arc::new(RuleExecutor::new(live_state, routing_cache)),
+            executor: Arc::new(RuleExecutor::new(live_state)),
             pool,
             rules: Arc::new(RwLock::new(Vec::new())),
             shutdown: CancellationToken::new(),
@@ -291,8 +279,6 @@ impl RuleScheduler<aether_calc::MemoryStateStore> {
             max_concurrency: 4,
             watch_rx: None,
             pw_dispatcher: None,
-            pw_routing_cache: None,
-            pw_manifest_source: None,
             pw_bitmap: None,
         }
     }
@@ -305,7 +291,6 @@ impl<S: StateStore + 'static> RuleScheduler<S> {
     #[allow(clippy::too_many_arguments)]
     pub fn with_state_store<L>(
         live_state: Arc<L>,
-        routing_cache: Arc<RoutingCache>,
         pool: SqlitePool,
         tick_ms: u64,
         log_root: PathBuf,
@@ -315,8 +300,7 @@ impl<S: StateStore + 'static> RuleScheduler<S> {
     where
         L: RuleLiveState + 'static,
     {
-        let mut executor =
-            RuleExecutor::with_state_store(Arc::clone(&live_state), routing_cache, state_store);
+        let mut executor = RuleExecutor::with_state_store(Arc::clone(&live_state), state_store);
         if let Some(commands) = action_commands {
             executor = executor.with_action_command_facade(commands);
         }
@@ -331,8 +315,6 @@ impl<S: StateStore + 'static> RuleScheduler<S> {
             max_concurrency: 4,
             watch_rx: None,
             pw_dispatcher: None,
-            pw_routing_cache: None,
-            pw_manifest_source: None,
             pw_bitmap: None,
         }
     }
@@ -347,13 +329,18 @@ impl<S: StateStore + 'static> RuleScheduler<S> {
     /// event-driven path in sync.
     pub async fn rebuild_point_watch(
         &self,
-        dispatcher: &mut crate::point_watch_dispatcher::PointWatchDispatcher,
-        routing_cache: &aether_routing::RoutingCache,
+        measurement_routes: &[MeasurementRouteBinding],
         manifest: &aether_shm_bridge::ChannelPointManifest,
-        bitmap: &aether_shm_bridge::SubscriptionBitmap,
-    ) {
+    ) -> bool {
+        let (Some(dispatcher), Some(bitmap)) = (&self.pw_dispatcher, &self.pw_bitmap) else {
+            return false;
+        };
         let rules = self.rules.read().await;
-        dispatcher.rebuild_from_rules(&rules, routing_cache, manifest, bitmap);
+        let mut dispatcher = dispatcher
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        dispatcher.rebuild_from_rules(&rules, measurement_routes, manifest, bitmap);
+        true
     }
 
     /// Attach a PointWatch event receiver.
@@ -377,13 +364,9 @@ impl<S: StateStore + 'static> RuleScheduler<S> {
     pub fn set_point_watch_rebuild_handles(
         &mut self,
         dispatcher: Arc<std::sync::Mutex<crate::point_watch_dispatcher::PointWatchDispatcher>>,
-        routing_cache: Arc<RoutingCache>,
-        manifest_source: aether_shm_bridge::ChannelPointManifestSource,
         bitmap: Arc<aether_shm_bridge::SubscriptionBitmap>,
     ) {
         self.pw_dispatcher = Some(dispatcher);
-        self.pw_routing_cache = Some(routing_cache);
-        self.pw_manifest_source = Some(manifest_source);
         self.pw_bitmap = Some(bitmap);
     }
 
@@ -429,37 +412,12 @@ impl<S: StateStore + 'static> RuleScheduler<S> {
 
     /// Reload rules from database (hot reload).
     ///
-    /// When PointWatch rebuild handles are present (set via
-    /// `set_point_watch_rebuild_handles`), this also rebuilds the
-    /// subscription bitmap + dispatcher index so newly-added or
-    /// newly-modified OnChange rules start receiving events immediately
-    /// without a service restart.
+    /// PointWatch publication is intentionally separate: the host must pin one
+    /// complete topology and pass its routes and manifest to
+    /// [`Self::rebuild_point_watch`] after this reload succeeds.
     pub async fn reload_rules(&self) -> Result<usize> {
         info!("Rules reloading");
-        let count = self.load_rules().await?;
-
-        if let (Some(disp), Some(routing), Some(manifest_source), Some(bitmap)) = (
-            &self.pw_dispatcher,
-            &self.pw_routing_cache,
-            &self.pw_manifest_source,
-            &self.pw_bitmap,
-        ) {
-            let Some(manifest) = manifest_source.load() else {
-                warn!("PointWatch rebuild skipped: no current SHM manifest generation");
-                return Ok(count);
-            };
-            let rules = self.rules.read().await;
-            // Mutex poison only indicates a prior holder panicked; the inner
-            // dispatcher state is still valid, so recover via into_inner().
-            let mut d = disp.lock().unwrap_or_else(|p| p.into_inner());
-            d.rebuild_from_rules(&rules, routing, &manifest, bitmap);
-            info!(
-                "PointWatch subscription index rebuilt: {} (ch,pt) pairs subscribed",
-                d.subscription_count()
-            );
-        }
-
-        Ok(count)
+        self.load_rules().await
     }
 
     /// Start the scheduler loop
@@ -1245,7 +1203,6 @@ mod tests {
     ) -> RuleScheduler<aether_calc::MemoryStateStore> {
         RuleScheduler::with_state_store(
             Arc::new(crate::MemoryRuleLiveState::new()),
-            Arc::new(RoutingCache::new()),
             pool,
             1,
             log_root,
@@ -1384,13 +1341,7 @@ mod tests {
             .await
             .expect("open scheduler database");
         let log_dir = tempfile::tempdir().expect("temporary rule logs");
-        let scheduler = RuleScheduler::new(
-            live_state,
-            Arc::new(RoutingCache::new()),
-            pool,
-            100,
-            log_dir.path().to_path_buf(),
-        );
+        let scheduler = RuleScheduler::new(live_state, pool, 100, log_dir.path().to_path_buf());
         let point = PointRef {
             instance: 1,
             point_type: PointKind::Measurement,
@@ -1507,7 +1458,6 @@ mod tests {
         let log_dir = tempfile::tempdir().expect("temporary rule logs");
         let scheduler = RuleScheduler::new(
             Arc::new(crate::MemoryRuleLiveState::new()),
-            Arc::new(RoutingCache::new()),
             pool,
             100,
             log_dir.path().to_path_buf(),

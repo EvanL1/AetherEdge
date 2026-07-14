@@ -1,23 +1,20 @@
-//! Integration test: `reload_rules` rebuilds the PointWatch subscription
-//! index when rebuild handles have been wired in.
+//! Integration test: rule reload and PointWatch publication are separate,
+//! generation-pinned operations.
 //!
-//! This protects the property that a `POST /api/scheduler/reload` call
-//! (or any equivalent runtime path that calls `reload_rules`) propagates
-//! rule subscription changes to the SHM `SubscriptionBitmap` and
-//! `PointWatchDispatcher` sub-index without a service restart.
+//! The host must supply the measurement bindings and manifest from one pinned
+//! service topology. The scheduler never consults an independently mutable
+//! routing cache or manifest source.
 
 #![allow(clippy::disallowed_methods)]
 
-use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use aether_dataplane::SlotWriter;
-use aether_routing::RoutingCache;
-use aether_rules::{MemoryRuleLiveState, PointWatchDispatcher, RuleScheduler};
-use aether_shm_bridge::{
-    ChannelPointManifest, ChannelPointManifestSource, ShmDeviceCommandSink, SubscriptionBitmap,
+use aether_domain::PointKind;
+use aether_rules::{
+    MeasurementRouteBinding, MemoryRuleLiveState, PointWatchDispatcher, RuleScheduler,
 };
+use aether_shm_bridge::{ChannelPointManifest, PhysicalPointAddress, SubscriptionBitmap};
 use sqlx::SqlitePool;
 
 async fn setup_pool() -> SqlitePool {
@@ -73,70 +70,54 @@ async fn insert_onchange_rule(pool: &SqlitePool, id: i64, instance: u32, point: 
     .expect("insert rule");
 }
 
-fn make_routing() -> Arc<RoutingCache> {
-    // C2M route: channel=1001, T, point=0 → instance=5, point=10
-    let mut c2m = HashMap::new();
-    c2m.insert("1001:T:0".to_string(), "5:M:10".to_string());
-    Arc::new(RoutingCache::from_maps(c2m, HashMap::new(), HashMap::new()))
+fn measurement_bindings() -> Vec<MeasurementRouteBinding> {
+    vec![MeasurementRouteBinding::new(
+        5,
+        10,
+        PhysicalPointAddress::from_legacy_raw(1001, PointKind::Telemetry, 0),
+    )]
 }
 
-fn make_manifest_source() -> ChannelPointManifestSource {
-    let directory = tempfile::tempdir().expect("manifest directory");
-    let manifest = Arc::new(ChannelPointManifest::from_entries([(1001, [1, 0, 0, 0])]));
-    let writer = Arc::new(
-        SlotWriter::create(
-            directory.path().join("point-watch.shm"),
-            4,
-            manifest.slot_count(),
-            manifest.layout_hash(),
-        )
-        .expect("point-watch writer"),
-    );
-    let sink = ShmDeviceCommandSink::new();
-    sink.publish_generation(writer, manifest)
-        .expect("publish point-watch manifest");
-    sink.manifest_source()
+fn make_manifest() -> ChannelPointManifest {
+    ChannelPointManifest::from_entries([(1001, [1, 0, 0, 0])])
 }
 
 #[tokio::test]
-async fn reload_rules_rebuilds_subscription_index_when_handles_set() {
+async fn pinned_topology_rebuilds_subscription_index_after_rule_reload() {
     let pool = setup_pool().await;
     insert_onchange_rule(&pool, 1, 5, 10).await;
 
     let live_state = Arc::new(MemoryRuleLiveState::new());
-    let routing = make_routing();
-
-    let mut scheduler = RuleScheduler::new(
-        live_state,
-        Arc::clone(&routing),
-        pool.clone(),
-        100,
-        PathBuf::from("logs/test"),
-    );
+    let mut scheduler =
+        RuleScheduler::new(live_state, pool.clone(), 100, PathBuf::from("logs/test"));
 
     let (dispatcher, _watch_rx) = PointWatchDispatcher::new();
     let dispatcher = Arc::new(Mutex::new(dispatcher));
-    let manifest_source = make_manifest_source();
     let bitmap = Arc::new(SubscriptionBitmap::new_in_memory().expect("bitmap"));
 
-    scheduler.set_point_watch_rebuild_handles(
-        Arc::clone(&dispatcher),
-        Arc::clone(&routing),
-        manifest_source,
-        Arc::clone(&bitmap),
-    );
+    scheduler.set_point_watch_rebuild_handles(Arc::clone(&dispatcher), Arc::clone(&bitmap));
 
     // Sanity: nothing subscribed yet.
     assert_eq!(dispatcher.lock().unwrap().subscription_count(), 0);
 
     let count = scheduler.reload_rules().await.expect("reload_rules");
     assert_eq!(count, 1, "should have loaded one rule");
+    assert_eq!(
+        dispatcher.lock().unwrap().subscription_count(),
+        0,
+        "rule reload alone must not publish from an unpinned route projection"
+    );
+    assert!(
+        scheduler
+            .rebuild_point_watch(&measurement_bindings(), &make_manifest())
+            .await
+    );
 
     // After reload, the rule's (channel=1001, point=0) should be in sub_index.
     assert_eq!(
         dispatcher.lock().unwrap().subscription_count(),
         1,
-        "reload_rules must rebuild the PointWatch subscription index"
+        "the pinned route+manifest pair must rebuild the subscription index"
     );
 }
 
@@ -146,19 +127,16 @@ async fn reload_rules_no_rebuild_when_handles_unset() {
     insert_onchange_rule(&pool, 2, 5, 10).await;
 
     let live_state = Arc::new(MemoryRuleLiveState::new());
-    let routing = make_routing();
-
-    let scheduler = RuleScheduler::new(
-        live_state,
-        Arc::clone(&routing),
-        pool,
-        100,
-        PathBuf::from("logs/test"),
-    );
+    let scheduler = RuleScheduler::new(live_state, pool, 100, PathBuf::from("logs/test"));
 
     // No handles set — reload should still succeed but not touch any dispatcher.
     let count = scheduler.reload_rules().await.expect("reload_rules");
     assert_eq!(count, 1);
+    assert!(
+        !scheduler
+            .rebuild_point_watch(&measurement_bindings(), &make_manifest())
+            .await
+    );
 }
 
 #[tokio::test]
@@ -168,30 +146,20 @@ async fn reload_rules_after_rule_added_picks_up_new_subscription() {
     let pool = setup_pool().await;
 
     let live_state = Arc::new(MemoryRuleLiveState::new());
-    let routing = make_routing();
-
-    let mut scheduler = RuleScheduler::new(
-        live_state,
-        Arc::clone(&routing),
-        pool.clone(),
-        100,
-        PathBuf::from("logs/test"),
-    );
+    let mut scheduler =
+        RuleScheduler::new(live_state, pool.clone(), 100, PathBuf::from("logs/test"));
 
     let (dispatcher, _watch_rx) = PointWatchDispatcher::new();
     let dispatcher = Arc::new(Mutex::new(dispatcher));
-    let manifest_source = make_manifest_source();
     let bitmap = Arc::new(SubscriptionBitmap::new_in_memory().expect("bitmap"));
-    scheduler.set_point_watch_rebuild_handles(
-        Arc::clone(&dispatcher),
-        Arc::clone(&routing),
-        manifest_source,
-        Arc::clone(&bitmap),
-    );
+    scheduler.set_point_watch_rebuild_handles(Arc::clone(&dispatcher), Arc::clone(&bitmap));
 
     // First reload: empty DB → no subscriptions.
     let count = scheduler.reload_rules().await.expect("reload empty");
     assert_eq!(count, 0);
+    scheduler
+        .rebuild_point_watch(&measurement_bindings(), &make_manifest())
+        .await;
     assert_eq!(dispatcher.lock().unwrap().subscription_count(), 0);
 
     // Admin adds a rule.
@@ -200,6 +168,9 @@ async fn reload_rules_after_rule_added_picks_up_new_subscription() {
     // Second reload: subscription index should grow.
     let count = scheduler.reload_rules().await.expect("reload after insert");
     assert_eq!(count, 1);
+    scheduler
+        .rebuild_point_watch(&measurement_bindings(), &make_manifest())
+        .await;
     assert_eq!(
         dispatcher.lock().unwrap().subscription_count(),
         1,

@@ -6,6 +6,8 @@
 use aether_dataplane::SlotReader;
 use aether_domain::PointKind;
 use aether_routing::{RoutingCache, load_routing_maps};
+#[cfg(test)]
+use aether_shm_bridge::PhysicalPointAddress;
 use aether_shm_bridge::{ChannelPointManifest, ShmChannelReader, default_shm_path};
 use anyhow::{Context, Result, bail};
 use clap::Subcommand;
@@ -831,14 +833,24 @@ mod tests {
         .expect("create typed SHM fixture");
         writer.set_direct(
             manifest
-                .slot(7, PointKind::Telemetry, 0)
+                .slot_for(PhysicalPointAddress::from_legacy_raw(
+                    7,
+                    PointKind::Telemetry,
+                    0,
+                ))
                 .expect("telemetry slot"),
             12.5,
             125.0,
             100,
         );
         writer.set_direct(
-            manifest.slot(7, PointKind::Action, 0).expect("action slot"),
+            manifest
+                .slot_for(PhysicalPointAddress::from_legacy_raw(
+                    7,
+                    PointKind::Action,
+                    0,
+                ))
+                .expect("action slot"),
             7.5,
             75.0,
             101,
@@ -992,7 +1004,11 @@ mod tests {
         .expect("create runtime SHM");
         writer.set_direct(
             manifest
-                .slot(7, PointKind::Telemetry, 0)
+                .slot_for(PhysicalPointAddress::from_legacy_raw(
+                    7,
+                    PointKind::Telemetry,
+                    0,
+                ))
                 .expect("telemetry slot"),
             48.0,
             480.0,

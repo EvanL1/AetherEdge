@@ -5,13 +5,24 @@
 use super::*;
 use crate::dto::{AdjustmentRequest, ControlRequest};
 use axum::{
+    Extension,
     body::Body,
     http::{Request, Response, StatusCode},
 };
 use serde_json::json;
 use sqlx::SqlitePool;
 use std::collections::{BTreeMap, HashMap};
-use std::sync::{Arc, Mutex};
+use std::sync::{
+    Arc, Mutex,
+    atomic::{AtomicUsize, Ordering},
+};
+
+#[cfg(feature = "modbus")]
+use crate::api::handlers::provision_handlers::{
+    SunSpecDiscoveryBoundary, SunSpecDiscoveryPort, provision_channel_handler,
+};
+#[cfg(feature = "modbus")]
+use crate::protocols::adapters::modbus_config::ModbusChannelParamsConfig;
 
 use aether_model::PointType;
 use aether_ports::{
@@ -26,6 +37,48 @@ use tower::util::ServiceExt; // for `oneshot` and `ready`
 const TEST_JWT_SECRET: &str = "0123456789abcdef0123456789abcdef";
 const ADMIN_ACCESS_TOKEN: &str = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyX2lkIjo3LCJyb2xlIjoiQWRtaW4iLCJ0eXBlIjoiYWNjZXNzIiwiaWF0IjoxNzAwMDAwMDAwLCJleHAiOjQxMDI0NDQ4MDB9.JtjQvDBo7j0bLOxwed6yC9-M9qFCloc4H2Dt0LjzF9E";
 const TEST_REQUEST_ID: &str = "018f0000-0000-7000-8000-000000000041";
+
+#[cfg(feature = "modbus")]
+#[derive(Default)]
+struct RecordingSunSpecDiscovery {
+    connect_calls: AtomicUsize,
+    read_calls: AtomicUsize,
+}
+
+#[cfg(feature = "modbus")]
+impl RecordingSunSpecDiscovery {
+    fn connect_calls(&self) -> usize {
+        self.connect_calls.load(Ordering::SeqCst)
+    }
+
+    fn read_calls(&self) -> usize {
+        self.read_calls.load(Ordering::SeqCst)
+    }
+}
+
+#[cfg(feature = "modbus")]
+#[async_trait::async_trait]
+impl SunSpecDiscoveryPort for RecordingSunSpecDiscovery {
+    async fn connect_and_discover(
+        &self,
+        _params: &ModbusChannelParamsConfig,
+        _protocol: &str,
+        _slave_id: u8,
+        _function_code: u8,
+        _base_address: Option<u16>,
+    ) -> Result<(u16, Vec<aether_model::sunspec::DiscoveredModel>), String> {
+        self.connect_calls.fetch_add(1, Ordering::SeqCst);
+        self.read_calls.fetch_add(1, Ordering::SeqCst);
+        Ok((
+            40_000,
+            vec![aether_model::sunspec::DiscoveredModel {
+                model_id: 103,
+                length: 50,
+                start_register: 40_002,
+            }],
+        ))
+    }
+}
 
 /// Helper: Create in-memory SQLite pool for testing
 async fn create_test_sqlite_pool() -> sqlx::SqlitePool {
@@ -70,22 +123,12 @@ async fn create_test_api_with_pool(
     channel_manager: Arc<ChannelManager>,
     sqlite_pool: SqlitePool,
 ) -> Router {
-    // Channel deletion owns cross-service routing/mapping rows in the unified
+    // Channel deletion owns cross-service routing rows in the unified
     // edge database. Mirror the complete production topology so HTTP tests do
     // not exercise the governed adapter against a partial schema.
     common::test_utils::schema::init_automation_schema(&sqlite_pool)
         .await
         .unwrap();
-    sqlx::query(
-        "CREATE TABLE IF NOT EXISTS json_point_mappings (\
-             id INTEGER PRIMARY KEY AUTOINCREMENT,\
-             channel_id INTEGER NOT NULL REFERENCES channels(channel_id) ON DELETE CASCADE\
-         )",
-    )
-    .execute(&sqlite_pool)
-    .await
-    .unwrap();
-
     let command_tx_cache = Arc::new(crate::api::command_cache::CommandTxCache::new());
     let adapter = Arc::new(crate::SqliteChannelMutator::new(
         sqlite_pool.clone(),
@@ -101,8 +144,12 @@ async fn create_test_api_with_pool(
     ));
     let reconciliation = Arc::new(aether_application::ChannelReconciliationApplication::new(
         reconciler,
-        audit,
+        Arc::clone(&audit),
         aether_application::SafetyPolicy,
+    ));
+    let point_topology = Arc::new(crate::point_topology::PointTopologyApplication::new(
+        sqlite_pool.clone(),
+        audit,
     ));
     let authenticator = Arc::new(
         aether_auth_jwt::AccessTokenAuthenticator::new(TEST_JWT_SECRET)
@@ -117,9 +164,144 @@ async fn create_test_api_with_pool(
         ChannelManagementHttpBoundary::governed_with_reconciliation(
             application,
             reconciliation,
-            authenticator,
+            Arc::clone(&authenticator),
         ),
+        PointTopologyHttpBoundary::governed(point_topology, authenticator),
     )
+}
+
+#[cfg(feature = "modbus")]
+async fn create_provision_test_api(
+    sqlite_pool: SqlitePool,
+    discovery: Arc<RecordingSunSpecDiscovery>,
+) -> Router {
+    let channel_manager = Arc::new(
+        ChannelManager::new(
+            crate::test_utils::create_test_shm_handle(),
+            crate::test_utils::create_test_routing_cache(),
+        )
+        .expect("provision test channel manager"),
+    );
+    let audit: Arc<dyn AuditSink> = Arc::new(aether_store_local::MemoryAuditSink::new());
+    let point_topology = Arc::new(crate::point_topology::PointTopologyApplication::new(
+        sqlite_pool.clone(),
+        audit,
+    ));
+    let authenticator = Arc::new(
+        aether_auth_jwt::AccessTokenAuthenticator::new(TEST_JWT_SECRET)
+            .expect("valid test access-token secret"),
+    );
+    let state = AppState::new(
+        channel_manager,
+        sqlite_pool,
+        Arc::new(crate::api::command_cache::CommandTxCache::new()),
+        false,
+        None,
+    );
+    Router::new()
+        .route(
+            "/api/channels/{channel_id}/provision",
+            axum::routing::post(provision_channel_handler),
+        )
+        .layer(Extension(PointTopologyHttpBoundary::governed(
+            point_topology,
+            authenticator,
+        )))
+        .layer(Extension(SunSpecDiscoveryBoundary::from_port(discovery)))
+        .with_state(state)
+}
+
+#[cfg(feature = "modbus")]
+fn provision_request(
+    authorization: bool,
+    confirmed: bool,
+    expected_revision: Option<&str>,
+) -> Request<Body> {
+    let mut request = Request::builder()
+        .method("POST")
+        .uri("/api/channels/711/provision")
+        .header("content-type", "application/json")
+        .header("x-request-id", TEST_REQUEST_ID);
+    if authorization {
+        request = request.header("authorization", format!("Bearer {ADMIN_ACCESS_TOKEN}"));
+    }
+    if confirmed {
+        request = request.header("x-aether-confirmed", "true");
+    }
+    if let Some(expected_revision) = expected_revision {
+        request = request.header("x-aether-expected-revision", expected_revision);
+    }
+    request
+        .body(Body::from(
+            json!({
+                "strategy": "sunspec",
+                "slave_id": 1,
+                "function_code": 3,
+                "replace_existing": true
+            })
+            .to_string(),
+        ))
+        .expect("provision request")
+}
+
+#[cfg(feature = "modbus")]
+#[tokio::test]
+async fn provision_authorization_precedes_device_io_and_stale_cas_fails_closed() {
+    let pool = create_test_sqlite_pool_with_points().await;
+    sqlx::query(
+        "INSERT INTO channels (channel_id, name, protocol, enabled, config) \
+         VALUES (711, 'SunSpec device', 'sunspec_tcp', 0, \
+                 '{\"parameters\":{\"host\":\"127.0.0.1\",\"port\":502}}')",
+    )
+    .execute(&pool)
+    .await
+    .expect("seed SunSpec channel");
+    let discovery = Arc::new(RecordingSunSpecDiscovery::default());
+    let app = create_provision_test_api(pool, Arc::clone(&discovery)).await;
+
+    let rejected = [
+        (
+            provision_request(false, true, Some("1")),
+            StatusCode::FORBIDDEN,
+        ),
+        (
+            provision_request(true, false, Some("1")),
+            StatusCode::UNPROCESSABLE_ENTITY,
+        ),
+        (provision_request(true, true, None), StatusCode::BAD_REQUEST),
+        (
+            provision_request(true, true, Some("not-a-revision")),
+            StatusCode::BAD_REQUEST,
+        ),
+        (
+            provision_request(true, true, Some("0")),
+            StatusCode::BAD_REQUEST,
+        ),
+    ];
+    for (request, expected_status) in rejected {
+        let response = app.clone().oneshot(request).await.expect("HTTP response");
+        assert_eq!(response.status(), expected_status);
+    }
+    assert_eq!(discovery.connect_calls(), 0);
+    assert_eq!(discovery.read_calls(), 0);
+
+    let response = app
+        .oneshot(provision_request(true, true, Some("2")))
+        .await
+        .expect("stale provision response");
+    let status = response.status();
+    let body = http_body_util::BodyExt::collect(response.into_body())
+        .await
+        .expect("stale provision body")
+        .to_bytes();
+    assert_eq!(
+        status,
+        StatusCode::CONFLICT,
+        "unexpected response: {}",
+        String::from_utf8_lossy(&body)
+    );
+    assert_eq!(discovery.connect_calls(), 1);
+    assert_eq!(discovery.read_calls(), 1);
 }
 
 fn channel_mutation_request(
@@ -332,6 +514,7 @@ async fn recording_channel_router_with_audit(
         false,
         None,
         ChannelManagementHttpBoundary::governed(application, authenticator),
+        PointTopologyHttpBoundary::unavailable(),
     )
 }
 
@@ -386,6 +569,7 @@ async fn recording_channel_applications_router(
             channel_reconciliation,
             authenticator,
         ),
+        PointTopologyHttpBoundary::unavailable(),
     )
 }
 
@@ -1265,6 +1449,10 @@ async fn test_update_mappings_replace_persists() {
         .uri("/api/channels/8002/mappings")
         .method("PUT")
         .header("content-type", "application/json")
+        .header("authorization", format!("Bearer {ADMIN_ACCESS_TOKEN}"))
+        .header("x-request-id", TEST_REQUEST_ID)
+        .header("x-aether-confirmed", "true")
+        .header("x-aether-expected-revision", "1")
         .body(Body::from(body.to_string()))
         .unwrap();
     let resp = app.oneshot(req).await.unwrap();
@@ -1315,6 +1503,10 @@ async fn test_update_mappings_merge_persists() {
         .uri("/api/channels/8010/mappings")
         .method("PUT")
         .header("content-type", "application/json")
+        .header("authorization", format!("Bearer {ADMIN_ACCESS_TOKEN}"))
+        .header("x-request-id", TEST_REQUEST_ID)
+        .header("x-aether-confirmed", "true")
+        .header("x-aether-expected-revision", "1")
         .body(Body::from(body.to_string()))
         .unwrap();
     let resp = app.oneshot(req).await.unwrap();
@@ -3102,6 +3294,10 @@ async fn test_protocol_data_type_normalization_closed_loop() {
         .uri("/api/channels/4001/mappings")
         .method("PUT")
         .header("content-type", "application/json")
+        .header("authorization", format!("Bearer {ADMIN_ACCESS_TOKEN}"))
+        .header("x-request-id", TEST_REQUEST_ID)
+        .header("x-aether-confirmed", "true")
+        .header("x-aether-expected-revision", "1")
         .body(Body::from(serde_json::to_string(&put_body).unwrap()))
         .unwrap();
 
@@ -3613,6 +3809,13 @@ async fn send_json_request(
         "DELETE" => builder.method("DELETE"),
         _ => builder.method("GET"),
     };
+    if uri.contains("/apply/") {
+        builder = builder
+            .header("authorization", format!("Bearer {ADMIN_ACCESS_TOKEN}"))
+            .header("x-request-id", TEST_REQUEST_ID)
+            .header("x-aether-confirmed", "true")
+            .header("x-aether-expected-revision", "1");
+    }
 
     let body = match body {
         Some(json) => Body::from(serde_json::to_string(&json).unwrap()),
@@ -3906,6 +4109,27 @@ async fn test_create_template_from_channel() {
         .await
         .unwrap();
 
+    sqlx::query(
+        "INSERT INTO adjustment_points \
+         (channel_id, point_id, signal_name, scale, offset, unit, data_type, reverse, description, min_value, max_value, step) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind(1001_i64)
+    .bind(2_i64)
+    .bind("power_setpoint")
+    .bind(0.1)
+    .bind(0.0)
+    .bind("kW")
+    .bind("float32")
+    .bind(false)
+    .bind("Active power command")
+    .bind(-500.0)
+    .bind(500.0)
+    .bind(0.5)
+    .execute(&pool)
+    .await
+    .unwrap();
+
     let app = rebuild_template_app(pool.clone()).await;
     let body = json!({
         "name": "From Channel Template",
@@ -3924,6 +4148,11 @@ async fn test_create_template_from_channel() {
     let points = &json["data"]["points_snapshot"]["telemetry"];
     assert_eq!(points.as_array().unwrap().len(), 1);
     assert_eq!(points[0]["signal_name"], "voltage");
+    let adjustment = &json["data"]["points_snapshot"]["adjustment"][0];
+    assert_eq!(adjustment["signal_name"], "power_setpoint");
+    assert_eq!(adjustment["min_value"], -500.0);
+    assert_eq!(adjustment["max_value"], 500.0);
+    assert_eq!(adjustment["step"], 0.5);
 }
 
 #[tokio::test]
@@ -3962,7 +4191,7 @@ async fn test_apply_template_to_channel() {
             "signal": [{"point_id": 1, "signal_name": "alarm", "scale": 1.0, "offset": 0.0, "unit": "", "data_type": "bool", "reverse": false, "normal_state": 0, "description": "alarm"}]
         },
         "mappings_snapshot": {
-            "telemetry": [{"point_id": 1, "signal_name": "v", "protocol_data": {"register": 0, "slave_id": 1}}],
+            "telemetry": [{"point_id": 1, "signal_name": "v", "protocol_data": {"register_address": 0, "slave_id": 1, "function_code": 3}}],
             "signal": [{"point_id": 1, "signal_name": "alarm", "protocol_data": {}}]
         }
     });
@@ -4101,7 +4330,7 @@ async fn test_apply_template_with_slave_id_override() {
             "telemetry": [{"point_id": 1, "signal_name": "v", "scale": 1.0, "offset": 0.0, "unit": "V", "data_type": "float32", "reverse": false, "description": ""}]
         },
         "mappings_snapshot": {
-            "telemetry": [{"point_id": 1, "signal_name": "v", "protocol_data": {"register": 100, "slave_id": 1}}]
+            "telemetry": [{"point_id": 1, "signal_name": "v", "protocol_data": {"register_address": 100, "slave_id": 1, "function_code": 3}}]
         }
     });
     let resp = send_json_request(app, "POST", "/api/templates", Some(body)).await;
@@ -4132,7 +4361,7 @@ async fn test_apply_template_with_slave_id_override() {
 
     let mapping: serde_json::Value = serde_json::from_str(&row.0.unwrap()).unwrap();
     assert_eq!(mapping["slave_id"], 42);
-    assert_eq!(mapping["register"], 100);
+    assert_eq!(mapping["register_address"], 100);
 }
 
 // ========================================================================

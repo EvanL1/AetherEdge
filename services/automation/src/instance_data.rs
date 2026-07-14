@@ -25,37 +25,20 @@ impl InstanceManager {
         // Pin one complete runtime generation for the whole HTTP query. This
         // prevents a response from resolving some points through old routing
         // and others through a newly-published SHM layout.
-        let runtime = self.runtime_topology.get().map(|topology| topology.load());
-        let legacy_reader = if runtime.is_none() {
-            Some(
-                self.live_reader
-                    .load_full()
-                    .ok_or_else(|| anyhow!("SHM live state is unavailable"))?,
-            )
-        } else {
-            None
-        };
+        let runtime = self
+            .runtime_topology
+            .get()
+            .ok_or_else(|| anyhow!("coherent runtime topology is unavailable"))?
+            .load();
 
         let read_points = |points: &[(u32, &'static str)]| {
             let mut values = serde_json::Map::new();
             for (point_id, kind) in points {
                 let instance_type = if *kind == "action" { 1 } else { 0 };
-                let sample = if let Some(runtime) = &runtime {
-                    runtime
-                        .read_instance_point(instance_id, instance_type != 0, *point_id)
-                        .ok()
-                        .flatten()
-                } else if let Some(reader) = &legacy_reader {
-                    crate::infra::rule_live_state::read_instance_point(
-                        reader,
-                        &self.routing_cache,
-                        instance_id,
-                        instance_type,
-                        *point_id,
-                    )
-                } else {
-                    None
-                };
+                let sample = runtime
+                    .read_instance_point(instance_id, instance_type != 0, *point_id)
+                    .ok()
+                    .flatten();
                 if let Some((value, timestamp_ms)) = sample
                     && value.is_finite()
                 {

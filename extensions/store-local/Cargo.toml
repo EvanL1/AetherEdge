@@ -1,13 +1,12 @@
 [package]
 name = "aether-store-local"
 version.workspace = true
-publish = false
 edition = "2024"
 rust-version = "1.90"
 description = "Zero-external-service adapters for the Aether edge kernel"
 license.workspace = true
 repository.workspace = true
-documentation = "https://docs.aetheriot.workers.dev/extensions/store-local"
+documentation = "https://docs.rs/aether-store-local"
 readme = "README.md"
 keywords = ["iot", "edge", "gateway", "offline"]
 categories = ["embedded", "asynchronous"]

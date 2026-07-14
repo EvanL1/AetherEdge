@@ -2,7 +2,9 @@
 
 set -euo pipefail
 
-cd "$(dirname "$0")/.."
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+cd "$ROOT_DIR"
 
 readonly REQUIRED_FILES=(
     README.md
@@ -26,23 +28,15 @@ readonly REQUIRED_FILES=(
     .github/workflows/security.yml
 )
 
-readonly SDK_SOURCE_PACKAGES=(
-    "aether-domain:crates/aether-domain"
-    "aether-dataplane:crates/aether-dataplane"
-    "aether-ports:crates/aether-ports"
-    "aether-application:crates/aether-application"
-    "aether-pack:crates/aether-pack"
-    "aether-data-processing:crates/aether-data-processing"
-    "aether-edge-sdk:crates/aether-sdk"
-    "aether-testkit:crates/aether-testkit"
-    "aether-store-local:extensions/store-local"
-    "aether-shm-bridge:extensions/shm-bridge"
-    "aether-http-data-processor:extensions/http-data-processor"
-    "aether-http-history-query:extensions/http-history-query"
-    "aether-sqlite-history-query:extensions/sqlite-history-query"
-    "aether-redis-bridge:extensions/redis-bridge"
-    "aether-postgres-history:extensions/postgres-history"
-)
+readonly PUBLIC_CRATE_CATALOG="$SCRIPT_DIR/public-crates.txt"
+declare -a PUBLIC_PACKAGES=()
+while IFS=$'\t' read -r package directory extra \
+    || [[ -n "${package:-}${directory:-}${extra:-}" ]]; do
+    [[ -z "${package//[[:space:]]/}" || "$package" == \#* ]] && continue
+    [[ -n "$directory" && -z "${extra:-}" ]] \
+        || { echo "invalid public crate catalog entry: $package" >&2; exit 1; }
+    PUBLIC_PACKAGES+=("$package:$directory")
+done < "$PUBLIC_CRATE_CATALOG"
 
 generate_validation_credential() {
     if ! command -v openssl >/dev/null 2>&1; then
@@ -52,8 +46,10 @@ generate_validation_credential() {
     openssl rand -hex 32
 }
 
-readonly COMPOSE_VALIDATION_JWT_SECRET="$(generate_validation_credential)"
-readonly COMPOSE_VALIDATION_UPLINK_TOKEN="$(generate_validation_credential)"
+COMPOSE_VALIDATION_JWT_SECRET="$(generate_validation_credential)"
+readonly COMPOSE_VALIDATION_JWT_SECRET
+COMPOSE_VALIDATION_UPLINK_TOKEN="$(generate_validation_credential)"
+readonly COMPOSE_VALIDATION_UPLINK_TOKEN
 readonly COMPOSE_VALIDATION_PROCESSOR_IMAGE="example.invalid/aether-load-forecasting@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 readonly COMPOSE_VALIDATION_PROCESSOR_BUNDLES='[{"kind":"model","family":"site-load","version":"v3","expected_digest":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","files":{"model":"/opt/load-forecasting/model.onnx"}}]'
 
@@ -82,10 +78,10 @@ manifest_package_name() {
     ' "$1"
 }
 
-is_sdk_source_package() {
+is_public_package() {
     local candidate=$1
     local entry
-    for entry in "${SDK_SOURCE_PACKAGES[@]}"; do
+    for entry in "${PUBLIC_PACKAGES[@]}"; do
         if [[ ${entry%%:*} == "$candidate" ]]; then
             return 0
         fi
@@ -104,8 +100,9 @@ if ! rg -q '^channel[[:space:]]*=[[:space:]]*"1\.90\.0"' rust-toolchain.toml; th
     fail "rust-toolchain.toml must pin Rust 1.90.0"
 fi
 
-echo "Checking SDK source package metadata..."
-for entry in "${SDK_SOURCE_PACKAGES[@]}"; do
+echo "Checking public package metadata..."
+"$SCRIPT_DIR/check-public-crate-release.sh" --catalog-only
+for entry in "${PUBLIC_PACKAGES[@]}"; do
     package=${entry%%:*}
     directory=${entry#*:}
     manifest="$directory/Cargo.toml"
@@ -146,8 +143,8 @@ for entry in "${SDK_SOURCE_PACKAGES[@]}"; do
     if ! rg -q '^repository(\.workspace)?[[:space:]]*=' "$manifest"; then
         fail "$manifest must declare or inherit its repository"
     fi
-    if ! rg -q '^documentation[[:space:]]*=[[:space:]]*"https://docs\.aetheriot\.workers\.dev/' "$manifest"; then
-        fail "$manifest must link to the versioned AetherIot documentation"
+    if ! rg -q '^documentation[[:space:]]*=[[:space:]]*"https://docs\.rs/' "$manifest"; then
+        fail "$manifest must link to its docs.rs documentation"
     fi
     if ! rg -q '^readme[[:space:]]*=[[:space:]]*"README\.md"' "$manifest"; then
         fail "$manifest must declare README.md"
@@ -155,15 +152,15 @@ for entry in "${SDK_SOURCE_PACKAGES[@]}"; do
     if [[ ! -s "$directory/README.md" ]]; then
         fail "$package README is missing or empty: $directory/README.md"
     fi
-    if ! rg -q '^publish[[:space:]]*=[[:space:]]*false' "$manifest"; then
-        fail "$package is a source-only implementation package and must set publish=false"
+    if rg -q '^publish[[:space:]]*=[[:space:]]*false' "$manifest"; then
+        fail "$package is public but marked publish=false"
     fi
 done
 
-echo "Checking that every other Rust package is explicitly private..."
+echo "Checking that every non-public Rust package is explicitly private..."
 while IFS= read -r manifest; do
     package=$(manifest_package_name "$manifest")
-    if [[ -z "$package" ]] || is_sdk_source_package "$package"; then
+    if [[ -z "$package" ]] || is_public_package "$package"; then
         continue
     fi
     if ! rg -q '^publish[[:space:]]*=[[:space:]]*false' "$manifest"; then
@@ -306,9 +303,9 @@ else
     fi
 fi
 
-echo "Checking the signed source-release boundary..."
-if rg -n 'cargo publish|CARGO_REGISTRY_TOKEN|publish-crates' .github/workflows/release.yml; then
-    fail "the source release workflow must not publish workspace crates"
+echo "Checking the signed source and public-crate release boundaries..."
+if ! rg -q 'CARGO_REGISTRY_TOKEN|publish-crates' .github/workflows/release.yml; then
+    fail "the release workflow must publish the governed public-crate catalog"
 fi
 if ! rg -q 'aetheriot-source-\$\{GITHUB_REF_NAME\}\.tar\.gz' \
     .github/workflows/release.yml; then
@@ -318,6 +315,32 @@ if ! rg -q 'release/aetheriot-source-\*\.tar\.gz' \
     .github/workflows/release.yml; then
     fail "the source archive must be covered by release provenance"
 fi
+
+echo "Checking that public crates can be assembled for publication..."
+for entry in "${PUBLIC_PACKAGES[@]}"; do
+    package=${entry%%:*}
+    if ! cargo package --package "$package" --allow-dirty \
+        --exclude-lockfile --no-verify --quiet; then
+        fail "cargo package failed for $package"
+        continue
+    fi
+
+    package_id=$(cargo pkgid --package "$package")
+    version=${package_id##*#}
+    version=${version##*@}
+    archive_prefix="${package}-${version}"
+    archive="target/package/${archive_prefix}.crate"
+    if [[ ! -s "$archive" ]]; then
+        fail "cargo package did not create $archive"
+        continue
+    fi
+    for license_name in LICENSE-MIT LICENSE-APACHE; do
+        if ! tar -xOf "$archive" "${archive_prefix}/${license_name}" \
+            | cmp -s - "$license_name"; then
+            fail "$archive does not contain the canonical $license_name text"
+        fi
+    done
+done
 
 if ((failures > 0)); then
     echo "Open-source readiness failed with $failures error(s)" >&2

@@ -148,7 +148,11 @@ impl PointWatchEvent {
             return false;
         };
         manifest
-            .slot(self.channel_id, kind, self.point_id)
+            .slot_for(crate::PhysicalPointAddress::from_legacy_raw(
+                self.channel_id,
+                kind,
+                self.point_id,
+            ))
             .and_then(|slot| u64::try_from(slot).ok())
             == Some(self.slot_index)
     }

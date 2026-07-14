@@ -57,6 +57,7 @@ async fn main() -> anyhow::Result<()> {
 
     info!("aether-history starting");
     info!("SHM: {}", env.shm_path);
+    info!("Channel health SHM: {}", env.channel_health_shm_path);
     info!("Embedded history: {}", env.history_db_path);
 
     // ── Shared SQLite – config table ──────────────────────────────────────────
@@ -74,6 +75,7 @@ async fn main() -> anyhow::Result<()> {
     db_config::create_config_table(&sqlite, &env.history_db_path).await?;
     let service_cfg = db_config::load_config(&sqlite).await?;
     let storage_cfg = db_config::load_storage(&sqlite).await?;
+    let collector = collector::build_shm_history_collector(&sqlite, &env).await?;
 
     // ── Storage backend – lazy / runtime-configurable ─────────────────────────
     // Start with the null backend.  If the saved config has storage enabled,
@@ -112,6 +114,7 @@ async fn main() -> anyhow::Result<()> {
 
     // ── App State ─────────────────────────────────────────────────────────────
     let state = Arc::new(AppState {
+        collector,
         storage: Arc::new(RwLock::new(initial_storage)),
         sqlite,
         env: Arc::clone(&env),

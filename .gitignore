@@ -57,6 +57,11 @@ docker-compose.override.yml
 **/dist/
 release/
 /bin/
+# Keep Rust binary source targets. The generic `bin/` artifact rule above
+# otherwise hides `src/bin/*.rs` and makes release tooling compile locally but
+# disappear from a clean checkout.
+!**/src/bin/
+!**/src/bin/**
 e2e-artifacts/
 variables.env
 release_notes.md

@@ -10,15 +10,19 @@
 #![allow(clippy::disallowed_methods)] // json! macro used in utoipa attribute examples
 
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
+    http::HeaderMap,
     response::Json,
 };
 use common::SuccessResponse;
 use std::sync::Arc;
 
 use crate::app_state::AppState;
-use crate::dto::{InstancePropertyPoint, UpsertPropertyRequest};
+use crate::dto::{InstanceMutationConfirmation, InstancePropertyPoint, UpsertPropertyRequest};
 use crate::error::AutomationError;
+use crate::instance_configuration::{
+    InstanceConfigurationMutation, InstanceConfigurationPayload, InstanceConfigurationRevision,
+};
 
 /// Upsert a single property value (PUT).
 ///
@@ -46,18 +50,38 @@ use crate::error::AutomationError;
         (status = 404, description = "Instance not found"),
         (status = 500, description = "Database error")
     ),
+    security(
+        ("bearer_auth" = [])
+    ),
     tag = "automation"
 )]
 pub async fn upsert_property(
     State(state): State<Arc<AppState>>,
     Path((id, property_id)): Path<(u32, i32)>,
+    headers: HeaderMap,
     Json(request): Json<UpsertPropertyRequest>,
-) -> Result<Json<SuccessResponse<InstancePropertyPoint>>, AutomationError> {
-    let updated = state
-        .instance_manager
-        .upsert_single_property(id, property_id, request.value)
-        .await?;
-    Ok(Json(SuccessResponse::new(updated)))
+) -> Result<Json<SuccessResponse<serde_json::Value>>, AutomationError> {
+    let acceptance = super::instance_management_handlers::apply_instance_mutation(
+        &state,
+        &headers,
+        request.confirmed,
+        InstanceConfigurationMutation::UpsertProperty {
+            instance_id: id,
+            property_id,
+            value: request.value,
+            expected_revision: InstanceConfigurationRevision::new(request.expected_revision),
+        },
+    )
+    .await?;
+    let InstanceConfigurationPayload::Property(updated) = acceptance.payload() else {
+        return Err(AutomationError::InternalError(
+            "property upsert returned an unexpected payload".to_string(),
+        ));
+    };
+    Ok(Json(SuccessResponse::new(serde_json::json!({
+        "property": updated,
+        "governance": super::instance_management_handlers::governance_response(&acceptance)
+    }))))
 }
 
 /// Delete a single property value (DELETE).
@@ -86,15 +110,35 @@ pub async fn upsert_property(
         (status = 404, description = "Instance not found"),
         (status = 500, description = "Database error")
     ),
+    security(
+        ("bearer_auth" = [])
+    ),
     tag = "automation"
 )]
 pub async fn delete_property(
     State(state): State<Arc<AppState>>,
     Path((id, property_id)): Path<(u32, i32)>,
-) -> Result<Json<SuccessResponse<InstancePropertyPoint>>, AutomationError> {
-    let updated = state
-        .instance_manager
-        .delete_single_property(id, property_id)
-        .await?;
-    Ok(Json(SuccessResponse::new(updated)))
+    headers: HeaderMap,
+    Query(request): Query<InstanceMutationConfirmation>,
+) -> Result<Json<SuccessResponse<serde_json::Value>>, AutomationError> {
+    let acceptance = super::instance_management_handlers::apply_instance_mutation(
+        &state,
+        &headers,
+        request.confirmed,
+        InstanceConfigurationMutation::DeleteProperty {
+            instance_id: id,
+            property_id,
+            expected_revision: InstanceConfigurationRevision::new(request.expected_revision),
+        },
+    )
+    .await?;
+    let InstanceConfigurationPayload::Property(updated) = acceptance.payload() else {
+        return Err(AutomationError::InternalError(
+            "property deletion returned an unexpected payload".to_string(),
+        ));
+    };
+    Ok(Json(SuccessResponse::new(serde_json::json!({
+        "property": updated,
+        "governance": super::instance_management_handlers::governance_response(&acceptance)
+    }))))
 }

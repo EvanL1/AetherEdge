@@ -32,6 +32,17 @@ run_boundary_check() {
     )
 }
 
+run_configuration_boundary_check() {
+    local fixture_root=$1
+
+    (
+        cd "$fixture_root"
+        AETHER_ARCHITECTURE_SOURCE_ROOT="$fixture_root" \
+            AETHER_ARCHITECTURE_CONFIGURATION_MUTATION_ONLY=1 \
+            "$ARCHITECTURE_CHECK"
+    )
+}
+
 assert_allowed() {
     local fixture_root=$1
     local output
@@ -136,5 +147,25 @@ async fn bypass(state: &AppState) {
 }
 RUST
 assert_rejected "$manager_fixture" "services/automation/src/api/handler.rs"
+
+test_only_manager_fixture=$(create_fixture retired_test_only_manager_mutation)
+mkdir -p "$test_only_manager_fixture/services/io/src/api"
+: > "$test_only_manager_fixture/services/automation/src/instance_routing.rs"
+cat > "$test_only_manager_fixture/services/automation/src/instance_manager.rs" <<'RUST'
+impl InstanceManager {
+    #[cfg(test)]
+    pub async fn create_instance(&self, request: CreateInstanceRequest) {
+        self.pool.execute(request).await;
+    }
+}
+RUST
+if output=$(run_configuration_boundary_check "$test_only_manager_fixture" 2>&1); then
+    printf 'expected retired test-only manager mutation to fail\n' >&2
+    exit 1
+fi
+if [[ "$output" != *"services/automation/src/instance_manager.rs"* ]]; then
+    printf 'expected test-only manager failure path, got:\n%s\n' "$output" >&2
+    exit 1
+fi
 
 echo "Action-routing architecture boundary tests passed"

@@ -8,7 +8,8 @@ use aether_io::protocols::core::data::{DataBatch, DataPoint};
 use aether_io::protocols::core::error::GatewayError;
 use aether_routing::RoutingCache;
 use aether_shm_bridge::{
-    ChannelPointManifest, ShmAcquisitionStateWriter, ShmRuntimeConfig, ShmWriterHandle,
+    ChannelPointManifest, PhysicalPointAddress, ShmAcquisitionStateWriter, ShmRuntimeConfig,
+    ShmWriterHandle,
 };
 
 fn create_test_handle() -> (tempfile::TempDir, Arc<ShmWriterHandle>) {
@@ -40,7 +41,11 @@ async fn shm_store_writes_poll_data_to_the_authoritative_slot() {
     let layout = handle.generation().expect("active layout");
     let slot = layout
         .manifest()
-        .slot(7, PointKind::Telemetry, 1)
+        .slot_for(PhysicalPointAddress::from_legacy_raw(
+            7,
+            PointKind::Telemetry,
+            1,
+        ))
         .expect("telemetry slot");
     let sample = layout.read_slot(slot).expect("slot sample");
     assert_eq!(sample.value, 42.5);
@@ -89,7 +94,11 @@ async fn unknown_c2c_target_rejects_source_before_any_production_write() {
     let layout = handle.generation().expect("active layout");
     let source_slot = layout
         .manifest()
-        .slot(7, PointKind::Telemetry, 0)
+        .slot_for(PhysicalPointAddress::from_legacy_raw(
+            7,
+            PointKind::Telemetry,
+            0,
+        ))
         .expect("source slot");
     assert!(
         layout
@@ -136,7 +145,11 @@ async fn c2c_expansion_deduplicates_targets_before_the_typed_port_call() {
     let layout = handle.generation().expect("active layout");
     let target_slot = layout
         .manifest()
-        .slot(8, PointKind::Telemetry, 0)
+        .slot_for(PhysicalPointAddress::from_legacy_raw(
+            8,
+            PointKind::Telemetry,
+            0,
+        ))
         .expect("C2C target slot");
     assert_eq!(
         layout

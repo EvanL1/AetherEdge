@@ -22,6 +22,7 @@
   "capabilities": [
     "alarm.alert.resolve",
     "alarm.rule.manage",
+    "automation.instance.manage",
     "automation.routing.manage",
     "automation.rule.execute",
     "automation.rule.manage",
@@ -46,6 +47,6 @@
   ],
   "checksum": {
     "algorithm": "sha256",
-    "digest": "d1c347bfd59e1ddae63935d2843c7678cde4b773771e5866ef94a6be86810696"
+    "digest": "ea91777559b1d46f363c7155a0908076369ce690c08da305c1d3052df9b940f7"
   }
 }

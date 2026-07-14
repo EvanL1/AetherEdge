@@ -287,3 +287,23 @@ fn rebuild_can_publish_the_first_generation_for_a_delayed_start() {
             .online()
     );
 }
+
+#[test]
+fn coordinated_health_publication_rejects_reserved_and_reused_epochs() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let zero_path = directory.path().join("zero-health.shm");
+    let manifest = Arc::new(ChannelHealthManifest::from_channel_ids([7]));
+
+    let zero_error =
+        ShmChannelHealthWriterHandle::create_at_epoch(&zero_path, Arc::clone(&manifest), 0)
+            .expect_err("epoch zero is reserved for diagnostic compatibility writers");
+    assert!(!zero_error.is_retryable());
+
+    let path = directory.path().join("health.shm");
+    let handle = ShmChannelHealthWriterHandle::create_at_epoch(&path, Arc::clone(&manifest), 600)
+        .expect("publish coordinated health generation");
+    let reused = handle
+        .rebuild_for_publication(manifest, 600)
+        .expect_err("a coordinated publication epoch must not be reused");
+    assert!(!reused.is_retryable());
+}

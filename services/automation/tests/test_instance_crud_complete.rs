@@ -13,28 +13,22 @@
 
 mod common;
 
-use aether_automation::instance_manager::InstanceManager;
 use aether_automation::product_loader::CreateInstanceRequest;
-use aether_routing::RoutingCache;
-use common::{TestEnv, energy_product_loader};
+use common::{GovernedInstanceManager, TestEnv, energy_product_loader};
 use std::collections::HashMap;
-use std::sync::Arc;
 
 // ============================================================================
 // Test Fixtures
 // ============================================================================
 
 /// Create an SQLite/SHM-oriented InstanceManager for testing.
-async fn create_test_instance_manager(env: &TestEnv) -> InstanceManager {
-    let routing_cache = Arc::new(RoutingCache::new());
-    let product_loader = Arc::new(energy_product_loader(env.pool.clone()));
-
-    InstanceManager::new(env.pool.clone(), routing_cache, product_loader)
+async fn create_test_instance_manager(env: &TestEnv) -> GovernedInstanceManager {
+    GovernedInstanceManager::new(env.pool.clone(), energy_product_loader(env.pool.clone())).await
 }
 
 /// Setup standard hierarchy for tests: Station(9901) -> ESS(9902)
 /// Returns ESS instance_id (9902) as parent for Battery/PCS instances
-async fn setup_hierarchy(manager: &InstanceManager) -> u32 {
+async fn setup_hierarchy(manager: &GovernedInstanceManager) -> u32 {
     let station_req = CreateInstanceRequest {
         instance_id: Some(9901),
         instance_name: "test_station_root".to_string(),
@@ -64,7 +58,7 @@ async fn setup_hierarchy(manager: &InstanceManager) -> u32 {
 
 /// Create a test instance
 async fn create_test_instance(
-    manager: &InstanceManager,
+    manager: &GovernedInstanceManager,
     instance_id: u32,
     instance_name: &str,
     product_name: &str,
@@ -192,7 +186,7 @@ async fn test_delete_instance_not_found() {
 }
 
 #[tokio::test]
-async fn test_delete_instance_cascade_routing() {
+async fn test_delete_instance_rejects_routed_instance() {
     let env = TestEnv::create().await.expect("Failed to create test env");
     let manager = create_test_instance_manager(&env).await;
     let ess_id = setup_hierarchy(&manager).await;
@@ -226,20 +220,23 @@ async fn test_delete_instance_cascade_routing() {
             .expect("Failed to count routings");
     assert_eq!(count, 1, "Routing should exist before delete");
 
-    // Delete instance (should cascade delete routings)
-    manager
+    // Governed deletion rejects routed instances; routing identity must be
+    // removed through its own CAS boundary first.
+    let error = manager
         .delete_instance(10)
         .await
-        .expect("Failed to delete instance");
+        .expect_err("routed instance deletion must fail closed");
+    assert!(error.to_string().contains("routed instance"));
 
-    // Verify routing was cascade deleted
+    // Neither instance nor routing is partially deleted.
     let (count,): (i64,) =
         sqlx::query_as("SELECT COUNT(*) FROM measurement_routing WHERE instance_id = ?")
             .bind(10i32)
             .fetch_one(&env.pool)
             .await
             .expect("Failed to count routings");
-    assert_eq!(count, 0, "Routing should be cascade deleted");
+    assert_eq!(count, 1, "Routing must remain after rejected deletion");
+    assert!(manager.get_instance(10).await.is_ok());
 
     env.cleanup().await.expect("Cleanup failed");
 }

@@ -2,9 +2,9 @@
 
 ## Status
 
-Implemented for the default production graphs on 2026-07-12. The legacy
-aggregate remains available only to explicit compatibility and conformance
-tests.
+Implemented for all production and test graphs on 2026-07-13. The legacy
+aggregate was removed after the ADR-0012 compatibility matrix and rolling
+conformance contracts passed.
 
 ## Context
 
@@ -49,6 +49,10 @@ not manufacture physical acquisition samples.
    Mapped `(device, inode)` identity and header generation checks remain a
    fail-closed second layer for crashes or a replacement that bypasses the
    composition-root protocol.
+8. `ChannelPointManifest` resolves slots only from a typed
+   `PhysicalPointAddress`. The temporary raw-ID `slot(channel_id, kind,
+   point_id)` entry point is removed; database and wire adapters must make the
+   legacy-to-domain conversion explicit at their own boundary.
 
 ## Consequences
 
@@ -62,9 +66,11 @@ not manufacture physical acquisition samples.
 - A canonical SHM directory now contains one persistent authority-lock
   sidecar. Commands may time out rather than overlap a long generation publish;
   advisory locks are released automatically if a process exits.
-- The six service binaries, rules engine, and CLI have no normal dependency on
-  `aether-rtdb-shm`. Compatibility fixtures may keep it as an explicit
-  development dependency until their wire-conformance coverage is replaced.
+- The six service binaries, rules engine, CLI, and test graph have no
+  dependency on the retired `aether-rtdb-shm` aggregate. Wire conformance is
+  owned by `aether-dataplane` and `aether-shm-bridge` fixtures.
+- A caller can no longer bypass physical-address validation by passing three
+  unrelated integers directly to a SHM manifest.
 
 ## Verification
 

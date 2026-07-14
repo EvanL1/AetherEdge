@@ -317,6 +317,7 @@ pub fn create_api_routes(
         simulation_writes_enabled(),
         None,
         ChannelManagementHttpBoundary::unavailable(),
+        PointTopologyHttpBoundary::unavailable(),
     )
 }
 
@@ -336,6 +337,29 @@ pub fn create_api_routes_with_channel_management(
         simulation_writes_enabled(),
         None,
         ChannelManagementHttpBoundary::governed(channel_management, access_authenticator),
+        PointTopologyHttpBoundary::unavailable(),
+    )
+}
+
+/// Creates routes with only the governed point-topology command composed.
+///
+/// This narrow composition root is useful for embedded commissioning tests;
+/// channel lifecycle mutations remain fail-closed.
+pub fn create_api_routes_with_point_topology(
+    channel_manager: Arc<ChannelManager>,
+    sqlite_pool: sqlx::SqlitePool,
+    command_tx_cache: Arc<CommandTxCache>,
+    point_topology: Arc<crate::point_topology::PointTopologyApplication>,
+    access_authenticator: Arc<AccessTokenAuthenticator>,
+) -> Router {
+    create_api_routes_with_boundary(
+        channel_manager,
+        sqlite_pool,
+        command_tx_cache,
+        simulation_writes_enabled(),
+        None,
+        ChannelManagementHttpBoundary::unavailable(),
+        PointTopologyHttpBoundary::governed(point_topology, access_authenticator),
     )
 }
 
@@ -348,9 +372,11 @@ pub fn create_api_routes_with_channel_applications(
     command_tx_cache: Arc<CommandTxCache>,
     channel_management: Arc<ChannelManagementApplication>,
     channel_reconciliation: Arc<ChannelReconciliationApplication>,
+    point_topology: Arc<crate::point_topology::PointTopologyApplication>,
     access_authenticator: Arc<AccessTokenAuthenticator>,
 ) -> Router {
     let state_reconciliation = Arc::clone(&channel_reconciliation);
+    let point_authenticator = Arc::clone(&access_authenticator);
     create_api_routes_with_boundary(
         channel_manager,
         sqlite_pool,
@@ -362,6 +388,7 @@ pub fn create_api_routes_with_channel_applications(
             channel_reconciliation,
             access_authenticator,
         ),
+        PointTopologyHttpBoundary::governed(point_topology, point_authenticator),
     )
 }
 
@@ -390,6 +417,7 @@ fn create_api_routes_with_simulation_writes(
         allow_simulation_writes,
         None,
         ChannelManagementHttpBoundary::unavailable(),
+        PointTopologyHttpBoundary::unavailable(),
     )
 }
 
@@ -400,6 +428,7 @@ fn create_api_routes_with_boundary(
     allow_simulation_writes: bool,
     channel_reconciliation: Option<Arc<ChannelReconciliationApplication>>,
     channel_management: ChannelManagementHttpBoundary,
+    point_topology: PointTopologyHttpBoundary,
 ) -> Router {
     let state = AppState::new(
         channel_manager,
@@ -409,7 +438,7 @@ fn create_api_routes_with_boundary(
         channel_reconciliation,
     );
 
-    Router::new()
+    let router = Router::new()
         // Health check (top-level for monitoring systems)
         .route("/health", get(health_check))
         // Service management
@@ -484,6 +513,10 @@ fn create_api_routes_with_boundary(
         )
         .route("/api/network/apply", post(apply_network_changes))
         .layer(axum::Extension(channel_management))
+        .layer(axum::Extension(point_topology));
+    #[cfg(feature = "modbus")]
+    let router = router.layer(axum::Extension(SunSpecDiscoveryBoundary::production()));
+    router
         // CRITICAL: Apply middleware BEFORE .with_state() for it to work
         .layer(axum::middleware::from_fn(common::logging::http_request_logger))
         .layer(DefaultBodyLimit::max(1024 * 1024)) // 1 MB request body limit

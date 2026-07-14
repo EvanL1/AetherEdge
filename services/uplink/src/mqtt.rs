@@ -300,17 +300,11 @@ async fn handle_read(state: Arc<AppState>, payload: Bytes) {
         },
     };
 
-    // Resolve the logical key through the embedded catalogue and SHM manifest.
+    // Pin the same immutable catalogue + committed SHM epoch for the complete read.
     let logical_device = req.device.replace('_', " ");
     let logical_key = format!("{}:{}:{}", req.source, logical_device, req.data_type);
-    let source = match crate::live_values::build_net_value_source(&state.sqlite, &state.env).await {
-        Ok(source) => source,
-        Err(error) => {
-            error!("Cannot rebuild SHM catalogue for cloud read: {error}");
-            return;
-        },
-    };
-    let values = match source.read_group(&logical_key, req.field.as_deref()) {
+    let generation = state.live_topology.load();
+    let values = match generation.read_group(&logical_key, req.field.as_deref()) {
         Ok(Some(values)) if !values.is_empty() => values,
         Ok(_) => {
             warn!(

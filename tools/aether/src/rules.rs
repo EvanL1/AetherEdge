@@ -330,12 +330,16 @@ impl RuleClient {
 
     pub(crate) async fn enable_rule(&self, rule_id: i64, confirmed: bool) -> Result<Value> {
         let access_token = self.rule_management_token(confirmed)?;
+        let expected_revision = self.current_rules_revision().await?;
         let response = self
             .client
             .post(format!("{}/api/rules/{}/enable", self.base_url, rule_id))
             .bearer_auth(access_token)
             .header("x-request-id", uuid::Uuid::new_v4().to_string())
-            .json(&serde_json::json!({ "confirmed": true }))
+            .json(&serde_json::json!({
+                "confirmed": true,
+                "expected_revision": expected_revision
+            }))
             .send()
             .await?;
 
@@ -351,12 +355,16 @@ impl RuleClient {
 
     pub(crate) async fn disable_rule(&self, rule_id: i64, confirmed: bool) -> Result<Value> {
         let access_token = self.rule_management_token(confirmed)?;
+        let expected_revision = self.current_rules_revision().await?;
         let response = self
             .client
             .post(format!("{}/api/rules/{}/disable", self.base_url, rule_id))
             .bearer_auth(access_token)
             .header("x-request-id", uuid::Uuid::new_v4().to_string())
-            .json(&serde_json::json!({ "confirmed": true }))
+            .json(&serde_json::json!({
+                "confirmed": true,
+                "expected_revision": expected_revision
+            }))
             .send()
             .await?;
 
@@ -400,9 +408,11 @@ impl RuleClient {
         confirmed: bool,
     ) -> Result<Value> {
         let access_token = self.rule_management_token(confirmed)?;
+        let expected_revision = self.current_rules_revision().await?;
         let mut body = serde_json::Map::new();
         body.insert("name".into(), Value::String(name.to_string()));
         body.insert("confirmed".into(), Value::Bool(true));
+        body.insert("expected_revision".into(), Value::from(expected_revision));
         if let Some(d) = description {
             body.insert("description".into(), Value::String(d.to_string()));
         }
@@ -432,9 +442,15 @@ impl RuleClient {
         confirmed: bool,
     ) -> Result<Value> {
         let access_token = self.rule_management_token(confirmed)?;
-        body.as_object_mut()
-            .ok_or_else(|| anyhow::anyhow!("rule update body must be a JSON object"))?
-            .insert("confirmed".to_string(), Value::Bool(true));
+        let expected_revision = self.current_rules_revision().await?;
+        let fields = body
+            .as_object_mut()
+            .ok_or_else(|| anyhow::anyhow!("rule update body must be a JSON object"))?;
+        fields.insert("confirmed".to_string(), Value::Bool(true));
+        fields.insert(
+            "expected_revision".to_string(),
+            Value::from(expected_revision),
+        );
         let response = self
             .client
             .put(format!("{}/api/rules/{}", self.base_url, rule_id))
@@ -457,12 +473,16 @@ impl RuleClient {
 
     pub(crate) async fn delete_rule(&self, rule_id: i64, confirmed: bool) -> Result<Value> {
         let access_token = self.rule_management_token(confirmed)?;
+        let expected_revision = self.current_rules_revision().await?;
         let response = self
             .client
             .delete(format!("{}/api/rules/{}", self.base_url, rule_id))
             .bearer_auth(access_token)
             .header("x-request-id", uuid::Uuid::new_v4().to_string())
-            .json(&serde_json::json!({ "confirmed": true }))
+            .json(&serde_json::json!({
+                "confirmed": true,
+                "expected_revision": expected_revision
+            }))
             .send()
             .await?;
 
@@ -489,6 +509,32 @@ impl RuleClient {
                 "rule management requires AETHER_ACCESS_TOKEN from an authenticated Admin or Engineer session"
             )
         })
+    }
+
+    async fn current_rules_revision(&self) -> Result<u64> {
+        let response = self
+            .client
+            .get(format!("{}/api/rules?page=1&page_size=1", self.base_url))
+            .send()
+            .await?;
+        if !response.status().is_success() {
+            return Err(anyhow::anyhow!(
+                "Failed to read automation-rules revision: {}",
+                response.status()
+            ));
+        }
+        let value = response
+            .headers()
+            .get("x-aether-configuration-revision")
+            .or_else(|| response.headers().get(reqwest::header::ETAG))
+            .ok_or_else(|| anyhow::anyhow!("rules query did not return a revision header"))?
+            .to_str()?
+            .trim_matches('"')
+            .parse::<u64>()?;
+        if value == 0 || value >= i64::MAX as u64 {
+            return Err(anyhow::anyhow!("invalid automation-rules revision {value}"));
+        }
+        Ok(value)
     }
 
     fn rule_execution_token(&self, confirmed: bool) -> Result<&str> {

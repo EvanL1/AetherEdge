@@ -5,7 +5,9 @@ use std::sync::Arc;
 
 use aether_model::PointType;
 use aether_routing::RoutingCache;
-use aether_shm_bridge::{ChannelPointManifest, ShmRuntimeConfig, ShmWriterHandle};
+use aether_shm_bridge::{
+    ChannelPointManifest, PhysicalPointAddress, ShmRuntimeConfig, ShmWriterHandle,
+};
 
 /// Creates an empty but available SHM layout suitable for manager/API tests.
 pub fn create_test_shm_handle() -> Arc<ShmWriterHandle> {
@@ -50,7 +52,9 @@ pub fn assert_channel_value(
     };
     let slot = layout
         .manifest()
-        .slot(channel_id, kind, point_id)
+        .slot_for(PhysicalPointAddress::from_legacy_raw(
+            channel_id, kind, point_id,
+        ))
         .expect("channel point slot");
     let sample = layout.read_slot(slot).expect("channel point sample");
     assert_eq!(sample.value, expected_value);

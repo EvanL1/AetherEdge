@@ -265,8 +265,7 @@ fn create_mqtt_channel(config: &ChannelConfig) -> Result<Box<dyn ChannelRuntime>
     // Build channel config
     let channel_config = params.to_config();
 
-    // MqttChannel is event-driven, doesn't use point configs like Modbus
-    // JSON mappings are loaded from json_point_mappings table at connect time
+    // MqttChannel loads JSON mappings from point-owned inline protocol_mappings.
     let channel = crate::protocols::adapters::mqtt::MqttChannel::new(
         channel_config,
         config.id,
@@ -287,7 +286,7 @@ fn create_http_channel(config: &ChannelConfig) -> Result<Box<dyn ChannelRuntime>
     // Build channel config
     let channel_config = params.to_config();
 
-    // HttpChannel uses JSON mappings loaded from json_point_mappings table
+    // HttpChannel loads JSON mappings from point-owned inline protocol_mappings.
     let channel = crate::protocols::adapters::http::HttpChannel::new(
         channel_config,
         config.id,

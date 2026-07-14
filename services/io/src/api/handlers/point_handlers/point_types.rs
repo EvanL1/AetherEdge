@@ -20,6 +20,21 @@ pub struct PointCrudResult {
 
     #[schema(example = "Point updated successfully")]
     pub message: String,
+
+    /// Durable audit correlation identifier for this non-idempotent command.
+    #[schema(format = "uuid")]
+    pub request_id: String,
+
+    /// Channel desired-state revision committed with the point mutation.
+    #[schema(minimum = 1, maximum = 9223372036854775807_i64)]
+    pub resulting_revision: u64,
+
+    /// Terminal audit persistence state after the command was accepted.
+    pub completion_audit: crate::dto::ChannelCompletionAudit,
+
+    /// Point topology mutations are never safe for automatic retry.
+    #[schema(default = false, example = false)]
+    pub retryable: bool,
 }
 
 // ============================================================================
@@ -117,6 +132,17 @@ pub struct PointBatchResult {
     /// Processing duration in milliseconds
     #[schema(example = 250)]
     pub duration_ms: u64,
+
+    #[schema(format = "uuid")]
+    pub request_id: String,
+
+    #[schema(minimum = 1, maximum = 9223372036854775807_i64)]
+    pub resulting_revision: u64,
+
+    pub completion_audit: crate::dto::ChannelCompletionAudit,
+
+    #[schema(default = false, example = false)]
+    pub retryable: bool,
 }
 
 /// Operation statistics grouped by type

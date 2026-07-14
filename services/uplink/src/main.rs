@@ -87,11 +87,22 @@ async fn main() -> anyhow::Result<()> {
     );
     let outbox: Arc<dyn aether_ports::DurableOutbox> = file_outbox.clone();
 
+    // One SQLite read transaction seeds the complete service-level topology.
+    // The generation remains lazy until IO has committed both SHM planes.
+    let topology_snapshot = aether_store_local::load_sqlite_live_topology(&sqlite)
+        .await
+        .map_err(|error| anyhow::anyhow!("Live topology load failed: {error}"))?;
+    let live_topology = Arc::new(
+        live_values::UplinkTopologyHandle::new_lazy(topology_snapshot, &env)
+            .map_err(|error| anyhow::anyhow!("Live topology initialization failed: {error}"))?,
+    );
+
     // ── App State ─────────────────────────────────────────────────────────────
     let state = Arc::new(AppState {
         sqlite,
         outbox,
         env: Arc::clone(&env),
+        live_topology: Arc::clone(&live_topology),
         config: Arc::new(RwLock::new(net_cfg)),
         device,
         topics,
@@ -107,6 +118,15 @@ async fn main() -> anyhow::Result<()> {
     // ── Background tasks ──────────────────────────────────────────────────────
     let shutdown = CancellationToken::new();
 
+    {
+        let topology = Arc::clone(&live_topology);
+        let pool = state.sqlite.clone();
+        let config = Arc::clone(&env);
+        let sd = shutdown.clone();
+        tokio::spawn(async move {
+            live_values::run_topology_refresher(topology, pool, config, sd).await;
+        });
+    }
     {
         let s = Arc::clone(&state);
         let sd = shutdown.clone();

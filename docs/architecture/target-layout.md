@@ -140,8 +140,8 @@ ports and may not become the only runnable form.
 
 - `aether-dataplane` contains the physical SHM core. Production channel-aware
   readers, acquisition writers, command sinks, generation lifecycle, and
-  PointWatch adapters live in `extensions/shm-bridge`; the legacy
-  `libs/aether-rtdb-shm` aggregate is retained only for compatibility tests.
+  PointWatch adapters live in `extensions/shm-bridge`. The former
+  `aether-rtdb-shm` compatibility aggregate has been removed.
 - `extensions/store-local::FileOutbox` is the default durable outbox option;
   it is a versioned append-only journal, not an external database.
 - `OutboxForwarder` in the application layer connects `DurableOutbox` to an

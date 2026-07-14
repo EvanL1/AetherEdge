@@ -7,6 +7,8 @@ readonly DEFAULT_GRAPH_PATTERN='^(redis|sqlx|sqlx-core|sqlx-postgres|bb8|bb8-red
 readonly PERIPHERAL_GRAPH_PATTERN='^(redis|sqlx-postgres|tokio-postgres|postgres-types|postgres-protocol|bb8|bb8-redis|workspace-hack) v'
 readonly ACTION_ROUTING_MUTATION_SQL_PATTERN='(?i)(?:r#{0,8})?"[[:space:]]*(?:INSERT(?:[[:space:]]+OR[[:space:]]+[A-Z_]+)?[[:space:]]+INTO|REPLACE[[:space:]]+INTO|UPDATE|DELETE[[:space:]]+FROM)[[:space:]]+action_routing\b'
 readonly LEGACY_ACTION_ROUTING_MANAGER_PATTERN='\.[[:space:]]*(?:upsert_action_routing|delete_action_routing|toggle_action_routing|delete_all_routing)[[:space:]]*\('
+readonly AUTOMATION_CONFIGURATION_MUTATION_SQL_PATTERN='(?i)(?:r#{0,8})?"[[:space:]]*(?:INSERT(?:[[:space:]]+OR[[:space:]]+[A-Z_]+)?[[:space:]]+INTO|REPLACE[[:space:]]+INTO|UPDATE|DELETE[[:space:]]+FROM)[[:space:]]+(?:measurement_routing|action_routing|rules|instances|instance_properties)\b'
+readonly POINT_CONFIGURATION_MUTATION_SQL_PATTERN='(?i)(?:r#{0,8})?"[[:space:]]*(?:INSERT(?:[[:space:]]+OR[[:space:]]+[A-Z_]+)?[[:space:]]+INTO|REPLACE[[:space:]]+INTO|UPDATE|DELETE[[:space:]]+FROM)[[:space:]]+(?:telemetry_points|signal_points|control_points|adjustment_points)\b'
 
 production_rust_source() {
     local source_file=$1
@@ -96,6 +98,7 @@ check_channel_management_mutation_boundary() {
     local point_helper="$source_root/services/io/src/api/handlers/point_handlers/point_helpers.rs"
     local control_handler="$source_root/services/io/src/api/handlers/control_handlers.rs"
     local obsolete_reload="$source_root/services/io/src/core/reload.rs"
+    local legacy_cli_reload="$source_root/tools/aether/src/services.rs"
     local violations_found=0
     local matches
 
@@ -128,6 +131,17 @@ check_channel_management_mutation_boundary() {
         printf '%s:%s\n' "${obsolete_reload#"$source_root"/}" \
             "duplicate ReloadableService runtime owner is forbidden"
         violations_found=1
+    fi
+
+    if [[ -f "$legacy_cli_reload" ]]; then
+        matches=$(
+            production_rust_source "$legacy_cli_reload" \
+                | rg -n '\bReload[[:space:]]*\{|/api/channels/reload' || true
+        )
+        if [[ -n "$matches" ]]; then
+            printf '%s:%s\n' "${legacy_cli_reload#"$source_root"/}" "$matches"
+            violations_found=1
+        fi
     fi
 
     if [[ -f "$reload_handler" ]]; then
@@ -174,6 +188,67 @@ enforce_channel_management_mutation_boundary() {
     fi
 }
 
+check_configuration_mutation_boundaries() {
+    local source_file
+    local relative_source
+    local matches
+    local violations_found=0
+
+    while IFS= read -r source_file; do
+        case "$source_file" in
+            *_tests.rs) continue ;;
+        esac
+        relative_source=${source_file#./}
+        matches=$(
+            production_rust_source "$source_file" \
+                | rg -n -U "$AUTOMATION_CONFIGURATION_MUTATION_SQL_PATTERN" || true
+        )
+        if [[ -n "$matches" ]]; then
+            printf '%s:%s\n' "$relative_source" "$matches"
+            violations_found=1
+        fi
+    done < <(rg --files services/automation/src/api --glob '*.rs')
+
+    while IFS= read -r source_file; do
+        case "$source_file" in
+            *_tests.rs) continue ;;
+        esac
+        relative_source=${source_file#./}
+        matches=$(
+            production_rust_source "$source_file" \
+                | rg -n -U "$POINT_CONFIGURATION_MUTATION_SQL_PATTERN" || true
+        )
+        if [[ -n "$matches" ]]; then
+            printf '%s:%s\n' "$relative_source" "$matches"
+            violations_found=1
+        fi
+    done < <(rg --files services/io/src/api --glob '*.rs')
+
+    for source_file in \
+        services/automation/src/instance_manager.rs \
+        services/automation/src/instance_routing.rs; do
+        matches=$(
+            rg -n \
+                '(pub )?async fn (create_instance|rename_instance|delete_instance|collect_descendants|delete_single_instance|upsert_single_property|delete_single_property|upsert_(measurement|action)_routing|delete_(measurement|action)_routing|toggle_(measurement|action)_routing|delete_all_routing)' \
+                "$source_file" 2>&1 || true
+        )
+        if [[ -n "$matches" ]]; then
+            printf '%s:%s\n' "$source_file" "$matches"
+            violations_found=1
+        fi
+    done
+
+    [[ "$violations_found" -eq 0 ]]
+}
+
+enforce_configuration_mutation_boundaries() {
+    echo "Checking governed configuration mutation boundaries..."
+    if ! check_configuration_mutation_boundaries; then
+        echo "ERROR: production HTTP or legacy manager code bypasses a governed configuration application boundary"
+        return 1
+    fi
+}
+
 if [[ "${AETHER_ARCHITECTURE_ACTION_ROUTING_ONLY:-0}" == "1" ]]; then
     enforce_action_routing_mutation_boundary "${AETHER_ARCHITECTURE_SOURCE_ROOT:-.}"
     exit 0
@@ -181,6 +256,12 @@ fi
 
 if [[ "${AETHER_ARCHITECTURE_CHANNEL_MANAGEMENT_ONLY:-0}" == "1" ]]; then
     enforce_channel_management_mutation_boundary "${AETHER_ARCHITECTURE_SOURCE_ROOT:-.}"
+    exit 0
+fi
+
+if [[ "${AETHER_ARCHITECTURE_CONFIGURATION_MUTATION_ONLY:-0}" == "1" ]]; then
+    cd "${AETHER_ARCHITECTURE_SOURCE_ROOT:-.}"
+    enforce_configuration_mutation_boundaries
     exit 0
 fi
 
@@ -214,6 +295,7 @@ enforce_action_routing_mutation_boundary "."
 ./scripts/test-action-routing-architecture-boundary.sh
 enforce_channel_management_mutation_boundary "."
 ./scripts/test-channel-management-architecture-boundary.sh
+enforce_configuration_mutation_boundaries
 
 echo "Checking channel-management safety policy..."
 ruby -ryaml -e '
@@ -249,9 +331,18 @@ if rg -n 'aether-rtdb-shm' extensions/shm-bridge/Cargo.toml; then
     echo "ERROR: SHM bridge depends on the legacy aggregation crate"
     exit 1
 fi
-legacy_core_file=$(find libs/aether-rtdb-shm/src/core -maxdepth 1 -type f -name '*.rs' -print -quit 2>/dev/null || true)
-if [[ -e libs/aether-rtdb-shm/src/core.rs || -n "$legacy_core_file" ]]; then
-    echo "ERROR: physical SHM core still exists in the legacy crate"
+if [[ -e libs/aether-rtdb-shm ]]; then
+    echo "ERROR: retired aether-rtdb-shm aggregation crate was restored"
+    exit 1
+fi
+if rg -n 'aether-rtdb-shm' Cargo.toml .guppy/hakari.toml; then
+    echo "ERROR: workspace metadata still references the retired aether-rtdb-shm crate"
+    exit 1
+fi
+if rg -n '(aether-routing|aether_routing|RoutingCache)' \
+    libs/aether-rules/Cargo.toml libs/aether-rules/src libs/aether-rules/tests \
+    --glob '*.rs' --glob 'Cargo.toml'; then
+    echo "ERROR: aether-rules restored the independently mutable legacy routing cache"
     exit 1
 fi
 
@@ -261,6 +352,67 @@ if git check-ignore -q examples/minimal-gateway/Cargo.toml; then
 fi
 if git check-ignore -q examples/energy-gateway/Cargo.toml; then
     echo "ERROR: energy gateway example is ignored by git"
+    exit 1
+fi
+if git check-ignore -q libs/aether-runtime-catalog/src/bin/aether-runtime-manifest.rs; then
+    echo "ERROR: runtime-manifest binary source is ignored by git"
+    exit 1
+fi
+if [[ ! -s distributions/aetherems/runtime-io-features.txt ]]; then
+    echo "ERROR: AetherEMS runtime IO feature authority is missing"
+    exit 1
+fi
+if ! rg -q 'distributions/aetherems/runtime-io-features.txt' \
+    .github/workflows/release.yml scripts/check-extraction-readiness.sh; then
+    echo "ERROR: release and extraction gates do not share the AetherEMS runtime feature authority"
+    exit 1
+fi
+
+echo "Checking removed topology and product compatibility entry points..."
+if [[ -e services/io/src/store/shm_manifest.rs \
+    || -e services/automation/src/infra/shm_manifest.rs ]]; then
+    echo "ERROR: a service-local SHM manifest forwarding shim was restored"
+    exit 1
+fi
+if rg -n '\b(LegacyRoutingTables|RoutingCache|compatibility_routing|routing_cache)\b|aether_routing' \
+    services/automation/src libs/aether-rules/src; then
+    echo "ERROR: automation restored the mutable legacy routing projection"
+    exit 1
+fi
+if rg -n '\b(get_builtin_products|get_builtin_product|get_product_names|get_child_products|builtin_only)\b' \
+    libs/aether-model/src services/automation/src tools/aether/src \
+    --glob '*.rs'; then
+    echo "ERROR: removed built-in product compatibility API was restored"
+    exit 1
+fi
+if rg -n '\bpoint_mappings\b' \
+    services/automation/src/product_loader.rs \
+    services/io/src/channel_mutator.rs \
+    services/io/src/automatic_reconciliation.rs; then
+    echo "ERROR: removed point_mappings compatibility projection was restored"
+    exit 1
+fi
+legacy_manifest_slot_count=$(rg -c \
+    'pub fn slot\(&self, channel_id: u32, kind: PointKind, point_id: u32\)' \
+    extensions/shm-bridge/src/manifest.rs || true)
+if [[ "$legacy_manifest_slot_count" -ne 1 ]]; then
+    echo "ERROR: published ChannelPointManifest::slot compatibility surface changed"
+    exit 1
+fi
+if ! rg -q -U \
+    'pub fn slot\(&self, channel_id: u32, kind: PointKind, point_id: u32\) -> Option<usize> \{[[:space:]]+self\.slot_for\(PhysicalPointAddress::from_legacy_raw\([[:space:]]+channel_id, kind, point_id,[[:space:]]+\)\)[[:space:]]+\}' \
+    extensions/shm-bridge/src/manifest.rs; then
+    echo "ERROR: ChannelPointManifest::slot must delegate directly to typed slot_for"
+    exit 1
+fi
+if rg -n '(\b[A-Za-z_][A-Za-z0-9_]*manifest(?:\(\))?\.slot\(|\bChannelPointManifest::slot\()' \
+    crates services extensions tools examples libs/aether-rules \
+    --glob '*.rs' \
+    --glob '!extensions/shm-bridge/src/manifest.rs' \
+    --glob '!**/tests/**' \
+    --glob '!**/*tests.rs' \
+    --glob '!**/test_utils.rs'; then
+    echo "ERROR: production code called the raw-ID ChannelPointManifest::slot compatibility shim"
     exit 1
 fi
 
@@ -273,8 +425,8 @@ if rg -n "$DEFAULT_GRAPH_PATTERN" "$dependency_tree"; then
     exit 1
 fi
 
-# `--edges normal` is intentional: compatibility/conformance tests may retain
-# an explicit dev-dependency, but no shipped service or CLI graph may do so.
+# `--edges normal` is intentional: every shipped service and CLI graph must be
+# independent of the deleted aggregation crate.
 echo "Checking production graphs for the legacy SHM aggregate..."
 if rg -n 'aether[_-]rtdb[_-]shm' \
     services/io/src services/automation/src services/alarm/src services/api/src \

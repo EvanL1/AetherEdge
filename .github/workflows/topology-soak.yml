@@ -1,0 +1,87 @@
+name: Topology Soak
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '23 18 * * *'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: topology-soak-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  cross-process-topology:
+    name: Cross-process topology and restart soak
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust environment
+        uses: ./.github/actions/setup-rust-env
+        with:
+          install-protoc: 'true'
+
+      - name: Run point/health publication soak
+        run: >-
+          cargo test -p aether-shm-bridge
+          --test topology_process_stress
+          cross_process_topology_switch_restart_and_partial_publish_soak
+          -- --ignored --exact --nocapture
+
+      - name: Run service-generation and automatic-reconciliation contracts
+        run: |
+          cargo test -p aether-history --all-features
+          cargo test -p aether-uplink --all-features
+          cargo test -p aether-io --test automatic_reconciliation_contract
+          cargo test -p aether-io --test shm_topology_projector_contract
+
+  service-dynamic-config:
+    name: ${{ matrix.service }} dynamic configuration soak
+    needs: cross-process-topology
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - service: History
+            command: >-
+              cargo test -p aether-history
+              collector::tests::dynamic_configuration_service_generation_soak
+              -- --ignored --exact --nocapture
+          - service: Uplink
+            command: >-
+              cargo test -p aether-uplink
+              live_values::tests::dynamic_configuration_service_generation_soak
+              -- --ignored --exact --nocapture
+          - service: IO reconciliation
+            command: >-
+              cargo test -p aether-io
+              --test automatic_reconciliation_contract
+              repeated_mapping_routing_and_topology_recovery_soak
+              -- --ignored --exact --nocapture
+    env:
+      AETHER_DYNAMIC_CONFIG_SOAK_ITERATIONS: 600
+      AETHER_DYNAMIC_CONFIG_SOAK_READERS: 4
+      AETHER_DYNAMIC_CONFIG_SOAK_RESTART_INTERVAL: 20
+      AETHER_DYNAMIC_CONFIG_SOAK_TIMEOUT_SECS: 1200
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust environment
+        uses: ./.github/actions/setup-rust-env
+        with:
+          install-protoc: 'true'
+
+      - name: Run ignored dynamic configuration soak
+        run: ${{ matrix.command }}

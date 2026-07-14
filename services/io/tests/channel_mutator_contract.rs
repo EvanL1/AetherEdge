@@ -188,15 +188,6 @@ async fn test_pool() -> sqlx::SqlitePool {
     common::test_utils::schema::init_automation_schema(&pool)
         .await
         .expect("automation schema");
-    sqlx::query(
-        "CREATE TABLE json_point_mappings (\
-             id INTEGER PRIMARY KEY AUTOINCREMENT,\
-             channel_id INTEGER NOT NULL REFERENCES channels(channel_id) ON DELETE CASCADE\
-         )",
-    )
-    .execute(&pool)
-    .await
-    .expect("json mapping schema");
     pool
 }
 
@@ -1454,6 +1445,56 @@ async fn delete_refuses_action_routes_without_fencing_or_cascading_them() {
 }
 
 #[tokio::test]
+async fn delete_refuses_measurement_routes_without_fencing_or_cascading_them() {
+    let pool = test_pool().await;
+    let runtime = Arc::new(FakeRuntime::default());
+    let mutator = adapter(pool.clone(), Arc::clone(&runtime));
+    mutator
+        .mutate(ChannelMutation::create(definition(15, true)))
+        .await
+        .expect("create enabled channel");
+    sqlx::query(
+        "INSERT INTO instances (instance_id, instance_name, product_name) \
+         VALUES (15, 'measurement-instance', 'ExampleDevice')",
+    )
+    .execute(&pool)
+    .await
+    .expect("instance");
+    sqlx::query(
+        "INSERT INTO measurement_routing \
+         (instance_id, instance_name, measurement_id, channel_id, channel_type, channel_point_id) \
+         VALUES (15, 'measurement-instance', 1, 15, 'T', 1)",
+    )
+    .execute(&pool)
+    .await
+    .expect("measurement route");
+    let calls_before = runtime.calls();
+
+    let error = mutator
+        .mutate(ChannelMutation::delete_with_revision(
+            ChannelId::new(15),
+            ChannelRevision::new(1),
+        ))
+        .await
+        .expect_err("measurement route must block deletion");
+
+    assert_eq!(error.kind(), PortErrorKind::Conflict);
+    assert_eq!(
+        runtime.calls(),
+        calls_before,
+        "conflict must not fence runtime"
+    );
+    assert!(runtime.is_active(15));
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM measurement_routing")
+            .fetch_one(&pool)
+            .await
+            .expect("route count"),
+        1
+    );
+}
+
+#[tokio::test]
 async fn delete_is_atomic_for_owned_rows_and_leaves_no_runtime_zombie() {
     let pool = test_pool().await;
     let runtime = Arc::new(FakeRuntime::default());
@@ -1469,34 +1510,6 @@ async fn delete_is_atomic_for_owned_rows_and_leaves_no_runtime_zombie() {
     .execute(&pool)
     .await
     .expect("point");
-    sqlx::query(
-        "INSERT INTO instances (instance_id, instance_name, product_name) \
-         VALUES (2, 'measurement-instance', 'ExampleDevice')",
-    )
-    .execute(&pool)
-    .await
-    .expect("instance");
-    sqlx::query(
-        "INSERT INTO measurement_routing \
-         (instance_id, instance_name, channel_id, channel_type, channel_point_id, measurement_id) \
-         VALUES (2, 'measurement-instance', 14, 'T', 1, 1)",
-    )
-    .execute(&pool)
-    .await
-    .expect("measurement route");
-    sqlx::query(
-        "CREATE TABLE point_mappings (\
-             mapping_id INTEGER PRIMARY KEY AUTOINCREMENT,\
-             channel_id INTEGER NOT NULL\
-         )",
-    )
-    .execute(&pool)
-    .await
-    .expect("legacy measurement mapping schema");
-    sqlx::query("INSERT INTO point_mappings (channel_id) VALUES (14)")
-        .execute(&pool)
-        .await
-        .expect("legacy measurement mapping");
     sqlx::query(
         "CREATE TABLE channel_routing (\
              source_channel_id INTEGER NOT NULL,\
@@ -1526,13 +1539,7 @@ async fn delete_is_atomic_for_owned_rows_and_leaves_no_runtime_zombie() {
         ChannelRuntimeProjection::Removed
     );
     assert!(!runtime.is_active(14));
-    for table in [
-        "channels",
-        "telemetry_points",
-        "measurement_routing",
-        "point_mappings",
-        "channel_routing",
-    ] {
+    for table in ["channels", "telemetry_points", "channel_routing"] {
         let predicate = if table == "channel_routing" {
             "source_channel_id = 14 OR target_channel_id = 14"
         } else {

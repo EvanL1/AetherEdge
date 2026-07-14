@@ -51,13 +51,6 @@ pub enum ServiceCommands {
         tail: String,
     },
 
-    /// Reload service configurations
-    #[command(about = "Reload configurations for services")]
-    Reload {
-        /// Service names (optional, reloads all if not specified)
-        services: Vec<String>,
-    },
-
     /// Build Docker images
     #[command(about = "Build Docker images for services")]
     Build {
@@ -222,27 +215,6 @@ pub async fn handle_command(
                     anyhow::bail!("journalctl failed for {service}");
                 }
             },
-        },
-        ServiceCommands::Reload { services } => {
-            let hot_reload_services = vec!["aether-io", "aether-automation"];
-
-            let services_to_reload =
-                if services.is_empty() || services.iter().any(|s| s.to_lowercase() == "all") {
-                    hot_reload_services.clone()
-                } else {
-                    services
-                        .iter()
-                        .filter(|s| s.to_lowercase() != "all")
-                        .map(|s| s.as_str())
-                        .collect()
-                };
-
-            for service in services_to_reload {
-                match reload_service(service).await {
-                    Ok(()) => println!("Reloaded {} configuration", service),
-                    Err(e) => eprintln!("Failed to reload {}: {}", service, e),
-                }
-            }
         },
         ServiceCommands::Build { services } => match mode {
             crate::deploy_mode::DeployMode::Docker => {
@@ -418,72 +390,6 @@ pub async fn handle_command(
         },
     }
     Ok(())
-}
-
-/// Reload a single service via its HTTP API.
-async fn reload_service(service: &str) -> Result<()> {
-    match reload_service_outcome(service).await? {
-        ReloadOutcome::Reloaded => Ok(()),
-        ReloadOutcome::Unavailable => anyhow::bail!("service is not reachable"),
-        ReloadOutcome::RestartRequired(reason) => {
-            anyhow::bail!("live reload incomplete; restart required: {reason}")
-        },
-    }
-}
-
-const IO_RELOAD_PATHS: &[&str] = &["/api/channels/reload"];
-const AUTOMATION_RELOAD_PATHS: &[&str] = &["/api/instances/reload", "/api/scheduler/reload"];
-
-fn reload_targets(service: &str) -> Result<(u16, &'static [&'static str])> {
-    match service {
-        "aether-io" => Ok((aether_model::service_ports::IO_PORT, IO_RELOAD_PATHS)),
-        "aether-automation" => Ok((
-            aether_model::service_ports::AUTOMATION_PORT,
-            AUTOMATION_RELOAD_PATHS,
-        )),
-        _ => anyhow::bail!("{service} does not support hot reload"),
-    }
-}
-
-#[derive(Debug, PartialEq, Eq)]
-enum ReloadOutcome {
-    Reloaded,
-    /// The service was not listening and will load configuration on next start.
-    Unavailable,
-    /// A running or partially reloaded service may still be using old config.
-    RestartRequired(String),
-}
-
-async fn reload_service_outcome(service: &str) -> Result<ReloadOutcome> {
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
-        .no_proxy()
-        .build()?;
-    let (port, paths) = reload_targets(service)?;
-    let mut completed = 0;
-
-    for path in paths {
-        let url = format!("http://localhost:{port}{path}");
-        match client.post(&url).send().await {
-            Ok(response) if response.status().is_success() => completed += 1,
-            Ok(response) => {
-                return Ok(ReloadOutcome::RestartRequired(format!(
-                    "{path} returned HTTP {}",
-                    response.status()
-                )));
-            },
-            Err(error) if completed == 0 && error.is_connect() => {
-                return Ok(ReloadOutcome::Unavailable);
-            },
-            Err(error) => {
-                return Ok(ReloadOutcome::RestartRequired(format!(
-                    "{path} failed after {completed} reload step(s): {error}"
-                )));
-            },
-        }
-    }
-
-    Ok(ReloadOutcome::Reloaded)
 }
 
 /// Ensure the Compose log target is a real directory without rewriting an
@@ -798,7 +704,22 @@ fn image_ids_match(running_image_id: &str, local_image_id: &str) -> bool {
 #[allow(clippy::disallowed_methods)] // Test code - unwrap is acceptable
 mod tests {
     use super::*;
+    use clap::Parser;
     use std::cell::RefCell;
+
+    #[derive(clap::Parser)]
+    struct ServiceCli {
+        #[command(subcommand)]
+        command: ServiceCommands,
+    }
+
+    #[test]
+    fn generic_services_reload_alias_is_absent_from_the_cli() {
+        assert!(
+            ServiceCli::try_parse_from(["services", "reload", "aether-io"]).is_err(),
+            "configuration convergence must use governed application commands or a supervised restart"
+        );
+    }
 
     #[test]
     fn docker_image_ids_are_compared_in_one_canonical_form() {
@@ -927,12 +848,6 @@ mod tests {
                 .file_type()
                 .is_symlink()
         );
-    }
-
-    #[test]
-    fn automation_reload_covers_instances_and_the_rule_scheduler() {
-        let (_, paths) = reload_targets("aether-automation").unwrap();
-        assert_eq!(paths, ["/api/instances/reload", "/api/scheduler/reload"]);
     }
 
     #[test]

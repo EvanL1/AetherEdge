@@ -50,7 +50,7 @@ const NON_RUNTIME_DISTRIBUTION_FILES: [&str; 2] = [
     "io/README.md",
     aether_runtime_catalog::RUNTIME_MANIFEST_FILE_NAME,
 ];
-const CORE_SCHEMA_TABLES: [&str; 15] = [
+const CORE_SCHEMA_TABLES: [&str; 14] = [
     "action_routing",
     "adjustment_points",
     "channel_templates",
@@ -58,7 +58,6 @@ const CORE_SCHEMA_TABLES: [&str; 15] = [
     "control_points",
     "instance_properties",
     "instances",
-    "json_point_mappings",
     "measurement_routing",
     "rule_history",
     "rules",

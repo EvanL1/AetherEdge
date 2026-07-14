@@ -8,6 +8,7 @@
 
 use axum::{
     extract::{Path, State},
+    http::HeaderMap,
     response::Json,
 };
 use common::SuccessResponse;
@@ -15,7 +16,7 @@ use serde_json::json;
 use std::sync::Arc;
 
 use crate::app_state::AppState;
-use crate::dto::{PointType, RoutingRequest};
+use crate::dto::{MeasurementRoutingDeleteRequest, PointType, RoutingRequest};
 use crate::error::AutomationError;
 use crate::routing_loader::{ActionRoutingRow, MeasurementRoutingRow};
 
@@ -53,6 +54,7 @@ use crate::routing_loader::{ActionRoutingRow, MeasurementRoutingRow};
 pub async fn create_instance_routing(
     State(state): State<Arc<AppState>>,
     Path(id): Path<u32>,
+    headers: HeaderMap,
     Json(routing): Json<RoutingRequest>,
 ) -> Result<Json<SuccessResponse<serde_json::Value>>, AutomationError> {
     if routing.point_type == PointType::Action {
@@ -61,109 +63,20 @@ pub async fn create_instance_routing(
                 .to_string(),
         ));
     }
-    // Validate instance exists
-    let instance_exists = match sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS(SELECT 1 FROM instances WHERE instance_id = ?)",
+    let mutation = crate::api::measurement_routing_boundary::generic_mutation(id, &routing)?;
+    let acceptance = crate::api::measurement_routing_boundary::apply(
+        &state,
+        &headers,
+        routing.confirmed,
+        mutation,
     )
-    .bind(id)
-    .fetch_one(&state.instance_manager.pool)
-    .await
-    {
-        Ok(exists) => exists,
-        Err(e) => {
-            return Err(AutomationError::InternalError(format!(
-                "Database error: {}",
-                e
-            )));
-        },
-    };
-
-    if !instance_exists {
-        return Err(AutomationError::InternalError(format!(
-            "Not found: Instance {} does not exist",
-            id
-        )));
-    }
-
-    // Get instance name for validation
-    let instance =
-        state.instance_manager.get_instance(id).await.map_err(|e| {
-            AutomationError::InternalError(format!("Failed to get instance: {}", e))
-        })?;
-    let instance_name = &instance.core.instance_name;
-
-    let routing_row = MeasurementRoutingRow {
-        channel_id: routing.channel_id,
-        channel_type: routing.four_remote,
-        channel_point_id: routing.channel_point_id,
-        measurement_id: routing.point_id,
-    };
-    let validation_result = state
-        .instance_manager
-        .validate_measurement_routing(&routing_row, instance_name)
-        .await;
-
-    match validation_result {
-        Ok(validation) => {
-            if !validation.is_valid {
-                return Err(AutomationError::InvalidData(format!(
-                    "Invalid routing: {:?}",
-                    validation.errors
-                )));
-            }
-        },
-        Err(e) => {
-            return Err(AutomationError::InvalidData(format!(
-                "Validation failed: {}",
-                e
-            )));
-        },
-    }
-
-    let insert_result = sqlx::query(
-        r#"
-        INSERT INTO measurement_routing
-        (instance_id, instance_name, channel_id, channel_type, channel_point_id,
-         measurement_id, enabled)
-        VALUES (?, (SELECT instance_name FROM instances WHERE instance_id = ?), ?, ?, ?, ?, true)
-        "#,
-    )
-    .bind(id)
-    .bind(id)
-    .bind(routing.channel_id)
-    .bind(routing.four_remote.map(|fr| fr.as_str()))
-    .bind(routing.channel_point_id)
-    .bind(routing.point_id)
-    .execute(&state.instance_manager.pool)
-    .await;
-
-    // Check insert result
-    if let Err(e) = insert_result {
-        return Err(AutomationError::InternalError(format!(
-            "Failed to insert routing: {}",
-            e
-        )));
-    }
-
-    state
-        .instance_manager
-        .refresh_routing()
-        .await
-        .map_err(|e| {
-            AutomationError::InternalError(format!("Failed to refresh routing after create: {}", e))
-        })?;
-
-    Ok(Json(SuccessResponse::new(json!({
-        "routing": {
-            "instance_id": id,
-            "channel": {
-                "id": routing.channel_id,
-                "four_remote": routing.four_remote.map(|fr| fr.as_str()),
-                "point_id": routing.channel_point_id
-            },
-            "point_id": routing.point_id
-        }
-    }))))
+    .await?;
+    Ok(Json(SuccessResponse::new(
+        crate::api::measurement_routing_boundary::response_data(
+            &acceptance,
+            format!("Routing updated for measurement point {}", routing.point_id),
+        ),
+    )))
 }
 
 /// Update routings for an instance (UPSERT)
@@ -192,6 +105,7 @@ pub async fn create_instance_routing(
 pub async fn update_instance_routing(
     State(state): State<Arc<AppState>>,
     Path(id): Path<u32>,
+    headers: HeaderMap,
     Json(routings): Json<Vec<RoutingRequest>>,
 ) -> Result<Json<SuccessResponse<serde_json::Value>>, AutomationError> {
     if routings
@@ -203,152 +117,23 @@ pub async fn update_instance_routing(
                 .to_string(),
         ));
     }
-    // Begin transaction
-    let mut tx = match state.instance_manager.pool.begin().await {
-        Ok(tx) => tx,
-        Err(e) => {
-            return Err(AutomationError::InternalError(format!(
-                "Failed to start transaction: {}",
-                e
-            )));
-        },
+    let [routing] = routings.as_slice() else {
+        return Err(AutomationError::InvalidRouting(
+            "legacy measurement batch writes are retired; submit one revision-fenced route per request"
+                .to_string(),
+        ));
     };
-
-    // Get instance name for validation
-    let instance = match state.instance_manager.get_instance(id).await {
-        Ok(inst) => inst,
-        Err(e) => {
-            if let Err(rb_err) = tx.rollback().await {
-                tracing::error!("Transaction rollback failed: {}", rb_err);
-            }
-            return Err(AutomationError::InternalError(format!(
-                "Failed to get instance: {}",
-                e
-            )));
-        },
-    };
-    let instance_name = &instance.core.instance_name;
-
-    // Insert new routings
-    let mut success_count = 0;
-    let mut errors = Vec::new();
-
-    for routing in routings {
-        // Handle unbind routing: when channel_id is None, DELETE instead of UPSERT
-        // This supports: null, "", or omitted field → None → DELETE
-        if routing.channel_id.is_none() {
-            let result = sqlx::query(
-                "DELETE FROM measurement_routing WHERE instance_id = ? AND measurement_id = ?",
-            )
-            .bind(id)
-            .bind(routing.point_id)
-            .execute(&mut *tx)
-            .await;
-
-            match result {
-                Ok(_) => {
-                    success_count += 1;
-                    tracing::debug!(
-                        instance_id = id,
-                        point_id = routing.point_id,
-                        "Measurement routing unbound"
-                    );
-                },
-                Err(e) => {
-                    errors.push(format!(
-                        "Failed to delete routing for point {}: {}",
-                        routing.point_id, e
-                    ));
-                },
-            }
-            continue;
-        }
-
-        let routing_row = MeasurementRoutingRow {
-            channel_id: routing.channel_id,
-            channel_type: routing.four_remote,
-            channel_point_id: routing.channel_point_id,
-            measurement_id: routing.point_id,
-        };
-        let validation_result = state
-            .instance_manager
-            .validate_measurement_routing(&routing_row, instance_name)
-            .await;
-
-        match validation_result {
-            Ok(validation) => {
-                if !validation.is_valid {
-                    errors.extend(validation.errors);
-                    continue;
-                }
-            },
-            Err(e) => {
-                errors.push(e.to_string());
-                continue;
-            },
-        }
-
-        let result = sqlx::query(
-            r#"
-            INSERT INTO measurement_routing
-            (instance_id, instance_name, channel_id, channel_type, channel_point_id,
-             measurement_id, enabled)
-            VALUES (?, (SELECT instance_name FROM instances WHERE instance_id = ?), ?, ?, ?, ?, true)
-            ON CONFLICT(instance_id, measurement_id) DO UPDATE SET
-                channel_id = excluded.channel_id,
-                channel_type = excluded.channel_type,
-                channel_point_id = excluded.channel_point_id,
-                instance_name = excluded.instance_name,
-                enabled = true
-            "#,
-        )
-        .bind(id)
-        .bind(id)
-        .bind(routing.channel_id)
-        .bind(routing.four_remote.map(|fr| fr.as_str()))
-        .bind(routing.channel_point_id)
-        .bind(routing.point_id)
-        .execute(&mut *tx)
-        .await;
-
-        if result.is_ok() {
-            success_count += 1;
-        } else if let Err(e) = result {
-            errors.push(e.to_string());
-        }
-    }
-
-    if errors.is_empty() {
-        if let Err(e) = tx.commit().await {
-            return Err(AutomationError::InternalError(format!(
-                "Failed to commit transaction: {}",
-                e
-            )));
-        }
-
-        state
-            .instance_manager
-            .refresh_routing()
-            .await
-            .map_err(|e| {
-                AutomationError::InternalError(format!(
-                    "Failed to refresh routing after update: {}",
-                    e
-                ))
-            })?;
-
-        Ok(Json(SuccessResponse::new(json!({
-            "message": format!("Updated {} routings", success_count)
-        }))))
-    } else {
-        if let Err(rb_err) = tx.rollback().await {
-            tracing::error!("Transaction rollback failed: {}", rb_err);
-        }
-        Err(AutomationError::InvalidData(format!(
-            "Update failed: {:?}",
-            errors
-        )))
-    }
+    let mutation = crate::api::measurement_routing_boundary::generic_mutation(id, routing)?;
+    let acceptance = crate::api::measurement_routing_boundary::apply(
+        &state,
+        &headers,
+        routing.confirmed,
+        mutation,
+    )
+    .await?;
+    Ok(Json(SuccessResponse::new(
+        crate::api::measurement_routing_boundary::response_data(&acceptance, "Updated 1 routing"),
+    )))
 }
 
 /// Delete all measurement (C2M) routings for an instance.
@@ -372,28 +157,29 @@ pub async fn update_instance_routing(
 pub async fn delete_instance_routing(
     State(state): State<Arc<AppState>>,
     Path(id): Path<u32>,
+    headers: HeaderMap,
+    Json(request): Json<MeasurementRoutingDeleteRequest>,
 ) -> Result<Json<SuccessResponse<serde_json::Value>>, AutomationError> {
-    let result = sqlx::query("DELETE FROM measurement_routing WHERE instance_id = ?")
-        .bind(id)
-        .execute(&state.instance_manager.pool)
-        .await
-        .map_err(|error| {
-            AutomationError::InternalError(format!(
-                "Failed to delete measurement routings: {error}"
-            ))
-        })?;
-    state
-        .instance_manager
-        .refresh_routing()
-        .await
-        .map_err(|error| {
-            AutomationError::InternalError(format!(
-                "Failed to refresh measurement routing after delete: {error}"
-            ))
-        })?;
-    Ok(Json(SuccessResponse::new(json!({
-        "message": format!("Deleted {} measurement routings", result.rows_affected())
-    }))))
+    let expected = crate::api::measurement_routing_boundary::revision(request.expected_revision)?;
+    let acceptance = crate::api::measurement_routing_boundary::apply(
+        &state,
+        &headers,
+        request.confirmed,
+        aether_ports::MeasurementRoutingMutation::delete_for_instance(
+            aether_domain::InstanceId::new(id),
+            expected,
+        ),
+    )
+    .await?;
+    Ok(Json(SuccessResponse::new(
+        crate::api::measurement_routing_boundary::response_data(
+            &acceptance,
+            format!(
+                "Deleted {} measurement routings",
+                acceptance.affected_routes()
+            ),
+        ),
+    )))
 }
 
 /// Validate routing completeness and integrity for an instance.

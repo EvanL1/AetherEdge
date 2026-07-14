@@ -1,13 +1,12 @@
 [package]
 name = "aether-pack"
 version.workspace = true
-publish = false
 edition = "2024"
 rust-version = "1.90"
 description = "Versioned, industry-neutral domain-pack contract for Aether"
 license.workspace = true
 repository.workspace = true
-documentation = "https://docs.aetheriot.workers.dev/crates/aether-pack"
+documentation = "https://docs.rs/aether-pack"
 readme = "README.md"
 keywords = ["iot", "edge", "pack", "configuration"]
 categories = ["config", "data-structures"]

@@ -9,8 +9,8 @@ use aether_domain::{ChannelId, PointKind};
 use aether_ports::ChannelHealthObservation;
 use aether_ports::{ChannelHealthSource, PortError, PortErrorKind, PortResult};
 use aether_shm_bridge::{
-    ChannelPointManifest, PointWatchEvent, ShmClientConfig, ShmReadTopologyGeneration,
-    SlotSnapshot, SlotSource,
+    ChannelPointManifest, PhysicalPointAddress, PointWatchEvent, ShmClientConfig,
+    ShmReadTopologyGeneration, SlotSnapshot, SlotSource,
 };
 use aether_store_local::{SqliteLiveTopologySnapshot, load_sqlite_live_topology};
 use anyhow::Context;
@@ -151,21 +151,42 @@ impl ShmAlarmValueSource {
     ) -> PortResult<bool> {
         let snapshot = load_sqlite_live_topology(pool).await?;
         let current = self.current.load_full();
-        if current.digest == snapshot.digest() {
+        let physical_current = current
+            .topology
+            .as_ref()
+            .is_some_and(|topology| topology.validate_layouts().is_ok());
+        if current.digest == snapshot.digest() && physical_current {
             return Ok(false);
         }
 
-        if physical_layout_matches(&current, &snapshot) {
+        let lazy_route_only = current.digest != snapshot.digest()
+            && current
+                .topology
+                .as_ref()
+                .is_some_and(|topology| topology.publication_epoch() == 0);
+        if physical_layout_matches(&current, &snapshot) && (physical_current || lazy_route_only) {
             let routing = Arc::new(alarm_routing_from_snapshot(&snapshot));
+            let topology = Arc::clone(current.topology.as_ref().ok_or_else(|| {
+                PortError::new(
+                    PortErrorKind::Permanent,
+                    "validated alarm generation is missing its SHM topology",
+                )
+            })?);
             let next = Arc::new(AlarmValueGeneration {
                 slots: Arc::clone(&current.slots),
                 manifest: Arc::clone(&current.manifest),
                 routing,
                 channel_health: Arc::clone(&current.channel_health),
-                topology: current.topology.clone(),
+                topology: Some(Arc::clone(&topology)),
                 digest: snapshot.digest(),
             });
-            self.current.store(next);
+            if physical_current {
+                topology
+                    .with_validated_authority(|| self.current.store(next))
+                    .map_err(retryable_topology_transition)?;
+            } else {
+                self.current.store(next);
+            }
             return Ok(true);
         }
 
@@ -205,7 +226,11 @@ impl AlarmValueGeneration {
     fn read_point(&self, point: ChannelPointRef) -> PortResult<Option<SlotSnapshot>> {
         let Some(slot) = self
             .manifest
-            .slot(point.channel_id, point.kind, point.point_id)
+            .slot_for(PhysicalPointAddress::from_legacy_raw(
+                point.channel_id,
+                point.kind,
+                point.point_id,
+            ))
         else {
             return Ok(None);
         };
@@ -290,7 +315,11 @@ impl AlarmValueSource for ShmAlarmValueSource {
             Some(ResolvedAlarmTarget::Point(target)) => {
                 Ok(generation
                     .manifest
-                    .slot(target.channel_id, target.kind, target.point_id))
+                    .slot_for(PhysicalPointAddress::from_legacy_raw(
+                        target.channel_id,
+                        target.kind,
+                        target.point_id,
+                    )))
             },
             Some(ResolvedAlarmTarget::ChannelHealth(_)) | None => Ok(None),
         }
@@ -497,7 +526,9 @@ mod tests {
 
     use aether_domain::PointKind;
     use aether_ports::{PortError, PortErrorKind, PortResult};
-    use aether_shm_bridge::{ChannelPointManifest, PointWatchEvent, SlotSnapshot, SlotSource};
+    use aether_shm_bridge::{
+        ChannelPointManifest, PhysicalPointAddress, PointWatchEvent, SlotSnapshot, SlotSource,
+    };
 
     use super::{
         AlarmRouting, AlarmValueSource, ChannelPointRef, NoChannelHealth, ShmAlarmValueSource,
@@ -546,10 +577,18 @@ mod tests {
     fn source() -> ShmAlarmValueSource {
         let manifest = ChannelPointManifest::from_entries([(10, [2, 1, 0, 1]), (20, [1, 0, 1, 0])]);
         let t_slot = manifest
-            .slot(10, PointKind::Telemetry, 1)
+            .slot_for(PhysicalPointAddress::from_legacy_raw(
+                10,
+                PointKind::Telemetry,
+                1,
+            ))
             .expect("telemetry slot");
         let a_slot = manifest
-            .slot(10, PointKind::Action, 0)
+            .slot_for(PhysicalPointAddress::from_legacy_raw(
+                10,
+                PointKind::Action,
+                0,
+            ))
             .expect("action slot");
         let values = HashMap::from([
             (t_slot, SlotSnapshot::new(42.5, 1_000)),
@@ -792,6 +831,7 @@ mod tests {
         };
         use aether_shm_bridge::{
             PointWatchEvent, ShmChannelHealthWriterHandle, ShmRuntimeConfig, ShmWriterHandle,
+            begin_topology_publication,
         };
 
         let pool = sqlx::sqlite::SqlitePoolOptions::new()
@@ -827,17 +867,25 @@ mod tests {
         let first = aether_store_local::load_sqlite_live_topology(&pool)
             .await
             .expect("initial topology snapshot");
-        let point_writer = ShmWriterHandle::create_published(
+        let first_epoch = 100;
+        let first_publication =
+            begin_topology_publication(&point_path).expect("begin initial publication");
+        let point_writer = ShmWriterHandle::create_published_at_epoch(
             ShmRuntimeConfig::new(&point_path, 32),
             Arc::new(first.point_manifest().clone()),
             None,
+            first_epoch,
         )
         .expect("publish initial point plane");
-        let health_writer = ShmChannelHealthWriterHandle::create(
+        let health_writer = ShmChannelHealthWriterHandle::create_at_epoch(
             &health_path,
             Arc::new(first.health_manifest().clone()),
+            first_epoch,
         )
         .expect("publish initial health plane");
+        first_publication
+            .commit(&health_path, first_epoch)
+            .expect("commit initial publication");
         let first_timestamp = TimestampMs::new(aether_shm_bridge::timestamp_ms());
         let first_sample = AcquiredPointSample::new(
             ChannelPointAddress::new(ChannelId::new(10), PointKind::Telemetry, PointId::new(0))
@@ -861,6 +909,10 @@ mod tests {
         let source = super::build_shm_alarm_source(&pool, &config)
             .await
             .expect("build alarm source");
+        source
+            .refresh_topology(&pool, &config)
+            .await
+            .expect("pin initial committed publication");
         assert_eq!(
             source
                 .read_rule(&rule("inst", 100, "M", 5))
@@ -893,9 +945,13 @@ mod tests {
         let second = aether_store_local::load_sqlite_live_topology(&pool)
             .await
             .expect("replacement topology snapshot");
+        let second_epoch = 102;
+        let partial_publication =
+            begin_topology_publication(&point_path).expect("begin replacement publication");
         point_writer
-            .rebuild(Arc::new(second.point_manifest().clone()))
+            .rebuild_for_publication(Arc::new(second.point_manifest().clone()), second_epoch)
             .expect("publish replacement point plane");
+        drop(partial_publication);
 
         let partial_error = source
             .refresh_topology(&pool, &config)
@@ -904,8 +960,10 @@ mod tests {
         assert!(partial_error.is_retryable());
         assert!(source.accepts_point_watch_event(old_event));
 
+        let second_publication =
+            begin_topology_publication(&point_path).expect("resume replacement publication");
         health_writer
-            .rebuild(Arc::new(second.health_manifest().clone()))
+            .rebuild_for_publication(Arc::new(second.health_manifest().clone()), second_epoch)
             .expect("publish replacement health plane");
         let second_timestamp = TimestampMs::new(aether_shm_bridge::timestamp_ms());
         health_writer
@@ -926,6 +984,9 @@ mod tests {
             .acquisition_writer()
             .commit_batch(&[second_sample])
             .expect("write replacement point");
+        second_publication
+            .commit(&health_path, second_epoch)
+            .expect("commit replacement publication");
 
         assert!(source.refresh_topology(&pool, &config).await.unwrap());
         assert_eq!(

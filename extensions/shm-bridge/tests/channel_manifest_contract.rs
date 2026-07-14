@@ -100,3 +100,17 @@ fn typed_lookup_rejects_missing_channel_kind_and_point() {
         None
     );
 }
+
+#[test]
+fn legacy_raw_lookup_matches_the_typed_lookup() {
+    let manifest = ChannelPointManifest::from_entries([(4, [2, 1, 0, 0])]);
+    let address =
+        PhysicalPointAddress::new(ChannelId::new(4), PointKind::Telemetry, PointId::new(1));
+
+    assert_eq!(manifest.slot(4, PointKind::Telemetry, 1), Some(1));
+    assert_eq!(
+        manifest.slot(4, PointKind::Telemetry, 1),
+        manifest.slot_for(address)
+    );
+    assert_eq!(manifest.slot(4, PointKind::Command, 0), None);
+}

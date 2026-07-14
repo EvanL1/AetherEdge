@@ -1,7 +1,7 @@
 ---
 title: Data Flow
 description: SHM-native uplink and downlink paths end to end, with latency budgets
-updated: 2026-07-11
+updated: 2026-07-13
 ---
 
 # Data Flow
@@ -18,20 +18,22 @@ transport. No default service needs Redis or PostgreSQL for live data.
 
 1. A protocol frame arrives on a communication channel and the channel's
    protocol adapter in aether-io decodes it into point values.
-2. aether-io writes each value into its T or S slot in shared memory via
-   `UnifiedWriter::set_direct` (`libs/aether-rtdb-shm/src/unified_shm.rs`) —
-   ~10 ns per point per the README.
+2. aether-io commits each typed T/S batch through
+   `ShmAcquisitionStateWriter` (`extensions/shm-bridge/src/acquisition_writer.rs`).
+   The adapter validates the immutable manifest and writer generation before
+   and after mutation; slot-indexed writes are private implementation detail.
 3. **Event path (immediate).** After every slot write, the
-   `PointWatchSignaler` (`libs/aether-rtdb-shm/src/point_watch.rs`) checks the
+   `PointWatchPublisher` (`extensions/shm-bridge/src/point_watch.rs`) checks the
    independent bitmap owned by each event consumer. On a hit, a bounded queue
    sends a `PointWatchEvent` to that consumer's UDS. aether-automation,
    aether-alarm, and aether-api cannot steal or overwrite one another's subscriptions. The event
    is a wake-up hint only; each consumer re-reads SHM, and polling repairs
    dropped events.
-4. **Direct read path.** aether-alarm and aether-api resolve channel/instance
-   coordinates from SQLite and re-read matching SHM slots. aether-history and aether-uplink
-   preserve their configured sampling/report cadence while reading the same
-   slots; events do not silently change their time-series semantics.
+4. **Direct read path.** Consumers resolve channel/instance coordinates from
+   one SQLite topology snapshot and re-read matching SHM slots. History and
+   Uplink bind their exact configured points and needed routes to one committed
+   point/health epoch, then pin that immutable generation for a whole
+   collection/upload pass. Events do not silently change their cadence.
 ```
 Device ──frame──► aether-io protocol adapter (decode)
                         │
@@ -62,15 +64,14 @@ Device ──frame──► aether-io protocol adapter (decode)
    decision mid-flight.
 3. The offline gate reads the channel-health SHM segment. An offline channel
    rejects the write with `ChannelUnreachable` before anything is written.
-4. After value validation, `ShmDispatch`
-   (`libs/aether-rtdb-shm/src/dispatch.rs`) writes the C or A slot through
-   `ActionWriter::set_action`. The writer generation is checked before and
+4. After value validation, `ShmDeviceCommandSink`
+   (`extensions/shm-bridge/src/command_sink.rs`) mirrors the C or A slot. The
+   writer generation and canonical path are checked before and
    after the write; a mismatch means aether-io restarted and rebuilt the segment,
    so the write is discarded and the dispatch fails rather than landing in a
    stale layout.
-5. `ShmNotifier` sends a fixed-size 56-byte `ShmNotification` over a Unix
-   domain socket
-   (`libs/aether-rtdb-shm/src/notifier.rs`). The notification carries the
+5. The same command adapter sends a fixed-size 56-byte frame over a Unix
+   domain socket. The notification carries the
    channel/point coordinates, the value bits, issue/expiry timestamps, and a
    producer id + sequence number for deduplication. If aether-io is down, the
    notifier reconnects with exponential backoff (1–5 s). Native deployments
@@ -137,10 +138,10 @@ artifact inputs rather than querying today's mutable sources for an old frame.
 
 ## Latency budget
 
-The microsecond figures are measured end-to-end on production hardware
-(Cortex-A55 @ 1.4 GHz, ECU-1170 / EdgeLinux 22.04) per the README, with the
-full benchmark in `libs/aether-rtdb-shm/benches/BASELINE.md`. The nanosecond
-figure is the README's stated order of magnitude for the hot-path write.
+The microsecond figures are historical measurements on production hardware
+(Cortex-A55 @ 1.4 GHz, ECU-1170 / EdgeLinux 22.04) recorded in the README and
+CHANGELOG. The nanosecond figure is the README's stated order of magnitude for
+the hot-path write; release qualification must rerun current stress gates.
 
 | Stage | Latency | Source label |
 |-------|---------|--------------|

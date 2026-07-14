@@ -14,7 +14,6 @@ use tracing::{debug, info};
 // Cross-platform config schema (shared with io/automation via aether-config).
 use aether_config::automation::{AutomationConfig, RuleConfig, RuleCore, RulesConfig};
 use aether_config::io::{ChannelConfig, ChannelCore, IoConfig};
-use aether_model::product_lib;
 
 /// CSV column headers for point exports
 const POINT_CSV_HEADERS: [&str; 8] = [
@@ -534,15 +533,12 @@ impl ConfigExporter {
         Ok(config)
     }
 
-    /// Export the legacy kernel compatibility product hierarchy.
+    /// The Kernel export owns no Pack product hierarchy.
     ///
-    /// The generic library is empty by default; active Pack assets are never
-    /// compiled into this CLI compatibility surface.
+    /// Active Pack artifacts are exported by the distribution workflow rather
+    /// than being inferred from an empty built-in compatibility catalog.
     fn export_products_hierarchy(&self) -> BTreeMap<String, Option<String>> {
-        product_lib::get_builtin_products()
-            .iter()
-            .map(|p| (p.name.clone(), p.parent_name.clone()))
-            .collect()
+        BTreeMap::new()
     }
 
     async fn export_instances(

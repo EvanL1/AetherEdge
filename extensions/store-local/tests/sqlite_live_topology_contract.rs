@@ -84,6 +84,58 @@ async fn live_snapshot_contains_validated_point_health_and_logical_routes() {
 }
 
 #[tokio::test]
+async fn live_snapshot_exposes_exact_ordered_configured_physical_points() {
+    let pool = live_topology_pool().await;
+    sqlx::query("INSERT INTO channels (channel_id, protocol) VALUES (7, 'virtual')")
+        .execute(&pool)
+        .await
+        .expect("virtual channel");
+    for (table, point_ids) in [
+        ("telemetry_points", &[2_i64, 0][..]),
+        ("signal_points", &[3][..]),
+        ("control_points", &[4, 1][..]),
+        ("adjustment_points", &[2][..]),
+    ] {
+        for point_id in point_ids {
+            sqlx::query(&format!(
+                "INSERT INTO {table} (channel_id, point_id) VALUES (7, ?)"
+            ))
+            .bind(point_id)
+            .execute(&pool)
+            .await
+            .expect("sparse configured physical point");
+        }
+    }
+
+    let snapshot = load_sqlite_live_topology(&pool)
+        .await
+        .expect("live topology with sparse virtual points");
+    let configured = snapshot
+        .configured_physical_points()
+        .iter()
+        .map(|address| {
+            (
+                address.channel_id().get(),
+                address.kind(),
+                address.point_id().get(),
+            )
+        })
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        configured,
+        vec![
+            (7, PointKind::Telemetry, 0),
+            (7, PointKind::Telemetry, 2),
+            (7, PointKind::Status, 3),
+            (7, PointKind::Command, 1),
+            (7, PointKind::Command, 4),
+            (7, PointKind::Action, 2),
+        ]
+    );
+}
+
+#[tokio::test]
 async fn enabled_but_fully_unbound_routes_are_not_physical_routes() {
     let pool = live_topology_pool().await;
     insert_channel_points(&pool).await;
@@ -223,6 +275,47 @@ async fn routing_only_change_advances_the_deterministic_digest() {
         first.point_manifest().layout_hash(),
         second.point_manifest().layout_hash()
     );
+}
+
+#[tokio::test]
+async fn exact_configured_point_change_advances_digest_when_layout_is_unchanged() {
+    let pool = live_topology_pool().await;
+    sqlx::query("INSERT INTO channels (channel_id, protocol) VALUES (7, 'virtual')")
+        .execute(&pool)
+        .await
+        .expect("virtual channel");
+    for point_id in [0_i64, 1, 3] {
+        sqlx::query("INSERT INTO telemetry_points (channel_id, point_id) VALUES (7, ?)")
+            .bind(point_id)
+            .execute(&pool)
+            .await
+            .expect("initial configured point");
+    }
+    let first = load_sqlite_live_topology(&pool)
+        .await
+        .expect("first live topology");
+
+    sqlx::query("DELETE FROM telemetry_points WHERE channel_id = 7 AND point_id = 0")
+        .execute(&pool)
+        .await
+        .expect("remove low configured point");
+    sqlx::query("INSERT INTO telemetry_points (channel_id, point_id) VALUES (7, 2)")
+        .execute(&pool)
+        .await
+        .expect("replace low configured point");
+    let second = load_sqlite_live_topology(&pool)
+        .await
+        .expect("second live topology");
+
+    assert_eq!(
+        first.point_manifest().layout_hash(),
+        second.point_manifest().layout_hash()
+    );
+    assert_eq!(
+        first.point_manifest().point_count(),
+        second.point_manifest().point_count()
+    );
+    assert_ne!(first.digest(), second.digest());
 }
 
 #[tokio::test]

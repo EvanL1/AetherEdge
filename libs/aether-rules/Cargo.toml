@@ -12,7 +12,6 @@ aether-ports = { path = "../../crates/aether-ports" }
 aether-calc = { path = "../aether-calc" }
 aether-model = { path = "../aether-model" }
 aether-shm-bridge = { path = "../../extensions/shm-bridge" }
-aether-routing = { path = "../aether-routing" }
 
 # Async runtime
 tokio = { workspace = true }

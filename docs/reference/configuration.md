@@ -18,10 +18,11 @@ drift between the two processes.
 config/*.yaml, *.csv, *.json  →  aether sync  →  SQLite (aether.db)  →  services (at startup)
 ```
 
-Editing a YAML file does nothing by itself. The change takes effect only
-after `aether sync` writes it into SQLite and the affected service reloads —
-either by restarting or through a reload endpoint such as io's
-`POST /api/channels/reload` or automation's `POST /api/scheduler/reload`.
+Editing a YAML file does nothing by itself. Offline `aether sync` requires the
+configuration-owning services to be stopped, writes all desired-state heads in
+one transaction, and takes effect on the next supervised service start. Online
+channel, instance, routing, and rule mutations instead enter their governed
+application commands and reconcile their runtime projections automatically.
 
 `aether sync` (implemented in `tools/aether/src/core/syncer.rs`) processes
 three targets inside one site-level SQLite transaction, so a failure in any

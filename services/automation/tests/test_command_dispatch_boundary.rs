@@ -1,19 +1,19 @@
 //! Logical application commands route to one typed physical C/A sink.
 
-use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use aether_application::{Actor, ControlApplication, RequestContext, SafetyPolicy};
 use aether_automation::infra::application_control::AutomationCommandDispatcher;
+use aether_automation::infra::runtime_topology::AutomationTopologyHandle;
 use aether_automation::instance_manager::InstanceManager;
 use aether_automation::product_loader::ProductLoader;
 use aether_domain::{
     CommandId, InstanceId, PhysicalDeviceCommand, PointAddress, PointId, PointKind, TimestampMs,
 };
 use aether_ports::{CommandDispatcher, CommandReceipt, DeviceCommandSink, PortResult};
-use aether_routing::RoutingCache;
 use aether_shm_bridge::{
-    ChannelHealthManifest, ShmChannelHealthReader, ShmChannelHealthWriter, ShmClientConfig,
+    ShmChannelHealthWriterHandle, ShmDeviceCommandSink, ShmRuntimeConfig, ShmWriterHandle,
+    commit_topology_publication,
 };
 use aether_store_local::SqliteAuditSink;
 use async_trait::async_trait;
@@ -72,30 +72,64 @@ async fn application(
     .execute(&pool)
     .await
     .expect("action point");
+    sqlx::query(
+        "INSERT INTO instances (instance_id, instance_name, product_name)
+         VALUES (1001, 'controller', 'GenericController')",
+    )
+    .execute(&pool)
+    .await
+    .expect("instance");
+    sqlx::query(
+        "INSERT INTO action_routing
+         (instance_id, instance_name, action_id, channel_id, channel_type, channel_point_id, enabled)
+         VALUES (1001, 'controller', 1, 2, 'A', 5, 1)",
+    )
+    .execute(&pool)
+    .await
+    .expect("logical action route");
 
-    let routing = Arc::new(RoutingCache::from_maps(
-        HashMap::new(),
-        HashMap::from([("1001:A:1".to_string(), "2:A:5".to_string())]),
-        HashMap::new(),
-    ));
     let manager = Arc::new(InstanceManager::new(
         pool.clone(),
-        routing,
         Arc::new(ProductLoader::new(pool.clone())),
     ));
 
+    let snapshot = aether_store_local::load_sqlite_live_topology(&pool)
+        .await
+        .expect("coherent topology snapshot");
+    let point_path = directory.path().join("live.shm");
     let health_path = directory.path().join("channel-health.shm");
-    let health_manifest = Arc::new(ChannelHealthManifest::from_channel_ids([2]));
-    let health_writer = ShmChannelHealthWriter::create(&health_path, Arc::clone(&health_manifest))
-        .expect("health writer");
+    let epoch = 77;
+    let _point_writer = ShmWriterHandle::create_published_at_epoch(
+        ShmRuntimeConfig::new(&point_path, 32),
+        Arc::new(snapshot.point_manifest().clone()),
+        None,
+        epoch,
+    )
+    .expect("point writer");
+    let health_writer = ShmChannelHealthWriterHandle::create_at_epoch(
+        &health_path,
+        Arc::new(snapshot.health_manifest().clone()),
+        epoch,
+    )
+    .expect("health writer");
+    commit_topology_publication(&point_path, &health_path, epoch).expect("topology commit");
     let health_timestamp = chrono::Utc::now().timestamp_millis().max(0) as u64;
     health_writer
         .set_online(2, true, health_timestamp)
         .expect("online channel");
-    manager.set_channel_health_reader(Arc::new(ShmChannelHealthReader::new(
-        ShmClientConfig::new(health_path, health_manifest.layout_hash()),
-        health_manifest,
-    )));
+    let topology = Arc::new(
+        AutomationTopologyHandle::new_lazy(
+            point_path,
+            health_path,
+            snapshot,
+            Arc::new(ShmDeviceCommandSink::new()),
+        )
+        .expect("automation topology"),
+    );
+    topology.refresh(&pool).await.expect("topology refresh");
+    manager
+        .set_runtime_topology(topology)
+        .expect("install runtime topology");
 
     let sink = Arc::new(RecordingDeviceSink::default());
     let dispatcher: Arc<dyn CommandDispatcher> = Arc::new(AutomationCommandDispatcher::new(

@@ -48,7 +48,7 @@ serde = { workspace = true }
 serde_yml = { workspace = true }
 serde_json = { workspace = true }
 # JSONPath for MQTT/HTTP protocol JSON mapping
-serde_json_path = { workspace = true, optional = true }
+serde_json_path = { workspace = true }
 
 # MQTT client for event-driven data collection
 rumqttc = { version = "0.25.1", default-features = false, optional = true }
@@ -91,7 +91,6 @@ tokio-gpiod = { version = "0.3", optional = true }
 
 [dev-dependencies]
 aether-dataplane = { path = "../../crates/aether-dataplane" }
-aether-rtdb-shm = { path = "../../libs/aether-rtdb-shm" }
 aether-runtime-catalog = { path = "../../libs/aether-runtime-catalog" }
 reqwest = { workspace = true }
 tempfile = { workspace = true }
@@ -109,7 +108,7 @@ j1939 = ["can", "dep:voltage_j1939"]
 gpio = ["dep:tokio-gpiod"]
 dl645 = ["dep:tokio-serial"]  # DL/T 645-2007 智能电表协议（支持 TCP 和串口 RTU）
 aether_485 = ["dep:tokio-serial"]  # Aether-485 私有 RS-485 通信协议
-json-mapping = ["dep:serde_json_path"]  # JSONPath mapping for MQTT/HTTP protocols
+json-mapping = []  # JSONPath mapping runtime for MQTT/HTTP protocols
 mqtt = ["json-mapping", "dep:rumqttc"]  # MQTT protocol (event-driven, JSON payload)
 http = ["json-mapping", "dep:reqwest"]  # HTTP protocol (polling + webhook, JSON payload)
 ble = ["dep:btleplug"]  # BLE GATT protocol (hybrid: notify + read/write)

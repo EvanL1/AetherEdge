@@ -1,4 +1,4 @@
-//! Stable public facade for embedding the Aether edge kernel.
+//! Versioned beta facade for embedding the Aether edge kernel.
 
 mod builder;
 

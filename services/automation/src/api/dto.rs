@@ -104,6 +104,10 @@ pub struct RoutingRequest {
     #[schema(example = 101)]
     #[serde(default, deserialize_with = "deserialize_optional_u32")]
     pub channel_point_id: Option<u32>,
+    /// Current shared logical-routing revision required for compare-and-set.
+    #[schema(example = 7)]
+    #[serde(default)]
+    pub expected_revision: u64,
     /// Explicit confirmation required when this request changes an action route.
     #[serde(default)]
     #[schema(default = false, example = true)]
@@ -150,8 +154,48 @@ pub struct RoutingMutationConfirmation {
     pub confirmed: bool,
 }
 
+/// Governed measurement-route upsert with a mandatory shared CAS revision.
+#[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
+pub struct MeasurementRoutingUpsertRequest {
+    #[schema(example = 1)]
+    pub channel_id: i32,
+    #[schema(value_type = String, example = "T")]
+    pub four_remote: FourRemote,
+    #[schema(example = 101)]
+    pub channel_point_id: u32,
+    #[serde(default = "default_enabled")]
+    #[schema(example = true)]
+    pub enabled: bool,
+    /// Current `logical_routing` revision returned by the previous command/query.
+    #[schema(example = 7)]
+    pub expected_revision: u64,
+    /// Explicit confirmation for the high-risk logical topology change.
+    #[schema(example = true)]
+    pub confirmed: bool,
+}
+
+/// Governed measurement-route enable/disable command.
+#[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
+pub struct MeasurementRoutingToggleRequest {
+    #[schema(example = true)]
+    pub enabled: bool,
+    #[schema(example = 7)]
+    pub expected_revision: u64,
+    #[schema(example = true)]
+    pub confirmed: bool,
+}
+
+/// Governed measurement-route deletion command.
+#[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
+pub struct MeasurementRoutingDeleteRequest {
+    #[schema(example = 7)]
+    pub expected_revision: u64,
+    #[schema(example = true)]
+    pub confirmed: bool,
+}
+
 /// Channel point kinds that are valid destinations for an action route.
-#[derive(Debug, Clone, Copy, Serialize, ToSchema)]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, ToSchema)]
 pub enum ActionRoutingFourRemote {
     /// Channel command point (`C`).
     #[serde(rename = "C")]
@@ -166,7 +210,7 @@ pub enum ActionRoutingFourRemote {
 /// This is intentionally separate from [`SinglePointRoutingRequest`]:
 /// measurement routing supports T/S destinations without high-risk
 /// confirmation, while action routing supports only C/A and requires it.
-#[derive(Debug, Clone, ToSchema)]
+#[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
 pub struct ActionRoutingUpsertBody {
     #[schema(example = 1)]
     pub channel_id: Option<i32>,
@@ -174,25 +218,35 @@ pub struct ActionRoutingUpsertBody {
     #[schema(example = 201)]
     pub channel_point_id: Option<u32>,
     #[schema(default = true, example = true)]
+    #[serde(default = "default_enabled")]
     pub enabled: bool,
+    /// Current `logical_routing` revision required for compare-and-set.
+    #[schema(example = 7)]
+    pub expected_revision: u64,
     /// Required explicit confirmation for the physical command-topology change.
     #[schema(example = true)]
     pub confirmed: bool,
 }
 
 /// Swagger request body for a governed action-route enable/disable command.
-#[derive(Debug, Clone, ToSchema)]
+#[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
 pub struct ActionRoutingToggleBody {
     #[schema(example = true)]
     pub enabled: bool,
+    /// Current `logical_routing` revision required for compare-and-set.
+    #[schema(example = 7)]
+    pub expected_revision: u64,
     /// Required explicit confirmation for the physical command-topology change.
     #[schema(example = true)]
     pub confirmed: bool,
 }
 
 /// Swagger request body for a governed action-route deletion command.
-#[derive(Debug, Clone, ToSchema)]
+#[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
 pub struct ActionRoutingConfirmationBody {
+    /// Current `logical_routing` revision required for compare-and-set.
+    #[schema(example = 7)]
+    pub expected_revision: u64,
     /// Required explicit confirmation for the physical command-topology change.
     #[schema(example = true)]
     pub confirmed: bool,
@@ -237,6 +291,9 @@ pub struct ActionRoutingMutationData {
     pub operation: String,
     #[schema(example = 1)]
     pub affected_routes: u64,
+    /// Authoritative shared logical-routing revision after commit.
+    #[schema(example = 8)]
+    pub resulting_revision: u64,
     pub audit: ActionRoutingAuditState,
     pub runtime: ActionRoutingRuntimeState,
     /// Always false after the application command has been accepted.
@@ -261,6 +318,23 @@ pub struct ActionRoutingMutationResponse {
 pub struct UpsertPropertyRequest {
     #[schema(value_type = Object, example = json!(5000.0))]
     pub value: serde_json::Value,
+    /// Current `instances` aggregate revision required for compare-and-set.
+    #[schema(example = 7)]
+    pub expected_revision: u64,
+    /// Explicit confirmation for the desired-state mutation.
+    #[schema(example = true)]
+    pub confirmed: bool,
+}
+
+/// Query/body fence for destructive instance-configuration mutations.
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, ToSchema)]
+pub struct InstanceMutationConfirmation {
+    /// Current `instances` aggregate revision required for compare-and-set.
+    #[schema(example = 7)]
+    pub expected_revision: u64,
+    /// Explicit confirmation for the desired-state mutation.
+    #[schema(example = true)]
+    pub confirmed: bool,
 }
 
 /// Default value for enabled field (true)
@@ -285,6 +359,12 @@ pub struct CreateInstanceDto {
     pub parent_id: Option<u32>,
     #[schema(value_type = Object, example = json!({"max_flow_lpm": 500.0, "manufacturer": "Example Corp"}))]
     pub properties: Option<HashMap<String, serde_json::Value>>,
+    /// Current `instances` aggregate revision required for compare-and-set.
+    #[schema(example = 7)]
+    pub expected_revision: u64,
+    /// Explicit confirmation for commissioning this instance.
+    #[schema(example = true)]
+    pub confirmed: bool,
 }
 
 /// Request to update an existing instance
@@ -300,6 +380,14 @@ pub struct UpdateInstanceDto {
     /// Updated properties (optional)
     #[schema(value_type = Option<Object>, example = json!({"max_flow_lpm": 500.0, "manufacturer": "Example Corp", "model": "P-500"}))]
     pub properties: Option<HashMap<String, serde_json::Value>>,
+
+    /// Current `instances` aggregate revision required for compare-and-set.
+    #[schema(example = 7)]
+    pub expected_revision: u64,
+
+    /// Explicit confirmation for changing desired state.
+    #[schema(example = true)]
+    pub confirmed: bool,
 }
 
 /// Request to execute an action on an instance

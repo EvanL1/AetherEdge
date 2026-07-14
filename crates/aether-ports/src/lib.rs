@@ -25,9 +25,12 @@ pub use audit::{AuditOutcome, AuditRecord, AuditSink};
 pub use automation::{
     ActionRoute, ActionRouteKey, ActionRoutingMutation, ActionRoutingMutationKind,
     ActionRoutingMutationReceipt, ActionRoutingRuntimeStatus, ActionRoutingTarget,
-    AutomationActionRoutingMutator, AutomationRuleExecutor, AutomationRuleMutator,
-    RuleExecutionReceipt, RuleMutation, RuleMutationKind, RuleMutationReceipt,
-    RuleSchedulerRefreshStatus,
+    AutomationActionRoutingMutator, AutomationMeasurementRoutingMutator, AutomationRuleExecutor,
+    AutomationRuleMutator, AutomationRulesRevision, LogicalRoutingRevision, MeasurementRoute,
+    MeasurementRouteKey, MeasurementRoutingMutation, MeasurementRoutingMutationKind,
+    MeasurementRoutingMutationReceipt, MeasurementRoutingRuntimeStatus, MeasurementRoutingTarget,
+    RevisionedActionRoutingMutation, RevisionedRuleMutation, RuleExecutionReceipt, RuleMutation,
+    RuleMutationKind, RuleMutationReceipt, RuleRuntimeStatus, RuleSchedulerRefreshStatus,
 };
 pub use channel::{
     ChannelDefinition, ChannelDesiredStateObservation, ChannelLoggingPolicy, ChannelMutation,

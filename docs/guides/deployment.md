@@ -406,7 +406,7 @@ fresh install fail until an operator has exported, relocated, or removed them.
 ## Runtime paths
 
 The shared-memory segment path is resolved in this order
-(`libs/aether-rtdb-shm/src/core/config.rs`):
+(`crates/aether-dataplane/src/core/config.rs`):
 
 1. `AETHER_SHM_PATH` environment variable, if set
 2. `/shm/rtdb/aether-rtdb.shm`, if the `/shm/rtdb` directory exists (the

@@ -65,16 +65,20 @@ it does not move live-state authority into SQLite.
    before committing; a failed database commit attempts to restore the prior
    enabled projection. Runtime and storage diagnostics exposed to callers are
    categorized and sanitized.
-6. Delete is transactional for measurement-owned channel records. It returns
-   conflict while a governed action route references the channel and never
-   cascades or nulls that command topology as an incidental I/O mutation.
+6. Delete is transactional for channel-owned point and protocol-mapping
+   records. It returns conflict while any governed measurement or action route
+   references the channel and never cascades, deletes, or nulls logical
+   topology as an incidental I/O mutation.
 7. Ordinary update cannot change channel identity. A body `channel_id` may
    echo the path ID during migration, but a different ID is rejected before
    the application port runs. A future identity migration, if needed, is a
    separate high-risk use case that coordinates every referencing aggregate.
 8. HTTP, CLI, and MCP use the same application commands. HTTP independently
    verifies the signed access token and forwards the generated or validated
-   request ID, explicit confirmation, and optional expected revision. Swagger
+   request ID, explicit confirmation, and optional expected revision. The
+   first-party Rust CLI and MCP catalog require the revision returned by the
+   latest channel read for update, delete, enable, and disable; they fail
+   before HTTP when it is absent or zero. Swagger
    UI documents the exact security headers, typed accepted receipt, degraded
    semantics, and 400/403/404/409/422/503/504 failure categories. CLI and MCP
    attach Bearer credentials only to loopback HTTP or certificate-validated
@@ -93,10 +97,13 @@ it does not move live-state authority into SQLite.
   partial-update semantics. Top-level protocol parameter keys are merged.
   Rename it or change its merge behavior only after every supported client
   consumes a versioned replacement.
-- Expected revision is optional while existing clients migrate. Remove the
-  revisionless constructors only after the web client, CLI, MCP catalog, sync,
-  import/export, and supported downstream SDKs all read and send revisions,
-  and the compatibility matrix rejects older clients explicitly.
+- Expected revision remains optional at the HTTP/application compatibility
+  boundary while existing clients migrate. The Rust CLI and MCP catalog now
+  require and send it; offline sync/import atomically advances the affected
+  heads instead of entering this online path. Remove the revisionless
+  constructors only after the web client, export/re-import consumers, and
+  supported downstream SDKs all read and send revisions, and the compatibility
+  matrix rejects older clients explicitly.
 - Legacy response aliases may remain alongside the typed receipt until those
   same consumers use `runtime_projection`, `desired_enabled`, and
   `resulting_revision`.
@@ -110,7 +117,10 @@ it does not move live-state authority into SQLite.
   authentication, confirmation, audit, and typed receipt as the canonical
   `/api/channels/reconcile` route. Remove the alias after the browser client,
   supported SDKs, deployment automation, and downstream integrations consume
-  the canonical route and the compatibility matrix rejects older clients.
+  the canonical route and the compatibility matrix rejects older clients. The
+  first-party CLI no longer exposes the unauthenticated generic
+  `aether services reload` fan-out; operators use the governed
+  `aether channels reload --confirmed` command or a supervised service restart.
 - `aether sync` remains an offline desired-state import rather than an online
   runtime command. It requires explicit operator confirmation and refuses to
   apply while the configuration-owning services are running; imported state is

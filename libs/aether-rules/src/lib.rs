@@ -14,11 +14,11 @@
 //! │  +PointWatch│     │  (evaluate)  │     │   port      │
 //! └─────────────┘     └──────────────┘     └─────────────┘
 //!        │                   │
-//!        ▼                   ▼
-//! ┌─────────────┐     ┌──────────────┐
-//! │ Repository  │     │RoutingCache  │
-//! │  (SQLite)   │     │  (M2C route) │
-//! └─────────────┘     └──────────────┘
+//!        ▼
+//! ┌─────────────┐
+//! │ Repository  │
+//! │  (SQLite)   │
+//! └─────────────┘
 //! ```
 
 mod error;
@@ -61,7 +61,7 @@ pub use live_state::{MemoryRuleLiveState, RuleExecutionContext, RuleLiveState};
 pub use logger::{RuleLogger, RuleLoggerManager, format_conditions};
 #[cfg(unix)]
 pub use point_watch_dispatcher::{
-    PointWatchDispatcher, PointWatchHint, RuleSubscriptionInfo, WatchEvent,
+    MeasurementRouteBinding, PointWatchDispatcher, PointWatchHint, RuleSubscriptionInfo, WatchEvent,
 };
 #[cfg(unix)]
 pub use scheduler::{

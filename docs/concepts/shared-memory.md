@@ -1,34 +1,38 @@
 ---
 title: Shared Memory
 description: The SHM data plane - slot layout, writer ownership, seqlock reads, generations, and the PointWatch event plane
-updated: 2026-07-10
+updated: 2026-07-13
 ---
 
 # Shared Memory
 
 Live values in Aether do not travel through a broker or a database on the hot
 path. io (the communication service) and automation (the model/rule service)
-share one memory-mapped file — the SHM segment — and exchange fixed-size
-notifications over Unix domain sockets. A device reading lands in shared
+share an IO-owned point segment plus a separate channel-health segment and
+exchange fixed-size notifications over Unix domain sockets. A small commit
+witness proves that both segments came from the same physical topology
+publication. A device reading lands in shared
 memory in tens of nanoseconds. This page describes the segment itself and the
 two socket-based signaling planes built on top of it. For the
 services around it see [Architecture](architecture.md); for what the values
 mean see [Data Model](data-model.md).
 
-Source of truth: `libs/aether-rtdb-shm/` (layout, writers, readers, sockets)
-and `services/io/src/core/channels/shm_listener.rs` (the command
-listener).
+Source of truth: `crates/aether-dataplane/` (physical header, slots, locking),
+`extensions/shm-bridge/` (typed manifests, point/health publication and
+self-healing readers), and `services/io/src/core/channels/shm_listener.rs`
+(the command listener). The former legacy SHM aggregation crate has been
+removed after the v4 rolling-compatibility gate passed.
 
 ## Layout
 
 The segment is a single file: a 64-byte header followed by a fixed-size array
 of 32-byte point slots (`calculate_file_size` in
-`libs/aether-rtdb-shm/src/core/header.rs` is exactly
+`crates/aether-dataplane/src/core/header.rs` is exactly
 `64 + 32 × max_slots`; the default capacity is 100,000 slots). Both struct
 sizes are compile-time asserted.
 
 The file path is resolved by `default_shm_path()`
-(`libs/aether-rtdb-shm/src/core/config.rs`) in this order:
+(`crates/aether-dataplane/src/core/config.rs`) in this order:
 
 1. `AETHER_SHM_PATH` environment variable, if set.
 2. `/shm/rtdb/aether-rtdb.shm`, if the `/shm/rtdb` directory exists (the
@@ -39,8 +43,9 @@ The file path is resolved by `default_shm_path()`
 The header (`UnifiedHeader`, `#[repr(C, align(64))]`) carries: a magic number,
 a layout version, `max_slots`, the live `slot_count`, a last-update timestamp,
 a writer heartbeat, `routing_hash` (a fingerprint of the channel/point layout),
-and `writer_generation` (an incarnation counter). All multi-byte fields use
-native endianness, so readers and writers must run on the same architecture.
+`writer_generation` (an incarnation counter), and `publication_epoch` (the
+common point/health publication identity). All multi-byte fields use native
+endianness, so readers and writers must run on the same architecture.
 
 Each `PointSlot` holds an engineering value (f64 bits), a raw value (f64
 bits), a millisecond timestamp, a seqlock sequence counter, and a dirty flag.
@@ -49,13 +54,11 @@ fields — an unwritten slot is self-describing, never confusable with a real
 device reading of zero. Downstream consumers filter on `is_finite`.
 
 Slots are addressed by flat index. Each process independently derives the same
-`(channel_id, point_type, point_id) → slot` mapping from the same channel
-point counts (`allocate_layouts` in `libs/aether-rtdb-shm/src/layout.rs`);
-the mapping itself never crosses the process boundary — agreement is verified
-through `routing_hash` instead. The allocator also inserts padding so that
-slots owned by different writers never share a 64-byte cache line: without
-that padding, false sharing between io and automation cores was measured at a
-5.7× per-write penalty on the Cortex-A55 deployment target.
+`(channel_id, point_type, point_id) → slot` mapping from the same immutable
+`ChannelPointManifest`. Agreement is verified through the manifest
+`routing_hash`, exact slot count, committed publication epoch, and writer
+generation. Logical measurement/action routing and protocol register mapping
+do not participate in the physical slot layout.
 
 ## Writer ownership is type-enforced
 
@@ -63,24 +66,22 @@ Channel points come in four slot types: telemetry (T) and signal (S) are the
 measurement side; control (C) and adjustment (A) are the action side. The
 ownership rule is:
 
-- **io owns T/S slots.** It creates the segment at startup through
-  `UnifiedWriter::create`, which truncates the file, initializes every slot to
-  the NaN sentinel, and stamps the header.
-- **automation owns C/A slots.** It opens the existing segment through
-  `ActionWriter::open` — a newtype wrapping the full writer that exposes only
-  `set_action` (which writes C/A slots), `generation()`, and a read-only
-  channel-to-slot index. There is no general `set()` on the type.
+- **io acquisition owns T/S slots.** `ShmAcquisitionStateWriter` accepts only
+  typed `AcquiredPointSample` batches and rejects C/A addresses before any
+  mutation.
+- **governed command dispatch mirrors C/A slots.** `ShmDeviceCommandSink`
+  resolves one typed physical target, checks the writer generation before and
+  after the mirror, and sends the complete command frame to io. It cannot
+  write T/S addresses.
 
-The protection is primarily compile-time: a automation write to a telemetry slot
-is unrepresentable because `ActionWriter` has no method for it, and the only
-way to obtain a full writer over an existing file
-(`UnifiedWriter::open_existing`) is crate-private. As defense in depth,
-`set_action` also carries a runtime guard that refuses point types other than
-control (2) and adjustment (3) and returns `false`.
+The protection is primarily typed at the extension port boundary; raw
+slot-indexed writes stay inside the physical adapter. Runtime checks provide
+defense in depth for manifest membership, slot bounds, stable generation, and
+canonical-file identity.
 
-`UnifiedReader` provides the read-only view for other consumers (automation rule
-evaluation, the `aether` CLI); it validates the same header chain on open, and
-a raw variant (`open_raw`) exists for debug tools that lack layout data.
+`ShmReadTopologyGeneration` provides the production read view. It binds point
+and health manifests to one commit witness and pins both writer generations;
+debug tools may still open a single physical segment explicitly.
 
 ## Consistency: seqlock
 
@@ -90,7 +91,7 @@ even. Readers read the sequence, read the data, and re-read the sequence; the
 snapshot is valid only if both reads returned the same even value. Memory
 ordering uses paired Acquire fences on the read side and a Release fence plus
 Release increment on the write side — the comments in
-`libs/aether-rtdb-shm/src/core/slot.rs` explain why single Acquire loads are
+`crates/aether-dataplane/src/core/slot.rs` explain why single Acquire loads are
 insufficient on AArch64.
 
 Two read entry points exist, and choosing the right one matters:
@@ -109,10 +110,10 @@ writes means a reader rarely collides with a write in progress.
 
 ## Generations and rebuilds
 
-Two header fields let readers detect that their view of the segment is stale:
+Three identities let readers detect that their view is stale:
 
 - **`routing_hash`** is the fingerprint of the channel point layout. io
-  writes it at create time; every open path (reader or `ActionWriter`)
+  writes it at create time; every coordinated open path
   recomputes its own fingerprint from local configuration and refuses to open
   on mismatch — slot indices would silently point at the wrong points
   otherwise. The error message tells the operator to restart io to
@@ -121,35 +122,35 @@ Two header fields let readers detect that their view of the segment is stale:
   create time from wall-clock nanoseconds combined with a per-process nonce,
   forced even and nonzero: the invariant is "even at rest, odd while a
   reconfigure is in flight," so readers gate themselves out on odd values.
-  automation compares the generation on every dispatch and detects a io
+  command/read adapters compare the generation on every operation and detect an io
   restart or reconfigure it has not caught up with.
+- **`publication_epoch` + commit witness** bind the point and health files to
+  one completed IO transaction. The witness also records both hashes, counts,
+  and writer generations. Missing, partial, corrupt, or mixed publications
+  fail retryably; readers never guess from equal hashes.
 
-Reconfiguration (a routing reload that changes the slot layout) never mutates
-the live mapping in place. `ShmHandle::rebuild_via_swap`
-(`libs/aether-rtdb-shm/src/shm_handle.rs`) creates a complete fresh file at a
-staging path (`aether-rtdb-<nanos>.shm`), flushes it, and then publishes it
-with a POSIX `rename(2)` over the canonical path — atomic on the same
-filesystem. Readers still holding a mmap of the old file keep reading the old
-inode (the kernel keeps it alive) until they reopen; there is no window in
-which anyone can observe a torn header or partially cleared slots. automation
-notices the swap through an inode watcher on the canonical path
-(`services/automation/src/main.rs`): when the inode changes it fires the rebuild
-trigger, and a background task reopens the `ActionWriter` against the new
-file with exponential backoff. Staging files orphaned by a crash between
-create and rename are cleaned up at the next io startup.
+Reconfiguration never mutates a live layout in place. `ShmWriterHandle` and
+`ShmChannelHealthWriterHandle` build complete staging files and atomically
+rename them over their canonical paths while holding one cross-plane
+publication lease. The commit witness is renamed last and is the
+linearization point. Retained mmaps are fenced by an odd writer generation;
+self-healing readers may reopen only the epoch and writer generation pinned by
+their service-level topology. History and Uplink replace their SQLite routes
+and committed SHM read view as one `Arc`, so a collection pass cannot mix
+logical and physical generations. Crash-orphaned staging files are bounded
+and cleaned on recovery.
 
 ## Command notifications
 
 When automation issues a command — a rule action or an HTTP control request (see
 [Safe Operations for Applications and Agents](../guides/safe-operations.md) for what is
-allowed to reach devices) — it writes the C/A slot through its `ActionWriter`
-and then sends a notification over a Unix domain socket
+allowed to reach devices) — `ShmDeviceCommandSink` mirrors the C/A value into
+the pinned writer generation and sends a notification over a Unix domain socket
 (`/tmp/aether-m2c.sock`) so io reacts immediately instead of polling. In
-measurement the notify path is sub-millisecond (the SHM write plus UDS send
-benches at microseconds; see `libs/aether-rtdb-shm/benches/BASELINE.md`);
-~1–2 ms is the design budget the dispatch code documents for the happy path.
+measurement the notify path is sub-millisecond; ~1–2 ms is the design budget
+the dispatch code documents for the happy path.
 
-The notification (`ShmNotification`) is a fixed 56-byte frame carrying the
+The notification (`DeviceCommandFrame`) is a fixed 56-byte frame carrying the
 routing target (channel, point type, point), the command payload (value bits
 plus issue and expiry timestamps), and producer ordering (`producer_id`, a per-incarnation ID
 that changes on every automation restart, plus a monotonic `seq`). Because the

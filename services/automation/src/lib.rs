@@ -22,6 +22,7 @@ pub mod api {
     pub mod health_handlers;
     pub mod instance_management_handlers;
     pub mod instance_query_handlers;
+    pub mod measurement_routing_boundary;
     pub mod product_handlers;
     pub mod property_handlers;
     pub mod routing_management_handlers;
@@ -37,10 +38,10 @@ pub mod infra {
     pub mod action_routing;
     pub mod application_control;
     pub mod channel_health;
+    pub mod measurement_routing;
     pub mod rule_live_state;
     pub mod rule_mutation;
     pub mod runtime_topology;
-    pub mod shm_manifest;
 }
 pub mod runtime {
     //! Runtime layer — in-memory caches and SHM slot management
@@ -51,6 +52,7 @@ pub mod bootstrap;
 #[path = "api/dto.rs"]
 pub mod dto;
 pub mod error;
+pub mod instance_configuration;
 pub mod instance_manager;
 // Extension impl blocks for InstanceManager (split for maintainability)
 mod instance_data;
@@ -72,7 +74,6 @@ pub use aether_rules::{
 };
 
 // Re-export routing primitives from the shared library.
-pub use aether_routing::{RouteContext, route_context_from_target, validate_action_value};
 
 // Re-export commonly used types
 pub use error::{AutomationError, Result};

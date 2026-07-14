@@ -1,8 +1,8 @@
-//! Data-plane batch types shared by the routing cache and SHM writer.
+//! Data-plane batch types shared by IO routing and the acquisition writer.
 //!
 //! This module deliberately contains no storage implementation. The
-//! acquisition owner writes batches through `aether-rtdb-shm`; optional
-//! mirrors consume SHM after the authoritative write.
+//! acquisition owner writes batches through the typed `AcquisitionStateWriter`;
+//! optional mirrors consume SHM after the authoritative write.
 
 use aether_model::PointType;
 

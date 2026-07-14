@@ -20,6 +20,15 @@ use crate::state::AppState;
 /// Spawn all background tasks. Each task honours the given `CancellationToken`.
 pub fn spawn_all(state: Arc<AppState>, shutdown: CancellationToken) {
     {
+        let collector = Arc::clone(&state.collector);
+        let pool = state.sqlite.clone();
+        let config = state.env.as_ref().clone();
+        let sd = shutdown.clone();
+        tokio::spawn(async move {
+            collector::run_history_topology_refresh(collector, pool, config, sd).await;
+        });
+    }
+    {
         let s = Arc::clone(&state);
         let sd = shutdown.clone();
         tokio::spawn(async move { collector_task(s, sd).await });
@@ -79,18 +88,21 @@ async fn collector_task(state: Arc<AppState>, shutdown: CancellationToken) {
             continue;
         }
 
-        // Stamp collection time before the (async) collect so we don't drift.
-        for entry in &due {
-            last_collected.insert(entry.pattern.clone(), now);
-        }
-
         // Remove stale entries for patterns that no longer exist in config.
         last_collected.retain(|k, _| cfg.subscribe_patterns.iter().any(|e| &e.pattern == k));
 
-        let points = match collector::build_shm_history_collector(&state.sqlite, &state.env).await {
-            Ok(collector) => collector.collect_patterns(&cfg, &due),
+        let points = match finish_collection(
+            &mut last_collected,
+            &due,
+            now,
+            state.collector.collect_patterns(&cfg, &due),
+        ) {
+            Ok(points) => points,
             Err(error) => {
-                warn!("Cannot rebuild historical SHM catalogue: {error}");
+                warn!(
+                    retryable = error.is_retryable(),
+                    "Historical SHM batch retained for retry: {error}"
+                );
                 Vec::new()
             },
         };
@@ -99,6 +111,19 @@ async fn collector_task(state: Arc<AppState>, shutdown: CancellationToken) {
             buf.extend(points);
         }
     }
+}
+
+fn finish_collection<T>(
+    last_collected: &mut HashMap<String, Instant>,
+    due: &[crate::models::PatternEntry],
+    now: Instant,
+    result: aether_ports::PortResult<T>,
+) -> aether_ports::PortResult<T> {
+    let value = result?;
+    for entry in due {
+        last_collected.insert(entry.pattern.clone(), now);
+    }
+    Ok(value)
 }
 
 async fn flush_task(state: Arc<AppState>, shutdown: CancellationToken) {
@@ -228,7 +253,14 @@ fn secs_until_02_utc() -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use super::storage_should_run;
+    use std::collections::HashMap;
+
+    use aether_ports::{PortError, PortErrorKind};
+    use tokio::time::Instant;
+
+    use crate::models::PatternEntry;
+
+    use super::{finish_collection, storage_should_run};
 
     #[test]
     fn configured_but_disconnected_storage_does_not_fill_the_buffer() {
@@ -236,5 +268,29 @@ mod tests {
         assert!(!storage_should_run(false, "sqlite"));
         assert!(storage_should_run(true, "sqlite"));
         assert!(storage_should_run(true, "postgres"));
+    }
+
+    #[test]
+    fn failed_collection_does_not_advance_any_due_pattern() {
+        let mut last_collected = HashMap::new();
+        let due = vec![PatternEntry::new("inst:*:M"), PatternEntry::new("io:*:T")];
+        let now = Instant::now();
+
+        let result = finish_collection::<()>(
+            &mut last_collected,
+            &due,
+            now,
+            Err(PortError::new(
+                PortErrorKind::Unavailable,
+                "injected batch failure",
+            )),
+        );
+
+        assert!(result.is_err());
+        assert!(last_collected.is_empty());
+
+        finish_collection(&mut last_collected, &due, now, Ok(()))
+            .expect("successful batch advances all due selectors");
+        assert_eq!(last_collected.len(), 2);
     }
 }

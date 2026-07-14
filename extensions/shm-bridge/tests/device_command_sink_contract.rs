@@ -11,7 +11,9 @@ use aether_domain::{
     TimestampMs,
 };
 use aether_ports::{DeviceCommandSink, PortErrorKind};
-use aether_shm_bridge::{ChannelPointManifest, CommandMirrorObserver, ShmDeviceCommandSink};
+use aether_shm_bridge::{
+    ChannelPointManifest, CommandMirrorObserver, PhysicalPointAddress, ShmDeviceCommandSink,
+};
 use tokio::io::AsyncReadExt;
 use tokio::net::UnixListener;
 
@@ -64,7 +66,11 @@ async fn unknown_command_slot_is_rejected_before_any_shm_write() {
 
     assert_eq!(error.kind(), PortErrorKind::NotFound);
     let known_slot = manifest
-        .slot(7, PointKind::Action, 0)
+        .slot_for(PhysicalPointAddress::from_legacy_raw(
+            7,
+            PointKind::Action,
+            0,
+        ))
         .expect("known action slot");
     assert!(
         writer
@@ -94,7 +100,11 @@ async fn uds_degradation_is_typed_and_never_returns_an_acceptance_receipt() {
 
     assert_eq!(error.kind(), PortErrorKind::Unavailable);
     let slot = manifest
-        .slot(7, PointKind::Command, 0)
+        .slot_for(PhysicalPointAddress::from_legacy_raw(
+            7,
+            PointKind::Command,
+            0,
+        ))
         .expect("known command slot");
     assert_eq!(
         writer.read_slot(slot).expect("mirrored command").value,
@@ -241,7 +251,13 @@ async fn generation_change_before_shm_write_fails_closed_and_triggers_rebuild() 
     tokio::time::timeout(Duration::from_millis(100), rebuild.notified())
         .await
         .expect("generation mismatch must request rebuild");
-    let slot = manifest.slot(7, PointKind::Action, 0).expect("action slot");
+    let slot = manifest
+        .slot_for(PhysicalPointAddress::from_legacy_raw(
+            7,
+            PointKind::Action,
+            0,
+        ))
+        .expect("action slot");
     assert!(writer.read_slot(slot).expect("action value").value.is_nan());
 }
 
@@ -332,7 +348,15 @@ fn reloadable_manifest_source_tracks_each_published_generation() {
 
     let current = source.load().expect("latest manifest");
     assert_eq!(current.layout_hash(), second.layout_hash());
-    assert!(current.slot(9, PointKind::Action, 0).is_some());
+    assert!(
+        current
+            .slot_for(PhysicalPointAddress::from_legacy_raw(
+                9,
+                PointKind::Action,
+                0,
+            ))
+            .is_some()
+    );
 }
 
 #[tokio::test]
@@ -425,7 +449,13 @@ async fn canonical_inode_replacement_after_command_mirror_fails_before_receipt()
     let replacement_reader =
         SlotWriter::open_existing(&canonical, replacement.slot_count(), manifest.layout_hash())
             .expect("open replacement through canonical path");
-    let slot = manifest.slot(7, PointKind::Action, 0).expect("action slot");
+    let slot = manifest
+        .slot_for(PhysicalPointAddress::from_legacy_raw(
+            7,
+            PointKind::Action,
+            0,
+        ))
+        .expect("action slot");
     assert!(
         replacement_reader
             .read_slot(slot)

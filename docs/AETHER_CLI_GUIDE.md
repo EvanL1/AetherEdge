@@ -341,8 +341,8 @@ aether services logs <service>
 aether services logs aether-io --follow
 aether services logs aether-automation --tail 200
 
-# 重新加载配置（热加载）
-aether services reload
+# 重启服务以应用离线同步的配置
+aether services restart aether-io aether-automation
 
 # 构建 Docker 镜像
 aether services build
@@ -579,11 +579,12 @@ vim config/io/io.yaml
 # 2. 验证更改
 aether sync --dry-run --detailed
 
-# 3. 同步到数据库
+# 3. 停止配置 owner，再同步到数据库
+aether services stop aether-io aether-automation
 aether sync
 
-# 4. 热加载服务
-aether services reload
+# 4. 重新启动服务
+aether services start aether-io aether-automation
 ```
 
 ### 场景 3：调试问题

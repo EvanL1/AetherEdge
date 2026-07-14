@@ -3,6 +3,7 @@
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::sync::RwLock;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use aether_dataplane::{AuthorityReadGuard, DataplaneError, SlotIo, SlotReader};
@@ -121,7 +122,11 @@ struct ClientState {
 pub struct ReconnectingSlotSource {
     config: ShmClientConfig,
     state: RwLock<ClientState>,
+    expected_publication_epoch: AtomicU64,
+    expected_writer_generation: AtomicU64,
 }
+
+const PUBLICATION_VALIDATION_PENDING: u64 = u64::MAX;
 
 impl ReconnectingSlotSource {
     /// Creates a lazy client. A missing writer does not prevent service startup;
@@ -131,7 +136,41 @@ impl ReconnectingSlotSource {
         Self {
             config,
             state: RwLock::new(ClientState::default()),
+            expected_publication_epoch: AtomicU64::new(0),
+            expected_writer_generation: AtomicU64::new(0),
         }
+    }
+
+    /// Blocks ordinary reads until a topology supervisor validates and pins a
+    /// coordinated publication epoch.
+    pub(crate) fn require_coordinated_publication(&self) {
+        self.expected_publication_epoch
+            .store(PUBLICATION_VALIDATION_PENDING, Ordering::Release);
+    }
+
+    /// Pins ordinary reads to one already validated physical publication.
+    pub(crate) fn accept_publication_identity(
+        &self,
+        publication_epoch: u64,
+        writer_generation: u64,
+    ) -> PortResult<()> {
+        if publication_epoch == 0 || publication_epoch == PUBLICATION_VALIDATION_PENDING {
+            return Err(PortError::new(
+                PortErrorKind::InvalidData,
+                "validated SHM publication epoch must be non-zero",
+            ));
+        }
+        if writer_generation == 0 || writer_generation & 1 != 0 {
+            return Err(PortError::new(
+                PortErrorKind::InvalidData,
+                "validated SHM writer generation must be stable",
+            ));
+        }
+        self.expected_writer_generation
+            .store(writer_generation, Ordering::Release);
+        self.expected_publication_epoch
+            .store(publication_epoch, Ordering::Release);
+        Ok(())
     }
 
     /// Eagerly validates the physical layout without requiring a fresh writer
@@ -164,6 +203,10 @@ impl ReconnectingSlotSource {
                     opened.generation
                 ),
             ));
+        }
+        let expected_epoch = self.expected_publication_epoch.load(Ordering::Acquire);
+        if expected_epoch != 0 && expected_epoch != PUBLICATION_VALIDATION_PENDING {
+            self.validate_publication_identity(&opened.reader)?;
         }
         Ok(())
     }
@@ -280,6 +323,7 @@ impl ReconnectingSlotSource {
             PortError::new(PortErrorKind::Unavailable, "SHM reader is not connected")
         })?;
         validate_writer_freshness(&opened.reader, self.config.writer_stale_after)?;
+        self.validate_publication_identity(&opened.reader)?;
         let value = read(&opened.reader)?;
         let generation = opened.reader.generation();
         if generation != opened.generation || generation & 1 != 0 {
@@ -292,6 +336,41 @@ impl ReconnectingSlotSource {
             ));
         }
         Ok(value)
+    }
+
+    fn validate_publication_identity(&self, reader: &SlotReader) -> PortResult<()> {
+        let expected = self.expected_publication_epoch.load(Ordering::Acquire);
+        if expected == 0 {
+            return Ok(());
+        }
+        if expected == PUBLICATION_VALIDATION_PENDING {
+            return Err(PortError::new(
+                PortErrorKind::Conflict,
+                "SHM topology publication has not been validated",
+            ));
+        }
+        let observed_epoch = reader.publication_epoch();
+        if observed_epoch != expected {
+            return Err(PortError::new(
+                PortErrorKind::Conflict,
+                format!(
+                    "SHM publication epoch {} does not match pinned topology epoch {expected}",
+                    observed_epoch
+                ),
+            ));
+        }
+        let header = reader.header();
+        let expected_generation = self.expected_writer_generation.load(Ordering::Acquire);
+        if header.writer_generation != expected_generation {
+            return Err(PortError::new(
+                PortErrorKind::Conflict,
+                format!(
+                    "SHM writer generation {} does not match pinned topology writer generation {expected_generation}",
+                    header.writer_generation
+                ),
+            ));
+        }
+        Ok(())
     }
 
     fn read_state(&self) -> PortResult<std::sync::RwLockReadGuard<'_, ClientState>> {

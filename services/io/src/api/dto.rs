@@ -747,6 +747,16 @@ pub struct MappingBatchUpdateResult {
     pub channel_reloaded: bool,
     pub validation_errors: Vec<String>,
     pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(format = "uuid")]
+    pub request_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(minimum = 1, maximum = 9223372036854775807_i64)]
+    pub resulting_revision: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub completion_audit: Option<ChannelCompletionAudit>,
+    #[schema(default = false, example = false)]
+    pub retryable: bool,
 }
 
 /// Mapping update mode

@@ -110,4 +110,19 @@ RUST
 assert_rejected "$legacy_fixture" \
     "services/io/src/api/handlers/channel_management_handlers/lifecycle.rs"
 
+cli_reload_fixture=$(create_fixture legacy_cli_reload_fanout)
+write_governed_handler "$cli_reload_fixture"
+write_governed_reconciliation "$cli_reload_fixture"
+mkdir -p "$cli_reload_fixture/tools/aether/src"
+cat > "$cli_reload_fixture/tools/aether/src/services.rs" <<'RUST'
+enum ServiceCommands {
+    Reload { services: Vec<String> },
+}
+
+async fn reload() {
+    client.post("/api/channels/reload").send().await;
+}
+RUST
+assert_rejected "$cli_reload_fixture" "tools/aether/src/services.rs"
+
 echo "Channel-management architecture boundary tests passed"

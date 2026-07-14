@@ -68,13 +68,11 @@ each variant carries a serde alias for the Chinese-standard code (YC/YX/YK/YT).
 `is_measurement()` is true for T and S, `is_action()` for C and A,
 `is_analog()` for T and A, `is_digital()` for S and C.
 
-Write ownership is enforced by construction in the shared-memory layer
-(`libs/aether-rtdb-shm/src/unified_shm.rs`): io creates the SHM file
-through `UnifiedWriter`, which has a general `set()` for T/S slots. automation
-opens the same file through `ActionWriter`, a newtype wrapper that exposes
-only `set_action()` — there is no `set()` on it, so writing a T or S slot from
-automation is a compile error, and `set_action()` additionally rejects any
-non-action `point_type` at runtime.
+Write ownership is enforced by construction at the port and composition
+boundaries. IO alone receives `LiveStateWriter` and publishes T/S acquisition
+batches through `ShmAcquisitionStateWriter`. Automation submits typed C/A
+commands through `ShmDeviceCommandSink`; it cannot obtain the acquisition
+writer, and the sink rejects non-command point kinds before touching SHM.
 
 On the instance side, the four channel types collapse into two roles, defined
 by `PointRole` in `libs/aether-model/src/types.rs`:
@@ -140,7 +138,7 @@ way.
 
 In the shared-memory plane, "no data has ever been written here" is encoded
 in the value itself. Every SHM `PointSlot`
-(`libs/aether-rtdb-shm/src/core/slot.rs`) is created with both its value and
+(`crates/aether-dataplane/src/core/slot.rs`) is created with both its value and
 raw-value fields set to a quiet IEEE-754 NaN (the hardcoded bit pattern
 `SLOT_UNWRITTEN_BITS = 0x7FF8_0000_0000_0000`). The first real write replaces
 the sentinel with a finite double. This removes the historical ambiguity where

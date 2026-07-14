@@ -57,3 +57,19 @@ digest, closed metadata, exact file inventory, and Pack compatibility. It then
 publishes to `<data-dir>/packs/<id>/<version>` and atomically activates that
 absolute root in `global.yaml`. It does not copy a Kernel binary, start or
 restart services, or commission any Pack example.
+
+Tagged releases are configured to package the Energy Pack separately for each
+target Kernel runtime as
+`aetherems-energy-pack-<target>-<version>.tar.gz`. The archive and its
+`.sha256` sidecar are release assets; GitHub build provenance is attached to
+the archive and can be checked with:
+
+```bash
+sha256sum -c aetherems-energy-pack-<target>-<version>.tar.gz.sha256
+gh attestation verify aetherems-energy-pack-<target>-<version>.tar.gz \
+  --repo EvanL1/Aether
+```
+
+This documents the workflow contract, not proof that a particular tag or a
+separate AetherEMS repository has already been published. ADR-0007 requires
+real release digests and successful downstream CI evidence before extraction.

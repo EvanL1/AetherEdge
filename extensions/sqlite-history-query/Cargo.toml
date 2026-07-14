@@ -1,13 +1,12 @@
 [package]
 name = "aether-sqlite-history-query"
 version.workspace = true
-publish = false
 edition = "2024"
 rust-version = "1.90"
 description = "Read-only embedded SQLite HistoryQuery adapter for Aether Data Processing"
 license.workspace = true
 repository.workspace = true
-documentation = "https://docs.aetheriot.workers.dev/extensions/sqlite-history-query"
+documentation = "https://docs.rs/aether-sqlite-history-query"
 readme = "README.md"
 keywords = ["iot", "edge", "sqlite", "history", "data-processing"]
 categories = ["database", "asynchronous"]

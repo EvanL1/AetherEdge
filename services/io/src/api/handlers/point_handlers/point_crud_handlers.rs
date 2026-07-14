@@ -5,16 +5,51 @@
 use crate::api::routes::AppState;
 use crate::core::config::TelemetryPoint;
 use crate::dto::{AppError, SuccessResponse};
+use crate::point_topology::{
+    PointDefinitionMutation, PointKind, PointMutation, PointPatchMutation, PointTopologyAcceptance,
+    PointTopologyMutation, PointTopologyMutationResult,
+};
 use axum::{
+    Extension,
     extract::{Path, Query, State},
+    http::HeaderMap,
     response::Json,
 };
 
-use super::point_helpers::{
-    point_type_to_table, trigger_channel_reload_if_needed, validate_channel_exists,
-    validate_point_uniqueness,
-};
+use super::point_governance::{PointTopologyHttpBoundary, completion_audit};
+use super::point_helpers::{point_type_to_table, trigger_channel_reload_if_needed};
 use super::point_types::{PointCrudResult, PointUpdateRequest};
+
+fn accepted_result(
+    acceptance: PointTopologyAcceptance,
+    channel_id: u32,
+    point_type: String,
+    point_id: u32,
+    message: String,
+) -> PointCrudResult {
+    let request_id = acceptance.request_id().to_string();
+    let resulting_revision = acceptance.resulting_revision().get();
+    let audit = completion_audit(acceptance.completion_audit());
+    let signal_name = match acceptance.into_result() {
+        PointTopologyMutationResult::Single { signal_name } => signal_name,
+        PointTopologyMutationResult::Batch { .. }
+        | PointTopologyMutationResult::Provisioned { .. }
+        | PointTopologyMutationResult::MappingsUpdated { .. } => {
+            "point mutation completed".to_string()
+        },
+    };
+    PointCrudResult {
+        channel_id,
+        point_type,
+        point_id,
+        signal_name,
+        message,
+        request_id,
+        resulting_revision,
+        completion_audit: audit,
+        retryable: false,
+    }
+}
 
 // ----------------------------------------------------------------------------
 // Helper: Extract common fields from point creation payload
@@ -122,11 +157,12 @@ pub async fn create_telemetry_point_handler(
     Path((channel_id, point_id)): Path<(u32, u32)>,
     State(state): State<AppState>,
     Query(reload_query): Query<crate::dto::AutoReloadQuery>,
+    Extension(boundary): Extension<PointTopologyHttpBoundary>,
+    headers: HeaderMap,
     Json(payload): Json<serde_json::Value>,
 ) -> Result<Json<SuccessResponse<PointCrudResult>>, AppError> {
     let point: TelemetryPoint = serde_json::from_value(payload)
         .map_err(|e| AppError::bad_request(format!("Invalid request body: {}", e)))?;
-    validate_channel_exists(&state.sqlite_pool, channel_id).await?;
 
     if point.base.point_id != point_id {
         return Err(AppError::bad_request(format!(
@@ -135,39 +171,44 @@ pub async fn create_telemetry_point_handler(
         )));
     }
 
-    validate_point_uniqueness(&state.sqlite_pool, channel_id, "telemetry_points", point_id).await?;
-
-    sqlx::query(
-        "INSERT INTO telemetry_points
-         (channel_id, point_id, signal_name, scale, offset, unit, data_type, reverse, description, protocol_mappings)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)",
-    )
-    .bind(channel_id as i64)
-    .bind(point.base.point_id as i64)
-    .bind(&point.base.signal_name)
-    .bind(point.scale)
-    .bind(point.offset)
-    .bind(&point.base.unit)
-    .bind(&point.data_type)
-    .bind(point.reverse)
-    .bind(&point.base.description)
-    .execute(&state.sqlite_pool)
-    .await
-    .map_err(|e| {
-        tracing::error!("Create T point: {}", e);
-        AppError::internal_error("Failed to create point")
-    })?;
+    let acceptance = boundary
+        .mutate(
+            &headers,
+            PointTopologyMutation::single(
+                channel_id,
+                PointMutation::Create {
+                    kind: PointKind::Telemetry,
+                    definition: PointDefinitionMutation {
+                        point_id,
+                        signal_name: point.base.signal_name,
+                        scale: point.scale,
+                        offset: point.offset,
+                        unit: point.base.unit.unwrap_or_default(),
+                        reverse: point.reverse,
+                        data_type: point.data_type,
+                        description: point.base.description.unwrap_or_default(),
+                        normal_state: 0,
+                        minimum: None,
+                        maximum: None,
+                        step: 1.0,
+                        protocol_mapping: Some(None),
+                    },
+                    force: false,
+                },
+            ),
+        )
+        .await?;
 
     tracing::debug!("Ch{}:T:{} created", channel_id, point_id);
     trigger_channel_reload_if_needed(channel_id, &state, reload_query.auto_reload).await;
 
-    Ok(Json(SuccessResponse::new(PointCrudResult {
+    Ok(Json(SuccessResponse::new(accepted_result(
+        acceptance,
         channel_id,
-        point_type: "T".to_string(),
+        "T".to_string(),
         point_id,
-        signal_name: point.base.signal_name.clone(),
-        message: "Telemetry point created successfully".to_string(),
-    })))
+        "Telemetry point created successfully".to_string(),
+    ))))
 }
 
 /// Create a new signal point (Signal / type "S").
@@ -196,65 +237,72 @@ pub async fn create_signal_point_handler(
     Path((channel_id, point_id)): Path<(u32, u32)>,
     State(state): State<AppState>,
     Query(reload_query): Query<crate::dto::AutoReloadQuery>,
+    Extension(boundary): Extension<PointTopologyHttpBoundary>,
+    headers: HeaderMap,
     Json(payload): Json<serde_json::Value>,
 ) -> Result<Json<SuccessResponse<PointCrudResult>>, AppError> {
     let fields = extract_create_fields(&payload, point_id, "bool")?;
-    validate_channel_exists(&state.sqlite_pool, channel_id).await?;
-    validate_point_uniqueness(&state.sqlite_pool, channel_id, "signal_points", point_id).await?;
 
     let normal_state = payload
         .get("normal_state")
         .and_then(|v| v.as_i64())
         .unwrap_or(0);
 
-    sqlx::query(
-        "INSERT INTO signal_points
-         (channel_id, point_id, signal_name, scale, offset, unit, reverse, normal_state, data_type, description, protocol_mappings)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)",
-    )
-    .bind(channel_id as i64)
-    .bind(point_id as i64)
-    .bind(&fields.signal_name)
-    .bind(fields.scale)
-    .bind(fields.offset)
-    .bind(&fields.unit)
-    .bind(fields.reverse)
-    .bind(normal_state)
-    .bind(&fields.data_type)
-    .bind(&fields.description)
-    .execute(&state.sqlite_pool)
-    .await
-    .map_err(|e| {
-        tracing::error!("Create S point: {}", e);
-        AppError::internal_error("Failed to create point")
-    })?;
+    let acceptance = boundary
+        .mutate(
+            &headers,
+            PointTopologyMutation::single(
+                channel_id,
+                PointMutation::Create {
+                    kind: PointKind::Signal,
+                    definition: PointDefinitionMutation {
+                        point_id,
+                        signal_name: fields.signal_name,
+                        scale: fields.scale,
+                        offset: fields.offset,
+                        unit: fields.unit,
+                        reverse: fields.reverse,
+                        data_type: fields.data_type,
+                        description: fields.description,
+                        normal_state,
+                        minimum: None,
+                        maximum: None,
+                        step: 1.0,
+                        protocol_mapping: Some(None),
+                    },
+                    force: false,
+                },
+            ),
+        )
+        .await?;
 
     tracing::debug!("Ch{}:S:{} created", channel_id, point_id);
     trigger_channel_reload_if_needed(channel_id, &state, reload_query.auto_reload).await;
 
-    Ok(Json(SuccessResponse::new(PointCrudResult {
+    Ok(Json(SuccessResponse::new(accepted_result(
+        acceptance,
         channel_id,
-        point_type: "S".to_string(),
+        "S".to_string(),
         point_id,
-        signal_name: fields.signal_name,
-        message: "Signal point created successfully".to_string(),
-    })))
+        "Signal point created successfully".to_string(),
+    ))))
 }
 
 /// Internal: create control or adjustment point (identical schema)
+#[allow(clippy::too_many_arguments)]
 async fn create_ca_point_inner(
     channel_id: u32,
     point_type: &str,
     point_id: u32,
     state: AppState,
     reload_query: crate::dto::AutoReloadQuery,
+    boundary: PointTopologyHttpBoundary,
+    headers: HeaderMap,
     payload: serde_json::Value,
     default_data_type: &str,
 ) -> Result<Json<SuccessResponse<PointCrudResult>>, AppError> {
-    let table = point_type_to_table(point_type)?;
+    point_type_to_table(point_type)?;
     let fields = extract_create_fields(&payload, point_id, default_data_type)?;
-    validate_channel_exists(&state.sqlite_pool, channel_id).await?;
-    validate_point_uniqueness(&state.sqlite_pool, channel_id, table, point_id).await?;
 
     let adjustment_constraints = if point_type == "A" {
         let minimum = payload.get("min_value").and_then(serde_json::Value::as_f64);
@@ -271,55 +319,35 @@ async fn create_ca_point_inner(
         None
     };
 
-    if let Some((minimum, maximum, step)) = adjustment_constraints {
-        sqlx::query(
-            "INSERT INTO adjustment_points
-             (channel_id, point_id, signal_name, scale, offset, unit, reverse, data_type,
-              description, protocol_mappings, min_value, max_value, step)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?)",
+    let (minimum, maximum, step) = adjustment_constraints.unwrap_or((None, None, 1.0));
+    let kind = PointKind::parse(point_type).map_err(AppError::bad_request)?;
+    let acceptance = boundary
+        .mutate(
+            &headers,
+            PointTopologyMutation::single(
+                channel_id,
+                PointMutation::Create {
+                    kind,
+                    definition: PointDefinitionMutation {
+                        point_id,
+                        signal_name: fields.signal_name,
+                        scale: fields.scale,
+                        offset: fields.offset,
+                        unit: fields.unit,
+                        reverse: fields.reverse,
+                        data_type: fields.data_type,
+                        description: fields.description,
+                        normal_state: 0,
+                        minimum,
+                        maximum,
+                        step,
+                        protocol_mapping: Some(None),
+                    },
+                    force: false,
+                },
+            ),
         )
-        .bind(channel_id as i64)
-        .bind(point_id as i64)
-        .bind(&fields.signal_name)
-        .bind(fields.scale)
-        .bind(fields.offset)
-        .bind(&fields.unit)
-        .bind(fields.reverse)
-        .bind(&fields.data_type)
-        .bind(&fields.description)
-        .bind(minimum)
-        .bind(maximum)
-        .bind(step)
-        .execute(&state.sqlite_pool)
-        .await
-        .map_err(|error| {
-            tracing::error!("Create adjustment point: {error}");
-            AppError::internal_error("Failed to create point")
-        })?;
-    } else {
-        let query = format!(
-        "INSERT INTO {}
-         (channel_id, point_id, signal_name, scale, offset, unit, reverse, data_type, description, protocol_mappings)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)",
-        table
-    );
-        sqlx::query(&query)
-            .bind(channel_id as i64)
-            .bind(point_id as i64)
-            .bind(&fields.signal_name)
-            .bind(fields.scale)
-            .bind(fields.offset)
-            .bind(&fields.unit)
-            .bind(fields.reverse)
-            .bind(&fields.data_type)
-            .bind(&fields.description)
-            .execute(&state.sqlite_pool)
-            .await
-            .map_err(|e| {
-                tracing::error!("Create {} point: {}", point_type, e);
-                AppError::internal_error("Failed to create point")
-            })?;
-    }
+        .await?;
 
     let type_name = match point_type {
         "C" => "Control",
@@ -329,13 +357,13 @@ async fn create_ca_point_inner(
     tracing::debug!("Ch{}:{}:{} created", channel_id, point_type, point_id);
     trigger_channel_reload_if_needed(channel_id, &state, reload_query.auto_reload).await;
 
-    Ok(Json(SuccessResponse::new(PointCrudResult {
+    Ok(Json(SuccessResponse::new(accepted_result(
+        acceptance,
         channel_id,
-        point_type: point_type.to_string(),
+        point_type.to_string(),
         point_id,
-        signal_name: fields.signal_name,
-        message: format!("{} point created successfully", type_name),
-    })))
+        format!("{} point created successfully", type_name),
+    ))))
 }
 
 /// Create a new control point (Control / type "C").
@@ -365,6 +393,8 @@ pub async fn create_control_point_handler(
     Path((channel_id, point_id)): Path<(u32, u32)>,
     State(state): State<AppState>,
     Query(reload_query): Query<crate::dto::AutoReloadQuery>,
+    Extension(boundary): Extension<PointTopologyHttpBoundary>,
+    headers: HeaderMap,
     Json(payload): Json<serde_json::Value>,
 ) -> Result<Json<SuccessResponse<PointCrudResult>>, AppError> {
     create_ca_point_inner(
@@ -373,6 +403,8 @@ pub async fn create_control_point_handler(
         point_id,
         state,
         reload_query,
+        boundary,
+        headers,
         payload,
         "bool",
     )
@@ -406,6 +438,8 @@ pub async fn create_adjustment_point_handler(
     Path((channel_id, point_id)): Path<(u32, u32)>,
     State(state): State<AppState>,
     Query(reload_query): Query<crate::dto::AutoReloadQuery>,
+    Extension(boundary): Extension<PointTopologyHttpBoundary>,
+    headers: HeaderMap,
     Json(payload): Json<serde_json::Value>,
 ) -> Result<Json<SuccessResponse<PointCrudResult>>, AppError> {
     create_ca_point_inner(
@@ -414,6 +448,8 @@ pub async fn create_adjustment_point_handler(
         point_id,
         state,
         reload_query,
+        boundary,
+        headers,
         payload,
         "int16",
     )
@@ -439,138 +475,48 @@ pub(super) async fn update_point_handler_inner(
     point_id: u32,
     state: AppState,
     reload_query: crate::dto::AutoReloadQuery,
+    boundary: PointTopologyHttpBoundary,
+    headers: HeaderMap,
     update: PointUpdateRequest,
 ) -> Result<Json<SuccessResponse<PointCrudResult>>, AppError> {
     let point_type_upper = point_type.to_ascii_uppercase();
-    let table = point_type_to_table(point_type)?;
-    validate_channel_exists(&state.sqlite_pool, channel_id).await?;
-
-    let has_update = update.signal_name.is_some()
-        || update.description.is_some()
-        || update.unit.is_some()
-        || update.scale.is_some()
-        || update.offset.is_some()
-        || update.data_type.is_some()
-        || update.reverse.is_some()
-        || update.min_value.is_some()
-        || update.max_value.is_some()
-        || update.step.is_some();
-
-    if !has_update {
-        return Err(AppError::bad_request("No fields provided for update"));
-    }
-
-    let signal_name = if point_type_upper == "A" {
-        let existing = sqlx::query_as::<_, (Option<f64>, Option<f64>, f64)>(
-            "SELECT min_value, max_value, step FROM adjustment_points
-             WHERE channel_id = ? AND point_id = ?",
+    let kind = PointKind::parse(point_type).map_err(AppError::bad_request)?;
+    let response_type = point_type_upper.clone();
+    let acceptance = boundary
+        .mutate(
+            &headers,
+            PointTopologyMutation::single(
+                channel_id,
+                PointMutation::Update {
+                    kind,
+                    point_id,
+                    patch: PointPatchMutation {
+                        signal_name: update.signal_name,
+                        description: update.description,
+                        unit: update.unit,
+                        scale: update.scale,
+                        offset: update.offset,
+                        data_type: update.data_type,
+                        reverse: update.reverse,
+                        minimum: update.min_value,
+                        maximum: update.max_value,
+                        step: update.step,
+                    },
+                },
+            ),
         )
-        .bind(channel_id as i64)
-        .bind(point_id as i64)
-        .fetch_optional(&state.sqlite_pool)
-        .await
-        .map_err(|error| {
-            tracing::error!("Read adjustment constraints: {error}");
-            AppError::internal_error("Failed to read point")
-        })?
-        .ok_or_else(|| {
-            AppError::not_found(format!(
-                "Point {} (type A) not found in channel {}",
-                point_id, channel_id
-            ))
-        })?;
-        let minimum = update.min_value.or(existing.0);
-        let maximum = update.max_value.or(existing.1);
-        let step = update.step.unwrap_or(existing.2);
-        aether_domain::CommandConstraints::new(minimum, maximum, Some(step)).map_err(|error| {
-            AppError::bad_request(format!("Invalid adjustment constraints: {error}"))
-        })?;
-
-        sqlx::query_scalar::<_, String>(
-            "UPDATE adjustment_points SET
-                signal_name = COALESCE(?, signal_name),
-                description = COALESCE(?, description),
-                unit = COALESCE(?, unit),
-                scale = COALESCE(?, scale),
-                offset = COALESCE(?, offset),
-                data_type = COALESCE(?, data_type),
-                reverse = COALESCE(?, reverse),
-                min_value = ?, max_value = ?, step = ?
-             WHERE channel_id = ? AND point_id = ?
-             RETURNING signal_name",
-        )
-        .bind(update.signal_name.as_deref())
-        .bind(update.description.as_deref())
-        .bind(update.unit.as_deref())
-        .bind(update.scale)
-        .bind(update.offset)
-        .bind(update.data_type.as_deref())
-        .bind(update.reverse)
-        .bind(minimum)
-        .bind(maximum)
-        .bind(step)
-        .bind(channel_id as i64)
-        .bind(point_id as i64)
-        .fetch_one(&state.sqlite_pool)
-        .await
-        .map_err(|error| {
-            tracing::error!("Update adjustment point: {error}");
-            AppError::internal_error("Failed to update point")
-        })?
-    } else {
-        if update.min_value.is_some() || update.max_value.is_some() || update.step.is_some() {
-            return Err(AppError::bad_request(
-                "min_value, max_value, and step are only valid for adjustment points",
-            ));
-        }
-        let query = format!(
-            "UPDATE {} SET
-            signal_name = COALESCE(?, signal_name),
-            description = COALESCE(?, description),
-            unit = COALESCE(?, unit),
-            scale = COALESCE(?, scale),
-            offset = COALESCE(?, offset),
-            data_type = COALESCE(?, data_type),
-            reverse = COALESCE(?, reverse)
-        WHERE channel_id = ? AND point_id = ?
-        RETURNING signal_name",
-            table
-        );
-
-        sqlx::query_scalar::<_, String>(&query)
-            .bind(update.signal_name.as_deref())
-            .bind(update.description.as_deref())
-            .bind(update.unit.as_deref())
-            .bind(update.scale)
-            .bind(update.offset)
-            .bind(update.data_type.as_deref())
-            .bind(update.reverse)
-            .bind(channel_id as i64)
-            .bind(point_id as i64)
-            .fetch_optional(&state.sqlite_pool)
-            .await
-            .map_err(|e| {
-                tracing::error!("Update {} point: {}", table, e);
-                AppError::internal_error("Failed to update point")
-            })?
-            .ok_or_else(|| {
-                AppError::not_found(format!(
-                    "Point {} (type {}) not found in channel {}",
-                    point_id, point_type_upper, channel_id
-                ))
-            })?
-    };
+        .await?;
 
     tracing::debug!("Ch{}:{}:{} updated", channel_id, point_type_upper, point_id);
     trigger_channel_reload_if_needed(channel_id, &state, reload_query.auto_reload).await;
 
-    Ok(Json(SuccessResponse::new(PointCrudResult {
+    Ok(Json(SuccessResponse::new(accepted_result(
+        acceptance,
         channel_id,
-        point_type: point_type_upper,
+        response_type,
         point_id,
-        signal_name,
-        message: "Point updated successfully".to_string(),
-    })))
+        "Point updated successfully".to_string(),
+    ))))
 }
 
 // ----------------------------------------------------------------------------
@@ -591,61 +537,30 @@ pub(super) async fn delete_point_handler_inner(
     point_id: u32,
     state: AppState,
     reload_query: crate::dto::AutoReloadQuery,
+    boundary: PointTopologyHttpBoundary,
+    headers: HeaderMap,
 ) -> Result<Json<SuccessResponse<PointCrudResult>>, AppError> {
     let point_type_upper = point_type.to_ascii_uppercase();
-    let table = point_type_to_table(point_type)?;
-    validate_channel_exists(&state.sqlite_pool, channel_id).await?;
-
-    // Get point info before deletion (for response)
-    let query = format!(
-        "SELECT signal_name FROM {} WHERE channel_id = ? AND point_id = ?",
-        table
-    );
-    let existing: Option<(String,)> = sqlx::query_as(&query)
-        .bind(channel_id as i64)
-        .bind(point_id as i64)
-        .fetch_optional(&state.sqlite_pool)
-        .await
-        .map_err(|e| {
-            tracing::error!("Point check: {}", e);
-            AppError::internal_error("Database operation failed")
-        })?;
-
-    let signal_name = existing
-        .ok_or_else(|| {
-            AppError::not_found(format!(
-                "Point {} (type {}) not found in channel {}",
-                point_id, point_type_upper, channel_id
-            ))
-        })?
-        .0;
-
-    // Delete point
-    let delete_sql = format!(
-        "DELETE FROM {} WHERE channel_id = ? AND point_id = ?",
-        table
-    );
-    sqlx::query(&delete_sql)
-        .bind(channel_id as i64)
-        .bind(point_id as i64)
-        .execute(&state.sqlite_pool)
-        .await
-        .map_err(|e| {
-            tracing::error!("Delete point: {}", e);
-            AppError::internal_error("Failed to delete point")
-        })?;
+    let kind = PointKind::parse(point_type).map_err(AppError::bad_request)?;
+    let response_type = point_type_upper.clone();
+    let acceptance = boundary
+        .mutate(
+            &headers,
+            PointTopologyMutation::single(channel_id, PointMutation::Delete { kind, point_id }),
+        )
+        .await?;
 
     tracing::debug!("Ch{}:{}:{} deleted", channel_id, point_type_upper, point_id);
 
     trigger_channel_reload_if_needed(channel_id, &state, reload_query.auto_reload).await;
 
-    Ok(Json(SuccessResponse::new(PointCrudResult {
+    Ok(Json(SuccessResponse::new(accepted_result(
+        acceptance,
         channel_id,
-        point_type: point_type_upper,
+        response_type,
         point_id,
-        signal_name,
-        message: "Point deleted successfully".to_string(),
-    })))
+        "Point deleted successfully".to_string(),
+    ))))
 }
 
 // ============================================================================
@@ -675,9 +590,21 @@ pub async fn update_telemetry_point_handler(
     Path((channel_id, point_id)): Path<(u32, u32)>,
     State(state): State<AppState>,
     Query(reload_query): Query<crate::dto::AutoReloadQuery>,
+    Extension(boundary): Extension<PointTopologyHttpBoundary>,
+    headers: HeaderMap,
     Json(update): Json<PointUpdateRequest>,
 ) -> Result<Json<SuccessResponse<PointCrudResult>>, AppError> {
-    update_point_handler_inner(channel_id, "T", point_id, state, reload_query, update).await
+    update_point_handler_inner(
+        channel_id,
+        "T",
+        point_id,
+        state,
+        reload_query,
+        boundary,
+        headers,
+        update,
+    )
+    .await
 }
 
 /// Update signal point
@@ -701,9 +628,21 @@ pub async fn update_signal_point_handler(
     Path((channel_id, point_id)): Path<(u32, u32)>,
     State(state): State<AppState>,
     Query(reload_query): Query<crate::dto::AutoReloadQuery>,
+    Extension(boundary): Extension<PointTopologyHttpBoundary>,
+    headers: HeaderMap,
     Json(update): Json<PointUpdateRequest>,
 ) -> Result<Json<SuccessResponse<PointCrudResult>>, AppError> {
-    update_point_handler_inner(channel_id, "S", point_id, state, reload_query, update).await
+    update_point_handler_inner(
+        channel_id,
+        "S",
+        point_id,
+        state,
+        reload_query,
+        boundary,
+        headers,
+        update,
+    )
+    .await
 }
 
 /// Update control point
@@ -727,9 +666,21 @@ pub async fn update_control_point_handler(
     Path((channel_id, point_id)): Path<(u32, u32)>,
     State(state): State<AppState>,
     Query(reload_query): Query<crate::dto::AutoReloadQuery>,
+    Extension(boundary): Extension<PointTopologyHttpBoundary>,
+    headers: HeaderMap,
     Json(update): Json<PointUpdateRequest>,
 ) -> Result<Json<SuccessResponse<PointCrudResult>>, AppError> {
-    update_point_handler_inner(channel_id, "C", point_id, state, reload_query, update).await
+    update_point_handler_inner(
+        channel_id,
+        "C",
+        point_id,
+        state,
+        reload_query,
+        boundary,
+        headers,
+        update,
+    )
+    .await
 }
 
 /// Update adjustment point
@@ -753,9 +704,21 @@ pub async fn update_adjustment_point_handler(
     Path((channel_id, point_id)): Path<(u32, u32)>,
     State(state): State<AppState>,
     Query(reload_query): Query<crate::dto::AutoReloadQuery>,
+    Extension(boundary): Extension<PointTopologyHttpBoundary>,
+    headers: HeaderMap,
     Json(update): Json<PointUpdateRequest>,
 ) -> Result<Json<SuccessResponse<PointCrudResult>>, AppError> {
-    update_point_handler_inner(channel_id, "A", point_id, state, reload_query, update).await
+    update_point_handler_inner(
+        channel_id,
+        "A",
+        point_id,
+        state,
+        reload_query,
+        boundary,
+        headers,
+        update,
+    )
+    .await
 }
 
 // --- DELETE wrappers ---
@@ -779,8 +742,19 @@ pub async fn delete_telemetry_point_handler(
     Path((channel_id, point_id)): Path<(u32, u32)>,
     State(state): State<AppState>,
     Query(reload_query): Query<crate::dto::AutoReloadQuery>,
+    Extension(boundary): Extension<PointTopologyHttpBoundary>,
+    headers: HeaderMap,
 ) -> Result<Json<SuccessResponse<PointCrudResult>>, AppError> {
-    delete_point_handler_inner(channel_id, "T", point_id, state, reload_query).await
+    delete_point_handler_inner(
+        channel_id,
+        "T",
+        point_id,
+        state,
+        reload_query,
+        boundary,
+        headers,
+    )
+    .await
 }
 
 /// Delete signal point
@@ -802,8 +776,19 @@ pub async fn delete_signal_point_handler(
     Path((channel_id, point_id)): Path<(u32, u32)>,
     State(state): State<AppState>,
     Query(reload_query): Query<crate::dto::AutoReloadQuery>,
+    Extension(boundary): Extension<PointTopologyHttpBoundary>,
+    headers: HeaderMap,
 ) -> Result<Json<SuccessResponse<PointCrudResult>>, AppError> {
-    delete_point_handler_inner(channel_id, "S", point_id, state, reload_query).await
+    delete_point_handler_inner(
+        channel_id,
+        "S",
+        point_id,
+        state,
+        reload_query,
+        boundary,
+        headers,
+    )
+    .await
 }
 
 /// Delete control point
@@ -825,8 +810,19 @@ pub async fn delete_control_point_handler(
     Path((channel_id, point_id)): Path<(u32, u32)>,
     State(state): State<AppState>,
     Query(reload_query): Query<crate::dto::AutoReloadQuery>,
+    Extension(boundary): Extension<PointTopologyHttpBoundary>,
+    headers: HeaderMap,
 ) -> Result<Json<SuccessResponse<PointCrudResult>>, AppError> {
-    delete_point_handler_inner(channel_id, "C", point_id, state, reload_query).await
+    delete_point_handler_inner(
+        channel_id,
+        "C",
+        point_id,
+        state,
+        reload_query,
+        boundary,
+        headers,
+    )
+    .await
 }
 
 /// Delete adjustment point
@@ -848,6 +844,17 @@ pub async fn delete_adjustment_point_handler(
     Path((channel_id, point_id)): Path<(u32, u32)>,
     State(state): State<AppState>,
     Query(reload_query): Query<crate::dto::AutoReloadQuery>,
+    Extension(boundary): Extension<PointTopologyHttpBoundary>,
+    headers: HeaderMap,
 ) -> Result<Json<SuccessResponse<PointCrudResult>>, AppError> {
-    delete_point_handler_inner(channel_id, "A", point_id, state, reload_query).await
+    delete_point_handler_inner(
+        channel_id,
+        "A",
+        point_id,
+        state,
+        reload_query,
+        boundary,
+        headers,
+    )
+    .await
 }

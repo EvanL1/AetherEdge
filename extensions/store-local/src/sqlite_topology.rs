@@ -32,6 +32,15 @@ const POINT_COUNT_QUERIES: [(&str, &str, usize); 4] = [
     ),
 ];
 
+const CONFIGURED_POINT_QUERY: &str = "SELECT channel_id, 0 AS kind_index, point_id FROM telemetry_points \
+     UNION ALL \
+     SELECT channel_id, 1 AS kind_index, point_id FROM signal_points \
+     UNION ALL \
+     SELECT channel_id, 2 AS kind_index, point_id FROM control_points \
+     UNION ALL \
+     SELECT channel_id, 3 AS kind_index, point_id FROM adjustment_points \
+     ORDER BY channel_id, kind_index, point_id";
+
 /// Point and channel-health manifests observed from one SQLite read transaction.
 #[derive(Debug, Clone)]
 pub struct SqliteShmTopologySnapshot {
@@ -46,6 +55,7 @@ pub type LogicalPointRoutes = BTreeMap<(u32, u32), PhysicalPointAddress>;
 #[derive(Debug, Clone)]
 pub struct SqliteLiveTopologySnapshot {
     shm: SqliteShmTopologySnapshot,
+    configured_physical_points: Vec<PhysicalPointAddress>,
     measurement_routes: LogicalPointRoutes,
     action_routes: LogicalPointRoutes,
     digest: u64,
@@ -62,6 +72,15 @@ impl SqliteLiveTopologySnapshot {
     #[must_use]
     pub const fn health_manifest(&self) -> &ChannelHealthManifest {
         self.shm.health_manifest()
+    }
+
+    /// Returns every configured physical point in canonical SHM address order.
+    ///
+    /// Sparse manifest holes are omitted. The order is ascending channel id,
+    /// then T/S/C/A kind, then point id.
+    #[must_use]
+    pub fn configured_physical_points(&self) -> &[PhysicalPointAddress] {
+        &self.configured_physical_points
     }
 
     /// Resolves one logical measurement point.
@@ -158,12 +177,14 @@ pub async fn load_sqlite_live_topology(
 ) -> PortResult<SqliteLiveTopologySnapshot> {
     let mut transaction = pool.begin().await.map_err(topology_unavailable)?;
     let shm = load_shm_topology(&mut transaction).await?;
+    let configured_physical_points = load_configured_physical_points(&mut transaction).await?;
     let measurement_routes = load_routes(
         &mut transaction,
         "measurement_routing",
         "measurement_id",
         false,
         shm.point_manifest(),
+        &configured_physical_points,
     )
     .await?;
     let action_routes = load_routes(
@@ -172,12 +193,19 @@ pub async fn load_sqlite_live_topology(
         "action_id",
         true,
         shm.point_manifest(),
+        &configured_physical_points,
     )
     .await?;
     transaction.commit().await.map_err(topology_unavailable)?;
-    let digest = live_topology_digest(&shm, &measurement_routes, &action_routes);
+    let digest = live_topology_digest(
+        &shm,
+        &configured_physical_points,
+        &measurement_routes,
+        &action_routes,
+    );
     Ok(SqliteLiveTopologySnapshot {
         shm,
+        configured_physical_points,
         measurement_routes,
         action_routes,
         digest,
@@ -241,12 +269,42 @@ async fn load_shm_topology(
     })
 }
 
+async fn load_configured_physical_points(
+    connection: &mut SqliteConnection,
+) -> PortResult<Vec<PhysicalPointAddress>> {
+    let rows = sqlx::query_as::<_, (i64, i64, i64)>(CONFIGURED_POINT_QUERY)
+        .fetch_all(&mut *connection)
+        .await
+        .map_err(topology_unavailable)?;
+    rows.into_iter()
+        .map(|(raw_channel_id, raw_kind_index, raw_point_id)| {
+            let channel_id = stored_u32(raw_channel_id, "channel_id", "physical point tables")?;
+            let point_id = stored_u32(raw_point_id, "point_id", "physical point tables")?;
+            let kind = match raw_kind_index {
+                0 => PointKind::Telemetry,
+                1 => PointKind::Status,
+                2 => PointKind::Command,
+                3 => PointKind::Action,
+                _ => {
+                    return Err(invalid_topology(
+                        "physical point query returned an unknown point kind",
+                    ));
+                },
+            };
+            Ok(PhysicalPointAddress::from_legacy_raw(
+                channel_id, kind, point_id,
+            ))
+        })
+        .collect()
+}
+
 async fn load_routes(
     connection: &mut SqliteConnection,
     table: &str,
     logical_point_column: &str,
     writable: bool,
     manifest: &ChannelPointManifest,
+    configured_physical_points: &[PhysicalPointAddress],
 ) -> PortResult<LogicalPointRoutes> {
     let query = format!(
         "SELECT instance_id, channel_id, channel_type, channel_point_id, {logical_point_column} \
@@ -292,17 +350,7 @@ async fn load_routes(
                 "{table} route target {channel_id}:{raw_kind}:{point_id} is absent from the point manifest"
             )));
         }
-        let point_table = physical_point_table(kind);
-        let point_exists = sqlx::query_scalar::<_, i64>(&format!(
-            "SELECT 1 FROM {point_table} WHERE channel_id = ? AND point_id = ? LIMIT 1"
-        ))
-        .bind(i64::from(channel_id))
-        .bind(i64::from(point_id))
-        .fetch_optional(&mut *connection)
-        .await
-        .map_err(topology_unavailable)?
-        .is_some();
-        if !point_exists {
+        if !configured_physical_points.contains(&target) {
             return Err(invalid_topology(format!(
                 "{table} route target {channel_id}:{raw_kind}:{point_id} is not a configured physical point"
             )));
@@ -329,26 +377,19 @@ fn parse_point_kind(value: &str) -> Option<PointKind> {
     }
 }
 
-const fn physical_point_table(kind: PointKind) -> &'static str {
-    match kind {
-        PointKind::Telemetry => "telemetry_points",
-        PointKind::Status => "signal_points",
-        PointKind::Command => "control_points",
-        PointKind::Action => "adjustment_points",
-    }
-}
-
 fn live_topology_digest(
     shm: &SqliteShmTopologySnapshot,
+    configured_physical_points: &[PhysicalPointAddress],
     measurements: &LogicalPointRoutes,
     actions: &LogicalPointRoutes,
 ) -> u64 {
     let mut hasher = FxHasher::default();
-    "aether.sqlite-live-topology.v1".hash(&mut hasher);
+    "aether.sqlite-live-topology.v2".hash(&mut hasher);
     shm.point_manifest().layout_hash().hash(&mut hasher);
     shm.point_manifest().slot_count().hash(&mut hasher);
     shm.health_manifest().layout_hash().hash(&mut hasher);
     shm.health_manifest().slot_count().hash(&mut hasher);
+    configured_physical_points.hash(&mut hasher);
     hash_routes(0, measurements, &mut hasher);
     hash_routes(1, actions, &mut hasher);
     hasher.finish()

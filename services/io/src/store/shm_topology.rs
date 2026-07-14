@@ -5,6 +5,7 @@ use std::sync::Arc;
 use aether_ports::{PortError, PortErrorKind, PortResult};
 use aether_shm_bridge::{
     ChannelHealthManifest, ChannelPointManifest, ShmChannelHealthWriterHandle, ShmWriterHandle,
+    publish_topology_generation, validate_topology_publication,
 };
 use aether_store_local::load_sqlite_shm_topology;
 use sqlx::SqlitePool;
@@ -17,6 +18,7 @@ pub struct ShmTopologyProjectionReceipt {
     changed: bool,
     live_state_generation: Option<u64>,
     channel_health_generation: Option<u64>,
+    publication_epoch: Option<u64>,
 }
 
 impl ShmTopologyProjectionReceipt {
@@ -42,6 +44,12 @@ impl ShmTopologyProjectionReceipt {
     #[must_use]
     pub const fn channel_health_generation(self) -> Option<u64> {
         self.channel_health_generation
+    }
+
+    /// Returns the committed cross-plane publication identity, when current.
+    #[must_use]
+    pub const fn publication_epoch(self) -> Option<u64> {
+        self.publication_epoch
     }
 }
 
@@ -90,7 +98,12 @@ impl SqliteShmTopologyProjector {
             manifest.layout_hash() != desired.health.layout_hash()
                 || manifest.slot_count() != desired.health.slot_count()
         });
-        let changed = point_changed || health_changed;
+        let committed_epoch = if point_changed || health_changed {
+            None
+        } else {
+            self.validate_publication(&desired)
+        };
+        let changed = point_changed || health_changed || committed_epoch.is_none();
 
         if !changed {
             return Ok(self.receipt(true, false));
@@ -101,33 +114,32 @@ impl SqliteShmTopologyProjector {
         let point_manifest = Arc::clone(&desired.points);
         let health_manifest = Arc::clone(&desired.health);
         let publication = tokio::task::spawn_blocking(move || {
-            if point_changed && let Err(error) = live_state.rebuild(point_manifest) {
-                return Err(error);
-            }
-            if health_changed && let Err(error) = channel_health.rebuild(health_manifest) {
-                return Err(error);
-            }
-            Ok(())
+            publish_topology_generation(
+                &live_state,
+                &channel_health,
+                point_manifest,
+                health_manifest,
+            )
         })
         .await;
 
-        let publication_succeeded = match publication {
-            Ok(Ok(())) => true,
+        let publication_epoch = match publication {
+            Ok(Ok(commit)) => Some(commit.publication_epoch()),
             Ok(Err(error)) => {
                 tracing::error!(
                     error_kind = ?error.kind(),
                     "SHM topology publication is degraded after it began"
                 );
-                false
+                None
             },
             Err(error) => {
                 tracing::error!("SHM topology publication worker failed: {error}");
-                false
+                None
             },
         };
-        if !publication_succeeded {
+        let Some(publication_epoch) = publication_epoch else {
             return Ok(self.receipt(false, true));
-        }
+        };
 
         let stable = match load_topology_snapshot(&self.pool).await {
             Ok(latest) => {
@@ -136,6 +148,7 @@ impl SqliteShmTopologyProjector {
                     && latest.health.layout_hash() == desired.health.layout_hash()
                     && latest.health.slot_count() == desired.health.slot_count()
                     && self.matches(&desired)
+                    && self.validate_publication(&desired) == Some(publication_epoch)
             },
             Err(error) => {
                 tracing::error!(
@@ -180,6 +193,19 @@ impl SqliteShmTopologyProjector {
         points_match && health_matches
     }
 
+    fn validate_publication(&self, desired: &TopologySnapshot) -> Option<u64> {
+        let commit = validate_topology_publication(
+            self.live_state.config().path(),
+            self.channel_health.path(),
+            desired.points.layout_hash(),
+            desired.points.slot_count(),
+            desired.health.layout_hash(),
+            desired.health.slot_count(),
+        )
+        .ok()?;
+        Some(commit.publication_epoch())
+    }
+
     fn receipt(&self, current: bool, changed: bool) -> ShmTopologyProjectionReceipt {
         ShmTopologyProjectionReceipt {
             current,
@@ -189,7 +215,28 @@ impl SqliteShmTopologyProjector {
                 .generation()
                 .map(|generation| generation.generation()),
             channel_health_generation: self.channel_health.generation(),
+            publication_epoch: current.then(|| self.current_publication_epoch()).flatten(),
         }
+    }
+
+    fn current_publication_epoch(&self) -> Option<u64> {
+        let point = self.live_state.generation()?;
+        let health = self.channel_health.manifest()?;
+        let point_epoch = point.publication_epoch();
+        if point_epoch == 0 || self.channel_health.publication_epoch()? != point_epoch {
+            return None;
+        }
+        validate_topology_publication(
+            self.live_state.config().path(),
+            self.channel_health.path(),
+            point.manifest().layout_hash(),
+            point.manifest().slot_count(),
+            health.layout_hash(),
+            health.slot_count(),
+        )
+        .ok()
+        .filter(|commit| commit.publication_epoch() == point_epoch)
+        .map(|commit| commit.publication_epoch())
     }
 }
 

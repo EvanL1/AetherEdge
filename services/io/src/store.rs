@@ -13,10 +13,8 @@
 //! Note: Data transformation (scale/offset/reverse) is handled by the protocol layer's
 //! TransformConfig in poll_once(), so `ShmDataStore` receives pre-transformed values.
 
-mod shm_manifest;
 mod shm_store;
 mod shm_topology;
 
-pub use shm_manifest::load_channel_point_manifest;
 pub use shm_store::ShmDataStore;
 pub use shm_topology::{ShmTopologyProjectionReceipt, SqliteShmTopologyProjector};

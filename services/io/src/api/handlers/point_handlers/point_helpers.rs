@@ -206,38 +206,6 @@ pub(crate) async fn validate_channel_exists(
     Ok(())
 }
 
-/// Validate that a point ID is unique within a channel
-pub(super) async fn validate_point_uniqueness(
-    pool: &sqlx::SqlitePool,
-    channel_id: u32,
-    table: &str,
-    point_id: u32,
-) -> Result<(), AppError> {
-    let query = format!(
-        "SELECT point_id FROM {} WHERE channel_id = ? AND point_id = ?",
-        table
-    );
-
-    let exists: Option<(i64,)> = sqlx::query_as(&query)
-        .bind(channel_id as i64)
-        .bind(point_id as i64)
-        .fetch_optional(pool)
-        .await
-        .map_err(|e| {
-            tracing::error!("Point uniqueness check: {}", e);
-            AppError::internal_error("Database operation failed")
-        })?;
-
-    if exists.is_some() {
-        return Err(AppError::conflict(format!(
-            "Point {} already exists in channel {}",
-            point_id, channel_id
-        )));
-    }
-
-    Ok(())
-}
-
 // ============================================================================
 // Auto-Reload Helper Functions
 // ============================================================================

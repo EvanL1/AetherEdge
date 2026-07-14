@@ -3,12 +3,15 @@ use std::sync::Arc;
 use sqlx::SqlitePool;
 use tokio::sync::{Mutex, RwLock};
 
+use crate::collector::ShmHistoryCollector;
 use crate::config::EnvConfig;
 use crate::models::{DataPoint, ServiceConfig, StorageSettings};
 use crate::storage::StorageBackend;
 
 /// Shared application state injected into every Axum handler.
 pub struct AppState {
+    /// Service-owned topology generation, atomically reconciled in background.
+    pub collector: Arc<ShmHistoryCollector>,
     /// Active storage backend, wrapped in RwLock so it can be replaced at
     /// runtime via `PUT /hisApi/storage` without restarting the service.
     /// Starts as `NullBackend` when storage is not yet configured.

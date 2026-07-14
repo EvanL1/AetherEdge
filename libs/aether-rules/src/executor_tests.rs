@@ -11,15 +11,13 @@ use crate::parser::extract_rule_flow;
 /// Helper: create executor with deterministic in-process live state.
 fn new_executor() -> (Arc<MemoryRuleLiveState>, RuleExecutor) {
     let live_state = Arc::new(MemoryRuleLiveState::new());
-    let routing_cache = Arc::new(RoutingCache::default());
-    let executor = RuleExecutor::new(Arc::clone(&live_state), routing_cache);
+    let executor = RuleExecutor::new(Arc::clone(&live_state));
     (live_state, executor)
 }
 
 fn new_executor_without_action_commands() -> (Arc<MemoryRuleLiveState>, RuleExecutor) {
     let live_state = Arc::new(MemoryRuleLiveState::new());
-    let routing_cache = Arc::new(RoutingCache::default());
-    let executor = RuleExecutor::new(Arc::clone(&live_state), routing_cache);
+    let executor = RuleExecutor::new(Arc::clone(&live_state));
     (live_state, executor)
 }
 
@@ -103,8 +101,7 @@ async fn setup_soc_test(soc_value: &'static str) -> (Arc<MemoryRuleLiveState>, R
     let live_state = Arc::new(MemoryRuleLiveState::new());
     let soc_value = soc_value.parse::<f64>().unwrap();
     assert!(live_state.set_instance(5, 0, 3, soc_value, 1));
-    let routing_cache = Arc::new(RoutingCache::default());
-    let executor = RuleExecutor::new(Arc::clone(&live_state), routing_cache)
+    let executor = RuleExecutor::new(Arc::clone(&live_state))
         .with_action_command_facade(Arc::new(SuccessfulActionCommands));
     let rule = create_soc_rule();
     (live_state, executor, rule)
@@ -328,7 +325,7 @@ async fn test_soc_strategy_low_battery() {
 async fn failed_attempted_action_makes_rule_execution_fail() {
     let live_state = Arc::new(MemoryRuleLiveState::new());
     assert!(live_state.set_instance(5, 0, 3, 3.5, 1));
-    let executor = RuleExecutor::new(Arc::clone(&live_state), Arc::new(RoutingCache::default()))
+    let executor = RuleExecutor::new(Arc::clone(&live_state))
         .with_action_command_facade(Arc::new(FailingActionCommands));
 
     let result = executor
@@ -353,7 +350,7 @@ async fn rule_execution_carries_one_topology_fence_from_reads_to_actions() {
     let fence = CommandTopologyFence::new(41);
     let live_state = Arc::new(FencedRuleLiveState { fence });
     let commands = Arc::new(RecordingActionCommands::default());
-    let executor = RuleExecutor::new(live_state, Arc::new(RoutingCache::default()))
+    let executor = RuleExecutor::new(live_state)
         .with_action_command_facade(Arc::clone(&commands) as Arc<dyn RuleActionCommandFacade>);
 
     let result = executor

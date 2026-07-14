@@ -67,6 +67,13 @@ capabilities:
     idempotent: false
     confirmation: always
     audit: required
+  automation.instance.manage:
+    kind: command
+    risk: high
+    permission: automation.instance.manage
+    idempotent: false
+    confirmation: always
+    audit: required
   io.channel.manage:
     kind: command
     risk: high

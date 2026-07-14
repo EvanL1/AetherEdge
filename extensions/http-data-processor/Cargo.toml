@@ -1,13 +1,12 @@
 [package]
 name = "aether-http-data-processor"
 version.workspace = true
-publish = false
 edition = "2024"
 rust-version = "1.90"
 description = "Bounded HTTP DataProcessor adapter for Aether"
 license.workspace = true
 repository.workspace = true
-documentation = "https://docs.aetheriot.workers.dev/extensions/http-data-processor"
+documentation = "https://docs.rs/aether-http-data-processor"
 readme = "README.md"
 keywords = ["iot", "edge", "http", "data-processing"]
 categories = ["web-programming::http-client", "asynchronous"]

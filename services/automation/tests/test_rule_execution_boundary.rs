@@ -12,7 +12,6 @@ use aether_ports::{
     AuditRecord, AuditSink, AutomationRuleExecutor, PortError, PortErrorKind, PortResult,
     RuleExecutionReceipt,
 };
-use aether_routing::RoutingCache;
 use aether_rules::{MemoryRuleLiveState, RuleScheduler};
 use aether_store_local::MemoryAuditSink;
 use async_trait::async_trait;
@@ -109,7 +108,6 @@ async fn application_router_with_audit(
     .unwrap();
     let scheduler = Arc::new(RuleScheduler::new(
         Arc::new(MemoryRuleLiveState::new()),
-        Arc::new(RoutingCache::new()),
         pool.clone(),
         1_000,
         std::env::temp_dir().join("aether-rule-boundary-tests"),

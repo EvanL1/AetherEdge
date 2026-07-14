@@ -40,8 +40,9 @@ use aether_routing::load_routing_maps;
 use aether_shm_bridge::{
     AcquisitionCommitObserver, DEFAULT_MAX_SLOTS, PointWatchPublisher,
     ShmChannelHealthWriterHandle, ShmRuntimeConfig, ShmWriterHandle, SubscriptionBitmap,
-    automation_bitmap_path_from_shm, bitmap_path_for_consumer, channel_health_path_from_shm,
-    cleanup_orphan_generation_files, default_shm_path, point_watch_socket_from_shm, timestamp_ms,
+    automation_bitmap_path_from_shm, begin_topology_publication, bitmap_path_for_consumer,
+    channel_health_path_from_shm, cleanup_orphan_generation_files, default_shm_path,
+    point_watch_socket_from_shm, timestamp_ms,
 };
 
 #[tokio::main]
@@ -116,10 +117,20 @@ async fn main() -> AetherResult<()> {
                 ))
             })?
             .into_manifests();
-
     // ============ Phase 2.5: publish the authoritative SHM generation ============
-    let (shm_handle, snapshot_manager_handle, snapshot_shutdown_tx, point_watch_drain_handle) = {
+    let (
+        shm_handle,
+        snapshot_manager_handle,
+        snapshot_shutdown_tx,
+        point_watch_drain_handle,
+        initial_topology_publication,
+        initial_publication_epoch,
+        initial_health_path,
+    ) = {
         let shm_path = default_shm_path();
+        let health_path = std::env::var("AETHER_CHANNEL_HEALTH_SHM_PATH")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|_| channel_health_path_from_shm(&shm_path));
         let max_slots = sqlx::query_scalar::<_, String>(
             "SELECT value FROM service_config WHERE service_name = 'global' AND key = 'shared_memory.max_slots'",
         )
@@ -207,20 +218,34 @@ async fn main() -> AetherResult<()> {
         let restore_path = restore_on_start
             .then_some(snapshot_path.as_path())
             .filter(|path| path.exists());
-        let handle = match ShmWriterHandle::create_published_with_observer(
+        let mut topology_publication = begin_topology_publication(&shm_path).map_err(|error| {
+            IoError::config(format!(
+                "acquire coordinated SHM publication lease: {error}"
+            ))
+        })?;
+        let publication_epoch = topology_publication
+            .next_publication_epoch(&health_path)
+            .map_err(|error| {
+                IoError::config(format!(
+                    "allocate coordinated SHM publication epoch: {error}"
+                ))
+            })?;
+        let handle = match ShmWriterHandle::create_published_with_observer_at_epoch(
             runtime_config.clone(),
             Arc::clone(&manifest),
             restore_path,
             observer.clone(),
+            publication_epoch,
         ) {
             Ok(handle) => handle,
             Err(error) if restore_path.is_some() => {
                 warn!("Snapshot restore failed, creating fresh: {error}");
-                ShmWriterHandle::create_published_with_observer(
+                ShmWriterHandle::create_published_with_observer_at_epoch(
                     runtime_config,
                     manifest,
                     None,
                     observer,
+                    publication_epoch,
                 )
                 .map_err(|error| {
                     IoError::config(format!(
@@ -284,6 +309,9 @@ async fn main() -> AetherResult<()> {
             Some(snapshot_handle),
             Some(snapshot_tx),
             point_watch_drain_handle,
+            topology_publication,
+            publication_epoch,
+            health_path,
         )
     };
 
@@ -318,19 +346,32 @@ async fn main() -> AetherResult<()> {
     let (shm_listener_shutdown_tx, shm_listener_shutdown_rx) = tokio::sync::watch::channel(false);
 
     let channel_health_writer = {
-        let main_shm_path = shm_handle.config().path().to_path_buf();
-        let health_path = std::env::var("AETHER_CHANNEL_HEALTH_SHM_PATH")
-            .map(std::path::PathBuf::from)
-            .unwrap_or_else(|_| channel_health_path_from_shm(&main_shm_path));
+        let health_path = initial_health_path;
         let writer = Arc::new(ShmChannelHealthWriterHandle::empty(&health_path));
-        match writer.rebuild(Arc::new(initial_health_manifest)) {
+        match writer
+            .rebuild_for_publication(Arc::new(initial_health_manifest), initial_publication_epoch)
+        {
             Ok(()) => {
                 info!("Channel health SHM ready: {}", health_path.display());
             },
             Err(error) => {
-                warn!("Channel health SHM disabled: {error}");
+                return Err(IoError::config(format!(
+                    "coordinated channel-health SHM initialization failed: {error}"
+                ))
+                .into());
             },
         }
+        initial_topology_publication
+            .commit(&health_path, initial_publication_epoch)
+            .map_err(|error| {
+                IoError::config(format!(
+                    "coordinated point/health SHM commit failed: {error}"
+                ))
+            })?;
+        info!(
+            publication_epoch = initial_publication_epoch,
+            "Committed initial point/health SHM topology"
+        );
         writer
     };
     let channel_health_heartbeat_handle = {
@@ -374,7 +415,7 @@ async fn main() -> AetherResult<()> {
     let channel_adapter = Arc::new(aether_io::SqliteChannelMutator::new_with_topology(
         sqlite_pool.clone(),
         Arc::clone(&channel_manager),
-        topology_projector,
+        Arc::clone(&topology_projector),
     ));
 
     // Determine bind address and start server
@@ -399,6 +440,52 @@ async fn main() -> AetherResult<()> {
     if shm_listener_handle.is_some() {
         info!("ShmCommandListener started for event-driven M2C dispatch (~1-2ms latency)");
     }
+
+    let automatic_reconciliation = Arc::new(
+        aether_io::automatic_reconciliation::AutomaticIoReconciler::new(
+            sqlite_pool.clone(),
+            Arc::clone(&channel_adapter),
+            topology_projector,
+            Arc::clone(&channel_adapter),
+        ),
+    );
+    match automatic_reconciliation.reconcile_once().await {
+        Ok(receipt) if receipt.converged() => {
+            info!(
+                attempted_channels = receipt.attempted_channels(),
+                "Initial IO desired/applied reconciliation converged"
+            );
+        },
+        Ok(receipt) => {
+            warn!(
+                topology_current = receipt.topology_current(),
+                authority_stable = receipt.authority_stable(),
+                attempted_channels = receipt.attempted_channels(),
+                "Initial IO desired/applied reconciliation is degraded and fenced"
+            );
+        },
+        Err(error) => {
+            error!(
+                error_kind = ?error.kind(),
+                "Initial IO desired/applied reconciliation failed closed"
+            );
+        },
+    }
+    let automatic_reconciliation_interval = Duration::from_millis(
+        std::env::var("AETHER_IO_RECONCILIATION_INTERVAL_MS")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(2_000),
+    );
+    let automatic_reconciliation_shutdown = shutdown_token.clone();
+    let automatic_reconciliation_handle = tokio::spawn(async move {
+        aether_io::automatic_reconciliation::run_automatic_io_reconciliation(
+            automatic_reconciliation,
+            automatic_reconciliation_interval,
+            automatic_reconciliation_shutdown,
+        )
+        .await;
+    });
 
     let watchdog_reconciler: Arc<dyn aether_ports::ChannelReconciler> = channel_adapter.clone();
     let (cleanup_handle, cleanup_token) = start_cleanup_task(
@@ -460,9 +547,13 @@ async fn main() -> AetherResult<()> {
     let channel_reconciliation =
         Arc::new(aether_application::ChannelReconciliationApplication::new(
             channel_reconciler,
-            channel_audit,
+            Arc::clone(&channel_audit),
             aether_application::SafetyPolicy,
         ));
+    let point_topology = Arc::new(aether_io::point_topology::PointTopologyApplication::new(
+        sqlite_pool.clone(),
+        channel_audit,
+    ));
     let access_authenticator = Arc::new(
         aether_auth_jwt::AccessTokenAuthenticator::from_env().map_err(|error| {
             IoError::ConfigError(format!("Channel-management authentication: {error}"))
@@ -474,6 +565,7 @@ async fn main() -> AetherResult<()> {
         Arc::clone(&command_tx_cache),
         channel_management,
         channel_reconciliation,
+        point_topology,
         access_authenticator,
     );
 
@@ -535,6 +627,12 @@ async fn main() -> AetherResult<()> {
         server_handle,
     )
     .await;
+
+    match tokio::time::timeout(Duration::from_secs(2), automatic_reconciliation_handle).await {
+        Ok(Ok(())) => info!("Automatic IO reconciliation task stopped"),
+        Ok(Err(error)) => error!("Automatic IO reconciliation task failed: {error}"),
+        Err(_) => error!("Automatic IO reconciliation task shutdown timed out"),
+    }
 
     match tokio::time::timeout(Duration::from_secs(2), shm_heartbeat_handle).await {
         Ok(Ok(())) => info!("SHM writer heartbeat task stopped"),

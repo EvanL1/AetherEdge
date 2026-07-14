@@ -8,6 +8,7 @@ use aether_dataplane::{AuthorityWriteGuard, SlotIo, SlotWriter};
 use aether_ports::{PortError, PortErrorKind, PortResult};
 use arc_swap::ArcSwapOption;
 
+use crate::topology_commit::validate_topology_publication_epoch;
 use crate::{AcquisitionCommitObserver, ChannelPointManifest, ShmAcquisitionStateWriter};
 
 /// Physical writer configuration selected by the IO composition root.
@@ -86,6 +87,12 @@ impl ShmWriterGeneration {
     #[must_use]
     pub fn generation(&self) -> u64 {
         self.writer.generation()
+    }
+
+    /// Returns the cross-plane publication identity stored in this segment.
+    #[must_use]
+    pub fn publication_epoch(&self) -> u64 {
+        self.writer.header().publication_epoch()
     }
 
     /// Returns the number of live slots, including alignment padding.
@@ -168,7 +175,19 @@ impl ShmWriterHandle {
         manifest: Arc<ChannelPointManifest>,
         snapshot: Option<&Path>,
     ) -> PortResult<Self> {
-        Self::create_published_with_observer(config, manifest, snapshot, None)
+        Self::create_published_internal(config, manifest, snapshot, None, 0)
+    }
+
+    /// Creates the initial generation as one member of a coordinated physical
+    /// topology publication.
+    pub fn create_published_at_epoch(
+        config: ShmRuntimeConfig,
+        manifest: Arc<ChannelPointManifest>,
+        snapshot: Option<&Path>,
+        publication_epoch: u64,
+    ) -> PortResult<Self> {
+        validate_topology_publication_epoch(publication_epoch)?;
+        Self::create_published_internal(config, manifest, snapshot, None, publication_epoch)
     }
 
     /// Creates the initial generation with a post-commit observer such as the
@@ -179,6 +198,29 @@ impl ShmWriterHandle {
         snapshot: Option<&Path>,
         observer: Option<Arc<dyn AcquisitionCommitObserver>>,
     ) -> PortResult<Self> {
+        Self::create_published_internal(config, manifest, snapshot, observer, 0)
+    }
+
+    /// Creates the initial generation with both a post-commit observer and a
+    /// cross-plane publication identity.
+    pub fn create_published_with_observer_at_epoch(
+        config: ShmRuntimeConfig,
+        manifest: Arc<ChannelPointManifest>,
+        snapshot: Option<&Path>,
+        observer: Option<Arc<dyn AcquisitionCommitObserver>>,
+        publication_epoch: u64,
+    ) -> PortResult<Self> {
+        validate_topology_publication_epoch(publication_epoch)?;
+        Self::create_published_internal(config, manifest, snapshot, observer, publication_epoch)
+    }
+
+    fn create_published_internal(
+        config: ShmRuntimeConfig,
+        manifest: Arc<ChannelPointManifest>,
+        snapshot: Option<&Path>,
+        observer: Option<Arc<dyn AcquisitionCommitObserver>>,
+        publication_epoch: u64,
+    ) -> PortResult<Self> {
         validate_capacity(&config, &manifest)?;
         let authority_gate = Arc::new(RwLock::new(()));
         let generation = publish_generation(
@@ -188,6 +230,7 @@ impl ShmWriterHandle {
             Arc::clone(&authority_gate),
             observer.clone(),
             None,
+            publication_epoch,
         )?;
         Ok(Self {
             current: ArcSwapOption::new(Some(Arc::new(generation))),
@@ -205,6 +248,34 @@ impl ShmWriterHandle {
 
     /// Atomically replaces the canonical segment with a fresh manifest.
     pub fn rebuild(&self, manifest: Arc<ChannelPointManifest>) -> PortResult<()> {
+        self.rebuild_internal(manifest, 0)
+    }
+
+    /// Replaces the canonical point plane as part of one coordinated physical
+    /// topology publication.
+    pub fn rebuild_for_publication(
+        &self,
+        manifest: Arc<ChannelPointManifest>,
+        publication_epoch: u64,
+    ) -> PortResult<()> {
+        validate_topology_publication_epoch(publication_epoch)?;
+        if self
+            .generation()
+            .is_some_and(|generation| generation.publication_epoch() == publication_epoch)
+        {
+            return Err(PortError::new(
+                PortErrorKind::InvalidData,
+                format!("point SHM publication epoch {publication_epoch} was already used"),
+            ));
+        }
+        self.rebuild_internal(manifest, publication_epoch)
+    }
+
+    fn rebuild_internal(
+        &self,
+        manifest: Arc<ChannelPointManifest>,
+        publication_epoch: u64,
+    ) -> PortResult<()> {
         validate_capacity(&self.config, &manifest)?;
         let previous = self.current.load_full();
         let generation = publish_generation(
@@ -214,6 +285,7 @@ impl ShmWriterHandle {
             Arc::clone(&self.authority_gate),
             self.observer.clone(),
             previous.as_deref(),
+            publication_epoch,
         )?;
         self.current.store(Some(Arc::new(generation)));
         Ok(())
@@ -253,6 +325,7 @@ fn publish_generation(
     authority_gate: Arc<RwLock<()>>,
     observer: Option<Arc<dyn AcquisitionCommitObserver>>,
     previous: Option<&ShmWriterGeneration>,
+    publication_epoch: u64,
 ) -> PortResult<ShmWriterGeneration> {
     let _local_authority = authority_gate.write().map_err(|_| {
         PortError::new(
@@ -269,11 +342,12 @@ fn publish_generation(
     let staging_path = generation_file_path(config.path(), staging_sequence.max(1));
     let mut cleanup = StagingCleanup(Some(staging_path.clone()));
 
-    let writer = SlotWriter::create(
+    let writer = SlotWriter::create_at_epoch(
         &staging_path,
         config.max_slots,
         manifest.slot_count(),
         manifest.layout_hash(),
+        publication_epoch,
     )
     .map_err(map_dataplane_error)?;
     if let Some(snapshot_path) = snapshot {

@@ -8,13 +8,13 @@
 use crate::error::AutomationError;
 use aether_calc::StateStore;
 use aether_domain::RuleId;
-use aether_ports::RuleMutation;
+use aether_ports::{RevisionedRuleMutation, RuleMutation};
 use aether_rules::{self as rule_repository, RuleNode, RuleScheduler, RuleVariable};
 use axum::{
     Router,
     extract::{Path, Query, State},
-    http::HeaderMap,
-    response::Json,
+    http::{HeaderMap, HeaderValue, header::ETAG},
+    response::{IntoResponse, Json, Response},
     routing::{get, post},
 };
 use common::{PaginatedResponse, SuccessResponse};
@@ -325,6 +325,11 @@ pub struct CreateRuleRequest {
     )]
     pub description: Option<String>,
 
+    /// Current automation-rules revision. Omission uses the staged browser
+    /// compatibility shim and does not protect the user's prior read.
+    #[serde(default)]
+    pub expected_revision: Option<u64>,
+
     /// Must be true because rule definitions are device-control policy.
     pub confirmed: bool,
 }
@@ -370,6 +375,11 @@ pub struct UpdateRuleRequest {
     #[cfg_attr(feature = "swagger-ui", schema(value_type = Option<Object>))]
     pub trigger_config: Option<serde_json::Value>,
 
+    /// Current automation-rules revision. Omission uses the staged browser
+    /// compatibility shim and does not protect the user's prior read.
+    #[serde(default)]
+    pub expected_revision: Option<u64>,
+
     /// Must be true because this mutation can change future device behavior.
     pub confirmed: bool,
 }
@@ -379,6 +389,10 @@ pub struct UpdateRuleRequest {
 #[serde(deny_unknown_fields)]
 #[cfg_attr(feature = "swagger-ui", derive(utoipa::ToSchema))]
 pub struct RuleMutationRequest {
+    /// Current automation-rules revision. Omission uses the staged browser
+    /// compatibility shim and does not protect the user's prior read.
+    #[serde(default)]
+    pub expected_revision: Option<u64>,
     /// Must be true because rule management changes device-control policy.
     pub confirmed: bool,
 }
@@ -428,7 +442,7 @@ pub struct ExecuteRuleRequest {
 pub async fn list_rules<S: StateStore + 'static>(
     State(state): State<Arc<RuleEngineState<S>>>,
     Query(query): Query<RuleListQuery>,
-) -> Result<Json<SuccessResponse<PaginatedResponse<serde_json::Value>>>, AutomationError> {
+) -> Result<Response, AutomationError> {
     let page = query.page.max(1);
     let page_size = query.page_size.clamp(1, 100);
 
@@ -448,7 +462,7 @@ pub async fn list_rules<S: StateStore + 'static>(
                 .collect();
 
             let paginated = PaginatedResponse::new(summaries, total, page, page_size);
-            Ok(Json(SuccessResponse::new(paginated)))
+            rules_query_response(&state.pool, paginated).await
         },
         Err(e) => {
             error!("List rules err: {}", e);
@@ -475,6 +489,7 @@ pub async fn list_rules<S: StateStore + 'static>(
         (status = 200, description = "Rule mutation persisted; the response includes non-retryable terminal-audit and scheduler-refresh state", body = serde_json::Value,
          example = json!({ "success": true, "data": { "id": 1, "name": "High Temperature Protection", "status": "created", "request_id": "018f0000-0000-7000-8000-000000000007", "audit": { "status": "recorded", "retryable": false }, "scheduler_refresh": { "status": "refreshed", "retryable": false } } })),
         (status = 403, description = "Missing/invalid Bearer credentials or actor lacks automation.rule.manage"),
+        (status = 409, description = "The automation-rules revision is stale"),
         (status = 422, description = "Explicit confirmation or rule data is invalid"),
         (status = 503, description = "Mandatory pre-mutation audit or rule storage is unavailable")
     ),
@@ -490,7 +505,11 @@ pub async fn create_rule<S: StateStore + 'static>(
         &state,
         &headers,
         req.confirmed,
-        RuleMutation::create(req.name.clone(), req.description),
+        RevisionedRuleMutation::create(
+            req.name.clone(),
+            req.description,
+            resolve_rules_revision(&state.pool, req.expected_revision, "POST /api/rules").await?,
+        ),
     )
     .await?;
     let new_id = acceptance.rule_id().ok_or_else(|| {
@@ -502,11 +521,12 @@ pub async fn create_rule<S: StateStore + 'static>(
         "id": new_id.get(),
         "name": req.name,
         "status": "created",
+        "resulting_revision": acceptance.resulting_revision().get(),
         "request_id": acceptance.request_id(),
         "audit": crate::infra::application_control::completion_audit_response(
             acceptance.completion_audit()
         ),
-        "scheduler_refresh": scheduler_refresh_response(acceptance.scheduler_refresh())
+        "scheduler_refresh": scheduler_refresh_response(acceptance.runtime_status())
     }))))
 }
 
@@ -527,9 +547,9 @@ pub async fn create_rule<S: StateStore + 'static>(
 pub async fn get_rule<S: StateStore + 'static>(
     State(state): State<Arc<RuleEngineState<S>>>,
     Path(id): Path<i64>,
-) -> Result<Json<SuccessResponse<serde_json::Value>>, AutomationError> {
+) -> Result<Response, AutomationError> {
     match rule_repository::get_rule(&state.pool, id).await {
-        Ok(rule) => Ok(Json(SuccessResponse::new(rule))),
+        Ok(rule) => rules_query_response(&state.pool, rule).await,
         Err(e) => {
             error!("Get rule {}: {}", id, e);
             Err(AutomationError::RuleNotFound(id.to_string()))
@@ -555,6 +575,7 @@ pub async fn get_rule<S: StateStore + 'static>(
         (status = 200, description = "Rule mutation persisted; the response includes non-retryable terminal-audit and scheduler-refresh state", body = serde_json::Value,
          example = json!({ "success": true, "data": { "id": 1, "status": "updated", "request_id": "018f0000-0000-7000-8000-000000000007", "audit": { "status": "recorded", "retryable": false }, "scheduler_refresh": { "status": "refreshed", "retryable": false } } })),
         (status = 403, description = "Missing/invalid Bearer credentials or actor lacks automation.rule.manage"),
+        (status = 409, description = "The automation-rules revision is stale"),
         (status = 404, description = "Rule not found"),
         (status = 422, description = "Explicit confirmation or rule data is invalid"),
         (status = 503, description = "Mandatory pre-mutation audit or rule storage is unavailable")
@@ -583,16 +604,20 @@ pub async fn update_rule<S: StateStore + 'static>(
         &state,
         &headers,
         req.confirmed,
-        RuleMutation::Update {
-            rule_id,
-            name: req.name,
-            description: req.description,
-            enabled: req.enabled,
-            priority: req.priority,
-            cooldown_ms: req.cooldown_ms,
-            flow_json,
-            trigger_config,
-        },
+        RevisionedRuleMutation::new(
+            RuleMutation::Update {
+                rule_id,
+                name: req.name,
+                description: req.description,
+                enabled: req.enabled,
+                priority: req.priority,
+                cooldown_ms: req.cooldown_ms,
+                flow_json,
+                trigger_config,
+            },
+            resolve_rules_revision(&state.pool, req.expected_revision, "PUT /api/rules/{id}")
+                .await?,
+        ),
     )
     .await?;
 
@@ -600,11 +625,12 @@ pub async fn update_rule<S: StateStore + 'static>(
     Ok(Json(SuccessResponse::new(json!({
         "id": id,
         "status": "updated",
+        "resulting_revision": acceptance.resulting_revision().get(),
         "request_id": acceptance.request_id(),
         "audit": crate::infra::application_control::completion_audit_response(
             acceptance.completion_audit()
         ),
-        "scheduler_refresh": scheduler_refresh_response(acceptance.scheduler_refresh())
+        "scheduler_refresh": scheduler_refresh_response(acceptance.runtime_status())
     }))))
 }
 
@@ -626,6 +652,7 @@ pub async fn update_rule<S: StateStore + 'static>(
     responses(
         (status = 200, description = "Rule deletion persisted; the response includes non-retryable terminal-audit and scheduler-refresh state", body = serde_json::Value),
         (status = 403, description = "Missing/invalid Bearer credentials or actor lacks automation.rule.manage"),
+        (status = 409, description = "The automation-rules revision is stale"),
         (status = 404, description = "Rule not found"),
         (status = 422, description = "Explicit confirmation is required"),
         (status = 503, description = "Mandatory pre-mutation audit or rule storage is unavailable")
@@ -640,11 +667,17 @@ pub async fn delete_rule<S: StateStore + 'static>(
     Json(request): Json<RuleMutationRequest>,
 ) -> Result<Json<SuccessResponse<serde_json::Value>>, AutomationError> {
     let rule_id = parse_rule_id(id)?;
+    let expected_revision = resolve_rules_revision(
+        &state.pool,
+        request.expected_revision,
+        "DELETE /api/rules/{id}",
+    )
+    .await?;
     let acceptance = apply_rule_mutation(
         &state,
         &headers,
         request.confirmed,
-        RuleMutation::delete(rule_id),
+        RevisionedRuleMutation::delete(rule_id, expected_revision),
     )
     .await?;
 
@@ -652,11 +685,12 @@ pub async fn delete_rule<S: StateStore + 'static>(
     Ok(Json(SuccessResponse::new(json!({
         "id": id,
         "status": "OK",
+        "resulting_revision": acceptance.resulting_revision().get(),
         "request_id": acceptance.request_id(),
         "audit": crate::infra::application_control::completion_audit_response(
             acceptance.completion_audit()
         ),
-        "scheduler_refresh": scheduler_refresh_response(acceptance.scheduler_refresh())
+        "scheduler_refresh": scheduler_refresh_response(acceptance.runtime_status())
     }))))
 }
 
@@ -680,6 +714,7 @@ pub async fn delete_rule<S: StateStore + 'static>(
     responses(
         (status = 200, description = "Rule enablement persisted; the response includes non-retryable terminal-audit and scheduler-refresh state", body = serde_json::Value),
         (status = 403, description = "Missing/invalid Bearer credentials or actor lacks automation.rule.manage"),
+        (status = 409, description = "The automation-rules revision is stale"),
         (status = 404, description = "Rule not found"),
         (status = 422, description = "Explicit confirmation is required"),
         (status = 503, description = "Mandatory pre-mutation audit or rule storage is unavailable")
@@ -694,11 +729,17 @@ pub async fn enable_rule<S: StateStore + 'static>(
     Json(request): Json<RuleMutationRequest>,
 ) -> Result<Json<SuccessResponse<serde_json::Value>>, AutomationError> {
     let rule_id = parse_rule_id(id)?;
+    let expected_revision = resolve_rules_revision(
+        &state.pool,
+        request.expected_revision,
+        "POST /api/rules/{id}/enable",
+    )
+    .await?;
     let acceptance = apply_rule_mutation(
         &state,
         &headers,
         request.confirmed,
-        RuleMutation::set_enabled(rule_id, true),
+        RevisionedRuleMutation::set_enabled(rule_id, true, expected_revision),
     )
     .await?;
 
@@ -706,11 +747,12 @@ pub async fn enable_rule<S: StateStore + 'static>(
     Ok(Json(SuccessResponse::new(json!({
         "id": id,
         "status": "OK",
+        "resulting_revision": acceptance.resulting_revision().get(),
         "request_id": acceptance.request_id(),
         "audit": crate::infra::application_control::completion_audit_response(
             acceptance.completion_audit()
         ),
-        "scheduler_refresh": scheduler_refresh_response(acceptance.scheduler_refresh())
+        "scheduler_refresh": scheduler_refresh_response(acceptance.runtime_status())
     }))))
 }
 
@@ -734,6 +776,7 @@ pub async fn enable_rule<S: StateStore + 'static>(
     responses(
         (status = 200, description = "Rule disablement persisted; the response includes non-retryable terminal-audit and scheduler-refresh state", body = serde_json::Value),
         (status = 403, description = "Missing/invalid Bearer credentials or actor lacks automation.rule.manage"),
+        (status = 409, description = "The automation-rules revision is stale"),
         (status = 404, description = "Rule not found"),
         (status = 422, description = "Explicit confirmation is required"),
         (status = 503, description = "Mandatory pre-mutation audit or rule storage is unavailable")
@@ -748,11 +791,17 @@ pub async fn disable_rule<S: StateStore + 'static>(
     Json(request): Json<RuleMutationRequest>,
 ) -> Result<Json<SuccessResponse<serde_json::Value>>, AutomationError> {
     let rule_id = parse_rule_id(id)?;
+    let expected_revision = resolve_rules_revision(
+        &state.pool,
+        request.expected_revision,
+        "POST /api/rules/{id}/disable",
+    )
+    .await?;
     let acceptance = apply_rule_mutation(
         &state,
         &headers,
         request.confirmed,
-        RuleMutation::set_enabled(rule_id, false),
+        RevisionedRuleMutation::set_enabled(rule_id, false, expected_revision),
     )
     .await?;
 
@@ -760,11 +809,12 @@ pub async fn disable_rule<S: StateStore + 'static>(
     Ok(Json(SuccessResponse::new(json!({
         "id": id,
         "status": "OK",
+        "resulting_revision": acceptance.resulting_revision().get(),
         "request_id": acceptance.request_id(),
         "audit": crate::infra::application_control::completion_audit_response(
             acceptance.completion_audit()
         ),
-        "scheduler_refresh": scheduler_refresh_response(acceptance.scheduler_refresh())
+        "scheduler_refresh": scheduler_refresh_response(acceptance.runtime_status())
     }))))
 }
 
@@ -774,11 +824,68 @@ fn parse_rule_id(id: i64) -> Result<RuleId, AutomationError> {
         .map_err(|_| AutomationError::InvalidData("rule id must be non-negative".to_string()))
 }
 
+async fn resolve_rules_revision(
+    pool: &SqlitePool,
+    requested: Option<u64>,
+    endpoint: &'static str,
+) -> Result<aether_ports::AutomationRulesRevision, AutomationError> {
+    let value = match requested {
+        Some(value) => value,
+        None => {
+            let current = current_rules_revision(pool).await?;
+            tracing::warn!(
+                endpoint,
+                revision = current,
+                "revisionless rules compatibility shim used; this request is CAS-safe at commit but cannot detect edits made since the caller's prior read"
+            );
+            current
+        },
+    };
+    if value == 0 || value >= i64::MAX as u64 {
+        return Err(AutomationError::InvalidData(
+            "expected_revision must be in 1..i64::MAX".to_string(),
+        ));
+    }
+    Ok(aether_ports::AutomationRulesRevision::new(value))
+}
+
+async fn current_rules_revision(pool: &SqlitePool) -> Result<u64, AutomationError> {
+    let revision = sqlx::query_scalar::<_, i64>(
+        "SELECT revision FROM configuration_revisions WHERE scope = 'automation_rules'",
+    )
+    .fetch_one(pool)
+    .await
+    .map_err(|error| {
+        AutomationError::DatabaseError(format!("failed to read automation-rules revision: {error}"))
+    })?;
+    u64::try_from(revision).map_err(|_| {
+        AutomationError::InternalError("automation-rules revision became negative".to_string())
+    })
+}
+
+async fn rules_query_response<T: serde::Serialize>(
+    pool: &SqlitePool,
+    data: T,
+) -> Result<Response, AutomationError> {
+    let revision = current_rules_revision(pool).await?;
+    let mut response = Json(SuccessResponse::new(data)).into_response();
+    let revision_text = revision.to_string();
+    let revision = HeaderValue::from_str(&revision_text)
+        .map_err(|error| AutomationError::InternalError(error.to_string()))?;
+    let etag = HeaderValue::from_str(&format!("\"{revision_text}\""))
+        .map_err(|error| AutomationError::InternalError(error.to_string()))?;
+    response.headers_mut().insert(ETAG, etag);
+    response
+        .headers_mut()
+        .insert("x-aether-configuration-revision", revision);
+    Ok(response)
+}
+
 async fn apply_rule_mutation<S: StateStore + 'static>(
     state: &RuleEngineState<S>,
     headers: &HeaderMap,
     confirmed: bool,
-    mutation: RuleMutation,
+    mutation: RevisionedRuleMutation,
 ) -> Result<aether_application::RuleMutationAcceptance, AutomationError> {
     let application = state.mutation_application.as_ref().ok_or_else(|| {
         AutomationError::DispatchDegraded("rule mutation application is not configured".to_string())
@@ -796,7 +903,7 @@ async fn apply_rule_mutation<S: StateStore + 'static>(
         aether_domain::TimestampMs::new(timestamp_ms),
     );
     let acceptance = application
-        .mutate(invocation.context(), mutation)
+        .mutate_revisioned(invocation.context(), mutation)
         .await
         .map_err(rule_mutation_error)?;
     if let Some(failure) = acceptance.completion_audit().failure() {
@@ -808,29 +915,49 @@ async fn apply_rule_mutation<S: StateStore + 'static>(
             "rule mutation completed but its terminal audit is incomplete; do not retry"
         );
     }
-    if let Some(failure) = acceptance.scheduler_refresh().failure() {
-        error!(
-            request_id = acceptance.request_id(),
-            operation = acceptance.kind().as_str(),
-            rule_id = ?acceptance.rule_id().map(aether_domain::RuleId::get),
-            error = %failure,
-            "rule mutation was persisted but scheduler refresh failed; scheduler stopped fail-closed"
-        );
+    if let Some(failure) = acceptance.runtime_status().failure() {
+        if acceptance.runtime_status().scheduler_running() {
+            error!(
+                request_id = acceptance.request_id(),
+                operation = acceptance.kind().as_str(),
+                rule_id = ?acceptance.rule_id().map(aether_domain::RuleId::get),
+                error = %failure,
+                "rule mutation was persisted; deterministic tick evaluation remains active but PointWatch hints are gated pending reconciliation"
+            );
+        } else {
+            error!(
+                request_id = acceptance.request_id(),
+                operation = acceptance.kind().as_str(),
+                rule_id = ?acceptance.rule_id().map(aether_domain::RuleId::get),
+                error = %failure,
+                "rule mutation was persisted but scheduler refresh failed; scheduler stopped fail-closed"
+            );
+        }
     }
     Ok(acceptance)
 }
 
-fn scheduler_refresh_response(
-    status: &aether_ports::RuleSchedulerRefreshStatus,
-) -> serde_json::Value {
-    if status.is_refreshed() {
-        json!({ "status": "refreshed", "retryable": false })
-    } else {
-        json!({
+fn scheduler_refresh_response(status: &aether_ports::RuleRuntimeStatus) -> serde_json::Value {
+    match status.as_str() {
+        "refreshed" => json!({
+            "status": "refreshed",
+            "reconciliation_required": false,
+            "retryable": false
+        }),
+        "point_watch_gated" => json!({
+            "status": "point_watch_gated",
+            "reconciliation_required": true,
+            "scheduler_running": true,
+            "retryable": false,
+            "message": "mutation was persisted and deterministic tick evaluation remains active, but PointWatch hints are gated until reconciliation; do not retry the committed command"
+        }),
+        _ => json!({
             "status": "stopped",
+            "reconciliation_required": true,
+            "scheduler_running": false,
             "retryable": false,
             "message": "mutation was persisted but scheduler refresh failed; scheduler stopped fail-closed; do not retry"
-        })
+        }),
     }
 }
 
@@ -839,6 +966,11 @@ fn rule_mutation_error(error: aether_application::ApplicationError) -> Automatio
         && port_error.kind() == aether_ports::PortErrorKind::NotFound
     {
         return AutomationError::RuleNotFound(port_error.to_string());
+    }
+    if let aether_application::ApplicationError::Port(port_error) = &error
+        && port_error.kind() == aether_ports::PortErrorKind::Conflict
+    {
+        return AutomationError::RoutingConflict(port_error.to_string());
     }
     AutomationError::from(error)
 }
@@ -971,6 +1103,7 @@ pub async fn scheduler_status<S: StateStore + 'static>(
     responses(
         (status = 200, description = "Scheduler reload accepted; the response includes non-retryable terminal-audit and scheduler-refresh state", body = serde_json::Value),
         (status = 403, description = "Missing/invalid Bearer credentials or actor lacks automation.rule.manage"),
+        (status = 409, description = "The automation-rules revision is stale"),
         (status = 422, description = "Explicit confirmation is required"),
         (status = 503, description = "Mandatory pre-reload audit is unavailable")
     ),
@@ -982,18 +1115,30 @@ pub async fn scheduler_reload<S: StateStore + 'static>(
     headers: HeaderMap,
     Json(request): Json<RuleMutationRequest>,
 ) -> Result<Json<SuccessResponse<serde_json::Value>>, AutomationError> {
-    let acceptance =
-        apply_rule_mutation(&state, &headers, request.confirmed, RuleMutation::Reload).await?;
+    let expected_revision = resolve_rules_revision(
+        &state.pool,
+        request.expected_revision,
+        "POST /api/scheduler/reload",
+    )
+    .await?;
+    let acceptance = apply_rule_mutation(
+        &state,
+        &headers,
+        request.confirmed,
+        RevisionedRuleMutation::reload(expected_revision),
+    )
+    .await?;
     let count = state.scheduler.status().await.enabled_rules;
     info!("Scheduler reloaded {} rules", count);
     Ok(Json(SuccessResponse::new(json!({
         "status": "OK",
         "rules_loaded": count,
+        "resulting_revision": acceptance.resulting_revision().get(),
         "request_id": acceptance.request_id(),
         "audit": crate::infra::application_control::completion_audit_response(
             acceptance.completion_audit()
         ),
-        "scheduler_refresh": scheduler_refresh_response(acceptance.scheduler_refresh())
+        "scheduler_refresh": scheduler_refresh_response(acceptance.runtime_status())
     }))))
 }
 

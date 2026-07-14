@@ -159,6 +159,7 @@ fn signed_admin_and_engineer_tokens_receive_all_shared_command_permissions() {
             "automation.rule.execute",
             "automation.rule.manage",
             "automation.routing.manage",
+            "automation.instance.manage",
             "alarm.rule.manage",
             "alarm.alert.resolve",
         ] {
@@ -231,6 +232,7 @@ fn authenticated_uplink_gets_a_fixed_identity() {
         "automation.rule.execute",
         "automation.rule.manage",
         "automation.routing.manage",
+        "automation.instance.manage",
         "alarm.rule.manage",
         "alarm.alert.resolve",
     ] {

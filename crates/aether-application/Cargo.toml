@@ -1,13 +1,12 @@
 [package]
 name = "aether-application"
 version.workspace = true
-publish = false
 edition = "2024"
 rust-version = "1.90"
 description = "Transport-neutral commands, queries, and safety policy for Aether"
 license.workspace = true
 repository.workspace = true
-documentation = "https://docs.aetheriot.workers.dev/crates/aether-application"
+documentation = "https://docs.rs/aether-application"
 readme = "README.md"
 keywords = ["iot", "edge", "gateway", "automation"]
 categories = ["embedded", "asynchronous"]

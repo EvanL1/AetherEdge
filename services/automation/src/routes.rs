@@ -20,8 +20,8 @@ use crate::api::health_handlers::health_check;
 use crate::api::product_handlers::{get_product_points, list_products};
 
 use crate::api::instance_management_handlers::{
-    create_instance, delete_instance, execute_instance_action, reload_instances_from_db,
-    update_instance,
+    create_instance, delete_instance, execute_instance_action, get_instance_configuration_revision,
+    reload_instances_from_db, update_instance,
 };
 use crate::api::instance_query_handlers::{
     get_instance, get_instance_children, get_instance_data, get_instance_points, get_topology_tree,
@@ -112,6 +112,9 @@ use common::admin_api::{get_log_level, list_log_files, set_log_level, view_log_f
             crate::dto::RoutingRequest,
             crate::dto::SinglePointRoutingRequest,
             crate::dto::ToggleRoutingRequest,
+            crate::dto::MeasurementRoutingUpsertRequest,
+            crate::dto::MeasurementRoutingToggleRequest,
+            crate::dto::MeasurementRoutingDeleteRequest,
             crate::dto::RoutingUpdate,
             crate::dto::RoutingType,
             crate::config::Product,
@@ -177,6 +180,10 @@ pub fn create_routes(state: Arc<AppState>) -> Router {
         .route("/health", get(health_check))
         // Instance management API
         .route("/api/instances", get(list_instances).post(create_instance))
+        .route(
+            "/api/instances/revision",
+            get(get_instance_configuration_revision),
+        )
         .route("/api/instances/list", get(list_instances_slim))
         .route("/api/instances/search", get(search_instances))
         .route(
@@ -574,7 +581,7 @@ mod openapi_tests {
             let operation = document
                 .pointer(pointer)
                 .unwrap_or_else(|| panic!("missing governed mutation operation {pointer}"));
-            for status in ["200", "403", "422", "503"] {
+            for status in ["200", "403", "409", "422", "503"] {
                 assert!(
                     operation.pointer(&format!("/responses/{status}")).is_some(),
                     "{pointer} is missing response {status}"
@@ -686,6 +693,15 @@ mod openapi_tests {
                     .is_some_and(|required| required.iter().any(|field| field == "confirmed")),
                 "{schema}.confirmed must be required in Swagger"
             );
+            assert!(
+                document
+                    .pointer(&format!("/components/schemas/{schema}/required"))
+                    .and_then(|value| value.as_array())
+                    .is_some_and(|required| {
+                        required.iter().any(|field| field == "expected_revision")
+                    }),
+                "{schema}.expected_revision must be required in Swagger"
+            );
             if method == "put" {
                 let action_point_kinds: Vec<_> = document
                     .pointer("/components/schemas/ActionRoutingFourRemote/enum")
@@ -718,6 +734,7 @@ mod openapi_tests {
                 "request_id",
                 "operation",
                 "affected_routes",
+                "resulting_revision",
                 "audit",
                 "runtime",
                 "retryable",

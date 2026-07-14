@@ -44,6 +44,7 @@ fn administrative_access_tokens_receive_the_shared_command_permissions() {
             "automation.rule.execute",
             "automation.rule.manage",
             "automation.routing.manage",
+            "automation.instance.manage",
             "io.channel.manage",
             "alarm.rule.manage",
             "alarm.alert.resolve",
@@ -61,6 +62,7 @@ fn viewer_refresh_and_malformed_credentials_never_gain_command_permissions() {
         .expect("valid viewer access token");
     assert!(!viewer.has_permission("alarm.rule.manage"));
     assert!(!viewer.has_permission("automation.routing.manage"));
+    assert!(!viewer.has_permission("automation.instance.manage"));
     assert!(!viewer.has_permission("io.channel.manage"));
 
     assert_eq!(

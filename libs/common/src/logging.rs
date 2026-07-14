@@ -2,10 +2,11 @@
 //!
 //! Provides multi-level logging support with automatic sub-logger creation
 
+use std::ffi::OsStr;
 use std::fs::{self, File, OpenOptions};
 #[allow(unused_imports)] // Used in Write trait impl for DailyRollingWriter
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
@@ -143,15 +144,28 @@ fn is_test_environment() -> bool {
         return true;
     }
 
-    // Method 2: Check if executable is in target/debug/deps (test binary location)
+    // Method 2: Cargo test binaries live below `<target>/{debug,release}/deps`.
+    // The target root is configurable through CARGO_TARGET_DIR, so do not
+    // require the directory itself to be literally named `target`.
     if let Ok(exe) = std::env::current_exe()
-        && let Some(path_str) = exe.to_str()
-        && (path_str.contains("target/debug/deps") || path_str.contains("target/release/deps"))
+        && is_cargo_test_binary_path(&exe)
     {
         return true;
     }
 
     false
+}
+
+fn is_cargo_test_binary_path(path: &Path) -> bool {
+    let Some(deps) = path.parent() else {
+        return false;
+    };
+    if deps.file_name() != Some(OsStr::new("deps")) {
+        return false;
+    }
+    deps.parent()
+        .and_then(Path::file_name)
+        .is_some_and(|profile| profile == "debug" || profile == "release")
 }
 
 /// Default max file size: 20MB (reduced from 100MB for faster rotation and compression)
@@ -1435,6 +1449,19 @@ mod tests {
         // When running via cargo test, this should return true
         // because CARGO_TARGET_TMPDIR is set or we're in target/debug/deps
         assert!(is_test_environment());
+    }
+
+    #[test]
+    fn custom_cargo_target_directory_is_still_detected_as_a_test_path() {
+        assert!(is_cargo_test_binary_path(Path::new(
+            "/tmp/aether-target/debug/deps/common-deadbeef"
+        )));
+        assert!(is_cargo_test_binary_path(Path::new(
+            "/tmp/aether-target/release/deps/common-deadbeef"
+        )));
+        assert!(!is_cargo_test_binary_path(Path::new(
+            "/opt/aether/bin/aether-api"
+        )));
     }
 
     // ========================================================================

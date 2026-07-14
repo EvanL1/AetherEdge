@@ -289,9 +289,8 @@ impl AutomationCommandDispatcher {
         fence: Option<CommandTopologyFence>,
     ) -> PortResult<CommandReceipt> {
         let logical = command.target();
-        let source_type = match logical.kind() {
-            PointKind::Command => aether_model::PointType::Control,
-            PointKind::Action => aether_model::PointType::Adjustment,
+        match logical.kind() {
+            PointKind::Command | PointKind::Action => {},
             PointKind::Telemetry | PointKind::Status => {
                 return Err(PortError::new(
                     PortErrorKind::Rejected,
@@ -302,65 +301,34 @@ impl AutomationCommandDispatcher {
         // Pin routing and health from one service generation across the whole
         // command decision. The SQLite constraint read may await, but a later
         // topology publication cannot alter this retained immutable view.
-        let runtime = if let Some(topology) = self.manager.runtime_topology.get() {
-            Some(Arc::clone(topology).pin_command().await)
-        } else {
-            None
-        };
-        validate_command_topology_fence(
-            fence,
-            runtime
-                .as_ref()
-                .map(|runtime| runtime.generation().sequence()),
-        )?;
-        let (channel_id, physical_kind, physical_point_id) = if let Some(runtime) = &runtime {
-            let routed = runtime
-                .generation()
-                .action_route(logical.instance_id().get(), logical.point_id().get())
-                .ok_or_else(|| {
-                    PortError::new(
-                        PortErrorKind::Rejected,
-                        format!("no enabled physical route for logical target {logical:?}"),
-                    )
-                })?;
-            if !routed.kind().is_writable() {
-                return Err(PortError::new(
-                    PortErrorKind::Rejected,
-                    "logical command route resolved to a read-only physical point",
-                ));
-            }
-            (
-                routed.channel_id().get(),
-                routed.kind(),
-                routed.point_id().get(),
+        let topology = self.manager.runtime_topology.get().ok_or_else(|| {
+            PortError::new(
+                PortErrorKind::Unavailable,
+                "coherent command topology is not configured",
             )
-        } else {
-            let routed = self
-                .manager
-                .routing_cache
-                .lookup_m2c_by_parts(
-                    logical.instance_id().get(),
-                    source_type,
-                    logical.point_id().get(),
+        })?;
+        let runtime = Arc::clone(topology).pin_command().await;
+        validate_command_topology_fence(fence, Some(runtime.generation().sequence()))?;
+        let routed = runtime
+            .generation()
+            .action_route(logical.instance_id().get(), logical.point_id().get())
+            .ok_or_else(|| {
+                PortError::new(
+                    PortErrorKind::Rejected,
+                    format!("no enabled physical route for logical target {logical:?}"),
                 )
-                .ok_or_else(|| {
-                    PortError::new(
-                        PortErrorKind::Rejected,
-                        format!("no enabled physical route for logical target {logical:?}"),
-                    )
-                })?;
-            let kind = match routed.point_type {
-                aether_model::PointType::Control => PointKind::Command,
-                aether_model::PointType::Adjustment => PointKind::Action,
-                aether_model::PointType::Telemetry | aether_model::PointType::Signal => {
-                    return Err(PortError::new(
-                        PortErrorKind::Rejected,
-                        format!("logical command route resolved to read-only target {routed}"),
-                    ));
-                },
-            };
-            (routed.channel_id, kind, routed.point_id)
-        };
+            })?;
+        if !routed.kind().is_writable() {
+            return Err(PortError::new(
+                PortErrorKind::Rejected,
+                "logical command route resolved to a read-only physical point",
+            ));
+        }
+        let (channel_id, physical_kind, physical_point_id) = (
+            routed.channel_id().get(),
+            routed.kind(),
+            routed.point_id().get(),
+        );
 
         let constraints = match physical_kind {
             PointKind::Command => {
@@ -425,20 +393,7 @@ impl AutomationCommandDispatcher {
             .validate_at(now, constraints)
             .map_err(|error| PortError::new(PortErrorKind::Rejected, error.to_string()))?;
 
-        let health = if let Some(runtime) = &runtime {
-            runtime.generation().channel_health(channel_id)
-        } else {
-            self.manager
-                .channel_health_reader
-                .load_full()
-                .ok_or_else(|| {
-                    PortError::new(
-                        PortErrorKind::Unavailable,
-                        "channel-health SHM reader is not configured",
-                    )
-                })?
-                .read_channel(channel_id)
-        }?;
+        let health = runtime.generation().channel_health(channel_id)?;
         match health {
             Some(sample) if sample.online() => {},
             Some(_) => {

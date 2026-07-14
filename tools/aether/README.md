@@ -89,9 +89,9 @@ Docker Compose runtime and fails if that composition is not present.
 | `aether channels list` | List all communication channels |
 | `aether channels status <id>` | Channel runtime status and statistics |
 | `aether channels create ... --confirmed` | Create a channel disabled by default; requires `AETHER_ACCESS_TOKEN` |
-| `aether channels update <id> ... --confirmed` | Update desired channel configuration; accepts `--expected-revision` |
-| `aether channels enable\|disable <id> --confirmed` | Change desired runtime lifecycle; accepts `--expected-revision` |
-| `aether channels delete <id> --confirmed` | Delete a channel; `--force` only skips the prompt and action-route references fail with a conflict |
+| `aether channels update <id> ... --expected-revision <rev> --confirmed` | Update desired channel configuration with mandatory compare-and-set |
+| `aether channels enable\|disable <id> --expected-revision <rev> --confirmed` | Change desired runtime lifecycle with mandatory compare-and-set |
+| `aether channels delete <id> --expected-revision <rev> --confirmed` | Delete a channel with mandatory compare-and-set; `--force` only skips the prompt and action-route references fail with a conflict |
 | `aether channels write <id> --type T\|S ...` | Inject supervised simulation telemetry |
 | `aether channels reload --confirmed` | Reconcile all channel runtimes through `io.channel.reconcile`; requires `AETHER_ACCESS_TOKEN` and must not be retried automatically |
 | `aether channels health` | Service health check |

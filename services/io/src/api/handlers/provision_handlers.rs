@@ -6,14 +6,22 @@
 //! Currently supports SunSpec (`sunspec_tcp` / `sunspec_rtu`).
 
 use crate::api::handlers::point_handlers::{
-    trigger_channel_reload_if_needed, validate_channel_exists,
+    PointTopologyHttpBoundary, PreauthorizedPointTopologyInvocation, validate_channel_exists,
 };
+#[cfg(feature = "modbus")]
+use crate::api::handlers::point_handlers::{completion_audit, trigger_channel_reload_if_needed};
 use crate::api::routes::AppState;
 use crate::dto::{AppError, AutoReloadQuery, SuccessResponse};
+#[cfg(feature = "modbus")]
+use crate::point_topology::{
+    PointDefinitionMutation, PointKind, PointTopologyMutation, PointTopologyMutationResult,
+};
+#[cfg(feature = "modbus")]
 use aether_model::sunspec::{ExpandConfig, ExpandFilter, expand_model, load_model, model_exists};
 use axum::{
+    Extension,
     extract::{Path, Query, State},
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
     response::Json,
 };
 use common::ErrorInfo;
@@ -29,6 +37,83 @@ use crate::utils::{is_modbus_family, normalize_protocol_name};
 
 #[cfg(not(feature = "modbus"))]
 use crate::utils::normalize_protocol_name;
+
+#[cfg(feature = "modbus")]
+use std::sync::Arc;
+
+#[cfg(feature = "modbus")]
+use aether_model::sunspec::DiscoveredModel;
+
+/// Device-I/O seam for SunSpec discovery.
+#[cfg(feature = "modbus")]
+#[async_trait::async_trait]
+pub(crate) trait SunSpecDiscoveryPort: Send + Sync {
+    async fn connect_and_discover(
+        &self,
+        params: &ModbusChannelParamsConfig,
+        protocol: &str,
+        slave_id: u8,
+        function_code: u8,
+        base_address: Option<u16>,
+    ) -> Result<(u16, Vec<DiscoveredModel>), String>;
+}
+
+/// Cloneable HTTP dependency around the production or test discovery port.
+#[cfg(feature = "modbus")]
+#[derive(Clone)]
+pub(crate) struct SunSpecDiscoveryBoundary {
+    port: Arc<dyn SunSpecDiscoveryPort>,
+}
+
+#[cfg(feature = "modbus")]
+impl SunSpecDiscoveryBoundary {
+    #[must_use]
+    pub(crate) fn production() -> Self {
+        Self {
+            port: Arc::new(ProductionSunSpecDiscovery),
+        }
+    }
+
+    #[cfg(test)]
+    #[must_use]
+    pub(crate) fn from_port(port: Arc<dyn SunSpecDiscoveryPort>) -> Self {
+        Self { port }
+    }
+
+    async fn connect_and_discover(
+        &self,
+        params: &ModbusChannelParamsConfig,
+        protocol: &str,
+        slave_id: u8,
+        function_code: u8,
+        base_address: Option<u16>,
+    ) -> Result<(u16, Vec<DiscoveredModel>), String> {
+        self.port
+            .connect_and_discover(params, protocol, slave_id, function_code, base_address)
+            .await
+    }
+}
+
+#[cfg(feature = "modbus")]
+struct ProductionSunSpecDiscovery;
+
+#[cfg(feature = "modbus")]
+#[async_trait::async_trait]
+impl SunSpecDiscoveryPort for ProductionSunSpecDiscovery {
+    async fn connect_and_discover(
+        &self,
+        params: &ModbusChannelParamsConfig,
+        protocol: &str,
+        slave_id: u8,
+        function_code: u8,
+        base_address: Option<u16>,
+    ) -> Result<(u16, Vec<DiscoveredModel>), String> {
+        let mut client = connect_modbus(params, protocol).await?;
+        let result = discover_models(&mut client, slave_id, function_code, base_address).await;
+        let _ = client.close().await;
+        result
+    }
+}
 
 // ============================================================================
 // Request / Response DTOs
@@ -98,6 +183,13 @@ pub struct ProvisionResult {
     pub point_id_start: u32,
     pub point_id_end: u32,
     pub message: String,
+    #[schema(format = "uuid")]
+    pub request_id: String,
+    #[schema(minimum = 1, maximum = 9223372036854775807_i64)]
+    pub resulting_revision: u64,
+    pub completion_audit: crate::dto::ChannelCompletionAudit,
+    #[schema(default = false, example = false)]
+    pub retryable: bool,
 }
 
 // ============================================================================
@@ -149,12 +241,16 @@ pub struct ProvisionResult {
     ),
     tag = "io"
 )]
-pub async fn provision_channel_handler(
+pub(crate) async fn provision_channel_handler(
     Path(channel_id): Path<u32>,
     Query(reload_query): Query<AutoReloadQuery>,
     State(state): State<AppState>,
+    Extension(boundary): Extension<PointTopologyHttpBoundary>,
+    #[cfg(feature = "modbus")] Extension(discovery): Extension<SunSpecDiscoveryBoundary>,
+    headers: HeaderMap,
     Json(req): Json<ProvisionRequest>,
 ) -> Result<Json<SuccessResponse<ProvisionResult>>, AppError> {
+    let authorization = boundary.preauthorize(&headers)?;
     validate_channel_exists(&state.sqlite_pool, channel_id).await?;
 
     let row: Option<(String, String)> =
@@ -185,13 +281,24 @@ pub async fn provision_channel_handler(
                     &config_json,
                     &state,
                     &req,
+                    authorization,
+                    &discovery,
                     reload_query.auto_reload,
                 )
                 .await?
             }
             #[cfg(not(feature = "modbus"))]
             {
-                let _ = (channel_id, protocol, config_json, state, req);
+                let _ = (
+                    channel_id,
+                    protocol,
+                    config_json,
+                    state,
+                    boundary,
+                    authorization,
+                    headers,
+                    req,
+                );
                 return Err(AppError::bad_request(
                     "SunSpec provision requires io built with modbus feature",
                 ));
@@ -229,6 +336,8 @@ async fn provision_sunspec(
     config_json: &str,
     state: &AppState,
     req: &ProvisionRequest,
+    authorization: PreauthorizedPointTopologyInvocation,
+    discovery: &SunSpecDiscoveryBoundary,
     auto_reload: bool,
 ) -> Result<ProvisionResult, AppError> {
     if !is_modbus_family(protocol) {
@@ -253,20 +362,16 @@ async fn provision_sunspec(
     let params: ModbusChannelParamsConfig = serde_json::from_value(params_value.clone())
         .map_err(|e| AppError::bad_request(format!("Invalid Modbus parameters: {e}")))?;
 
-    let mut client = connect_modbus(&params, protocol)
+    let (base_address, discovered) = discovery
+        .connect_and_discover(
+            &params,
+            protocol,
+            req.slave_id,
+            req.function_code,
+            req.base_address,
+        )
         .await
-        .map_err(|e| device_error(format!("Modbus connect failed: {e}")))?;
-
-    let (base_address, discovered) = discover_models(
-        &mut client,
-        req.slave_id,
-        req.function_code,
-        req.base_address,
-    )
-    .await
-    .map_err(|e| device_error(format!("SunSpec discovery failed: {e}")))?;
-
-    let _ = client.close().await;
+        .map_err(|e| device_error(format!("SunSpec discovery failed: {e}")))?;
 
     let models_to_expand: Vec<_> = discovered
         .iter()
@@ -321,61 +426,69 @@ async fn provision_sunspec(
         ));
     }
 
+    let points_created = expanded.len();
     let point_id_start = match req.point_id_start {
-        Some(id) => id,
+        Some(point_id) => point_id,
         None => next_point_id(&state.sqlite_pool, channel_id).await?,
     };
-
-    let mut tx = state
-        .sqlite_pool
-        .begin()
-        .await
-        .map_err(|e| AppError::internal_error(format!("Transaction start: {e}")))?;
-
-    if req.replace_existing {
-        for table in [
-            "telemetry_points",
-            "signal_points",
-            "control_points",
-            "adjustment_points",
-        ] {
-            sqlx::query(&format!("DELETE FROM {table} WHERE channel_id = ?"))
-                .bind(channel_id as i64)
-                .execute(&mut *tx)
-                .await
-                .map_err(|e| AppError::internal_error(format!("Clear {table}: {e}")))?;
-        }
+    let mut points = Vec::with_capacity(points_created);
+    for (offset, point) in expanded.into_iter().enumerate() {
+        let offset = u32::try_from(offset)
+            .map_err(|_| AppError::bad_request("provision point count exceeds u32"))?;
+        let point_id = point_id_start
+            .checked_add(offset)
+            .ok_or_else(|| AppError::bad_request("provision point_id range exceeds u32"))?;
+        points.push((
+            PointKind::Telemetry,
+            PointDefinitionMutation {
+                point_id,
+                signal_name: point.signal_name,
+                scale: point.scale,
+                offset: point.offset,
+                unit: point.unit,
+                reverse: false,
+                data_type: point.data_type,
+                description: point.description,
+                normal_state: 0,
+                minimum: None,
+                maximum: None,
+                step: 1.0,
+                protocol_mapping: Some(Some(point.protocol_mappings)),
+            },
+        ));
     }
-
-    let mut point_id = point_id_start;
-    for point in &expanded {
-        sqlx::query(
-            "INSERT INTO telemetry_points \
-             (channel_id, point_id, signal_name, scale, offset, unit, data_type, reverse, description, protocol_mappings) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?)",
+    let acceptance = authorization
+        .mutate(PointTopologyMutation::Provision {
+            channel_id,
+            replace_existing: req.replace_existing,
+            upsert_existing: false,
+            points,
+        })
+        .await?;
+    let request_id = acceptance.request_id().to_string();
+    let resulting_revision = acceptance.resulting_revision().get();
+    let audit = completion_audit(acceptance.completion_audit());
+    let accepted_count = match acceptance.into_result() {
+        PointTopologyMutationResult::Provisioned { point_count } => point_count,
+        PointTopologyMutationResult::Single { .. }
+        | PointTopologyMutationResult::Batch { .. }
+        | PointTopologyMutationResult::MappingsUpdated { .. } => {
+            return Err(AppError::internal_error(
+                "Point topology application returned an invalid provision receipt",
+            ));
+        },
+    };
+    if accepted_count != points_created {
+        return Err(AppError::internal_error(
+            "Point topology application returned an invalid provision count",
+        ));
+    }
+    let point_id_end = point_id_start
+        .checked_add(
+            u32::try_from(points_created - 1)
+                .map_err(|_| AppError::internal_error("provision point count exceeds u32"))?,
         )
-        .bind(channel_id as i64)
-        .bind(point_id as i64)
-        .bind(&point.signal_name)
-        .bind(point.scale)
-        .bind(point.offset)
-        .bind(&point.unit)
-        .bind(&point.data_type)
-        .bind(&point.description)
-        .bind(&point.protocol_mappings)
-        .execute(&mut *tx)
-        .await
-        .map_err(|e| AppError::internal_error(format!("Insert point {point_id}: {e}")))?;
-
-        point_id = point_id.saturating_add(1);
-    }
-
-    tx.commit()
-        .await
-        .map_err(|e| AppError::internal_error(format!("Transaction commit: {e}")))?;
-
-    let point_id_end = point_id.saturating_sub(1);
-    let points_created = expanded.len();
+        .ok_or_else(|| AppError::internal_error("provision point_id range exceeds u32"))?;
 
     tracing::info!(
         "Ch{} provisioned {} SunSpec points (base={}, models={:?})",
@@ -406,6 +519,10 @@ async fn provision_sunspec(
         point_id_start,
         point_id_end,
         message: format!("Provisioned {points_created} telemetry points from SunSpec discovery"),
+        request_id,
+        resulting_revision,
+        completion_audit: audit,
+        retryable: false,
     })
 }
 
@@ -425,9 +542,12 @@ async fn next_point_id(pool: &sqlx::SqlitePool, channel_id: u32) -> Result<u32, 
     .bind(channel_id as i64)
     .fetch_one(pool)
     .await
-    .map_err(|e| AppError::internal_error(format!("Query max point_id: {e}")))?;
+    .map_err(|error| AppError::internal_error(format!("Query max point_id: {error}")))?;
 
-    Ok((row.0 as u32).saturating_add(1))
+    u32::try_from(row.0)
+        .ok()
+        .and_then(|value| value.checked_add(1))
+        .ok_or_else(|| AppError::bad_request("next provision point_id exceeds u32"))
 }
 
 fn device_error(message: impl Into<String>) -> AppError {

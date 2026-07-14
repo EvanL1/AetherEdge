@@ -148,11 +148,6 @@ components:
     responsibility: Disabled load/PV task declarations, uncommissioned binding, and cross-language v1 fixtures
     verify:
       - cargo test -p aether-example-energy-gateway --test data_processing_composition
-  legacy_shm_adapters:
-    path: libs/aether-rtdb-shm
-    responsibility: Channel, instance, routing, and action adapters during migration
-    verify:
-      - cargo test -p aether-rtdb-shm
   aether_uplink_runtime:
     path: services/uplink/src/uplink.rs
     responsibility: aether-uplink integration with DurableOutbox and UplinkPublisher

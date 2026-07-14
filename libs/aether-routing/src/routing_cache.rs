@@ -527,10 +527,11 @@ impl RoutingCache {
         }
     }
 
-    /// Iterate over all C2M routes (for building ChannelToSlotIndex)
+    /// Iterate over all C2M routes for IO-local routing projections.
     ///
-    /// Returns a Vec of all C2M routes for building direct channel-to-slot mappings.
-    /// The returned Vec is a snapshot of the current routing state.
+    /// The returned Vec is a snapshot of the current routing state. Service
+    /// readers and PointWatch rebuilds consume their typed, generation-pinned
+    /// logical topology instead of this independently mutable cache.
     ///
     /// # Example
     /// ```ignore

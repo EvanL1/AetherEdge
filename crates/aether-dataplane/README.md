@@ -26,6 +26,6 @@ cargo test -p aether-dataplane
 cargo tree -p aether-dataplane --edges normal
 ```
 
-During migration, `aether-rtdb-shm::core` re-exports this crate so existing
-service imports keep compiling. New industry-neutral code should depend on
-`aether-dataplane` directly.
+The former `aether-rtdb-shm` aggregation crate was retired after its rolling
+v4 compatibility contracts passed. Industry-neutral code depends on this
+crate directly; channel-aware composition belongs in `aether-shm-bridge`.

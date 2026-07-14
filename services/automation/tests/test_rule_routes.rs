@@ -25,7 +25,6 @@ use aether_automation::rule_routes::{RuleEngineState, create_rule_routes};
 use aether_ports::{
     AuditRecord, AuditSink, AutomationRuleMutator, PortError, PortErrorKind, PortResult,
 };
-use aether_routing::RoutingCache;
 use aether_rules::{MemoryRuleLiveState, RuleScheduler};
 use anyhow::Result;
 use async_trait::async_trait;
@@ -92,6 +91,7 @@ async fn create_test_database() -> Result<sqlx::SqlitePool> {
     )
     .execute(&pool)
     .await?;
+    common::test_utils::schema::initialize_configuration_revisions(&pool).await?;
 
     Ok(pool)
 }
@@ -109,16 +109,12 @@ async fn create_test_app_with_audit(
     let pool = create_test_database().await?;
     let live_state = Arc::new(MemoryRuleLiveState::new());
 
-    // Create empty routing cache for testing
-    let routing_cache = Arc::new(RoutingCache::new());
-
     // Create rule scheduler with test configuration
     // tick_ms: 1000ms (1 second) - reasonable for tests
     // log_root: temp directory for test logs
     let log_root = PathBuf::from("/tmp/automation_test_logs");
     let scheduler = Arc::new(RuleScheduler::new(
         live_state,
-        routing_cache,
         pool.clone(),
         1000, // tick_ms
         log_root,
@@ -293,6 +289,71 @@ async fn mandatory_audit_failure_prevents_database_mutation_and_scheduler_reload
     assert_eq!(count, 0);
     let (_, scheduler) = make_request(&app, "GET", "/api/scheduler/status", None).await?;
     assert_eq!(scheduler["data"]["enabled_rules"], 0);
+    Ok(())
+}
+
+#[tokio::test]
+async fn rules_http_exposes_revision_and_rejects_stale_explicit_cas() -> Result<()> {
+    let (app, pool) =
+        create_test_app_with_audit(Arc::new(aether_store_local::MemoryAuditSink::new())).await?;
+    let response = app
+        .clone()
+        .oneshot(Request::builder().uri("/api/rules").body(Body::empty())?)
+        .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.headers()["etag"], "\"1\"");
+    assert_eq!(response.headers()["x-aether-configuration-revision"], "1");
+
+    let create = json!({
+        "name": "revision-fenced",
+        "expected_revision": 1
+    });
+    let (created, body) = make_request(&app, "POST", "/api/rules", Some(create.clone())).await?;
+    assert_eq!(created, StatusCode::OK, "{body}");
+    assert_eq!(body["data"]["resulting_revision"], 2);
+
+    let (conflict, body) = make_request(&app, "POST", "/api/rules", Some(create)).await?;
+    assert_eq!(conflict, StatusCode::CONFLICT, "{body}");
+    let (count, head): (i64, i64) = (
+        sqlx::query_scalar("SELECT COUNT(*) FROM rules")
+            .fetch_one(&pool)
+            .await?,
+        sqlx::query_scalar(
+            "SELECT revision FROM configuration_revisions WHERE scope = 'automation_rules'",
+        )
+        .fetch_one(&pool)
+        .await?,
+    );
+    assert_eq!((count, head), (1, 2));
+    Ok(())
+}
+
+#[tokio::test]
+async fn invalid_rule_update_rolls_back_the_revision_cas() -> Result<()> {
+    let (app, pool) =
+        create_test_app_with_audit(Arc::new(aether_store_local::MemoryAuditSink::new())).await?;
+    let (_, created) = make_request(
+        &app,
+        "POST",
+        "/api/rules",
+        Some(json!({ "name": "valid-shell", "expected_revision": 1 })),
+    )
+    .await?;
+    let id = created["data"]["id"].as_i64().expect("created rule id");
+    let (status, _) = make_request(
+        &app,
+        "PUT",
+        &format!("/api/rules/{id}"),
+        Some(json!({ "flow_json": "not-a-flow", "expected_revision": 2 })),
+    )
+    .await?;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    let head: i64 = sqlx::query_scalar(
+        "SELECT revision FROM configuration_revisions WHERE scope = 'automation_rules'",
+    )
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(head, 2, "validation failure must roll back the CAS");
     Ok(())
 }
 

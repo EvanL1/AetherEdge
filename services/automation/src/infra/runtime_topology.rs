@@ -1,14 +1,12 @@
 //! Coherent runtime publication of automation's physical and logical topology.
 
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
-use aether_domain::PointKind;
 use aether_ports::{ChannelHealthObservation, PortError, PortErrorKind, PortResult};
-use aether_routing::RoutingCache;
+use aether_rules::{MeasurementRouteBinding, RuleScheduler};
 use aether_shm_bridge::{
     ChannelPointManifest, PhysicalPointAddress, PointWatchEvent, ShmClientConfig,
     ShmDeviceCommandSink, ShmReadTopologyGeneration, SlotSource,
@@ -20,60 +18,11 @@ use tokio::sync::{Mutex, MutexGuard, OwnedMutexGuard, OwnedRwLockReadGuard, RwLo
 
 const WRITER_STALE_AFTER: Duration = Duration::from_secs(30);
 
-#[derive(Clone)]
-struct LegacyRoutingTables {
-    c2m: HashMap<String, String>,
-    m2c: HashMap<String, String>,
-}
-
-impl LegacyRoutingTables {
-    fn from_routes(measurements: &LogicalPointRoutes, actions: &LogicalPointRoutes) -> Self {
-        let c2m = measurements
-            .iter()
-            .map(|(&(instance_id, point_id), &target)| {
-                (
-                    physical_route_key(target),
-                    format!("{instance_id}:M:{point_id}"),
-                )
-            })
-            .collect();
-        let m2c = actions
-            .iter()
-            .map(|(&(instance_id, point_id), &target)| {
-                (
-                    format!("{instance_id}:A:{point_id}"),
-                    physical_route_key(target),
-                )
-            })
-            .collect();
-        Self { c2m, m2c }
-    }
-
-    fn publish_into(&self, cache: &RoutingCache) {
-        cache.update(self.c2m.clone(), self.m2c.clone(), HashMap::new());
-    }
-}
-
-fn physical_route_key(target: PhysicalPointAddress) -> String {
-    let kind = match target.kind() {
-        PointKind::Telemetry => "T",
-        PointKind::Status => "S",
-        PointKind::Command => "C",
-        PointKind::Action => "A",
-    };
-    format!(
-        "{}:{kind}:{}",
-        target.channel_id().get(),
-        target.point_id().get()
-    )
-}
-
 struct CandidateParts {
     point_manifest: Arc<ChannelPointManifest>,
     health_manifest: Arc<aether_shm_bridge::ChannelHealthManifest>,
     measurement_routes: Arc<LogicalPointRoutes>,
     action_routes: Arc<LogicalPointRoutes>,
-    legacy: LegacyRoutingTables,
     digest: u64,
 }
 
@@ -81,13 +30,11 @@ impl CandidateParts {
     fn from_snapshot(snapshot: SqliteLiveTopologySnapshot) -> Self {
         let digest = snapshot.digest();
         let (point_manifest, health_manifest, measurements, actions) = snapshot.into_parts();
-        let legacy = LegacyRoutingTables::from_routes(&measurements, &actions);
         Self {
             point_manifest: Arc::new(point_manifest),
             health_manifest: Arc::new(health_manifest),
             measurement_routes: Arc::new(measurements),
             action_routes: Arc::new(actions),
-            legacy,
             digest,
         }
     }
@@ -98,10 +45,10 @@ pub struct AutomationTopologyGeneration {
     read: Arc<ShmReadTopologyGeneration>,
     measurement_routes: Arc<LogicalPointRoutes>,
     action_routes: Arc<LogicalPointRoutes>,
-    legacy: LegacyRoutingTables,
     digest: u64,
     sequence: u64,
     physical_validated: bool,
+    measurement_routes_revoked: bool,
     action_routes_revoked: bool,
 }
 
@@ -115,6 +62,10 @@ impl std::fmt::Debug for AutomationTopologyGeneration {
             .field("digest", &self.digest)
             .field("sequence", &self.sequence)
             .field("physical_validated", &self.physical_validated)
+            .field(
+                "measurement_routes_revoked",
+                &self.measurement_routes_revoked,
+            )
             .field("action_routes_revoked", &self.action_routes_revoked)
             .finish()
     }
@@ -131,10 +82,10 @@ impl AutomationTopologyGeneration {
             read,
             measurement_routes: parts.measurement_routes,
             action_routes: parts.action_routes,
-            legacy: parts.legacy,
             digest: parts.digest,
             sequence,
             physical_validated,
+            measurement_routes_revoked: false,
             action_routes_revoked: false,
         }
     }
@@ -179,6 +130,32 @@ impl AutomationTopologyGeneration {
     #[must_use]
     pub fn action_route(&self, instance_id: u32, point_id: u32) -> Option<PhysicalPointAddress> {
         self.action_routes.get(&(instance_id, point_id)).copied()
+    }
+
+    /// Copies the exact logical measurement bindings pinned to this generation.
+    #[must_use]
+    pub fn measurement_route_bindings(&self) -> Vec<MeasurementRouteBinding> {
+        self.measurement_routes
+            .iter()
+            .map(|(&(instance_id, point_id), &target)| {
+                MeasurementRouteBinding::new(instance_id, point_id, target)
+            })
+            .collect()
+    }
+
+    /// Rebuilds PointWatch from this generation's inseparable route/manifest view.
+    ///
+    /// Keeping this operation on the immutable service generation prevents a
+    /// caller from pairing bindings copied from one logical publication with
+    /// the point manifest of another physical publication.
+    pub async fn rebuild_point_watch<S>(&self, scheduler: &RuleScheduler<S>) -> bool
+    where
+        S: aether_calc::StateStore + 'static,
+    {
+        let bindings = self.measurement_route_bindings();
+        scheduler
+            .rebuild_point_watch(&bindings, self.point_manifest())
+            .await
     }
 
     /// Reads one logical point without mixing routing and SHM generations.
@@ -301,7 +278,6 @@ pub struct AutomationTopologyHandle {
     point_path: PathBuf,
     health_path: PathBuf,
     command_sink: Arc<ShmDeviceCommandSink>,
-    compatibility_routing: Arc<RoutingCache>,
     refresh_gate: Arc<Mutex<()>>,
     command_gate: Arc<RwLock<()>>,
     change_sequence: AtomicU64,
@@ -318,7 +294,6 @@ impl AutomationTopologyHandle {
         health_path: impl Into<PathBuf>,
         snapshot: SqliteLiveTopologySnapshot,
         command_sink: Arc<ShmDeviceCommandSink>,
-        compatibility_routing: Arc<RoutingCache>,
     ) -> PortResult<Self> {
         let point_path = point_path.into();
         let health_path = health_path.into();
@@ -329,7 +304,6 @@ impl AutomationTopologyHandle {
             Arc::clone(&parts.point_manifest),
             Arc::clone(&parts.health_manifest),
         )?);
-        parts.legacy.publish_into(&compatibility_routing);
         let initial = Arc::new(AutomationTopologyGeneration::compose(read, parts, false, 0));
         let (change_tx, _change_rx) = watch::channel(0);
         Ok(Self {
@@ -337,7 +311,6 @@ impl AutomationTopologyHandle {
             point_path,
             health_path,
             command_sink,
-            compatibility_routing,
             refresh_gate: Arc::new(Mutex::new(())),
             command_gate: Arc::new(RwLock::new(())),
             change_sequence: AtomicU64::new(0),
@@ -390,6 +363,24 @@ impl AutomationTopologyHandle {
         }
     }
 
+    /// Revokes C2M before a measurement-route transaction and retains the
+    /// refresh lease until the exact committed SQLite snapshot is published.
+    pub async fn begin_measurement_routing_mutation(
+        self: &Arc<Self>,
+    ) -> MeasurementRoutingMutationLease {
+        let refresh_guard = Arc::clone(&self.refresh_gate).lock_owned().await;
+        let previous_generation = self.load();
+        let revoked_generation = self.revoke_measurement_routes_locked().await;
+        let restore_generation = (!Arc::ptr_eq(&previous_generation, &revoked_generation))
+            .then_some(previous_generation);
+        MeasurementRoutingMutationLease {
+            topology: Arc::clone(self),
+            restore_generation,
+            revoked_generation,
+            refresh_guard: Some(refresh_guard),
+        }
+    }
+
     /// Loads SQLite topology and publishes it only after both SHM planes and
     /// the command writer validate against the same physical manifest.
     ///
@@ -418,12 +409,13 @@ impl AutomationTopologyHandle {
         let parts = CandidateParts::from_snapshot(snapshot);
         let current = self.current.load_full();
         let physical_changed = !current.has_physical_layout(&parts);
-        let logical_changed = current.digest != parts.digest || current.action_routes_revoked;
+        let logical_changed = current.digest != parts.digest
+            || current.measurement_routes_revoked
+            || current.action_routes_revoked;
+        let physical_current =
+            current.physical_validated && current.read.validate_layouts().is_ok();
 
-        if !physical_changed
-            && current.physical_validated
-            && self.command_sink.is_writer_available()
-        {
+        if !physical_changed && physical_current && self.command_sink.is_writer_available() {
             if !logical_changed {
                 return Ok(false);
             }
@@ -435,7 +427,6 @@ impl AutomationTopologyHandle {
                 sequence,
             ));
             let _commands = self.command_gate.write().await;
-            replacement.legacy.publish_into(&self.compatibility_routing);
             self.current.store(replacement);
             self.notify_change(sequence);
             return Ok(true);
@@ -452,7 +443,6 @@ impl AutomationTopologyHandle {
                 sequence,
             ));
             let _commands = self.command_gate.write().await;
-            replacement.legacy.publish_into(&self.compatibility_routing);
             self.current.store(replacement);
             self.notify_change(sequence);
             return Ok(true);
@@ -492,7 +482,6 @@ impl AutomationTopologyHandle {
             .with_validated_authority(|| -> PortResult<()> {
                 self.command_sink
                     .open_generation(&self.point_path, command_manifest)?;
-                replacement.legacy.publish_into(&self.compatibility_routing);
                 self.current.store(Arc::clone(&replacement));
                 Ok(())
             })
@@ -516,24 +505,49 @@ impl AutomationTopologyHandle {
         self.revoke_action_routes_locked().await;
     }
 
+    /// Revokes all logical measurement routes after committed publication fails.
+    pub async fn revoke_measurement_routes(&self) {
+        let _refresh = self.refresh_gate.lock().await;
+        self.revoke_measurement_routes_locked().await;
+    }
+
+    async fn revoke_measurement_routes_locked(&self) -> Arc<AutomationTopologyGeneration> {
+        let _commands = self.command_gate.write().await;
+        let current = self.current.load_full();
+        if current.measurement_routes_revoked {
+            return current;
+        }
+        let sequence = self.next_sequence();
+        let revoked = Arc::new(AutomationTopologyGeneration {
+            read: Arc::clone(&current.read),
+            measurement_routes: Arc::new(LogicalPointRoutes::new()),
+            action_routes: Arc::clone(&current.action_routes),
+            digest: current.digest,
+            sequence,
+            physical_validated: current.physical_validated,
+            measurement_routes_revoked: true,
+            action_routes_revoked: current.action_routes_revoked,
+        });
+        self.current.store(Arc::clone(&revoked));
+        self.notify_change(sequence);
+        revoked
+    }
+
     async fn revoke_action_routes_locked(&self) -> Arc<AutomationTopologyGeneration> {
         let _commands = self.command_gate.write().await;
         let current = self.current.load_full();
         if current.action_routes_revoked {
             return current;
         }
-        let mut legacy = current.legacy.clone();
-        legacy.m2c.clear();
-        legacy.publish_into(&self.compatibility_routing);
         let sequence = self.next_sequence();
         let revoked = Arc::new(AutomationTopologyGeneration {
             read: Arc::clone(&current.read),
             measurement_routes: Arc::clone(&current.measurement_routes),
             action_routes: Arc::new(LogicalPointRoutes::new()),
-            legacy,
             digest: current.digest,
             sequence,
             physical_validated: current.physical_validated,
+            measurement_routes_revoked: current.measurement_routes_revoked,
             action_routes_revoked: true,
         });
         self.current.store(Arc::clone(&revoked));
@@ -556,7 +570,6 @@ impl AutomationTopologyHandle {
             );
             return;
         }
-        previous.legacy.publish_into(&self.compatibility_routing);
         self.current.store(Arc::clone(&previous));
         self.notify_change(previous.sequence());
     }
@@ -584,6 +597,68 @@ pub struct ActionRoutingMutationLease {
     restore_generation: Option<Arc<AutomationTopologyGeneration>>,
     revoked_generation: Arc<AutomationTopologyGeneration>,
     refresh_guard: Option<OwnedMutexGuard<()>>,
+}
+
+/// Exclusive refresh lease spanning one SQLite measurement-route mutation.
+pub struct MeasurementRoutingMutationLease {
+    topology: Arc<AutomationTopologyHandle>,
+    restore_generation: Option<Arc<AutomationTopologyGeneration>>,
+    revoked_generation: Arc<AutomationTopologyGeneration>,
+    refresh_guard: Option<OwnedMutexGuard<()>>,
+}
+
+impl MeasurementRoutingMutationLease {
+    /// Restores the pre-mutation generation after a known-uncommitted failure.
+    pub(crate) async fn restore(mut self) {
+        self.restore_before_commit().await;
+    }
+
+    /// Disarms restoration before a commit with potentially ambiguous outcome.
+    pub(crate) fn commit_started(&mut self) {
+        self.restore_generation = None;
+    }
+
+    /// Publishes the committed SQLite view before releasing the refresh lease.
+    pub async fn publish(mut self, pool: &SqlitePool) -> PortResult<bool> {
+        self.commit_started();
+        self.topology.refresh_locked(pool).await
+    }
+
+    async fn restore_before_commit(&mut self) {
+        let Some(previous) = self.restore_generation.as_ref().cloned() else {
+            return;
+        };
+        self.topology
+            .restore_revoked_generation(previous, Arc::clone(&self.revoked_generation))
+            .await;
+        self.restore_generation = None;
+    }
+}
+
+impl Drop for MeasurementRoutingMutationLease {
+    fn drop(&mut self) {
+        let Some(previous) = self.restore_generation.take() else {
+            return;
+        };
+        let revoked = Arc::clone(&self.revoked_generation);
+        let topology = Arc::clone(&self.topology);
+        let Some(refresh_guard) = self.refresh_guard.take() else {
+            tracing::error!(
+                "measurement-routing mutation lease lost its refresh guard before restoration"
+            );
+            return;
+        };
+        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+            tracing::error!(
+                "cannot schedule measurement-routing restoration outside a Tokio runtime"
+            );
+            return;
+        };
+        drop(runtime.spawn(async move {
+            topology.restore_revoked_generation(previous, revoked).await;
+            drop(refresh_guard);
+        }));
+    }
 }
 
 impl ActionRoutingMutationLease {

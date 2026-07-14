@@ -5,23 +5,20 @@
 mod common;
 
 use std::collections::HashMap;
-use std::sync::Arc;
 
-use aether_automation::instance_manager::InstanceManager;
 use aether_automation::product_loader::CreateInstanceRequest;
-use aether_routing::RoutingCache;
 use anyhow::Result;
-use common::{TestEnv, energy_product_loader, fixtures, helpers};
+use common::{GovernedInstanceManager, TestEnv, energy_product_loader, fixtures, helpers};
 
-fn manager(env: &TestEnv) -> InstanceManager {
-    InstanceManager::new(
+async fn manager(env: &TestEnv) -> GovernedInstanceManager {
+    GovernedInstanceManager::new(
         env.pool().clone(),
-        Arc::new(RoutingCache::new()),
-        Arc::new(energy_product_loader(env.pool().clone())),
+        energy_product_loader(env.pool().clone()),
     )
+    .await
 }
 
-async fn create_hierarchy(manager: &InstanceManager) -> Result<()> {
+async fn create_hierarchy(manager: &GovernedInstanceManager) -> Result<()> {
     manager
         .create_instance(CreateInstanceRequest {
             instance_id: Some(9901),
@@ -46,7 +43,7 @@ async fn create_hierarchy(manager: &InstanceManager) -> Result<()> {
 #[tokio::test]
 async fn create_instance_full_flow_requires_no_external_service() -> Result<()> {
     let env = TestEnv::create().await?;
-    let manager = manager(&env);
+    let manager = manager(&env).await;
     create_hierarchy(&manager).await?;
 
     let instance = manager
@@ -70,7 +67,7 @@ async fn create_instance_full_flow_requires_no_external_service() -> Result<()> 
 #[tokio::test]
 async fn duplicate_instance_is_rejected_by_local_persistence() -> Result<()> {
     let env = TestEnv::create().await?;
-    let manager = manager(&env);
+    let manager = manager(&env).await;
     create_hierarchy(&manager).await?;
     let request = CreateInstanceRequest {
         instance_id: Some(1001),

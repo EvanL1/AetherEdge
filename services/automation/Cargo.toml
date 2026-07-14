@@ -29,7 +29,6 @@ aether-ports = { path = "../../crates/aether-ports" }
 aether-store-local = { path = "../../extensions/store-local", features = ["sqlite-audit", "sqlite-topology"] }
 aether-model = { path = "../../libs/aether-model" }
 aether-shm-bridge = { path = "../../extensions/shm-bridge" }
-aether-routing = { path = "../../libs/aether-routing" }
 aether-rules = { path = "../../libs/aether-rules" }
 aether-calc = { path = "../../libs/aether-calc" }
 
@@ -58,7 +57,6 @@ subtle = "2.6"
 
 [dev-dependencies]
 # criterion removed - no benchmarks
-aether-rtdb-shm = { path = "../../libs/aether-rtdb-shm" }
 tempfile = { workspace = true }
 http-body-util = "0.1"
 jsonwebtoken = "9"

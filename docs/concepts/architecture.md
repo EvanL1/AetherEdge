@@ -105,9 +105,9 @@ and [Data Processing Flow](data-processing-flow.md).
 
 ## Communication paths
 
-Latency figures below come from `README.md`; the microsecond numbers are
-measured end-to-end on production hardware (Cortex-A55 @ 1.4 GHz, ECU-1170),
-with the full benchmark in `libs/aether-rtdb-shm/benches/BASELINE.md`.
+Latency figures below come from historical `README.md` and CHANGELOG
+measurements on production hardware (Cortex-A55 @ 1.4 GHz, ECU-1170). Release
+qualification uses the current cross-process stress and soak gates.
 
 | Path | Mechanism | Latency class |
 |------|-----------|---------------|
@@ -137,10 +137,10 @@ Two properties keep the hot path safe:
 
 ## Startup order
 
-aether-io must start before aether-automation. aether-io creates the shared-memory segment and
-stamps its header with a `routing_hash` derived from the channel/point layout;
-aether-automation can only attach to a segment that already exists and matches its own
-view of the layout.
+aether-io owns point/health SHM publication and normally starts first. It
+publishes both planes with one non-zero epoch and a final commit witness;
+aether-automation can only attach to files that match its SQLite-derived
+manifests and the same committed publication.
 
 The ordering is enforced in application code, not by making every peripheral
 service depend on Redis. Peripheral SHM readers open lazily and can start
@@ -157,11 +157,10 @@ their subscription bitmaps are not truncated:
    until it returns HTTP 2xx or the timeout expires. If aether-io is still not
    healthy after 30 seconds, aether-automation logs a warning and continues
    starting — with shared memory possibly unavailable until aether-io comes up.
-2. When aether-automation opens the segment, `validate_shm_header`
-   (`libs/aether-rtdb-shm/src/unified_shm.rs`) checks the magic number, the
-   format version, and that the header's `routing_hash` equals the layout hash
-   aether-automation computed locally. On mismatch it refuses to open and reports
-   that the writer process (aether-io) must be restarted to resynchronize.
+2. When aether-automation opens live state,
+   `ShmReadTopologyGeneration` checks both physical headers and the commit
+   witness. A hash, slot count, epoch, or writer-generation mismatch remains
+   retryably unavailable until the service publishes one complete generation.
 
 ## Configuration flow
 
@@ -173,9 +172,10 @@ Configuration is authored as YAML (and CSV point tables) under `config/`. The
 `aether` CLI parses it and writes it into the shared SQLite database
 (`tools/aether/src/core/syncer.rs`); services read only from SQLite — no
 service crate parses YAML. Every service container receives the same
-`AETHER_DB_PATH` pointing at `aether.db`. To apply a config change, run
-`aether sync` and restart or refresh the affected services (`aether services
-refresh`).
+`AETHER_DB_PATH` pointing at `aether.db`. aether-io automatically reconciles
+channel runtime, point/health layout, protocol mappings, and routing
+projections from SQLite; governed explicit reconciliation remains available
+for operator recovery.
 
 ## Where state lives
 

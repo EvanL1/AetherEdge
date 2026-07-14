@@ -25,6 +25,9 @@ use serde_json::json;
 use std::sync::Arc;
 use tower::ServiceExt;
 
+const TEST_JWT_SECRET: &str = "0123456789abcdef0123456789abcdef";
+const ADMIN_ACCESS_TOKEN: &str = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyX2lkIjo3LCJyb2xlIjoiQWRtaW4iLCJ0eXBlIjoiYWNjZXNzIiwiaWF0IjoxNzAwMDAwMDAwLCJleHAiOjQxMDI0NDQ4MDB9.JtjQvDBo7j0bLOxwed6yC9-M9qFCloc4H2Dt0LjzF9E";
+
 /// Create test SQLite database with required schema (including point tables)
 async fn create_test_database() -> Result<sqlx::SqlitePool> {
     let pool = sqlx::SqlitePool::connect("sqlite::memory:").await?;
@@ -36,7 +39,8 @@ async fn create_test_database() -> Result<sqlx::SqlitePool> {
             name TEXT NOT NULL UNIQUE,
             protocol TEXT NOT NULL,
             enabled BOOLEAN NOT NULL DEFAULT TRUE,
-            config TEXT
+            config TEXT,
+            revision INTEGER NOT NULL DEFAULT 1
         )"#,
     )
     .execute(&pool)
@@ -264,8 +268,21 @@ async fn create_test_app_with_pool(pool: sqlx::SqlitePool) -> Result<axum::Route
     // Create command TX cache
     let command_tx_cache = Arc::new(aether_io::api::command_cache::CommandTxCache::new());
 
-    // Create router
-    let router = aether_io::api::routes::create_api_routes(channel_manager, pool, command_tx_cache);
+    let point_topology = Arc::new(aether_io::point_topology::PointTopologyApplication::new(
+        pool.clone(),
+        Arc::new(aether_store_local::MemoryAuditSink::new()),
+    ));
+    let authenticator = Arc::new(
+        aether_auth_jwt::AccessTokenAuthenticator::new(TEST_JWT_SECRET)
+            .expect("test authenticator"),
+    );
+    let router = aether_io::api::routes::create_api_routes_with_point_topology(
+        channel_manager,
+        pool,
+        command_tx_cache,
+        point_topology,
+        authenticator,
+    );
     Ok(router)
 }
 
@@ -277,6 +294,24 @@ async fn make_request(
     body: Option<serde_json::Value>,
 ) -> Result<(StatusCode, serde_json::Value)> {
     let mut req_builder = Request::builder().method(method).uri(uri);
+    if method == "PUT" {
+        let channel_id = uri
+            .split('/')
+            .nth(3)
+            .ok_or_else(|| anyhow::anyhow!("missing channel ID"))?;
+        let revision_request = Request::builder()
+            .method("GET")
+            .uri(format!("/api/channels/{channel_id}"))
+            .body(Body::empty())?;
+        let revision_response = app.clone().oneshot(revision_request).await?;
+        let revision_body = revision_response.into_body().collect().await?.to_bytes();
+        let revision_json: serde_json::Value = serde_json::from_slice(&revision_body)?;
+        let revision = revision_json["data"]["revision"].as_u64().unwrap_or(1);
+        req_builder = req_builder
+            .header("authorization", format!("Bearer {ADMIN_ACCESS_TOKEN}"))
+            .header("x-aether-confirmed", "true")
+            .header("x-aether-expected-revision", revision.to_string());
+    }
 
     let body_bytes = if let Some(json_body) = body {
         req_builder = req_builder.header("content-type", "application/json");
@@ -575,6 +610,32 @@ async fn test_update_mappings_merge_mode_partial_update() -> Result<()> {
     Ok(())
 }
 
+#[tokio::test]
+async fn test_update_mappings_merge_validates_the_merged_mapping() -> Result<()> {
+    let pool = create_test_database_with_modbus_channel().await?;
+    let app = create_test_app_with_pool(pool).await?;
+    let update_request = json!({
+        "mappings": [{
+            "point_id": 101,
+            "four_remote": "T",
+            "protocol_data": { "function_code": 99 }
+        }],
+        "validate_only": false,
+        "mode": "merge"
+    });
+
+    let (status, _body) = make_request(
+        &app,
+        "PUT",
+        "/api/channels/1001/mappings",
+        Some(update_request),
+    )
+    .await?;
+
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    Ok(())
+}
+
 // ============================================================================
 // PUT /api/channels/{id}/mappings Tests - Validate Only Mode
 // ============================================================================
@@ -728,7 +789,7 @@ async fn test_update_mappings_point_not_found() -> Result<()> {
     )
     .await?;
 
-    assert_eq!(status, StatusCode::BAD_REQUEST, "Response: {:?}", body);
+    assert_eq!(status, StatusCode::NOT_FOUND, "Response: {:?}", body);
 
     Ok(())
 }

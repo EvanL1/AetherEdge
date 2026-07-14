@@ -301,7 +301,7 @@ Usage: aether channels update [OPTIONS] <CHANNEL_ID>
 | `--name <NAME>` | New channel name |
 | `--params <PARAMS>` | Updated protocol parameters as JSON string |
 | `--description <DESCRIPTION>` | Updated description |
-| `--expected-revision <EXPECTED_REVISION>` | Optional desired-state compare-and-set guard; must be at least 1 |
+| `--expected-revision <EXPECTED_REVISION>` | Required desired-state compare-and-set guard from the latest channel read; must be at least 1 |
 | `--confirmed` | Explicitly confirm this high-risk commissioning mutation; requires `AETHER_ACCESS_TOKEN` |
 
 ```bash
@@ -322,7 +322,7 @@ Usage: aether channels delete [OPTIONS] <CHANNEL_ID>
 | Flag | Description |
 |------|-------------|
 | `-f, --force` | Skip the interactive prompt only; it never replaces `--confirmed` |
-| `--expected-revision <EXPECTED_REVISION>` | Optional desired-state compare-and-set guard; must be at least 1 |
+| `--expected-revision <EXPECTED_REVISION>` | Required desired-state compare-and-set guard from the latest channel read; must be at least 1 |
 | `--confirmed` | Explicitly confirm this high-risk commissioning mutation; requires `AETHER_ACCESS_TOKEN` |
 
 ```bash
@@ -340,7 +340,7 @@ Usage: aether channels enable [OPTIONS] <CHANNEL_ID>
 
 | Flag | Description |
 |------|-------------|
-| `--expected-revision <EXPECTED_REVISION>` | Optional desired-state compare-and-set guard; must be at least 1 |
+| `--expected-revision <EXPECTED_REVISION>` | Required desired-state compare-and-set guard from the latest channel read; must be at least 1 |
 | `--confirmed` | Explicitly confirm this high-risk lifecycle mutation; requires `AETHER_ACCESS_TOKEN` |
 
 ```bash
@@ -358,18 +358,21 @@ Usage: aether channels disable [OPTIONS] <CHANNEL_ID>
 
 | Flag | Description |
 |------|-------------|
-| `--expected-revision <EXPECTED_REVISION>` | Optional desired-state compare-and-set guard; must be at least 1 |
+| `--expected-revision <EXPECTED_REVISION>` | Required desired-state compare-and-set guard from the latest channel read; must be at least 1 |
 | `--confirmed` | Explicitly confirm this high-risk lifecycle mutation; requires `AETHER_ACCESS_TOKEN` |
 
 ```bash
-AETHER_ACCESS_TOKEN='<signed access JWT>' aether channels disable 1001 --confirmed
+AETHER_ACCESS_TOKEN='<signed access JWT>' aether channels disable 1001 \
+  --expected-revision 7 --confirmed
 ```
 
 The five channel commissioning and lifecycle mutations call the governed
 `io.channel.manage` application boundary. Success may report a degraded
 runtime projection after desired state has committed. Preserve `request_id`,
 inspect `resulting_revision` and `reconciliation_required`, and do not
-automatically retry the non-idempotent command. `channels reload` is the sixth
+automatically retry the non-idempotent command. Update, delete, enable, and
+disable require the revision returned by the latest channel read and fail
+before HTTP when it is absent. `channels reload` is the sixth
 governed channel command and maps separately to `io.channel.reconcile` while
 requiring the same `io.channel.manage` permission, explicit confirmation,
 Bearer token, UUID request ID, and audit policy.
@@ -1037,18 +1040,6 @@ Usage: aether services logs [OPTIONS] <SERVICE>
 
 ```bash
 aether services logs aether-io --follow --tail 200
-```
-
-### services reload
-
-Reload configurations for services.
-
-```
-Usage: aether services reload [OPTIONS] [SERVICES]...
-```
-
-```bash
-aether services reload aether-automation
 ```
 
 ### services build

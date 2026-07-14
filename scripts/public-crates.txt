@@ -1,0 +1,20 @@
+# Public crates in crates.io publication order.
+#
+# Format: package<TAB>workspace-relative directory
+# Every workspace path dependency, including packaged dev-dependencies, must
+# appear before the package that references it.
+aether-domain	crates/aether-domain
+aether-dataplane	crates/aether-dataplane
+aether-pack	crates/aether-pack
+aether-ports	crates/aether-ports
+aether-data-processing	crates/aether-data-processing
+aether-shm-bridge	extensions/shm-bridge
+aether-testkit	crates/aether-testkit
+aether-store-local	extensions/store-local
+aether-application	crates/aether-application
+aether-http-data-processor	extensions/http-data-processor
+aether-http-history-query	extensions/http-history-query
+aether-sqlite-history-query	extensions/sqlite-history-query
+aether-redis-bridge	extensions/redis-bridge
+aether-postgres-history	extensions/postgres-history
+aether-edge-sdk	crates/aether-sdk

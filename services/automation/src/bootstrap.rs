@@ -351,6 +351,8 @@ pub async fn load_products(
     )
     .execute(sqlite_pool)
     .await?;
+    common::test_utils::schema::initialize_configuration_revisions(sqlite_pool).await?;
+    crate::instance_configuration::initialize_instance_configuration_revision(sqlite_pool).await?;
 
     info!(
         active_pack_count = active_packs.len(),
@@ -365,14 +367,9 @@ pub async fn load_products(
 /// Setup the SQLite/SHM instance manager.
 pub async fn setup_instance_manager(
     sqlite_pool: &SqlitePool,
-    routing_cache: Arc<aether_routing::RoutingCache>,
     product_loader: Arc<ProductLoader>,
 ) -> Result<Arc<InstanceManager>> {
-    let instance_manager = Arc::new(InstanceManager::new(
-        sqlite_pool.clone(),
-        routing_cache,
-        product_loader,
-    ));
+    let instance_manager = Arc::new(InstanceManager::new(sqlite_pool.clone(), product_loader));
 
     // Instances loaded by aether (may be empty on first startup)
     let instance_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM instances")
@@ -491,38 +488,6 @@ pub async fn validate_routing_integrity(sqlite_pool: &SqlitePool) -> Result<()> 
     Ok(())
 }
 
-/// Refresh routing cache from SQLite database
-///
-/// This function reloads routing data from SQLite and updates the in-memory
-/// routing cache. It's called after routing management operations (create/update/delete)
-/// to ensure the cache stays synchronized with the database.
-///
-/// # Arguments
-/// * `sqlite_pool` - SQLite connection pool
-/// * `routing_cache` - Shared routing cache to refresh
-///
-/// # Returns
-/// * `Ok(usize)` - Number of routes loaded (c2m + m2c)
-/// * `Err(anyhow::Error)` - Database or parsing errors
-pub async fn refresh_routing_cache(
-    sqlite_pool: &SqlitePool,
-    routing_cache: &Arc<aether_routing::RoutingCache>,
-) -> anyhow::Result<usize> {
-    debug!("Refreshing routes");
-
-    // Load fresh routing data from database via shared library
-    let maps = aether_routing::load_routing_maps(sqlite_pool).await?;
-
-    let total_routes = maps.c2m.len() + maps.m2c.len();
-
-    // Update cache atomically (clears old data and loads new)
-    routing_cache.update(maps.c2m, maps.m2c, maps.c2c);
-
-    info!("Routes refreshed: {}", total_routes);
-
-    Ok(total_routes)
-}
-
 /// Create application state with all initialized components
 pub async fn create_app_state(service_info: &ServiceInfo) -> Result<Arc<AppState>> {
     // Initialize environment
@@ -562,23 +527,6 @@ pub async fn create_app_state(service_info: &ServiceInfo) -> Result<Arc<AppState
     // Validate routing integrity before loading (check for orphan records)
     validate_routing_integrity(&sqlite_pool).await?;
 
-    let routing_cache = {
-        // Load routing maps directly from the same SQLite pool via shared library
-        let maps = aether_routing::load_routing_maps(&sqlite_pool).await?;
-
-        // Save lengths before moving maps
-        let c2m_len = maps.c2m.len();
-        let m2c_len = maps.m2c.len();
-
-        let cache = Arc::new(aether_routing::RoutingCache::from_maps(
-            maps.c2m, maps.m2c, maps.c2c,
-        ));
-
-        info!("Routes: {} C2M, {} M2C", c2m_len, m2c_len);
-
-        cache
-    };
-
     // Load products and their local SQLite schema.
     let product_loader = load_products(&config, &sqlite_pool).await?;
 
@@ -586,13 +534,8 @@ pub async fn create_app_state(service_info: &ServiceInfo) -> Result<Arc<AppState
     // in main, after IO's canonical generation becomes available.
     let shm_dispatch = Arc::new(aether_shm_bridge::ShmDeviceCommandSink::new());
 
-    // Setup instance manager (routing handled externally by aether-routing library)
-    let instance_manager = setup_instance_manager(
-        &sqlite_pool,
-        routing_cache.clone(),
-        Arc::clone(&product_loader),
-    )
-    .await?;
+    let instance_manager =
+        setup_instance_manager(&sqlite_pool, Arc::clone(&product_loader)).await?;
 
     let audit_sink = SqliteAuditSink::initialize(sqlite_pool.clone())
         .await
@@ -615,9 +558,27 @@ pub async fn create_app_state(service_info: &ServiceInfo) -> Result<Arc<AppState
     );
     let action_routing_application = Arc::new(aether_application::ActionRoutingApplication::new(
         action_routing_mutator,
-        audit_sink,
+        Arc::clone(&audit_sink),
         aether_application::SafetyPolicy,
     ));
+    let measurement_routing_mutator: Arc<dyn aether_ports::AutomationMeasurementRoutingMutator> =
+        Arc::new(
+            crate::infra::measurement_routing::SqliteMeasurementRoutingMutator::new(Arc::clone(
+                &instance_manager,
+            )),
+        );
+    let measurement_routing_application =
+        Arc::new(aether_application::MeasurementRoutingApplication::new(
+            measurement_routing_mutator,
+            Arc::clone(&audit_sink),
+            aether_application::SafetyPolicy,
+        ));
+    let instance_configuration_application = Arc::new(
+        crate::instance_configuration::InstanceConfigurationApplication::new(
+            Arc::clone(&instance_manager),
+            audit_sink,
+        ),
+    );
     let control_authenticator = Arc::new(
         ControlAuthenticator::from_env()
             .map_err(|error| AutomationError::ConfigError(error.to_string()))?,
@@ -629,6 +590,8 @@ pub async fn create_app_state(service_info: &ServiceInfo) -> Result<Arc<AppState
         instance_manager,
         control_application,
         action_routing_application,
+        measurement_routing_application,
+        instance_configuration_application,
         control_authenticator,
         shm_dispatch,
     )))

@@ -87,20 +87,18 @@ pub async fn upload_once(state: Arc<AppState>) {
 
     let exclude_res: Vec<Regex> = excludes.iter().filter_map(|p| Regex::new(p).ok()).collect();
 
-    let entries = match crate::live_values::build_net_value_source(&state.sqlite, &state.env).await
-    {
-        Ok(source) => match source.collect_entries(&patterns, &exclude_res) {
-            Ok(entries) => entries,
-            Err(error) => {
-                warn!(
-                    retryable = error.is_retryable(),
-                    "SHM property collection failed: {error}"
-                );
-                Vec::new()
-            },
-        },
+    // Pin exactly one SQLite-routing + committed-SHM generation for the whole
+    // collection pass. A concurrent refresh may serve the next pass only.
+    let generation = state.live_topology.load();
+    let entries = match generation.collect_entries(&patterns, &exclude_res) {
+        Ok(entries) => entries,
         Err(error) => {
-            warn!("Cannot rebuild uplink SHM catalogue: {error}");
+            warn!(
+                retryable = error.is_retryable(),
+                topology_digest = generation.digest(),
+                publication_epoch = generation.publication_epoch(),
+                "SHM property collection failed: {error}"
+            );
             Vec::new()
         },
     };

@@ -158,6 +158,39 @@ impl SqliteChannelMutator {
         )
     }
 
+    /// Returns the runtime identities observed by automatic reconciliation.
+    #[must_use]
+    pub(crate) fn runtime_channel_ids_for_reconciliation(&self) -> Vec<ChannelId> {
+        self.runtime.channel_ids()
+    }
+
+    /// Fences projections whose SQLite authority could not be proven stable.
+    ///
+    /// This shares the same gates as mutation and explicit reconciliation, but
+    /// deliberately bypasses the command/audit application boundary because it
+    /// is a safety repair rather than a user-issued command.
+    pub(crate) async fn fence_untrusted_channels(
+        &self,
+        channel_ids: &[ChannelId],
+    ) -> PortResult<()> {
+        let _projection_guard = self.projection_gate.write().await;
+        let channel_ids: std::collections::BTreeSet<_> = channel_ids.iter().copied().collect();
+        let mut first_error = None;
+        for channel_id in channel_ids {
+            let lock = self.channel_lock(channel_id);
+            let _channel_guard = lock.lock().await;
+            if let Err(error) = self.runtime.fence(channel_id).await
+                && first_error.is_none()
+            {
+                first_error = Some(error);
+            }
+        }
+        match first_error {
+            Some(error) => Err(error),
+            None => Ok(()),
+        }
+    }
+
     async fn create(&self, definition: ChannelDefinition) -> PortResult<ChannelMutationReceipt> {
         match definition.requested_channel_id() {
             Some(channel_id) => {
@@ -435,9 +468,9 @@ impl SqliteChannelMutator {
 
         // Fail before fencing in the common case, then repeat inside the
         // transaction to close the race with governed routing commands.
-        if action_route_count(&self.pool, channel_id).await? != 0 {
+        if logical_route_count(&self.pool, channel_id).await? != 0 {
             return Err(conflict(
-                "remove governed action routes before deleting their channel",
+                "remove governed logical routes before deleting their channel",
             ));
         }
         if self.runtime.fence(channel_id).await.is_err() {
@@ -1106,12 +1139,17 @@ fn validate_runtime_config(config: &ChannelConfig) -> PortResult<()> {
     Ok(())
 }
 
-async fn action_route_count(pool: &SqlitePool, channel_id: ChannelId) -> PortResult<i64> {
-    sqlx::query_scalar("SELECT COUNT(*) FROM action_routing WHERE channel_id = ?")
-        .bind(i64::from(channel_id.get()))
-        .fetch_one(pool)
-        .await
-        .map_err(|error| map_database_error(error, "check governed action routes"))
+async fn logical_route_count(pool: &SqlitePool, channel_id: ChannelId) -> PortResult<i64> {
+    sqlx::query_scalar(
+        "SELECT \
+           (SELECT COUNT(*) FROM action_routing WHERE channel_id = ?) + \
+           (SELECT COUNT(*) FROM measurement_routing WHERE channel_id = ?)",
+    )
+    .bind(i64::from(channel_id.get()))
+    .bind(i64::from(channel_id.get()))
+    .fetch_one(pool)
+    .await
+    .map_err(|error| map_database_error(error, "check governed logical routes"))
 }
 
 async fn delete_desired_state(
@@ -1135,15 +1173,19 @@ async fn delete_desired_state(
         return Err(conflict("channel desired state changed concurrently"));
     }
 
-    let action_routes: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM action_routing WHERE channel_id = ?")
-            .bind(i64::from(channel_id.get()))
-            .fetch_one(&mut **transaction)
-            .await
-            .map_err(|error| map_database_error(error, "recheck governed action routes"))?;
-    if action_routes != 0 {
+    let logical_routes: i64 = sqlx::query_scalar(
+        "SELECT \
+           (SELECT COUNT(*) FROM action_routing WHERE channel_id = ?) + \
+           (SELECT COUNT(*) FROM measurement_routing WHERE channel_id = ?)",
+    )
+    .bind(i64::from(channel_id.get()))
+    .bind(i64::from(channel_id.get()))
+    .fetch_one(&mut **transaction)
+    .await
+    .map_err(|error| map_database_error(error, "recheck governed logical routes"))?;
+    if logical_routes != 0 {
         return Err(conflict(
-            "remove governed action routes before deleting their channel",
+            "remove governed logical routes before deleting their channel",
         ));
     }
 
@@ -1161,28 +1203,15 @@ async fn delete_desired_state(
     .await
     .map_err(|error| map_database_error(error, "persist channel revision tombstone"))?;
 
-    // These rows are owned by channel measurement/configuration state. Every
-    // error aborts the transaction; none are treated as an optional table.
+    // Point rows own their inline protocol mappings. Every error aborts the
+    // transaction; none are treated as an optional table.
     for table in [
-        "measurement_routing",
-        "json_point_mappings",
         "telemetry_points",
         "signal_points",
         "control_points",
         "adjustment_points",
     ] {
         sqlx::query(&format!("DELETE FROM {table} WHERE channel_id = ?"))
-            .bind(i64::from(channel_id.get()))
-            .execute(&mut **transaction)
-            .await
-            .map_err(|error| map_database_error(error, "delete channel-owned configuration"))?;
-    }
-
-    // Automation creates this legacy measurement projection lazily. It is
-    // optional at the schema level, but when present its rows are channel
-    // owned and every deletion error must still abort this transaction.
-    if table_exists(transaction, "point_mappings").await? {
-        sqlx::query("DELETE FROM point_mappings WHERE channel_id = ?")
             .bind(i64::from(channel_id.get()))
             .execute(&mut **transaction)
             .await

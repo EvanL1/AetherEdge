@@ -136,6 +136,22 @@ impl SlotWriter {
         slot_count: usize,
         layout_hash: u64,
     ) -> DataplaneResult<Self> {
+        Self::create_at_epoch(path, max_slots, slot_count, layout_hash, 0)
+    }
+
+    /// Creates and publishes a fresh slot-based SHM file carrying an opaque
+    /// cross-plane publication identity.
+    ///
+    /// Composition roots use a non-zero `publication_epoch` to correlate
+    /// independently mapped planes. A zero epoch preserves the diagnostic and
+    /// compatibility semantics of [`Self::create`].
+    pub fn create_at_epoch(
+        path: impl AsRef<Path>,
+        max_slots: u32,
+        slot_count: usize,
+        layout_hash: u64,
+        publication_epoch: u64,
+    ) -> DataplaneResult<Self> {
         let path = path.as_ref();
         if slot_count > max_slots as usize {
             return Err(DataplaneError::InvalidLayout(format!(
@@ -178,7 +194,7 @@ impl SlotWriter {
             writer_heartbeat: AtomicU64::new(0),
             routing_hash: AtomicU64::new(layout_hash),
             writer_generation: AtomicU64::new(generation),
-            _reserved: [0; 8],
+            _reserved: publication_epoch.to_ne_bytes(),
         };
         // SAFETY: mmap bases are page-aligned, satisfying the header's 64-byte
         // alignment; the map is large enough by construction. `ptr::write`

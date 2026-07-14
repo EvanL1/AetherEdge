@@ -2,12 +2,16 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use aether_dataplane::AuthorityReadGuard;
 use aether_ports::{PortError, PortErrorKind, PortResult};
 use arc_swap::ArcSwap;
 
 use crate::managed::map_dataplane_error;
+use crate::topology_commit::{
+    TopologyPublicationCommit, acquire_topology_authority, validate_topology_publication_locked,
+};
 use crate::{
     ChannelHealthManifest, ChannelPointManifest, ReconnectingSlotSource, ShmChannelHealthReader,
     ShmClientConfig,
@@ -25,6 +29,9 @@ pub struct ShmReadTopologyGeneration {
     point_manifest: Arc<ChannelPointManifest>,
     channel_health: Arc<ShmChannelHealthReader>,
     health_manifest: Arc<ChannelHealthManifest>,
+    point_writer_generation: AtomicU64,
+    health_writer_generation: AtomicU64,
+    publication_epoch: AtomicU64,
 }
 
 impl std::fmt::Debug for ShmReadTopologyGeneration {
@@ -35,6 +42,18 @@ impl std::fmt::Debug for ShmReadTopologyGeneration {
             .field("point_slot_count", &self.point_manifest.slot_count())
             .field("health_layout_hash", &self.health_manifest.layout_hash())
             .field("health_slot_count", &self.health_manifest.slot_count())
+            .field(
+                "publication_epoch",
+                &self.publication_epoch.load(Ordering::Acquire),
+            )
+            .field(
+                "point_writer_generation",
+                &self.point_writer_generation.load(Ordering::Acquire),
+            )
+            .field(
+                "health_writer_generation",
+                &self.health_writer_generation.load(Ordering::Acquire),
+            )
             .finish()
     }
 }
@@ -66,16 +85,25 @@ impl ShmReadTopologyGeneration {
             health_config.expected_layout_hash(),
             health_manifest.layout_hash(),
         )?;
+        let point_path = point_config.path().to_path_buf();
+        let health_path = health_config.path().to_path_buf();
+        let point_source = Arc::new(ReconnectingSlotSource::new(point_config));
+        point_source.require_coordinated_publication();
+        let channel_health = Arc::new(ShmChannelHealthReader::new(
+            health_config,
+            Arc::clone(&health_manifest),
+        ));
+        channel_health.require_coordinated_publication();
         Ok(Self {
-            point_path: point_config.path().to_path_buf(),
-            health_path: health_config.path().to_path_buf(),
-            point_source: Arc::new(ReconnectingSlotSource::new(point_config)),
+            point_path,
+            health_path,
+            point_source,
             point_manifest,
-            channel_health: Arc::new(ShmChannelHealthReader::new(
-                health_config,
-                Arc::clone(&health_manifest),
-            )),
+            channel_health,
             health_manifest,
+            point_writer_generation: AtomicU64::new(0),
+            health_writer_generation: AtomicU64::new(0),
+            publication_epoch: AtomicU64::new(0),
         })
     }
 
@@ -88,7 +116,8 @@ impl ShmReadTopologyGeneration {
     ) -> PortResult<Self> {
         let generation =
             Self::new_lazy(point_config, health_config, point_manifest, health_manifest)?;
-        generation.validate_layouts()?;
+        let publication = generation.validate_current_publication()?;
+        generation.pin_publication(publication)?;
         Ok(generation)
     }
 
@@ -103,11 +132,70 @@ impl ShmReadTopologyGeneration {
     /// so a service-local `ArcSwap` performed in this closure cannot race the
     /// final validation and publish a mapping that was already superseded.
     pub fn with_validated_authority<T>(&self, publish: impl FnOnce() -> T) -> PortResult<T> {
+        let _topology = acquire_topology_authority(&self.point_path)?;
         let (_first, _second) = acquire_authority_pair(&self.point_path, &self.health_path)?;
+        let observed = self.validate_locked_publication()?;
+        let observed_epoch = observed.publication_epoch();
+        let pinned_epoch = self.publication_epoch.load(Ordering::Acquire);
+        let pinned_point_writer = self.point_writer_generation.load(Ordering::Acquire);
+        let pinned_health_writer = self.health_writer_generation.load(Ordering::Acquire);
+        if pinned_epoch != 0
+            && (observed_epoch != pinned_epoch
+                || observed.point_writer_generation() != pinned_point_writer
+                || observed.health_writer_generation() != pinned_health_writer)
+        {
+            return Err(PortError::new(
+                PortErrorKind::Conflict,
+                format!(
+                    "SHM topology publication changed from epoch/writers \
+                     {pinned_epoch}/{pinned_point_writer}/{pinned_health_writer} to \
+                     {observed_epoch}/{}/{}",
+                    observed.point_writer_generation(),
+                    observed.health_writer_generation(),
+                ),
+            ));
+        }
+        self.pin_publication(observed)?;
+        Ok(publish())
+    }
+
+    fn validate_current_publication(&self) -> PortResult<TopologyPublicationCommit> {
+        let _topology = acquire_topology_authority(&self.point_path)?;
+        let (_first, _second) = acquire_authority_pair(&self.point_path, &self.health_path)?;
+        self.validate_locked_publication()
+    }
+
+    fn validate_locked_publication(&self) -> PortResult<TopologyPublicationCommit> {
         self.point_source
             .validate_layout(self.point_manifest.slot_count())?;
         self.channel_health.validate_layout()?;
-        Ok(publish())
+        validate_topology_publication_locked(
+            &self.point_path,
+            &self.health_path,
+            self.point_manifest.layout_hash(),
+            self.point_manifest.slot_count(),
+            self.health_manifest.layout_hash(),
+            self.health_manifest.slot_count(),
+        )
+    }
+
+    fn pin_publication(&self, publication: TopologyPublicationCommit) -> PortResult<()> {
+        let publication_epoch = publication.publication_epoch();
+        self.point_source.accept_publication_identity(
+            publication_epoch,
+            publication.point_writer_generation(),
+        )?;
+        self.channel_health.accept_publication_identity(
+            publication_epoch,
+            publication.health_writer_generation(),
+        )?;
+        self.point_writer_generation
+            .store(publication.point_writer_generation(), Ordering::Release);
+        self.health_writer_generation
+            .store(publication.health_writer_generation(), Ordering::Release);
+        self.publication_epoch
+            .store(publication_epoch, Ordering::Release);
+        Ok(())
     }
 
     /// Returns the point-plane source paired with this generation.
@@ -132,6 +220,25 @@ impl ShmReadTopologyGeneration {
     #[must_use]
     pub fn health_manifest(&self) -> &Arc<ChannelHealthManifest> {
         &self.health_manifest
+    }
+
+    /// Returns the committed IO publication epoch pinned by this read view.
+    /// Zero is reserved for compatibility-only uncoordinated fixtures.
+    #[must_use]
+    pub fn publication_epoch(&self) -> u64 {
+        self.publication_epoch.load(Ordering::Acquire)
+    }
+
+    /// Returns the point-plane writer generation pinned with this view.
+    #[must_use]
+    pub fn point_writer_generation(&self) -> u64 {
+        self.point_writer_generation.load(Ordering::Acquire)
+    }
+
+    /// Returns the channel-health writer generation pinned with this view.
+    #[must_use]
+    pub fn health_writer_generation(&self) -> u64 {
+        self.health_writer_generation.load(Ordering::Acquire)
     }
 }
 

@@ -6,6 +6,7 @@ use crate::api::routes::AppState;
 use crate::dto::{AppError, SuccessResponse};
 use aether_domain::PointKind;
 use aether_model::PointType;
+use aether_shm_bridge::PhysicalPointAddress;
 use axum::{
     extract::{Path, Query, State},
     response::Json,
@@ -69,7 +70,9 @@ pub async fn get_point_info_handler(
     };
     let sample = layout
         .manifest()
-        .slot(channel_id, kind, point_id)
+        .slot_for(PhysicalPointAddress::from_legacy_raw(
+            channel_id, kind, point_id,
+        ))
         .and_then(|slot| layout.read_slot(slot));
     let value = sample
         .filter(|sample| sample.value.is_finite())

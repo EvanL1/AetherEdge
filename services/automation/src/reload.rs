@@ -39,8 +39,9 @@ impl ReloadableService for InstanceManager {
         let db_ids: HashSet<u32> = db_by_id.keys().copied().collect();
         let cached_by_id: HashMap<u32, String> = self
             .name_cache
+            .load()
             .iter()
-            .map(|entry| (*entry.value(), entry.key().clone()))
+            .map(|(name, id)| (*id, name.clone()))
             .collect();
         let cached_ids: HashSet<u32> = cached_by_id.keys().copied().collect();
 

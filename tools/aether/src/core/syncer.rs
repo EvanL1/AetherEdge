@@ -348,6 +348,15 @@ impl ConfigSyncer {
                      {action_route_count} existing action route(s)"
                 );
             }
+
+            // Measurement routing is configuration-owned, but it is a child
+            // aggregate of both physical points/channels and instances. Remove
+            // it before IO full replacement so routing-integrity triggers do
+            // not permit a transient/silent physical-parent cascade. The same
+            // site transaction later rebuilds the configured routes.
+            sqlx::query("DELETE FROM measurement_routing")
+                .execute(&mut *tx)
+                .await?;
         }
 
         if self.require_empty_site {
@@ -396,6 +405,13 @@ impl ConfigSyncer {
                 }
             }
         }
+
+        // `aether sync` is an explicitly confirmed, service-stopped import,
+        // but its committed configuration must still fence revision tokens
+        // issued before the import. Advance every online-owned aggregate head
+        // in this same site transaction so a restarted service cannot accept
+        // an ABA-stale command against the newly imported state.
+        advance_offline_configuration_heads(&mut tx).await?;
 
         tx.commit().await?;
         Ok(results)
@@ -1451,6 +1467,34 @@ impl ConfigSyncer {
     }
 }
 
+async fn advance_offline_configuration_heads(tx: &mut Transaction<'_, Sqlite>) -> Result<()> {
+    for scope in ["logical_routing", "automation_rules", "instances"] {
+        sqlx::query(
+            "INSERT INTO configuration_revisions (scope, revision) VALUES (?, 1) \
+             ON CONFLICT(scope) DO NOTHING",
+        )
+        .bind(scope)
+        .execute(&mut **tx)
+        .await
+        .with_context(|| format!("initialize offline import revision for {scope}"))?;
+
+        let updated = sqlx::query(
+            "UPDATE configuration_revisions \
+             SET revision = revision + 1, updated_at = CURRENT_TIMESTAMP \
+             WHERE scope = ? AND revision < 9223372036854775807",
+        )
+        .bind(scope)
+        .execute(&mut **tx)
+        .await
+        .with_context(|| format!("advance offline import revision for {scope}"))?;
+        anyhow::ensure!(
+            updated.rows_affected() == 1,
+            "configuration revision for {scope} is exhausted"
+        );
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 #[allow(clippy::disallowed_methods)]
 mod atomic_sync_tests {
@@ -1474,6 +1518,13 @@ channels:
     protocol: virtual
     enabled: false
 "#,
+        )
+        .unwrap();
+        fs::create_dir_all(config_path.join("io/1")).unwrap();
+        fs::write(
+            config_path.join("io/1/telemetry.csv"),
+            "point_id,signal_name,description,unit,scale,offset,data_type,reverse\n\
+             77,temperature,,,1,0,float64,false\n",
         )
         .unwrap();
         fs::write(
@@ -1595,6 +1646,65 @@ instances:
     }
 
     #[tokio::test]
+    async fn offline_sync_atomically_fences_every_online_configuration_head() {
+        let workspace = TempDir::new().unwrap();
+        let (config_path, database_path) = write_site_config_with_managed_entities(&workspace);
+        let syncer = ConfigSyncer::new(&config_path, &database_path);
+        syncer.sync_all().await.unwrap();
+
+        let database_file = database_path.join("aether.db");
+        let pool = connect_to_database(&database_file).await;
+        let before: Vec<(String, i64)> = sqlx::query_as(
+            "SELECT scope, revision FROM configuration_revisions \
+             WHERE scope IN ('logical_routing', 'automation_rules', 'instances') \
+             ORDER BY scope",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(before.len(), 3);
+        pool.close().await;
+
+        write_managed_rule(&config_path, "imported second revision");
+        write_instance_routing(&config_path, "1,T,77,M,88\n");
+        syncer.sync_all().await.unwrap();
+
+        let pool = connect_to_database(&database_file).await;
+        let after: Vec<(String, i64)> = sqlx::query_as(
+            "SELECT scope, revision FROM configuration_revisions \
+             WHERE scope IN ('logical_routing', 'automation_rules', 'instances') \
+             ORDER BY scope",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            after,
+            before
+                .iter()
+                .map(|(scope, revision)| (scope.clone(), revision + 1))
+                .collect::<Vec<_>>()
+        );
+
+        for (scope, stale_revision) in before {
+            let stale_update = sqlx::query(
+                "UPDATE configuration_revisions SET revision = revision + 1 \
+                 WHERE scope = ? AND revision = ?",
+            )
+            .bind(scope)
+            .bind(stale_revision)
+            .execute(&pool)
+            .await
+            .unwrap();
+            assert_eq!(
+                stale_update.rows_affected(),
+                0,
+                "a pre-import CAS token must be fenced after restart"
+            );
+        }
+    }
+
+    #[tokio::test]
     async fn action_routing_in_configuration_fails_closed_and_rolls_back_measurements() {
         let workspace = TempDir::new().unwrap();
         let (config_path, database_path) = write_site_config_with_managed_entities(&workspace);
@@ -1686,6 +1796,51 @@ instances:
         assert_eq!(action_count, 1);
         assert_eq!(control_count, 1);
         assert_eq!(site_name, "commissioned");
+    }
+
+    #[tokio::test]
+    async fn force_sync_removes_measurement_routes_before_replacing_physical_parents() {
+        let workspace = TempDir::new().unwrap();
+        let (config_path, database_path) = write_site_config_with_managed_entities(&workspace);
+        write_instance_routing(&config_path, "1,T,77,M,88\n");
+        ConfigSyncer::new(&config_path, &database_path)
+            .sync_all()
+            .await
+            .unwrap();
+
+        fs::write(
+            config_path.join("io/1/telemetry.csv"),
+            "point_id,signal_name,description,unit,scale,offset,data_type,reverse\n\
+             78,replacement_temperature,,,1,0,float64,false\n",
+        )
+        .unwrap();
+        write_instance_routing(&config_path, "1,T,78,M,88\n");
+
+        ConfigSyncer::new(&config_path, &database_path)
+            .with_force(true)
+            .sync_all()
+            .await
+            .unwrap();
+
+        let pool = connect_to_database(&database_path.join("aether.db")).await;
+        let route: (i64, String, i64) = sqlx::query_as(
+            "SELECT channel_id, channel_type, channel_point_id \
+             FROM measurement_routing WHERE instance_id = 1 AND measurement_id = 88",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(route, (1, "T".to_owned(), 78));
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM telemetry_points \
+                 WHERE channel_id = 1 AND point_id = 77",
+            )
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+            0
+        );
     }
 
     #[tokio::test]
@@ -1912,13 +2067,6 @@ channels:
         .await
         .unwrap();
         sqlx::query(
-            "INSERT INTO json_point_mappings \
-             (channel_id, point_id, point_type, json_path) VALUES (1, 77, 'T', '$.value')",
-        )
-        .execute(&pool)
-        .await
-        .unwrap();
-        sqlx::query(
             "INSERT INTO measurement_routing \
              (instance_id, instance_name, channel_id, channel_type, channel_point_id, measurement_id) \
              VALUES (1, 'configured-device', 1, 'T', 77, 88)",
@@ -1994,11 +2142,6 @@ channels:
         .fetch_one(&pool)
         .await
         .unwrap();
-        let json_mapping_count: i64 =
-            sqlx::query_scalar("SELECT COUNT(*) FROM json_point_mappings WHERE channel_id = 1")
-                .fetch_one(&pool)
-                .await
-                .unwrap();
         let routing_target: Option<i64> = sqlx::query_scalar(
             "SELECT channel_id FROM measurement_routing \
              WHERE instance_id = 1 AND measurement_id = 88",
@@ -2039,7 +2182,6 @@ channels:
         assert_eq!(channel_count, 2, "API-created channel must be preserved");
         assert_eq!(instance_count, 2, "API-created instance must be preserved");
         assert_eq!(template_source, Some(1));
-        assert_eq!(json_mapping_count, 1);
         assert_eq!(routing_target, Some(1));
         assert_eq!(property_value, "\"api-owned\"");
         assert_eq!(api_config_value, "preserve");

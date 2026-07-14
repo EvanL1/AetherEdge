@@ -1,13 +1,12 @@
 [package]
 name = "aether-shm-bridge"
 version.workspace = true
-publish = false
 edition = "2024"
 rust-version = "1.90"
 description = "Typed Aether domain-port bridge for the shared-memory data plane"
 license.workspace = true
 repository.workspace = true
-documentation = "https://docs.aetheriot.workers.dev/extensions/shm-bridge"
+documentation = "https://docs.rs/aether-shm-bridge"
 readme = "README.md"
 keywords = ["iot", "edge", "shared-memory", "gateway"]
 categories = ["embedded", "asynchronous"]

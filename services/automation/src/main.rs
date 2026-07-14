@@ -63,7 +63,6 @@ async fn main() -> Result<()> {
     // Initialize Rule Engine (integrated on port 6002)
     // ============================================================================
     let sqlite_pool = state.instance_manager.pool().clone();
-    let routing_cache = state.instance_manager.routing_cache().clone();
 
     // Load tick_ms from global config (SQLite key-value table)
     let tick_ms: u64 = sqlx::query_scalar::<_, String>(
@@ -97,7 +96,6 @@ async fn main() -> Result<()> {
             health_path,
             topology_snapshot,
             Arc::clone(&state.shm_dispatch),
-            Arc::clone(&routing_cache),
         )
         .map_err(|error| {
             AutomationError::DispatchDegraded(format!(
@@ -395,7 +393,6 @@ async fn main() -> Result<()> {
     )));
     let mut scheduler = RuleScheduler::with_state_store(
         rule_live_state,
-        routing_cache,
         sqlite_pool.clone(),
         tick_ms,
         rule_log_root,
@@ -428,12 +425,7 @@ async fn main() -> Result<()> {
     // Wire rebuild handles into scheduler so reload_rules can refresh the
     // SubscriptionBitmap + dispatcher index without a service restart.
     if let (Some(disp_arc), Some(bitmap)) = (pw_dispatcher_arc.as_ref(), pw_bitmap.as_ref()) {
-        scheduler.set_point_watch_rebuild_handles(
-            Arc::clone(disp_arc),
-            Arc::clone(state.instance_manager.routing_cache()),
-            pw_manifest_source.clone(),
-            Arc::clone(bitmap),
-        );
+        scheduler.set_point_watch_rebuild_handles(Arc::clone(disp_arc), Arc::clone(bitmap));
         info!("PointWatch rebuild handles wired into RuleScheduler");
     }
 
@@ -447,16 +439,16 @@ async fn main() -> Result<()> {
         tick_ms, max_concurrency
     );
 
-    // Load rules + initial PointWatch subscription rebuild (if handles wired
-    // above). reload_rules calls load_rules internally and then rebuilds the
-    // SubscriptionBitmap + dispatcher index in a single lock-correct path,
-    // so this also doubles as the initial PointWatch bootstrap.
+    // Load rules, then rebuild PointWatch from one pinned service generation.
+    // The rebuild gate keeps this rule/index/bitmap publication serialized
+    // with topology-driven and governed-rule refreshes.
     let initial_rebuild = point_watch_readiness.lock_rebuild().await;
     let initial_subscription_view = Arc::clone(&runtime_topology).pin_command().await;
     point_watch_readiness.mark_unready();
     match scheduler.reload_rules().await {
         Ok(count) => {
             let generation = initial_subscription_view.generation();
+            generation.rebuild_point_watch(&scheduler).await;
             let manifest_matches = pw_manifest_source.load().is_some_and(|manifest| {
                 manifest.layout_hash() == generation.point_manifest().layout_hash()
                     && manifest.slot_count() == generation.point_manifest().slot_count()
@@ -500,7 +492,7 @@ async fn main() -> Result<()> {
     }
 
     // Every successful topology replacement rebuilds PointWatch routing and
-    // bitmap subscriptions from the newly-published compatibility view.
+    // bitmap subscriptions from the newly published service generation.
     {
         let mut changes = runtime_topology.subscribe();
         let subscription_scheduler = Arc::clone(&scheduler);
@@ -521,6 +513,9 @@ async fn main() -> Result<()> {
                         match subscription_scheduler.reload_rules().await {
                             Ok(count) => {
                                 let generation = view.generation();
+                                generation
+                                    .rebuild_point_watch(&subscription_scheduler)
+                                    .await;
                                 let manifest_matches = subscription_manifest
                                     .load()
                                     .is_some_and(|manifest| {

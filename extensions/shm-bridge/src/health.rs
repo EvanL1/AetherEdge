@@ -15,6 +15,7 @@ use aether_ports::{
 use arc_swap::ArcSwapOption;
 
 use crate::managed::map_dataplane_error;
+use crate::topology_commit::validate_topology_publication_epoch;
 use crate::{ReconnectingSlotSource, ShmClientConfig, SlotSource};
 
 const CHANNEL_HEALTH_MANIFEST_DOMAIN: &str = "aether.channel-health.v1";
@@ -85,10 +86,34 @@ impl ShmChannelHealthWriter {
         path: impl AsRef<Path>,
         manifest: Arc<ChannelHealthManifest>,
     ) -> PortResult<Self> {
-        let canonical_path = path.as_ref();
+        Self::create_internal(path.as_ref(), manifest, 0)
+    }
+
+    /// Creates a fresh health segment carrying the coordinated publication
+    /// identity selected by the IO composition root.
+    pub fn create_at_epoch(
+        path: impl AsRef<Path>,
+        manifest: Arc<ChannelHealthManifest>,
+        publication_epoch: u64,
+    ) -> PortResult<Self> {
+        validate_topology_publication_epoch(publication_epoch)?;
+        Self::create_internal(path.as_ref(), manifest, publication_epoch)
+    }
+
+    fn create_internal(
+        canonical_path: &Path,
+        manifest: Arc<ChannelHealthManifest>,
+        publication_epoch: u64,
+    ) -> PortResult<Self> {
         let authority =
             AuthorityWriteGuard::acquire(canonical_path).map_err(map_dataplane_error)?;
-        publish_health_writer(canonical_path, manifest, None, &authority)
+        publish_health_writer(
+            canonical_path,
+            manifest,
+            None,
+            &authority,
+            publication_epoch,
+        )
     }
 
     /// Publishes one online/offline transition and refreshes writer heartbeat.
@@ -160,6 +185,10 @@ impl ShmChannelHealthWriter {
         self.writer.generation()
     }
 
+    fn publication_epoch(&self) -> u64 {
+        self.writer.header().publication_epoch()
+    }
+
     fn slot_count(&self) -> usize {
         self.writer.slot_count()
     }
@@ -212,12 +241,54 @@ impl ShmChannelHealthWriterHandle {
         Ok(handle)
     }
 
+    /// Creates and atomically publishes the initial coordinated health
+    /// generation.
+    pub fn create_at_epoch(
+        path: impl Into<PathBuf>,
+        manifest: Arc<ChannelHealthManifest>,
+        publication_epoch: u64,
+    ) -> PortResult<Self> {
+        validate_topology_publication_epoch(publication_epoch)?;
+        let handle = Self::empty(path);
+        handle.rebuild_for_publication(manifest, publication_epoch)?;
+        Ok(handle)
+    }
+
     /// Publishes a fresh health manifest while preserving observations for
     /// channel ids present in both the old and new manifests.
     ///
     /// Rebuilding an identical canonical manifest is a true no-op: it does not
     /// replace the inode, advance the writer generation, or refresh heartbeat.
     pub fn rebuild(&self, manifest: Arc<ChannelHealthManifest>) -> PortResult<()> {
+        self.rebuild_internal(manifest, 0, false)
+    }
+
+    /// Publishes a fresh health plane for a coordinated topology epoch.
+    /// Unlike the compatibility rebuild path, a new epoch always replaces an
+    /// identical manifest so both physical planes carry the same identity.
+    pub fn rebuild_for_publication(
+        &self,
+        manifest: Arc<ChannelHealthManifest>,
+        publication_epoch: u64,
+    ) -> PortResult<()> {
+        validate_topology_publication_epoch(publication_epoch)?;
+        if self.publication_epoch() == Some(publication_epoch) {
+            return Err(PortError::new(
+                PortErrorKind::InvalidData,
+                format!(
+                    "channel-health SHM publication epoch {publication_epoch} was already used"
+                ),
+            ));
+        }
+        self.rebuild_internal(manifest, publication_epoch, true)
+    }
+
+    fn rebuild_internal(
+        &self,
+        manifest: Arc<ChannelHealthManifest>,
+        publication_epoch: u64,
+        force_publication: bool,
+    ) -> PortResult<()> {
         let _local_authority = self.authority_gate.write().map_err(|_| {
             PortError::new(
                 PortErrorKind::Permanent,
@@ -230,7 +301,7 @@ impl ShmChannelHealthWriterHandle {
 
         if let Some(previous) = previous.as_ref() {
             previous.validate_authoritative_path()?;
-            if previous.manifest.as_ref() == manifest.as_ref() {
+            if !force_publication && previous.manifest.as_ref() == manifest.as_ref() {
                 return Ok(());
             }
         }
@@ -240,6 +311,7 @@ impl ShmChannelHealthWriterHandle {
             manifest,
             previous.as_deref(),
             &cross_process_authority,
+            publication_epoch,
         )?;
         self.current.store(Some(Arc::new(replacement)));
         Ok(())
@@ -294,6 +366,14 @@ impl ShmChannelHealthWriterHandle {
         self.current.load_full().map(|current| current.generation())
     }
 
+    /// Returns the current cross-plane publication identity.
+    #[must_use]
+    pub fn publication_epoch(&self) -> Option<u64> {
+        self.current
+            .load_full()
+            .map(|current| current.publication_epoch())
+    }
+
     /// Returns the current sparse health-segment slot count.
     #[must_use]
     pub fn slot_count(&self) -> Option<usize> {
@@ -323,6 +403,7 @@ fn publish_health_writer(
     manifest: Arc<ChannelHealthManifest>,
     previous: Option<&ShmChannelHealthWriter>,
     authority: &AuthorityWriteGuard,
+    publication_epoch: u64,
 ) -> PortResult<ShmChannelHealthWriter> {
     let max_slots = u32::try_from(manifest.slot_count()).map_err(|_| {
         PortError::new(
@@ -339,11 +420,12 @@ fn publish_health_writer(
         .as_nanos() as u64;
     let staging_path = generation_file_path(canonical_path, sequence.max(1));
     let mut cleanup = HealthStagingCleanup(Some(staging_path.clone()));
-    let staging_writer = SlotWriter::create(
+    let staging_writer = SlotWriter::create_at_epoch(
         &staging_path,
         max_slots,
         manifest.slot_count(),
         manifest.layout_hash(),
+        publication_epoch,
     )
     .map_err(map_dataplane_error)?;
 
@@ -454,6 +536,19 @@ impl ShmChannelHealthReader {
     /// Eagerly validates the health-plane layout for topology publication.
     pub fn validate_layout(&self) -> PortResult<()> {
         self.source.validate_layout(self.manifest.slot_count())
+    }
+
+    pub(crate) fn require_coordinated_publication(&self) {
+        self.source.require_coordinated_publication();
+    }
+
+    pub(crate) fn accept_publication_identity(
+        &self,
+        publication_epoch: u64,
+        writer_generation: u64,
+    ) -> PortResult<()> {
+        self.source
+            .accept_publication_identity(publication_epoch, writer_generation)
     }
 
     /// Returns the immutable health manifest paired with this reader.

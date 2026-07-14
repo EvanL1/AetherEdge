@@ -1,10 +1,61 @@
 use std::fs::OpenOptions;
 
 use aether_dataplane::{
-    DataplaneError, SlotIo, SlotReader, SlotWriter, UNIFIED_MAGIC, UNIFIED_VERSION,
-    calculate_file_size,
+    DataplaneError, HeaderSnapshot, SlotIo, SlotReader, SlotWriter, UNIFIED_MAGIC, UNIFIED_VERSION,
+    UnifiedHeader, calculate_file_size,
 };
 use memmap2::MmapOptions;
+
+/// Frozen view compiled into pre-epoch v4 readers.
+///
+/// Those readers treated the final eight header bytes as reserved and never
+/// interpreted them. Keeping this fixture independent from `UnifiedHeader`
+/// makes the rolling-compatibility test fail if a future change moves slots or
+/// grows the physical header while still claiming v4 compatibility.
+#[repr(C, align(64))]
+struct LegacyV4Header {
+    magic: u64,
+    version: u32,
+    max_slots: u32,
+    slot_count: std::sync::atomic::AtomicU32,
+    _pad: [u8; 4],
+    last_update_ts: std::sync::atomic::AtomicU64,
+    writer_heartbeat: std::sync::atomic::AtomicU64,
+    routing_hash: std::sync::atomic::AtomicU64,
+    writer_generation: std::sync::atomic::AtomicU64,
+    _reserved: [u8; 8],
+}
+
+const _: () = assert!(std::mem::size_of::<LegacyV4Header>() == 64);
+
+#[test]
+fn publication_epoch_extension_preserves_legacy_public_header_literals() {
+    let header = UnifiedHeader {
+        magic: UNIFIED_MAGIC,
+        version: UNIFIED_VERSION,
+        max_slots: 4,
+        slot_count: std::sync::atomic::AtomicU32::new(2),
+        _pad: [0; 4],
+        last_update_ts: std::sync::atomic::AtomicU64::new(0),
+        writer_heartbeat: std::sync::atomic::AtomicU64::new(0),
+        routing_hash: std::sync::atomic::AtomicU64::new(99),
+        writer_generation: std::sync::atomic::AtomicU64::new(2),
+        _reserved: 4_096_u64.to_ne_bytes(),
+    };
+    let snapshot = HeaderSnapshot {
+        magic: UNIFIED_MAGIC,
+        version: UNIFIED_VERSION,
+        max_slots: 4,
+        slot_count: 2,
+        last_update_ts: 0,
+        writer_heartbeat: 0,
+        routing_hash: 99,
+        writer_generation: 2,
+    };
+
+    assert_eq!(header.publication_epoch(), 4_096);
+    assert_eq!(snapshot.routing_hash, 99);
+}
 
 #[test]
 fn reader_rejects_mapping_that_cannot_cover_declared_slots() {
@@ -134,6 +185,59 @@ fn writer_create_publishes_a_valid_readable_segment() {
     let reader = SlotReader::open(&path).expect("open created segment read-only");
     assert_eq!(reader.read_slot(1).expect("written slot").value, 1.0);
     assert_eq!(reader.header().routing_hash, 99);
+}
+
+#[test]
+fn writer_create_at_epoch_exposes_the_cross_plane_publication_identity() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let path = directory.path().join("coordinated.shm");
+    let publication_epoch = 4_096;
+
+    let writer = SlotWriter::create_at_epoch(&path, 4, 2, 99, publication_epoch)
+        .expect("create coordinated SHM writer");
+    assert_eq!(writer.header().publication_epoch(), publication_epoch);
+
+    let reader = SlotReader::open(&path).expect("open coordinated SHM reader");
+    assert_eq!(reader.publication_epoch(), publication_epoch);
+    assert_eq!(reader.header().routing_hash, 99);
+}
+
+#[test]
+fn legacy_v4_reader_accepts_new_io_segment_during_io_first_rolling_upgrade() {
+    use std::sync::atomic::Ordering;
+
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let path = directory.path().join("new-io-old-reader.shm");
+    let writer =
+        SlotWriter::create_at_epoch(&path, 4, 2, 99, 4_096).expect("create coordinated SHM writer");
+    writer.set_direct(1, 37.5, 37.5, 1_234);
+    writer.flush().expect("flush coordinated SHM writer");
+
+    let file = OpenOptions::new()
+        .read(true)
+        .open(&path)
+        .expect("open new IO segment as a legacy reader");
+    // SAFETY: the file is immutable for the lifetime of this read-only mapping
+    // and was created at the exact v4 size by `SlotWriter` above.
+    let mmap = unsafe { MmapOptions::new().map(&file) }.expect("map new IO segment");
+    // SAFETY: the fixture is 64-byte aligned, the mmap begins at a page-aligned
+    // address, and the file is at least one complete frozen v4 header long.
+    let header = unsafe { &*mmap.as_ptr().cast::<LegacyV4Header>() };
+
+    assert_eq!(header.magic, UNIFIED_MAGIC);
+    assert_eq!(header.version, UNIFIED_VERSION);
+    assert_eq!(header.max_slots, 4);
+    assert_eq!(header.slot_count.load(Ordering::Acquire), 2);
+    assert_eq!(header.routing_hash.load(Ordering::Acquire), 99);
+    assert_eq!(header.writer_generation.load(Ordering::Acquire) & 1, 0);
+
+    let slot_offset = std::mem::size_of::<LegacyV4Header>() + std::mem::size_of::<u64>() * 4;
+    let value_bits = u64::from_ne_bytes(
+        mmap[slot_offset..slot_offset + 8]
+            .try_into()
+            .expect("one legacy slot value"),
+    );
+    assert_eq!(f64::from_bits(value_bits), 37.5);
 }
 
 #[test]

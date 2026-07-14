@@ -72,6 +72,16 @@ pub enum AutomationError {
     #[error("Invalid routing: {0}")]
     InvalidRouting(String),
 
+    /// The caller fenced a configuration mutation against a stale authority revision.
+    #[error("Routing conflict: {0}")]
+    RoutingConflict(String),
+
+    /// The caller fenced an instance/configuration mutation against a stale
+    /// aggregate revision, or attempted to remove an instance still used by
+    /// logical routing.
+    #[error("Instance configuration conflict: {0}")]
+    ConfigurationConflict(String),
+
     /// Authenticated actor lacks the application permission required to issue
     /// a device command.
     #[error("Authorization denied: {0}")]
@@ -142,6 +152,8 @@ impl errors::AetherErrorTrait for AutomationError {
             // Validation
             Self::InvalidData(_) => "AUTOMATION_INVALID_DATA",
             Self::InvalidRouting(_) => "AUTOMATION_INVALID_ROUTING",
+            Self::RoutingConflict(_) => "AUTOMATION_ROUTING_CONFLICT",
+            Self::ConfigurationConflict(_) => "AUTOMATION_CONFIGURATION_CONFLICT",
             Self::AuthorizationDenied(_) => "AUTOMATION_AUTHORIZATION_DENIED",
             Self::AuditUnavailable(_) => "AUTOMATION_AUDIT_UNAVAILABLE",
 
@@ -173,7 +185,10 @@ impl errors::AetherErrorTrait for AutomationError {
             Self::InstanceNotFound(_) | Self::RuleNotFound(_) => ErrorCategory::NotFound,
 
             // Conflict
-            Self::InstanceExists(_) | Self::RuleExists(_) => ErrorCategory::Conflict,
+            Self::InstanceExists(_)
+            | Self::RuleExists(_)
+            | Self::RoutingConflict(_)
+            | Self::ConfigurationConflict(_) => ErrorCategory::Conflict,
 
             // Validation
             Self::InvalidData(_)
@@ -226,6 +241,12 @@ impl errors::AetherErrorTrait for AutomationError {
             ),
             Self::InvalidRouting(_) => Some(
                 "Verify routing configuration. Check that source and target channels/instances exist".to_string()
+            ),
+            Self::RoutingConflict(_) => Some(
+                "Reload the current logical-routing revision and review the newer topology before submitting a fresh command".to_string()
+            ),
+            Self::ConfigurationConflict(_) => Some(
+                "Reload the current instances revision and review routed descendants before submitting a fresh command".to_string()
             ),
             Self::AuthorizationDenied(_) => Some(
                 "Use a signed Admin/Engineer session or the local aether CLI to issue device commands".to_string()

@@ -6,7 +6,7 @@
 
 use crate::config::CreateInstanceRequest;
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::HeaderMap,
     response::Json,
 };
@@ -16,8 +16,28 @@ use std::sync::Arc;
 use tracing::{error, info};
 
 use crate::app_state::AppState;
-use crate::dto::{ActionRequest, CreateInstanceDto, UpdateInstanceDto};
+use crate::dto::{
+    ActionRequest, CreateInstanceDto, InstanceMutationConfirmation, UpdateInstanceDto,
+};
 use crate::error::AutomationError;
+use crate::instance_configuration::{
+    InstanceConfigurationAcceptance, InstanceConfigurationMutation, InstanceConfigurationPayload,
+    InstanceConfigurationRevision,
+};
+
+/// Return the current authoritative instance-configuration CAS head.
+pub async fn get_instance_configuration_revision(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<SuccessResponse<serde_json::Value>>, AutomationError> {
+    let revision = state
+        .instance_configuration_application
+        .current_revision()
+        .await?;
+    Ok(Json(SuccessResponse::new(json!({
+        "scope": "instances",
+        "revision": revision.get()
+    }))))
+}
 
 /// Create a new model instance
 ///
@@ -42,14 +62,23 @@ use crate::error::AutomationError;
                     "updated_at": "2025-10-15T10:30:00Z"
                 }
             })
-        )
+        ),
+        (status = 403, description = "Missing/invalid credentials or actor lacks automation.instance.manage"),
+        (status = 409, description = "Stale instances revision or duplicate identity"),
+        (status = 422, description = "Explicit confirmation, revision, or desired state is invalid")
+    ),
+    security(
+        ("bearer_auth" = [])
     ),
     tag = "automation"
 )]
 pub async fn create_instance(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Json(dto): Json<CreateInstanceDto>,
 ) -> Result<Json<SuccessResponse<serde_json::Value>>, AutomationError> {
+    let expected_revision = InstanceConfigurationRevision::new(dto.expected_revision);
+    let confirmed = dto.confirmed;
     let req = CreateInstanceRequest {
         instance_id: dto.instance_id,
         instance_name: dto.instance_name,
@@ -58,9 +87,24 @@ pub async fn create_instance(
         properties: dto.properties.unwrap_or_default(),
     };
 
-    let instance = state.instance_manager.create_instance(req).await?;
+    let acceptance = apply_instance_mutation(
+        &state,
+        &headers,
+        confirmed,
+        InstanceConfigurationMutation::Create {
+            request: req,
+            expected_revision,
+        },
+    )
+    .await?;
+    let InstanceConfigurationPayload::Created(instance) = acceptance.payload() else {
+        return Err(AutomationError::InternalError(
+            "instance create returned an unexpected payload".to_string(),
+        ));
+    };
     Ok(Json(SuccessResponse::new(json!({
-        "instance": instance
+        "instance": instance,
+        "governance": governance_response(&acceptance)
     }))))
 }
 
@@ -97,11 +141,15 @@ pub async fn create_instance(
         (status = 409, description = "Instance name already exists"),
         (status = 500, description = "Database error")
     ),
+    security(
+        ("bearer_auth" = [])
+    ),
     tag = "automation"
 )]
 pub async fn update_instance(
     State(state): State<Arc<AppState>>,
     Path(id): Path<u32>,
+    headers: HeaderMap,
     Json(dto): Json<UpdateInstanceDto>,
 ) -> Result<Json<SuccessResponse<serde_json::Value>>, AutomationError> {
     // Validate: at least one field must be provided
@@ -111,121 +159,40 @@ pub async fn update_instance(
         ));
     }
 
-    // Query current instance_name for local cache maintenance.
-    let old_instance_name: String =
-        match sqlx::query_scalar("SELECT instance_name FROM instances WHERE instance_id = ?")
-            .bind(id as i32)
-            .fetch_one(&state.instance_manager.pool)
-            .await
-        {
-            Ok(name) => name,
-            Err(_) => return Err(AutomationError::InstanceNotFound(id.to_string())),
-        };
+    let acceptance = apply_instance_mutation(
+        &state,
+        &headers,
+        dto.confirmed,
+        InstanceConfigurationMutation::Update {
+            instance_id: id,
+            instance_name: dto.instance_name,
+            properties: dto.properties,
+            expected_revision: InstanceConfigurationRevision::new(dto.expected_revision),
+        },
+    )
+    .await?;
+    let InstanceConfigurationPayload::Updated { instance_name, .. } = acceptance.payload() else {
+        return Err(AutomationError::InternalError(
+            "instance update returned an unexpected payload".to_string(),
+        ));
+    };
 
-    // Determine the final instance name
-    let new_instance_name = dto.instance_name.as_deref().unwrap_or(&old_instance_name);
-    let is_renaming = dto.instance_name.is_some() && new_instance_name != old_instance_name;
-
-    // Handle renaming
-    if is_renaming {
-        // Rename in SQLite (includes transaction)
-        state
-            .instance_manager
-            .rename_instance(id, new_instance_name)
-            .await?;
-    }
-
-    // Handle properties update.
-    //
-    // Semantics: this endpoint replaces the property map atomically — keys
-    // omitted from `dto.properties` are removed. (For single-point edits use
-    // PUT /api/instances/{id}/properties/{property_id}, which does not touch
-    // sibling properties.)
-    if let Some(ref properties) = dto.properties {
-        let product_name: String =
-            match sqlx::query_scalar("SELECT product_name FROM instances WHERE instance_id = ?")
-                .bind(id as i64)
-                .fetch_one(&state.instance_manager.pool)
-                .await
-            {
-                Ok(name) => name,
-                Err(_) => return Err(AutomationError::InstanceNotFound(id.to_string())),
-            };
-
-        let mut tx =
-            state.instance_manager.pool.begin().await.map_err(|e| {
-                AutomationError::DatabaseError(format!("Failed to begin tx: {}", e))
-            })?;
-
-        // Wipe existing rows so omitted keys disappear (replace, not merge).
-        if let Err(e) = sqlx::query("DELETE FROM instance_properties WHERE instance_id = ?")
-            .bind(id as i64)
-            .execute(&mut *tx)
-            .await
-        {
-            error!("Failed to clear properties for instance {}: {}", id, e);
-            let _ = tx.rollback().await;
-            return Err(AutomationError::DatabaseError(format!(
-                "Database update failed: {}",
-                e
-            )));
-        }
-
-        if let Err(e) = state
-            .instance_manager
-            .write_properties_tx(&mut tx, id, &product_name, properties)
-            .await
-        {
-            error!("Failed to write properties for instance {}: {}", id, e);
-            let _ = tx.rollback().await;
-            return Err(AutomationError::InvalidData(format!(
-                "Failed to write properties: {}",
-                e
-            )));
-        }
-
-        if let Err(e) =
-            sqlx::query("UPDATE instances SET updated_at = CURRENT_TIMESTAMP WHERE instance_id = ?")
-                .bind(id as i64)
-                .execute(&mut *tx)
-                .await
-        {
-            error!("Failed to bump updated_at for instance {}: {}", id, e);
-            let _ = tx.rollback().await;
-            return Err(AutomationError::DatabaseError(format!(
-                "Database update failed: {}",
-                e
-            )));
-        }
-
-        if let Err(e) = tx.commit().await {
-            error!("Failed to commit properties tx for instance {}: {}", id, e);
-            return Err(AutomationError::DatabaseError(format!(
-                "Database commit failed: {}",
-                e
-            )));
-        }
-    }
-
-    info!(
-        "Instance {} updated successfully (renamed: {}, properties: {})",
-        id,
-        is_renaming,
-        dto.properties.is_some()
-    );
+    info!("Instance {} updated successfully", id);
 
     // Query and return updated instance
     match state.instance_manager.get_instance(id).await {
         Ok(instance) => Ok(Json(SuccessResponse::new(json!({
-            "instance": instance
+            "instance": instance,
+            "governance": governance_response(&acceptance)
         })))),
         Err(e) => {
             error!("Failed to query updated instance {}: {}", id, e);
             // Update succeeded but query failed - return id as fallback
             Ok(Json(SuccessResponse::new(json!({
                 "instance_id": id,
-                "instance_name": new_instance_name,
-                "message": "Instance updated successfully but failed to retrieve details"
+                "instance_name": instance_name,
+                "message": "Instance updated successfully but failed to retrieve details",
+                "governance": governance_response(&acceptance)
             }))))
         },
     }
@@ -245,18 +212,100 @@ pub async fn update_instance(
             example = json!({
                 "message": "Instance 1 deleted"
             })
-        )
+        ),
+        (status = 403, description = "Missing/invalid credentials or actor lacks automation.instance.manage"),
+        (status = 409, description = "Stale instances revision or routed subtree"),
+        (status = 422, description = "Explicit confirmation or revision is invalid")
+    ),
+    security(
+        ("bearer_auth" = [])
     ),
     tag = "automation"
 )]
 pub async fn delete_instance(
     State(state): State<Arc<AppState>>,
     Path(id): Path<u32>,
+    headers: HeaderMap,
+    Query(request): Query<InstanceMutationConfirmation>,
 ) -> Result<Json<SuccessResponse<serde_json::Value>>, AutomationError> {
-    state.instance_manager.delete_instance(id).await?;
+    let acceptance = apply_instance_mutation(
+        &state,
+        &headers,
+        request.confirmed,
+        InstanceConfigurationMutation::DeleteSubtree {
+            instance_id: id,
+            expected_revision: InstanceConfigurationRevision::new(request.expected_revision),
+        },
+    )
+    .await?;
+    let InstanceConfigurationPayload::Deleted {
+        deleted_instance_ids,
+        ..
+    } = acceptance.payload()
+    else {
+        return Err(AutomationError::InternalError(
+            "instance deletion returned an unexpected payload".to_string(),
+        ));
+    };
     Ok(Json(SuccessResponse::new(json!({
-        "message": format!("Instance {} deleted", id)
+        "message": format!("Instance {} subtree deleted", id),
+        "deleted_instance_ids": deleted_instance_ids,
+        "governance": governance_response(&acceptance)
     }))))
+}
+
+pub(crate) async fn apply_instance_mutation(
+    state: &AppState,
+    headers: &HeaderMap,
+    confirmed: bool,
+    mutation: InstanceConfigurationMutation,
+) -> Result<InstanceConfigurationAcceptance, AutomationError> {
+    let timestamp =
+        aether_domain::TimestampMs::new(chrono::Utc::now().timestamp_millis().max(0) as u64);
+    let invocation = crate::infra::application_control::command_invocation_from_headers(
+        &state.control_authenticator,
+        headers,
+        confirmed,
+        timestamp,
+    );
+    let acceptance = state
+        .instance_configuration_application
+        .mutate(invocation.context(), mutation)
+        .await?;
+    if let Some(failure) = acceptance.audit_status().failure() {
+        error!(
+            request_id = acceptance.request_id(),
+            error = %failure,
+            "instance configuration committed but terminal audit is incomplete; do not retry"
+        );
+    }
+    if let Some(failure) = acceptance.runtime_status().failure() {
+        error!(
+            request_id = acceptance.request_id(),
+            error = %failure,
+            "instance configuration committed but cache reconciliation is degraded; do not retry"
+        );
+    }
+    Ok(acceptance)
+}
+
+pub(crate) fn governance_response(
+    acceptance: &InstanceConfigurationAcceptance,
+) -> serde_json::Value {
+    json!({
+        "request_id": acceptance.request_id(),
+        "operation": acceptance.kind().as_str(),
+        "resulting_revision": acceptance.resulting_revision().get(),
+        "audit": {
+            "status": acceptance.audit_status().as_str(),
+            "retryable": false
+        },
+        "runtime": {
+            "status": acceptance.runtime_status().as_str(),
+            "reconciliation_required": acceptance.runtime_status().reconciliation_required()
+        },
+        "retryable": acceptance.is_retryable()
+    })
 }
 
 /// Reload instances from database

@@ -138,6 +138,7 @@ fn actor_for_role(actor_id: &str, role: Option<&str>) -> Actor {
             .with_permission("automation.rule.execute")
             .with_permission("automation.rule.manage")
             .with_permission("automation.routing.manage")
+            .with_permission("automation.instance.manage")
             .with_permission("io.channel.manage")
             .with_permission("alarm.rule.manage")
             .with_permission("alarm.alert.resolve")

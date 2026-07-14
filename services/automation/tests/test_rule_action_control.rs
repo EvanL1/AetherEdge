@@ -10,7 +10,6 @@ use aether_ports::{
     AuditOutcome, AuditRecord, AuditSink, CommandDispatcher, CommandReceipt, CommandTopologyFence,
     PortError, PortErrorKind, PortResult,
 };
-use aether_routing::RoutingCache;
 use aether_rules::{
     MemoryRuleLiveState, Rule, RuleActionCommand, RuleActionCommandFacade, RuleExecutor,
     extract_rule_flow,
@@ -123,11 +122,8 @@ impl CommandDispatcher for RecordingDispatcher {
 fn executor(dispatcher: Arc<RecordingDispatcher>, audit: Arc<RecordingAudit>) -> RuleExecutor {
     let application = Arc::new(ControlApplication::new(dispatcher, audit, SafetyPolicy));
     let action_application = Arc::new(RuleActionApplication::new(application));
-    RuleExecutor::new(
-        Arc::new(MemoryRuleLiveState::new()),
-        Arc::new(RoutingCache::default()),
-    )
-    .with_action_command_facade(action_application)
+    RuleExecutor::new(Arc::new(MemoryRuleLiveState::new()))
+        .with_action_command_facade(action_application)
 }
 
 #[derive(Default)]
@@ -167,11 +163,8 @@ fn executor_with_completion_audit_failure(
 ) -> RuleExecutor {
     let application = Arc::new(ControlApplication::new(dispatcher, audit, SafetyPolicy));
     let action_application = Arc::new(RuleActionApplication::new(application));
-    RuleExecutor::new(
-        Arc::new(MemoryRuleLiveState::new()),
-        Arc::new(RoutingCache::default()),
-    )
-    .with_action_command_facade(action_application)
+    RuleExecutor::new(Arc::new(MemoryRuleLiveState::new()))
+        .with_action_command_facade(action_application)
 }
 
 fn action_rule(id: i64, point_type: &str, value: Value) -> Rule {

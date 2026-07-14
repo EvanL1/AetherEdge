@@ -13,6 +13,7 @@ const SLOT_BYTES: usize = 32;
 #[derive(Debug)]
 pub struct SnapshotImage {
     header: HeaderSnapshot,
+    publication_epoch: u64,
     slots: Vec<Option<SlotRead>>,
 }
 
@@ -30,6 +31,7 @@ impl SnapshotImage {
         }
 
         let header = decode_header(&bytes)?;
+        let publication_epoch = read_u64(&bytes, 56, "publication_epoch")?;
         if header.magic != UNIFIED_MAGIC {
             return Err(DataplaneError::InvalidLayout(format!(
                 "snapshot magic mismatch: expected 0x{UNIFIED_MAGIC:x}, got 0x{:x}",
@@ -71,13 +73,24 @@ impl SnapshotImage {
         for slot in 0..header.slot_count as usize {
             slots.push(decode_slot(&bytes, slot)?);
         }
-        Ok(Self { header, slots })
+        Ok(Self {
+            header,
+            publication_epoch,
+            slots,
+        })
     }
 
     /// Returns physical header metadata captured by the snapshot.
     #[must_use]
     pub const fn header(&self) -> HeaderSnapshot {
         self.header
+    }
+
+    /// Returns the cross-plane publication identity captured in the physical
+    /// header, or zero for an uncoordinated snapshot.
+    #[must_use]
+    pub const fn publication_epoch(&self) -> u64 {
+        self.publication_epoch
     }
 
     /// Returns compact slot values; `None` is the unwritten sentinel.

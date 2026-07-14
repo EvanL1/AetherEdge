@@ -4,14 +4,16 @@ use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 use std::time::Duration;
 
-use aether_domain::PointKind;
 use aether_ports::{PortError, PortErrorKind, PortResult};
 use aether_shm_bridge::{
-    ChannelPointManifest, ReconnectingSlotSource, ShmClientConfig, SlotSource,
+    PhysicalPointAddress, ShmClientConfig, ShmReadTopologyGeneration, SlotSource,
 };
-use anyhow::Context;
+use aether_store_local::{SqliteLiveTopologySnapshot, load_sqlite_live_topology};
+use arc_swap::ArcSwap;
 use regex::Regex;
 use sqlx::SqlitePool;
+use tokio::sync::Mutex;
+use tokio_util::sync::CancellationToken;
 use tracing::warn;
 
 use crate::config::EnvConfig;
@@ -59,12 +61,129 @@ pub struct ShmNetValueSource {
     groups: BTreeMap<String, LogicalGroup>,
 }
 
+/// One immutable Uplink view of the SQLite catalogue and committed IO epoch.
+///
+/// The retained read generation is deliberately service-owned: callers pin
+/// this object once for a complete cloud read or upload pass, so physical
+/// slots and logical routes cannot be selected from different generations.
+pub struct UplinkTopologyGeneration {
+    read: Arc<ShmReadTopologyGeneration>,
+    values: ShmNetValueSource,
+    digest: u64,
+}
+
+impl UplinkTopologyGeneration {
+    /// Reads one group from the routes and SHM generation captured together.
+    pub fn read_group(
+        &self,
+        key: &str,
+        field: Option<&str>,
+    ) -> PortResult<Option<HashMap<String, serde_json::Value>>> {
+        self.read.validate_layouts()?;
+        self.values.read_group(key, field)
+    }
+
+    /// Collects one complete scheduler pass from this immutable generation.
+    pub fn collect_entries(
+        &self,
+        patterns: &[String],
+        excludes: &[Regex],
+    ) -> PortResult<Vec<PropertyEntry>> {
+        self.read.validate_layouts()?;
+        self.values.collect_entries(patterns, excludes)
+    }
+
+    /// Returns the deterministic digest of the one SQLite snapshot used here.
+    #[must_use]
+    pub const fn digest(&self) -> u64 {
+        self.digest
+    }
+
+    /// Returns the committed point/health IO epoch paired with the snapshot.
+    #[must_use]
+    pub fn publication_epoch(&self) -> u64 {
+        self.read.publication_epoch()
+    }
+}
+
+/// Atomically publishes complete Uplink generations after dual-plane validation.
+pub struct UplinkTopologyHandle {
+    current: ArcSwap<UplinkTopologyGeneration>,
+    refresh_gate: Mutex<()>,
+}
+
+impl UplinkTopologyHandle {
+    /// Creates an offline-first generation from exactly one SQLite snapshot.
+    pub fn new_lazy(snapshot: SqliteLiveTopologySnapshot, config: &EnvConfig) -> PortResult<Self> {
+        let initial = Arc::new(build_uplink_generation(snapshot, config, false)?);
+        Ok(Self {
+            current: ArcSwap::new(initial),
+            refresh_gate: Mutex::new(()),
+        })
+    }
+
+    /// Pins one complete generation for a cloud read or scheduler/upload pass.
+    #[must_use]
+    pub fn load(&self) -> Arc<UplinkTopologyGeneration> {
+        self.current.load_full()
+    }
+
+    /// Loads one authoritative SQLite snapshot, validates the matching
+    /// committed point/health pair, and atomically publishes both together.
+    pub async fn refresh(&self, pool: &SqlitePool, config: &EnvConfig) -> PortResult<bool> {
+        let _refresh = self.refresh_gate.lock().await;
+        let snapshot = load_sqlite_live_topology(pool).await?;
+        let candidate = Arc::new(build_uplink_generation(snapshot, config, true)?);
+        let current = self.load();
+        if current.digest() == candidate.digest()
+            && current.publication_epoch() == candidate.publication_epoch()
+            && current.read.point_writer_generation() == candidate.read.point_writer_generation()
+            && current.read.health_writer_generation() == candidate.read.health_writer_generation()
+        {
+            return Ok(false);
+        }
+        candidate
+            .read
+            .with_validated_authority(|| self.current.store(Arc::clone(&candidate)))?;
+        Ok(true)
+    }
+}
+
+/// Keeps the service generation reconciled with SQLite and committed IO state.
+pub async fn run_topology_refresher(
+    topology: Arc<UplinkTopologyHandle>,
+    pool: SqlitePool,
+    config: Arc<EnvConfig>,
+    shutdown: CancellationToken,
+) {
+    let interval = Duration::from_millis(config.shm_topology_refresh_interval_ms.max(100));
+    let mut ticker = tokio::time::interval(interval);
+    ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    loop {
+        tokio::select! {
+            _ = shutdown.cancelled() => break,
+            _ = ticker.tick() => match topology.refresh(&pool, &config).await {
+                Ok(true) => {
+                    let generation = topology.load();
+                    tracing::info!(
+                        digest = generation.digest(),
+                        publication_epoch = generation.publication_epoch(),
+                        "Uplink live topology generation refreshed"
+                    );
+                },
+                Ok(false) => {},
+                Err(error) => tracing::warn!(
+                    retryable = error.is_retryable(),
+                    "Uplink live topology refresh retained the previous generation: {error}"
+                ),
+            },
+        }
+    }
+}
+
 impl ShmNetValueSource {
     #[must_use]
-    pub fn new<S>(slots: Arc<S>, groups: Vec<LogicalGroup>) -> Self
-    where
-        S: SlotSource,
-    {
+    pub fn new(slots: Arc<dyn SlotSource>, groups: Vec<LogicalGroup>) -> Self {
         Self {
             slots,
             groups: groups
@@ -153,131 +272,64 @@ impl ShmNetValueSource {
     }
 }
 
-/// Rebuilds logical discovery from SQLite and creates a lazy SHM reader.
-pub async fn build_net_value_source(
-    pool: &SqlitePool,
+fn build_uplink_generation(
+    snapshot: SqliteLiveTopologySnapshot,
     config: &EnvConfig,
-) -> anyhow::Result<ShmNetValueSource> {
-    let manifest = load_channel_manifest(pool).await?;
-    let groups = load_logical_groups(pool, &manifest).await?;
-    let slots = Arc::new(ReconnectingSlotSource::new(
-        ShmClientConfig::new(&config.shm_path, manifest.layout_hash())
-            .with_writer_stale_after(Duration::from_millis(config.shm_writer_stale_after_ms))
-            .with_identity_check_interval(Duration::from_millis(
-                config.shm_identity_check_interval_ms,
-            )),
-    ));
-    Ok(ShmNetValueSource::new(slots, groups))
+    validate_physical: bool,
+) -> PortResult<UplinkTopologyGeneration> {
+    let digest = snapshot.digest();
+    let groups = logical_groups_from_snapshot(&snapshot)?;
+    let point_manifest = Arc::new(snapshot.point_manifest().clone());
+    let health_manifest = Arc::new(snapshot.health_manifest().clone());
+    let point_config = shm_client_config(&config.shm_path, point_manifest.layout_hash(), config);
+    let health_config = shm_client_config(
+        &config.channel_health_shm_path,
+        health_manifest.layout_hash(),
+        config,
+    );
+    let read = Arc::new(if validate_physical {
+        ShmReadTopologyGeneration::open(
+            point_config,
+            health_config,
+            point_manifest,
+            health_manifest,
+        )?
+    } else {
+        ShmReadTopologyGeneration::new_lazy(
+            point_config,
+            health_config,
+            point_manifest,
+            health_manifest,
+        )?
+    });
+    let slots: Arc<dyn SlotSource> = read.point_source().clone();
+    Ok(UplinkTopologyGeneration {
+        read,
+        values: ShmNetValueSource::new(slots, groups),
+        digest,
+    })
 }
 
-async fn load_channel_manifest(pool: &SqlitePool) -> anyhow::Result<ChannelPointManifest> {
-    let mut counts = BTreeMap::<u32, [u32; 4]>::new();
-    for (table, type_index, physical_only) in [
-        ("telemetry_points", 0_usize, true),
-        ("signal_points", 1_usize, true),
-        ("control_points", 2_usize, false),
-        ("adjustment_points", 3_usize, false),
-    ] {
-        let query = if physical_only {
-            format!(
-                "SELECT p.channel_id, MAX(p.point_id) + 1 \
-                 FROM {table} p JOIN channels c ON c.channel_id = p.channel_id \
-                 WHERE c.protocol != 'virtual' GROUP BY p.channel_id"
-            )
-        } else {
-            format!("SELECT channel_id, MAX(point_id) + 1 FROM {table} GROUP BY channel_id")
-        };
-        let rows: Vec<(i64, i64)> = sqlx::query_as(&query)
-            .fetch_all(pool)
-            .await
-            .with_context(|| format!("load uplink SHM counts from {table}"))?;
-        for (channel_id, count) in rows {
-            counts
-                .entry(config_u32(channel_id, "channel_id")?)
-                .or_insert([0; 4])[type_index] = config_u32(count, "point count")?;
-        }
-    }
-    Ok(ChannelPointManifest::from_map(counts))
-}
-
-async fn load_logical_groups(
-    pool: &SqlitePool,
-    manifest: &ChannelPointManifest,
-) -> anyhow::Result<Vec<LogicalGroup>> {
+fn logical_groups_from_snapshot(
+    snapshot: &SqliteLiveTopologySnapshot,
+) -> PortResult<Vec<LogicalGroup>> {
+    let manifest = snapshot.point_manifest();
     let mut groups = BTreeMap::<String, (String, String, String, BTreeMap<String, usize>)>::new();
-    for (table, code, kind, physical_only) in [
-        ("telemetry_points", "T", PointKind::Telemetry, true),
-        ("signal_points", "S", PointKind::Status, true),
-        ("control_points", "C", PointKind::Command, false),
-        ("adjustment_points", "A", PointKind::Action, false),
-    ] {
-        let query = if physical_only {
-            format!(
-                "SELECT p.channel_id, p.point_id \
-                 FROM {table} p JOIN channels c ON c.channel_id = p.channel_id \
-                 WHERE c.protocol != 'virtual' ORDER BY p.channel_id, p.point_id"
+    for &target in snapshot.configured_physical_points() {
+        let slot = manifest.slot_for(target).ok_or_else(|| {
+            PortError::new(
+                PortErrorKind::Conflict,
+                "configured physical point is absent from its snapshot manifest",
             )
-        } else {
-            format!("SELECT channel_id, point_id FROM {table} ORDER BY channel_id, point_id")
-        };
-        let rows: Vec<(i64, i64)> = sqlx::query_as(&query)
-            .fetch_all(pool)
-            .await
-            .with_context(|| format!("load uplink groups from {table}"))?;
-        for (channel_id, point_id) in rows {
-            let channel_id = config_u32(channel_id, "group channel_id")?;
-            let point_id = config_u32(point_id, "group point_id")?;
-            if let Some(slot) = manifest.slot(channel_id, kind, point_id) {
-                add_group_point(
-                    &mut groups,
-                    "io",
-                    &channel_id.to_string(),
-                    code,
-                    point_id.to_string(),
-                    slot,
-                );
-            }
-        }
+        })?;
+        add_physical_group_point(&mut groups, target, slot);
     }
 
-    let measurements: Vec<(i64, i64, String, i64, i64)> = sqlx::query_as(
-        "SELECT instance_id, channel_id, channel_type, channel_point_id, measurement_id \
-         FROM measurement_routing WHERE enabled = TRUE",
-    )
-    .fetch_all(pool)
-    .await
-    .context("load uplink measurement groups")?;
-    for (instance_id, channel_id, channel_type, channel_point_id, measurement_id) in measurements {
-        add_routed_group_point(
-            &mut groups,
-            manifest,
-            "M",
-            instance_id,
-            measurement_id,
-            channel_id,
-            &channel_type,
-            channel_point_id,
-        )?;
+    for (instance_id, point_id, target) in snapshot.measurement_routes() {
+        add_routed_group_point(&mut groups, manifest, "M", instance_id, point_id, target)?;
     }
-
-    let actions: Vec<(i64, i64, String, i64, i64)> = sqlx::query_as(
-        "SELECT instance_id, channel_id, channel_type, channel_point_id, action_id \
-         FROM action_routing WHERE enabled = TRUE",
-    )
-    .fetch_all(pool)
-    .await
-    .context("load uplink action groups")?;
-    for (instance_id, channel_id, channel_type, channel_point_id, action_id) in actions {
-        add_routed_group_point(
-            &mut groups,
-            manifest,
-            "A",
-            instance_id,
-            action_id,
-            channel_id,
-            &channel_type,
-            channel_point_id,
-        )?;
+    for (instance_id, point_id, target) in snapshot.action_routes() {
+        add_routed_group_point(&mut groups, manifest, "A", instance_id, point_id, target)?;
     }
 
     Ok(groups
@@ -313,36 +365,55 @@ fn add_group_point(
         .insert(point_id, slot);
 }
 
-#[allow(clippy::too_many_arguments)]
+fn add_physical_group_point(groups: &mut GroupMap, target: PhysicalPointAddress, slot: usize) {
+    add_group_point(
+        groups,
+        "io",
+        &target.channel_id().get().to_string(),
+        point_kind_code(target),
+        target.point_id().get().to_string(),
+        slot,
+    );
+}
+
 fn add_routed_group_point(
     groups: &mut GroupMap,
-    manifest: &ChannelPointManifest,
+    manifest: &aether_shm_bridge::ChannelPointManifest,
     instance_data_type: &str,
-    instance_id: i64,
-    logical_point_id: i64,
-    channel_id: i64,
-    channel_type: &str,
-    channel_point_id: i64,
-) -> anyhow::Result<()> {
-    let Some(kind) = parse_channel_kind(channel_type) else {
-        warn!(channel_type, "skipping invalid uplink route point type");
-        return Ok(());
-    };
-    let instance_id = config_u32(instance_id, "uplink instance_id")?;
-    let logical_point_id = config_u32(logical_point_id, "uplink logical point_id")?;
-    let channel_id = config_u32(channel_id, "uplink route channel_id")?;
-    let channel_point_id = config_u32(channel_point_id, "uplink route point_id")?;
-    if let Some(slot) = manifest.slot(channel_id, kind, channel_point_id) {
-        add_group_point(
-            groups,
-            "inst",
-            &instance_id.to_string(),
-            instance_data_type,
-            logical_point_id.to_string(),
-            slot,
-        );
-    }
+    instance_id: u32,
+    logical_point_id: u32,
+    target: PhysicalPointAddress,
+) -> PortResult<()> {
+    let slot = manifest.slot_for(target).ok_or_else(|| {
+        PortError::new(
+            PortErrorKind::Conflict,
+            "uplink logical route is absent from its snapshot manifest",
+        )
+    })?;
+    add_group_point(
+        groups,
+        "inst",
+        &instance_id.to_string(),
+        instance_data_type,
+        logical_point_id.to_string(),
+        slot,
+    );
     Ok(())
+}
+
+fn point_kind_code(target: PhysicalPointAddress) -> &'static str {
+    match target.kind() {
+        aether_domain::PointKind::Telemetry => "T",
+        aether_domain::PointKind::Status => "S",
+        aether_domain::PointKind::Command => "C",
+        aether_domain::PointKind::Action => "A",
+    }
+}
+
+fn shm_client_config(path: &str, layout_hash: u64, config: &EnvConfig) -> ShmClientConfig {
+    ShmClientConfig::new(path, layout_hash)
+        .with_writer_stale_after(Duration::from_millis(config.shm_writer_stale_after_ms))
+        .with_identity_check_interval(Duration::from_millis(config.shm_identity_check_interval_ms))
 }
 
 fn compile_globs(patterns: &[String]) -> Vec<Regex> {
@@ -369,20 +440,6 @@ fn logical_glob_regex(pattern: &str) -> Result<Regex, regex::Error> {
     }
     regex.push('$');
     Regex::new(&regex)
-}
-
-fn parse_channel_kind(code: &str) -> Option<PointKind> {
-    match code {
-        "T" => Some(PointKind::Telemetry),
-        "S" => Some(PointKind::Status),
-        "C" => Some(PointKind::Command),
-        "A" => Some(PointKind::Action),
-        _ => None,
-    }
-}
-
-fn config_u32(value: i64, label: &str) -> anyhow::Result<u32> {
-    u32::try_from(value).with_context(|| format!("{label} must fit in u32, got {value}"))
 }
 
 #[cfg(test)]
@@ -420,16 +477,17 @@ mod tests {
             .await
             .expect("open embedded config database");
         for statement in [
-            "CREATE TABLE channels (channel_id INTEGER PRIMARY KEY, protocol TEXT NOT NULL)",
+            "CREATE TABLE channels (channel_id INTEGER PRIMARY KEY)",
             "CREATE TABLE telemetry_points (channel_id INTEGER, point_id INTEGER)",
             "CREATE TABLE signal_points (channel_id INTEGER, point_id INTEGER)",
             "CREATE TABLE control_points (channel_id INTEGER, point_id INTEGER)",
             "CREATE TABLE adjustment_points (channel_id INTEGER, point_id INTEGER)",
             "CREATE TABLE measurement_routing (instance_id INTEGER, channel_id INTEGER, channel_type TEXT, channel_point_id INTEGER, measurement_id INTEGER, enabled BOOLEAN)",
             "CREATE TABLE action_routing (instance_id INTEGER, channel_id INTEGER, channel_type TEXT, channel_point_id INTEGER, action_id INTEGER, enabled BOOLEAN)",
-            "INSERT INTO channels VALUES (10, 'modbus')",
+            "INSERT INTO channels VALUES (10)",
             "INSERT INTO telemetry_points VALUES (10, 0)",
             "INSERT INTO measurement_routing VALUES (12, 10, 'T', 0, 5, TRUE)",
+            "ALTER TABLE telemetry_points ADD COLUMN protocol_mappings TEXT NOT NULL DEFAULT '{}'",
         ] {
             sqlx::query(statement)
                 .execute(&pool)
@@ -437,6 +495,186 @@ mod tests {
                 .expect("create minimal uplink catalogue");
         }
         pool
+    }
+
+    #[tokio::test]
+    async fn uplink_catalog_uses_exact_snapshot_points_without_protocol_mapping() {
+        let pool = config_pool().await;
+        sqlx::query("INSERT INTO telemetry_points (channel_id, point_id) VALUES (10, 2)")
+            .execute(&pool)
+            .await
+            .expect("insert sparse physical point");
+        let snapshot = aether_store_local::load_sqlite_live_topology(&pool)
+            .await
+            .expect("load one authoritative snapshot");
+
+        let groups = logical_groups_from_snapshot(&snapshot).expect("build uplink catalogue");
+        let physical = groups
+            .iter()
+            .find(|group| group.key == "io:10:T")
+            .expect("physical telemetry group");
+
+        assert_eq!(physical.points.keys().collect::<Vec<_>>(), vec!["0", "2"]);
+        assert!(groups.iter().any(|group| {
+            group.key == "inst:12:M" && group.points.keys().collect::<Vec<_>>() == vec!["5"]
+        }));
+    }
+
+    #[tokio::test]
+    async fn service_handle_replaces_digest_and_epoch_as_one_generation() {
+        let pool = config_pool().await;
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let point_path = directory.path().join("live.shm");
+        let health_path = directory.path().join("health.shm");
+        let config = EnvConfig {
+            shm_path: point_path.to_string_lossy().into_owned(),
+            channel_health_shm_path: health_path.to_string_lossy().into_owned(),
+            ..Default::default()
+        };
+        let snapshot = aether_store_local::load_sqlite_live_topology(&pool)
+            .await
+            .expect("load initial snapshot");
+        let points = Arc::new(snapshot.point_manifest().clone());
+        let health = Arc::new(snapshot.health_manifest().clone());
+        let point_writer = aether_shm_bridge::ShmWriterHandle::create_published_at_epoch(
+            aether_shm_bridge::ShmRuntimeConfig::new(&point_path, 32),
+            Arc::clone(&points),
+            None,
+            10,
+        )
+        .expect("publish point plane");
+        let health_writer = aether_shm_bridge::ShmChannelHealthWriterHandle::create_at_epoch(
+            &health_path,
+            Arc::clone(&health),
+            10,
+        )
+        .expect("publish health plane");
+        aether_shm_bridge::commit_topology_publication(&point_path, &health_path, 10)
+            .expect("commit initial topology");
+        point_writer
+            .generation()
+            .expect("initial point generation")
+            .acquisition_writer()
+            .update_heartbeat(aether_shm_bridge::timestamp_ms());
+        let handle = UplinkTopologyHandle::new_lazy(snapshot, &config).expect("build lazy handle");
+
+        assert!(handle.refresh(&pool, &config).await.expect("first refresh"));
+        let pinned = handle.load();
+        assert_eq!(pinned.publication_epoch(), 10);
+
+        sqlx::query("UPDATE measurement_routing SET measurement_id = 6")
+            .execute(&pool)
+            .await
+            .expect("change only the logical route");
+        assert!(
+            handle
+                .refresh(&pool, &config)
+                .await
+                .expect("routing-only refresh")
+        );
+        let routing_replacement = handle.load();
+        assert_eq!(routing_replacement.publication_epoch(), 10);
+        assert_ne!(routing_replacement.digest(), pinned.digest());
+        assert!(
+            routing_replacement
+                .values
+                .groups
+                .get("inst:12:M")
+                .is_some_and(|group| group.points.contains_key("6"))
+        );
+
+        health_writer
+            .rebuild_for_publication(Arc::clone(&health), 11)
+            .expect("publish only a replacement health plane");
+        let partial_health = routing_replacement
+            .read_group("io:10:T", None)
+            .expect_err("a pinned upload generation must revalidate both physical planes");
+        assert!(partial_health.is_retryable());
+
+        point_writer
+            .rebuild_for_publication(Arc::clone(&points), 12)
+            .expect("restart point plane at same layout");
+        assert!(handle.refresh(&pool, &config).await.is_err());
+        assert!(Arc::ptr_eq(&routing_replacement, &handle.load()));
+        health_writer
+            .rebuild_for_publication(Arc::clone(&health), 12)
+            .expect("restart health plane at same layout");
+        aether_shm_bridge::commit_topology_publication(&point_path, &health_path, 12)
+            .expect("commit restarted topology");
+
+        assert!(handle.refresh(&pool, &config).await.expect("epoch refresh"));
+        assert_eq!(pinned.publication_epoch(), 10);
+        assert_eq!(handle.load().publication_epoch(), 12);
+    }
+
+    #[tokio::test]
+    async fn service_handle_does_not_noop_a_reused_epoch_with_new_writer_generations() {
+        let pool = config_pool().await;
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let point_path = directory.path().join("live.shm");
+        let health_path = directory.path().join("health.shm");
+        let config = EnvConfig {
+            shm_path: point_path.to_string_lossy().into_owned(),
+            channel_health_shm_path: health_path.to_string_lossy().into_owned(),
+            ..Default::default()
+        };
+        let snapshot = aether_store_local::load_sqlite_live_topology(&pool)
+            .await
+            .expect("load initial snapshot");
+        let points = Arc::new(snapshot.point_manifest().clone());
+        let health = Arc::new(snapshot.health_manifest().clone());
+        let point_writer = aether_shm_bridge::ShmWriterHandle::create_published_at_epoch(
+            aether_shm_bridge::ShmRuntimeConfig::new(&point_path, 32),
+            Arc::clone(&points),
+            None,
+            500,
+        )
+        .expect("publish initial point plane");
+        let health_writer = aether_shm_bridge::ShmChannelHealthWriterHandle::create_at_epoch(
+            &health_path,
+            Arc::clone(&health),
+            500,
+        )
+        .expect("publish initial health plane");
+        aether_shm_bridge::commit_topology_publication(&point_path, &health_path, 500)
+            .expect("commit initial topology");
+        let handle = UplinkTopologyHandle::new_lazy(snapshot, &config).expect("build lazy handle");
+        assert!(
+            handle
+                .refresh(&pool, &config)
+                .await
+                .expect("pin initial view")
+        );
+        let stale = handle.load();
+        drop(point_writer);
+        drop(health_writer);
+
+        let _replacement_point = aether_shm_bridge::ShmWriterHandle::create_published_at_epoch(
+            aether_shm_bridge::ShmRuntimeConfig::new(&point_path, 32),
+            Arc::clone(&points),
+            None,
+            500,
+        )
+        .expect("fault-inject a point writer that reused the epoch");
+        let _replacement_health = aether_shm_bridge::ShmChannelHealthWriterHandle::create_at_epoch(
+            &health_path,
+            Arc::clone(&health),
+            500,
+        )
+        .expect("fault-inject a health writer that reused the epoch");
+        std::fs::remove_file(aether_shm_bridge::topology_commit_path_from_shm(
+            &point_path,
+        ))
+        .expect("fault-inject loss of the old durable witness");
+        aether_shm_bridge::commit_topology_publication(&point_path, &health_path, 500)
+            .expect("fault-inject a valid replacement witness that reused the epoch");
+
+        let refreshed =
+            tokio::time::timeout(Duration::from_secs(2), handle.refresh(&pool, &config))
+                .await
+                .expect("same-epoch refresh must not deadlock");
+        assert!(refreshed.expect("replace stale same-epoch view"));
+        assert!(!Arc::ptr_eq(&stale, &handle.load()));
     }
 
     #[test]
@@ -489,15 +727,22 @@ mod tests {
     #[tokio::test]
     async fn sqlite_catalog_discovers_cloud_groups_without_scan() {
         let pool = config_pool().await;
-        let manifest = load_channel_manifest(&pool).await.expect("load manifest");
-
-        let groups = load_logical_groups(&pool, &manifest)
+        let snapshot = load_sqlite_live_topology(&pool)
             .await
-            .expect("load groups");
+            .expect("load snapshot");
+        let groups = logical_groups_from_snapshot(&snapshot).expect("load groups");
 
         assert!(groups.iter().any(|group| {
             group.key == "inst:12:M"
-                && group.points.get("5") == manifest.slot(10, PointKind::Telemetry, 0).as_ref()
+                && group.points.get("5")
+                    == snapshot
+                        .point_manifest()
+                        .slot_for(PhysicalPointAddress::from_legacy_raw(
+                            10,
+                            aether_domain::PointKind::Telemetry,
+                            0,
+                        ))
+                        .as_ref()
         }));
     }
 
@@ -512,13 +757,429 @@ mod tests {
             ..Default::default()
         };
 
-        let source = build_net_value_source(&pool, &config)
+        let snapshot = load_sqlite_live_topology(&pool)
             .await
+            .expect("load embedded snapshot");
+        let handle = UplinkTopologyHandle::new_lazy(snapshot, &config)
             .expect("build with embedded config only");
-        let error = source
+        let error = handle
+            .load()
             .read_group("inst:12:M", None)
             .expect_err("missing writer is a retryable read-time condition");
 
         assert!(error.is_retryable());
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    #[ignore = "explicit long-running Uplink dynamic-config/IO-restart soak gate"]
+    async fn dynamic_configuration_service_generation_soak() {
+        let iterations = soak_usize("AETHER_DYNAMIC_CONFIG_SOAK_ITERATIONS", 400);
+        let readers = soak_usize("AETHER_DYNAMIC_CONFIG_SOAK_READERS", 4);
+        let restart_interval = soak_usize("AETHER_DYNAMIC_CONFIG_SOAK_RESTART_INTERVAL", 25);
+        let timeout = Duration::from_secs(soak_u64("AETHER_DYNAMIC_CONFIG_SOAK_TIMEOUT_SECS", 900));
+        assert!(iterations > 0, "Uplink soak needs at least one iteration");
+        assert!(readers > 0, "Uplink soak needs at least one reader");
+        assert!(restart_interval > 0, "restart interval must be non-zero");
+
+        tokio::time::timeout(
+            timeout,
+            run_dynamic_configuration_soak(iterations, readers, restart_interval),
+        )
+        .await
+        .unwrap_or_else(|_| panic!("Uplink dynamic configuration soak exceeded {timeout:?}"));
+    }
+
+    async fn run_dynamic_configuration_soak(
+        iterations: usize,
+        reader_count: usize,
+        restart_interval: usize,
+    ) {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        use aether_domain::{AcquiredPointSample, ChannelPointAddress, PointQuality, TimestampMs};
+        use aether_shm_bridge::{
+            ShmChannelHealthWriterHandle, ShmRuntimeConfig, ShmWriterHandle,
+            begin_topology_publication,
+        };
+        use tokio_util::sync::CancellationToken;
+
+        let pool = config_pool().await;
+        let directory = tempfile::tempdir().expect("Uplink soak directory");
+        let point_path = directory.path().join("live.shm");
+        let health_path = directory.path().join("health.shm");
+        let config = EnvConfig {
+            shm_path: point_path.to_string_lossy().into_owned(),
+            channel_health_shm_path: health_path.to_string_lossy().into_owned(),
+            shm_identity_check_interval_ms: 0,
+            ..Default::default()
+        };
+
+        let initial = load_sqlite_live_topology(&pool)
+            .await
+            .expect("initial Uplink topology");
+        let mut epoch = 20_000_u64;
+        let publication =
+            begin_topology_publication(&point_path).expect("begin initial Uplink publication");
+        let mut point_writer = ShmWriterHandle::create_published_at_epoch(
+            ShmRuntimeConfig::new(&point_path, 64),
+            Arc::new(initial.point_manifest().clone()),
+            None,
+            epoch,
+        )
+        .expect("initial Uplink point writer");
+        write_uplink_soak_points(&point_writer, &initial, epoch);
+        let mut health_writer = ShmChannelHealthWriterHandle::create_at_epoch(
+            &health_path,
+            Arc::new(initial.health_manifest().clone()),
+            epoch,
+        )
+        .expect("initial Uplink health writer");
+        write_uplink_soak_health(&health_writer, &initial, epoch);
+        publication
+            .commit(&health_path, epoch)
+            .expect("commit initial Uplink publication");
+
+        let handle = Arc::new(
+            UplinkTopologyHandle::new_lazy(initial, &config).expect("build Uplink soak handle"),
+        );
+        assert!(
+            handle
+                .refresh(&pool, &config)
+                .await
+                .expect("pin initial Uplink publication")
+        );
+        assert_eq!(handle.load().publication_epoch(), epoch);
+
+        let shutdown = CancellationToken::new();
+        let progress = Arc::new(AtomicUsize::new(0));
+        let reader_handles = (0..reader_count)
+            .map(|_| {
+                let handle = Arc::clone(&handle);
+                let shutdown = shutdown.clone();
+                let progress = Arc::clone(&progress);
+                tokio::spawn(async move {
+                    let mut coherent_reads = 0_usize;
+                    while !shutdown.is_cancelled() {
+                        let generation = handle.load();
+                        match generation
+                            .collect_entries(&["inst:*:M".to_string(), "io:*:T".to_string()], &[])
+                        {
+                            Ok(entries) => {
+                                assert_uplink_batch_is_one_generation(&entries);
+                                progress.fetch_add(1, Ordering::Relaxed);
+                                coherent_reads += 1;
+                            },
+                            Err(error) => assert!(
+                                error.is_retryable(),
+                                "Uplink reader observed non-retryable publication error: {error}"
+                            ),
+                        }
+                        tokio::task::yield_now().await;
+                    }
+                    coherent_reads
+                })
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(reader_handles.len(), reader_count, "reader task bound");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+
+        for iteration in 0..iterations {
+            let logical_point_id = if iteration & 1 == 0 { 6 } else { 5 };
+            let before_route = handle.load();
+            sqlx::query("UPDATE measurement_routing SET measurement_id = ? WHERE instance_id = 12")
+                .bind(logical_point_id)
+                .execute(&pool)
+                .await
+                .expect("Uplink routing-only mutation");
+            assert!(
+                handle
+                    .refresh(&pool, &config)
+                    .await
+                    .expect("Uplink routing-only refresh")
+            );
+            let routed = handle.load();
+            assert_eq!(
+                routed.publication_epoch(),
+                epoch,
+                "routing changed Uplink SHM epoch"
+            );
+            assert_ne!(routed.digest(), before_route.digest());
+            assert_eq!(
+                uplink_measurement_ids(&routed),
+                vec![logical_point_id.to_string()],
+                "Uplink published an inexact logical route generation"
+            );
+
+            let before_mapping = Arc::clone(&routed);
+            sqlx::query(
+                "UPDATE telemetry_points SET protocol_mappings = ? \
+                 WHERE channel_id = 10 AND point_id = 0",
+            )
+            .bind(format!("{{\"json_path\":\"$.uplink_{iteration}\"}}"))
+            .execute(&pool)
+            .await
+            .expect("Uplink protocol-mapping-only mutation");
+            assert!(
+                !handle
+                    .refresh(&pool, &config)
+                    .await
+                    .expect("Uplink mapping-only refresh"),
+                "protocol mapping entered the Uplink service manifest"
+            );
+            assert!(
+                Arc::ptr_eq(&before_mapping, &handle.load()),
+                "protocol mapping replaced the Uplink generation"
+            );
+
+            let extra_point_present = iteration & 1 == 0;
+            if extra_point_present {
+                sqlx::query(
+                    "INSERT OR IGNORE INTO telemetry_points \
+                     (channel_id, point_id, protocol_mappings) VALUES (10, 2, '{}')",
+                )
+                .execute(&pool)
+                .await
+                .expect("add Uplink layout point");
+            } else {
+                sqlx::query("DELETE FROM telemetry_points WHERE channel_id = 10 AND point_id = 2")
+                    .execute(&pool)
+                    .await
+                    .expect("remove Uplink layout point");
+            }
+            let snapshot = load_sqlite_live_topology(&pool)
+                .await
+                .expect("load switched Uplink topology");
+            epoch += 1;
+            let publication =
+                begin_topology_publication(&point_path).expect("begin Uplink topology publication");
+
+            if (iteration + 1) % restart_interval == 0 {
+                drop(point_writer);
+                drop(health_writer);
+                point_writer = ShmWriterHandle::create_published_at_epoch(
+                    ShmRuntimeConfig::new(&point_path, 64),
+                    Arc::new(snapshot.point_manifest().clone()),
+                    None,
+                    epoch,
+                )
+                .expect("restart Uplink point writer");
+                write_uplink_soak_points(&point_writer, &snapshot, epoch);
+                drop(publication);
+                assert_uplink_partial_publication_fails_closed(&handle, &pool, &config).await;
+                health_writer = ShmChannelHealthWriterHandle::create_at_epoch(
+                    &health_path,
+                    Arc::new(snapshot.health_manifest().clone()),
+                    epoch,
+                )
+                .expect("restart Uplink health writer");
+            } else {
+                point_writer
+                    .rebuild_for_publication(Arc::new(snapshot.point_manifest().clone()), epoch)
+                    .expect("publish Uplink point plane");
+                write_uplink_soak_points(&point_writer, &snapshot, epoch);
+                drop(publication);
+                assert_uplink_partial_publication_fails_closed(&handle, &pool, &config).await;
+                health_writer
+                    .rebuild_for_publication(Arc::new(snapshot.health_manifest().clone()), epoch)
+                    .expect("publish Uplink health plane");
+            }
+            write_uplink_soak_health(&health_writer, &snapshot, epoch);
+            aether_shm_bridge::commit_topology_publication(&point_path, &health_path, epoch)
+                .expect("commit Uplink topology switch");
+            assert!(
+                handle
+                    .refresh(&pool, &config)
+                    .await
+                    .expect("recover Uplink generation")
+            );
+            let recovered = handle.load();
+            assert_eq!(recovered.publication_epoch(), epoch);
+            assert_eq!(
+                recovered.read.point_manifest().slot_count(),
+                snapshot.point_manifest().slot_count()
+            );
+            assert_eq!(
+                uplink_measurement_ids(&recovered),
+                vec![logical_point_id.to_string()]
+            );
+        }
+
+        shutdown.cancel();
+        for reader in reader_handles {
+            let coherent_reads = tokio::time::timeout(Duration::from_secs(5), reader)
+                .await
+                .expect("Uplink reader stopped within the task bound")
+                .expect("Uplink reader task completed");
+            assert!(
+                coherent_reads > 0,
+                "Uplink reader made no coherent progress"
+            );
+        }
+        assert!(
+            progress.load(Ordering::Relaxed) >= reader_count,
+            "every Uplink reader must make coherent progress"
+        );
+        let retained = handle.load();
+        assert_eq!(
+            Arc::strong_count(&retained),
+            2,
+            "Uplink retained more than its current service generation"
+        );
+        assert_soak_files_are_bounded(directory.path());
+
+        fn write_uplink_soak_points(
+            writer: &ShmWriterHandle,
+            snapshot: &SqliteLiveTopologySnapshot,
+            epoch: u64,
+        ) {
+            let samples = snapshot
+                .configured_physical_points()
+                .iter()
+                .copied()
+                .map(|target| {
+                    let address = ChannelPointAddress::new(
+                        target.channel_id(),
+                        target.kind(),
+                        target.point_id(),
+                    )
+                    .expect("valid Uplink soak address");
+                    AcquiredPointSample::new(
+                        address,
+                        epoch as f64,
+                        epoch as f64,
+                        TimestampMs::new(aether_shm_bridge::timestamp_ms()),
+                        PointQuality::Good,
+                    )
+                    .expect("valid Uplink soak sample")
+                })
+                .collect::<Vec<_>>();
+            writer
+                .generation()
+                .expect("Uplink point generation")
+                .acquisition_writer()
+                .commit_batch(&samples)
+                .expect("write Uplink epoch samples");
+        }
+
+        fn write_uplink_soak_health(
+            writer: &ShmChannelHealthWriterHandle,
+            snapshot: &SqliteLiveTopologySnapshot,
+            epoch: u64,
+        ) {
+            for channel_id in snapshot.health_manifest().channel_ids() {
+                writer
+                    .set_online(
+                        channel_id,
+                        epoch & 1 != 0,
+                        aether_shm_bridge::timestamp_ms(),
+                    )
+                    .expect("write Uplink epoch health");
+            }
+        }
+    }
+
+    async fn assert_uplink_partial_publication_fails_closed(
+        handle: &UplinkTopologyHandle,
+        pool: &SqlitePool,
+        config: &EnvConfig,
+    ) {
+        let retained = handle.load();
+        let error = retained
+            .read_group("io:10:T", None)
+            .expect_err("Uplink must fail closed during point/health partial publication");
+        assert!(
+            error.is_retryable(),
+            "unexpected partial read error: {error}"
+        );
+        assert!(handle.refresh(pool, config).await.is_err());
+        assert!(
+            Arc::ptr_eq(&retained, &handle.load()),
+            "partial publication replaced the last Uplink generation"
+        );
+    }
+
+    fn assert_uplink_batch_is_one_generation(entries: &[PropertyEntry]) {
+        if entries.is_empty() {
+            return;
+        }
+        let measurement = entries
+            .iter()
+            .find(|entry| entry.source == "inst" && entry.device == "12")
+            .expect("Uplink measurement group");
+        let measurement_ids = measurement
+            .value
+            .keys()
+            .map(String::as_str)
+            .collect::<Vec<_>>();
+        assert!(
+            matches!(measurement_ids.as_slice(), ["5"] | ["6"]),
+            "mixed Uplink route generation: {measurement_ids:?}"
+        );
+        let physical = entries
+            .iter()
+            .find(|entry| entry.source == "io" && entry.device == "10")
+            .expect("Uplink physical group");
+        assert!(
+            matches!(physical.value.len(), 1 | 2),
+            "Uplink exposed holes or lost configured points: {}",
+            physical.value.len()
+        );
+        let values = entries
+            .iter()
+            .flat_map(|entry| entry.value.values())
+            .filter_map(serde_json::Value::as_f64)
+            .collect::<Vec<_>>();
+        let first = values[0];
+        assert!(
+            values.iter().all(|value| *value == first),
+            "Uplink batch mixed SHM epochs"
+        );
+    }
+
+    fn uplink_measurement_ids(generation: &UplinkTopologyGeneration) -> Vec<String> {
+        generation
+            .values
+            .groups
+            .get("inst:12:M")
+            .expect("Uplink measurement route")
+            .points
+            .keys()
+            .cloned()
+            .collect()
+    }
+
+    fn soak_usize(name: &str, default: usize) -> usize {
+        std::env::var(name)
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(default)
+    }
+
+    fn soak_u64(name: &str, default: u64) -> u64 {
+        std::env::var(name)
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(default)
+    }
+
+    fn assert_soak_files_are_bounded(directory: &std::path::Path) {
+        let entries = std::fs::read_dir(directory)
+            .expect("read Uplink soak directory")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("read Uplink soak entries");
+        assert!(
+            entries
+                .iter()
+                .all(|entry| !entry.file_name().to_string_lossy().contains(".staging")),
+            "Uplink publication staging files accumulated"
+        );
+        assert!(
+            entries.len() <= 6,
+            "Uplink topology files grew without bound: {:?}",
+            entries
+                .iter()
+                .map(std::fs::DirEntry::file_name)
+                .collect::<Vec<_>>()
+        );
     }
 }

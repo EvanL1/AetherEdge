@@ -3,7 +3,7 @@
 //! Product queries use an explicitly assembled runtime [`ProductLibrary`]. The
 //! default loader is empty and never selects a domain Pack implicitly.
 
-use aether_model::product_lib::{self, BuiltinProduct, PointDef, ProductLibrary};
+use aether_model::product_lib::{BuiltinProduct, PointDef, ProductLibrary};
 use anyhow::{Context, Result};
 use common::test_utils::schema::INSTANCES_TABLE;
 use sqlx::SqlitePool;
@@ -19,14 +19,14 @@ pub use aether_model::PointRole;
 
 /// Product loader that provides access to products
 ///
-/// The optional library is populated by startup after active Pack validation.
-/// `None` is the fail-safe empty state retained for constructor compatibility.
+/// The library is populated explicitly by startup after active Pack validation.
+/// The empty constructor remains the intentional no-Pack kernel composition.
 #[derive(Clone)]
 pub struct ProductLoader {
     /// SQLite pool for instance schema initialization (not for product queries)
     pool: SqlitePool,
-    /// Optional runtime product library (with external overrides)
-    library: Option<Arc<ProductLibrary>>,
+    /// Explicit runtime product library (empty when no Pack is active).
+    library: Arc<ProductLibrary>,
 }
 
 impl ProductLoader {
@@ -36,7 +36,7 @@ impl ProductLoader {
     pub fn new(pool: SqlitePool) -> Self {
         Self {
             pool,
-            library: None,
+            library: Arc::new(ProductLibrary::default()),
         }
     }
 
@@ -45,59 +45,21 @@ impl ProductLoader {
     /// When a library is provided, all product queries use its active Pack and
     /// site-selected products.
     pub fn with_library(pool: SqlitePool, library: Arc<ProductLibrary>) -> Self {
-        Self {
-            pool,
-            library: Some(library),
-        }
+        Self { pool, library }
     }
 
-    /// Initialize database schema for instances and mappings
+    /// Initialize database schema for instances.
     ///
     /// Note: product tables are not created; definitions come from the selected
     /// runtime library.
-    /// This method only creates instance-related tables.
+    /// Logical measurement/action routes are owned by the canonical SQLite
+    /// routing tables; the removed legacy mapping compatibility table is not
+    /// recreated here.
     pub async fn init_schema(&self) -> Result<()> {
         debug!("Init instance tables");
 
         // Reuse canonical DDL from common crate (single source of truth)
         sqlx::query(INSTANCES_TABLE).execute(&self.pool).await?;
-
-        // Create point mappings table for channel-instance point routing
-        // UNIQUE constraint ensures each instance point has only one data source
-        sqlx::query(
-            r#"
-            CREATE TABLE IF NOT EXISTS point_mappings (
-                mapping_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                instance_id INTEGER NOT NULL,
-                channel_id INTEGER NOT NULL,
-                channel_type TEXT NOT NULL CHECK(channel_type IN ('T','S','C','A')),
-                channel_point_id INTEGER NOT NULL,
-                instance_type TEXT NOT NULL CHECK(instance_type IN ('M','A')),
-                instance_point_id INTEGER NOT NULL,
-                description TEXT,
-                enabled BOOLEAN DEFAULT TRUE,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(instance_id, instance_type, instance_point_id),
-                FOREIGN KEY (instance_id) REFERENCES instances(instance_id) ON DELETE CASCADE
-            )
-            "#,
-        )
-        .execute(&self.pool)
-        .await?;
-
-        // Create indexes
-        sqlx::query(
-            "CREATE INDEX IF NOT EXISTS idx_mapping_channel ON point_mappings(channel_id, channel_type)",
-        )
-        .execute(&self.pool)
-        .await?;
-
-        sqlx::query(
-            "CREATE INDEX IF NOT EXISTS idx_mapping_instance ON point_mappings(instance_id)",
-        )
-        .execute(&self.pool)
-        .await?;
 
         debug!("Instance tables ready");
         Ok(())
@@ -107,25 +69,17 @@ impl ProductLoader {
 
     /// Get a complete product with nested structure
     pub fn get_product(&self, product_name: &str) -> Result<Product> {
-        if let Some(lib) = &self.library {
-            let builtin = lib
-                .get(product_name)
-                .context(format!("Product not found: {}", product_name))?;
-            return Ok(convert_builtin_to_product(builtin));
-        }
-
-        let builtin = product_lib::get_builtin_product(product_name)
+        let builtin = self
+            .library
+            .get(product_name)
             .context(format!("Product not found: {}", product_name))?;
         Ok(convert_builtin_to_product(builtin))
     }
 
     /// Get all products
     pub fn get_all_products(&self) -> Vec<Product> {
-        if let Some(lib) = &self.library {
-            return lib.all().iter().map(convert_builtin_to_product).collect();
-        }
-
-        product_lib::get_builtin_products()
+        self.library
+            .all()
             .iter()
             .map(convert_builtin_to_product)
             .collect()
@@ -133,15 +87,8 @@ impl ProductLoader {
 
     /// Get product hierarchy (product_name, parent_name) tuples
     pub fn get_product_hierarchy(&self) -> ProductHierarchy {
-        if let Some(lib) = &self.library {
-            return lib
-                .all()
-                .iter()
-                .map(|p| (p.name.clone(), p.parent_name.clone()))
-                .collect();
-        }
-
-        product_lib::get_builtin_products()
+        self.library
+            .all()
             .iter()
             .map(|p| (p.name.clone(), p.parent_name.clone()))
             .collect()
@@ -152,15 +99,8 @@ impl ProductLoader {
     /// Returns Vec of (product_name, parent_name) tuples.
     /// Ideal for frontend dropdown lists or selection interfaces.
     pub fn get_all_product_names(&self) -> Vec<(String, Option<String>)> {
-        if let Some(lib) = &self.library {
-            return lib
-                .all()
-                .iter()
-                .map(|p| (p.name.clone(), p.parent_name.clone()))
-                .collect();
-        }
-
-        product_lib::get_builtin_products()
+        self.library
+            .all()
             .iter()
             .map(|p| (p.name.clone(), p.parent_name.clone()))
             .collect()
@@ -171,26 +111,19 @@ impl ProductLoader {
     /// Returns None for root products (e.g., Station).
     /// Returns Some("ESS") for products like Battery, PCS, etc.
     pub fn get_product_parent_name(&self, product_name: &str) -> Option<String> {
-        if let Some(lib) = &self.library {
-            return lib.get(product_name).and_then(|p| p.parent_name.clone());
-        }
-        product_lib::get_builtin_product(product_name).and_then(|p| p.parent_name.clone())
+        self.library
+            .get(product_name)
+            .and_then(|p| p.parent_name.clone())
     }
 
     /// Check if a product exists
     pub fn product_exists(&self, name: &str) -> bool {
-        if let Some(lib) = &self.library {
-            return lib.exists(name);
-        }
-        product_lib::product_exists(name)
+        self.library.exists(name)
     }
 
     /// Get the number of products
     pub fn product_count(&self) -> usize {
-        if let Some(lib) = &self.library {
-            return lib.len();
-        }
-        product_lib::get_builtin_products().len()
+        self.library.len()
     }
 }
 
