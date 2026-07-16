@@ -111,7 +111,7 @@ history, or local control loops.
 CloudLink v1 carries no arbitrary RPC, physical command, point/register write,
 or SHM mutation. Point telemetry contains only edge-owned address, finite
 value, source timestamp, exposed quality, and coherent topology generation. It
-does not fabricate a Thing Model revision. AetherCloud and AetherIot now share
+does not fabricate a Thing Model revision. AetherCloud and AetherEdge now share
 the digest-pinned public AetherContracts subset. Three public behavior artifacts
 remain pending, so distribution integrity does not imply codec conformance.
 Remaining implementation mismatches and release gates are recorded in ADR-0017,

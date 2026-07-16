@@ -147,7 +147,7 @@ for entry in "${SDK_SOURCE_PACKAGES[@]}"; do
         fail "$manifest must declare or inherit its repository"
     fi
     if ! rg -q '^documentation[[:space:]]*=[[:space:]]*"https://docs\.aetheriot\.workers\.dev/' "$manifest"; then
-        fail "$manifest must link to the versioned AetherIot documentation"
+        fail "$manifest must link to the versioned AetherEdge documentation"
     fi
     if ! rg -q '^readme[[:space:]]*=[[:space:]]*"README\.md"' "$manifest"; then
         fail "$manifest must declare README.md"

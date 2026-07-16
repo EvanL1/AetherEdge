@@ -1,6 +1,6 @@
-# AetherIot
+# AetherEdge
 
-[![代码检查](https://github.com/EvanL1/AetherIot/actions/workflows/rust-check.yml/badge.svg)](https://github.com/EvanL1/AetherIot/actions/workflows/rust-check.yml)
+[![代码检查](https://github.com/EvanL1/AetherEdge/actions/workflows/rust-check.yml/badge.svg)](https://github.com/EvanL1/AetherEdge/actions/workflows/rust-check.yml)
 [![许可证](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-1.90%2B-orange.svg)](https://www.rust-lang.org/)
 [![版本](https://img.shields.io/badge/version-0.5.0-yellow.svg)](CHANGELOG.md)
@@ -10,23 +10,29 @@
 
 **用 AI 构建可靠的边缘 IoT 应用。**
 
-AetherIot 是开源、行业中立的 Linux 网关 IoT Edge Kernel、Runtime 与 Rust SDK。它连接
+AetherEdge 是开源、行业中立的 Linux 网关 IoT Edge Kernel、Runtime 与 Rust SDK。它连接
 现场设备，以共享内存保存权威实时状态，在本地确定性地执行规则与告警，并保存嵌入式历史；
 默认运行不依赖 Redis、PostgreSQL、云服务、浏览器或 LLM。
 
-AI 是 AetherIot 的客户端，不进入硬实时闭环。Agent、CLI、生成式应用和操作界面都通过同一
+AetherEdge 是 [AetherIoT 平台](docs/overview/platform.md)的边缘产品，与
+[AetherCloud](https://github.com/EvanL1/AetherCloud) 和
+[AetherContracts](https://github.com/EvanL1/AetherContracts)共同组成核心产品族。本仓库原名
+`EvanL1/AetherIot`；迁移期间软件标识保持稳定，详见
+[迁移说明](docs/migration/aetheriot-to-aetheredge.md)。
+
+AI 是 AetherEdge 的客户端，不进入硬实时闭环。Agent、CLI、生成式应用和操作界面都通过同一
 套类型化 command/query 边界访问系统；设备控制始终默认拒绝，并要求明确确认和完整审计。
 
-> **Beta：** AetherIot 是行业中立的 Kernel、Runtime 与 SDK。现有 crate、二进制、CLI 和
+> **Beta：** AetherEdge 是行业中立的 Kernel、Runtime 与 SDK。现有 crate、二进制、CLI 和
 > 部分兼容产物仍使用 `aether-*` / `aether` 名称。官方能源管理实现位于独立的
 > [AetherEMS](https://github.com/EvanL1/AetherEMS) 仓库。
 
-## 安装 AetherIot
+## 安装 AetherEdge
 
-AetherIot 不是 npm 或 Bun 包；`npx` 和 `bunx` 都不能安装 Kernel、Runtime、CLI 或 Rust SDK。
+AetherEdge 不是 npm 或 Bun 包；`npx` 和 `bunx` 都不能安装 Kernel、Runtime、CLI 或 Rust SDK。
 
 在基于 Docker 的 Linux Edge 主机上，从
-[GitHub Releases](https://github.com/EvanL1/AetherIot/releases)下载与目标架构匹配的
+[GitHub Releases](https://github.com/EvanL1/AetherEdge/releases)下载与目标架构匹配的
 `AetherEdge-<arch>-<version>.run` 及其 `.sha256` 文件，然后在目标主机上校验并运行这个仅支持
 全新部署的安装包：
 
@@ -43,7 +49,7 @@ sudo ./AetherEdge-<arch>-<version>.run
 
 ## 可选：连接 AI Agent
 
-仓库里的 Agent Skill 只是可选的开发指导，不是 AetherIot 软件包。需要时按
+仓库里的 Agent Skill 只是可选的开发指导，不是 AetherEdge 软件包。需要时按
 [使用 AI 构建应用](docs/guides/build-applications-with-ai.md)添加到兼容的编码助手。
 
 把正在运行的 Edge 系统作为默认只读的 MCP tools 接入：
@@ -55,7 +61,7 @@ claude mcp add aether -- aether mcp
 然后直接告诉助手：
 
 ```text
-从 AetherIot 开始。检查这个仓库，并根据当前 Edge Runtime 暴露的能力，
+从 AetherEdge 开始。检查这个仓库，并根据当前 Edge Runtime 暴露的能力，
 生成一个只读运维应用。
 ```
 
@@ -66,7 +72,7 @@ claude mcp add aether -- aether mcp
 完整客户端契约见[使用 AI 构建应用](docs/guides/build-applications-with-ai.md)，安全空运行时的
 完整安装流程见[Agent Quickstart](https://docs.aetheriot.workers.dev/agent-quickstart/)。
 
-## AetherIot 提供什么
+## AetherEdge 提供什么
 
 - **确定性 Edge Runtime**：没有 AI 客户端时，六个隔离 Rust 服务仍持续采集、执行规则、
   处理告警、保存历史并完成 uplink。
@@ -81,8 +87,8 @@ claude mcp add aether -- aether mcp
 
 ## 默认无头
 
-AetherIot 不交付一个固定的通用 Web Console。固定 Dashboard 无法表达所有行业 Pack，浏览器
-也不能成为第二套配置权威。AetherIot 交付的是生成或维护专用应用所需的契约、Agent Skill 和
+AetherEdge 不交付一个固定的通用 Web Console。固定 Dashboard 无法表达所有行业 Pack，浏览器
+也不能成为第二套配置权威。AetherEdge 交付的是生成或维护专用应用所需的契约、Agent Skill 和
 开发规范。
 
 UI 是下游客户端和参考实现：它只消费公开 application API，可被替换，不能直接访问 SHM、
@@ -131,7 +137,7 @@ domain <- ports <- application <- runtime/interfaces
 
 ## 项目状态
 
-AetherIot 当前为 beta。版本化 SDK、Pack v1、六服务 Runtime、point/health 一致 SHM epoch、
+AetherEdge 当前为 beta。版本化 SDK、Pack v1、六服务 Runtime、point/health 一致 SHM epoch、
 嵌入式本地运行、受治理命令、MCP 接口和 OpenAPI 契约检查已经可用。签名的 `v0.5.0`
 源码、Runtime 与 CLI 发行已经发布；下游 bootstrap pin 替换和剩余无 revision 兼容路径的
 清理仍未完成。精确边界见[架构说明](ARCHITECTURE.md)、
@@ -151,7 +157,7 @@ manifest 与 CLI 产物。AetherEMS 物理拆仓及其下游 bootstrap CI 已落
 Broker-neutral CloudLink MQTT v1 的**边端基础**已经以实验性、显式 opt-in 方式落地：严格
 JSON schema/codec、只由 application durable ACK 清理的独立 memory/file spool、用户自选
 MQTT 3.1.1 Broker binding、session/heartbeat/manifest/真实 PointSample telemetry 与 replay
-测试。Legacy MQTT adapter 仍是兼容默认值。AetherCloud 与 AetherIot 现在消费同一份通过摘要锁定的
+测试。Legacy MQTT adapter 仍是兼容默认值。AetherCloud 与 AetherEdge 现在消费同一份通过摘要锁定的
 AetherContracts `v0.1.0-alpha.3`：Cloud 与 Edge 使用完全一致的 complete-consumer 锁，`pending_imports` 为空。该证据只证明分发完整性与公开 fixture 执行，不证明生产密钥生命周期、签名 ACK 或 Cloud 崩溃持久性。
 这只证明分发完整性，不代表 Rust/TypeScript codec 或边云正式联调已经完成；认证、真实双进程
 Broker harness、Cloud batch-position 应用模型和 durable Cloud store 仍未完成。边界见

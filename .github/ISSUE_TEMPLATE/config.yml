@@ -1,11 +1,11 @@
 blank_issues_enabled: false
 contact_links:
   - name: Security vulnerability
-    url: https://github.com/EvanL1/AetherIot/security/advisories/new
+    url: https://github.com/EvanL1/AetherEdge/security/advisories/new
     about: Report suspected vulnerabilities privately; do not open a public issue.
   - name: Usage and architecture questions
-    url: https://github.com/EvanL1/AetherIot/discussions
+    url: https://github.com/EvanL1/AetherEdge/discussions
     about: Ask non-sensitive usage and architecture questions in GitHub Discussions when enabled.
   - name: Support policy
-    url: https://github.com/EvanL1/AetherIot/blob/main/SUPPORT.md
+    url: https://github.com/EvanL1/AetherEdge/blob/main/SUPPORT.md
     about: Read the support channels, boundaries, and information to include.

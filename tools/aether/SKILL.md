@@ -1,11 +1,11 @@
 ---
 name: aether-iot-query
-description: Use this skill when the user asks about a live AetherIot runtime: channels, points, real-time values, history, alarms, rules, models, instances, routing, SHM health, service health, or system status. Use aether CLI commands to answer — do NOT inspect source code, local database files, or config YAMLs to answer questions about current platform state.
+description: Use this skill when the user asks about a live AetherEdge runtime: channels, points, real-time values, history, alarms, rules, models, instances, routing, SHM health, service health, or system status. Use aether CLI commands to answer — do NOT inspect source code, local database files, or config YAMLs to answer questions about current platform state.
 ---
 
-# AetherIot Runtime Query Skill
+# AetherEdge Runtime Query Skill
 
-Use `aether` as the primary interface for live AetherIot runtime data. Energy
+Use `aether` as the primary interface for live AetherEdge runtime data. Energy
 models, mappings, rules, commissioning examples, and operator-console guidance
 belong to the downstream AetherEMS repository.
 

@@ -942,10 +942,10 @@ assert_contains "$ROOT_DIR/docs/AETHER_CLI_GUIDE.md" '/etc/aether/install.yaml'
 assert_contains "$ROOT_DIR/docs/AETHER_CLI_GUIDE.md" '/opt/AetherEdge/data/config'
 assert_contains "$ROOT_DIR/docs/guides/deployment.md" '`AETHER_INSTALL_DIR` overrides'
 
-echo "Testing the AetherIot distribution remains headless..."
-[[ ! -e "$ROOT_DIR/apps" ]] || fail "AetherIot restored a product-specific Web UI source tree"
+echo "Testing the AetherEdge distribution remains headless..."
+[[ ! -e "$ROOT_DIR/apps" ]] || fail "AetherEdge restored a product-specific Web UI source tree"
 [[ ! -e "$ROOT_DIR/scripts/systemd/aether-apps.service" ]] \
-    || fail "AetherIot restored the retired EMS console service"
+    || fail "AetherEdge restored the retired EMS console service"
 for headless_owner in \
     "$ROOT_DIR/docker-compose.yml" \
     "$ROOT_DIR/scripts/build-installer.sh" \
@@ -956,7 +956,7 @@ for headless_owner in \
     "$ROOT_DIR/tools/aether/src/services.rs"; do
     if grep -En 'aether-apps|apps/(dist|nginx)|FRONTEND_INCLUDED|INCLUDE_FRONTEND|INCLUDE_NGINX' \
         "$headless_owner"; then
-        fail "AetherIot distribution still owns EMS console integration: $headless_owner"
+        fail "AetherEdge distribution still owns EMS console integration: $headless_owner"
     fi
 done
 

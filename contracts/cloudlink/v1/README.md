@@ -1,8 +1,8 @@
-# CloudLink MQTT v1 AetherIot implementation overlay
+# CloudLink MQTT v1 AetherEdge implementation overlay
 
 This directory consumes AetherContracts `v0.1.0-alpha.3`, the sole CloudLink
 wire authority. Imported files are exact release bytes. Local manifests,
-profiles, gates, scenarios, and migration notes are non-authoritative AetherIot
+profiles, gates, scenarios, and migration notes are non-authoritative AetherEdge
 implementation/readiness/evidence overlays and cannot redefine the public
 contract. Complete distribution adoption is not production conformance.
 

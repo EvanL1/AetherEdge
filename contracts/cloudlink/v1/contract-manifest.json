@@ -3,7 +3,7 @@
   "contracts_release": "0.1.0-alpha.3",
   "status": "product-local-implementation-overlay",
   "authority": "AetherContracts v0.1.0-alpha.3",
-  "owner": "AetherIot implementation evidence",
+  "owner": "AetherEdge implementation evidence",
   "authoritative_artifacts": {
     "specification": "AetherContracts spec/cloudlink-v1alpha1.md",
     "core_profile": "AetherContracts profiles/cloudlink/v1alpha1/core.json",

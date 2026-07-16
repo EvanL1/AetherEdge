@@ -1,35 +1,38 @@
 ---
-title: AetherIot
-description: Build reliable edge IoT applications with AI on an industry-neutral, deterministic runtime.
+title: AetherIoT
+description: Open-source edge, cloud, and interoperability building blocks for reliable IoT systems.
 template: splash
 hero:
-  title: AetherIot
-  tagline: Build reliable edge IoT applications with AI.
+  title: AetherIoT
+  tagline: Edge authority, cloud coordination, and open contracts.
   actions:
-    - text: Agent quickstart
-      link: /agent-quickstart/
+    - text: Explore the platform
+      link: /overview/platform/
       icon: right-arrow
-    - text: Read the docs
-      link: /guides/getting-started/
+    - text: Start with AetherEdge
+      link: /aetheredge/
       variant: minimal
       icon: open-book
 ---
 
-AetherIot is a headless, AI-native IoT edge kernel, runtime, and Rust SDK. AI
-agents, generated applications, CLIs, and downstream operator interfaces use
-the same governed application contracts; acquisition and safety remain
-deterministic when no AI client is connected.
+AetherIoT is the open-source project for AetherEdge, AetherCloud, and
+AetherContracts. AetherEMS is an energy-management solution built on the
+platform rather than part of its industry-neutral core.
 
-Install the AetherIot Agent Skill:
+Start with the product that owns your task:
 
-```bash
-npx skills add EvanL1/AetherIot -s aether-iot
-```
+- [AetherEdge](/aetheredge/) runs acquisition, deterministic behavior, local
+  history, and final physical execution.
+- [AetherCloud](/aethercloud/) coordinates desired state, governed jobs, and
+  provider-native cloud resources.
+- [AetherContracts](/aethercontracts/) defines the shared protocol, Schemas,
+  fixtures, and TCK.
 
-- Start an automated installation at [Agent Quickstart](/agent-quickstart/).
-- Generate a contract-first client with
-  [Build Applications with AI](/guides/build-applications-with-ai/).
-- Learn the runtime at [Getting Started](/guides/getting-started/).
+- Understand boundaries at [Platform Overview](/overview/platform/).
+- Follow the complete [Edge to Contracts to Cloud tutorial](/tutorials/edge-contracts-cloud/).
+- Select tested versions in [Compatibility](/compatibility/version-matrix/).
+- Distinguish shipped and planned work at [Status and Roadmap](/roadmap/status/).
+- Install the edge runtime at [Agent Quickstart](/agent-quickstart/).
 - Discover every published document through
   [`/llms.txt`](https://docs.aetheriot.workers.dev/llms.txt).
 - Fetch the complete corpus through
@@ -37,4 +40,5 @@ npx skills add EvanL1/AetherIot -s aether-iot
 
 Browsers receive the rendered documentation site. Agents can append `.md` to
 any document URL or send `Accept: text/markdown` to retrieve the Markdown
-source directly.
+source directly. Product repositories remain authoritative for implementation
+details, and AetherContracts remains the sole shared protocol authority.

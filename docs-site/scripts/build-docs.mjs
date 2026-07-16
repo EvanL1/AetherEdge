@@ -85,13 +85,29 @@ export function renderDocument(source) {
 export function renderLlmsIndex(documents, publicBaseUrl) {
   const baseUrl = publicBaseUrl.replace(/\/$/, '');
   const sections = [
-    ['Start Here', ({ slug }) => slug === 'agent-quickstart' || slug === 'guides/getting-started'],
-    ['Concepts', ({ slug }) => slug.startsWith('concepts/')],
-    ['Guides', ({ slug }) => slug.startsWith('guides/')],
-    ['Reference', ({ slug }) => slug.startsWith('reference/')],
-    ['SDK Crates', ({ slug }) => slug.startsWith('crates/')],
-    ['Extensions', ({ slug }) => slug.startsWith('extensions/')],
-    ['Security', ({ slug }) => slug.startsWith('security/')],
+    ['Overview', ({ slug }) => slug.startsWith('overview/')],
+    [
+      'AetherEdge',
+      ({ slug }) =>
+        slug === 'aetheredge' ||
+        slug.startsWith('aetheredge/') ||
+        slug === 'agent-quickstart' ||
+        slug.startsWith('concepts/') ||
+        slug.startsWith('guides/') ||
+        slug.startsWith('reference/') ||
+        slug.startsWith('crates/') ||
+        slug.startsWith('extensions/') ||
+        slug.startsWith('security/'),
+    ],
+    ['AetherCloud', ({ slug }) => slug === 'aethercloud' || slug.startsWith('aethercloud/')],
+    [
+      'AetherContracts',
+      ({ slug }) => slug === 'aethercontracts' || slug.startsWith('aethercontracts/'),
+    ],
+    ['Tutorials', ({ slug }) => slug.startsWith('tutorials/')],
+    ['Compatibility', ({ slug }) => slug.startsWith('compatibility/')],
+    ['Roadmap', ({ slug }) => slug.startsWith('roadmap/')],
+    ['Migration', ({ slug }) => slug.startsWith('migration/')],
   ];
   const remaining = documents.filter(({ slug }) => slug !== '');
   const renderedSections = [];
@@ -130,9 +146,9 @@ export function renderLlmsIndex(documents, publicBaseUrl) {
   }
 
   return [
-    '# AetherIot',
+    '# AetherIoT',
     '',
-    '> Build reliable edge IoT applications with AI on an industry-neutral, deterministic runtime.',
+    '> Open-source edge, cloud, and interoperability building blocks for reliable IoT systems.',
     '',
     'Documentation pages are available as Markdown. Append `.md` to any document URL or send `Accept: text/markdown`.',
     '',

@@ -57,9 +57,9 @@ explicitly active Packs contribute namespaced
 `<pack>/<category>/<asset>` identities.
 
 The machine-readable contracts are the
-[`Pack manifest v1`](https://github.com/EvanL1/AetherIot/blob/main/contracts/pack/pack-manifest.v1.schema.json)
+[`Pack manifest v1`](https://github.com/EvanL1/AetherEdge/blob/main/contracts/pack/pack-manifest.v1.schema.json)
 and
-[`Pack asset index v1`](https://github.com/EvanL1/AetherIot/blob/main/contracts/pack/pack-asset-index.v1.schema.json)
+[`Pack asset index v1`](https://github.com/EvanL1/AetherEdge/blob/main/contracts/pack/pack-asset-index.v1.schema.json)
 schemas.
 
 Licensed under either MIT or Apache-2.0, at your option.

@@ -6,7 +6,7 @@ updated: 2026-07-14
 
 # HTTP API
 
-AetherIot runs six HTTP services, but remote applications have one network
+AetherEdge runs six HTTP services, but remote applications have one network
 boundary: `aether-api` on port 6005. This page describes the gateway, its
 service-local contracts, and the security conventions that apply across it.
 

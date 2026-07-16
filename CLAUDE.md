@@ -1,4 +1,4 @@
-# AetherIot Claude Notes
+# AetherEdge Claude Notes
 
 Read [`AGENTS.md`](AGENTS.md) first. It is the canonical policy for product
 direction, dependency boundaries, AI safety, Rust conventions, verification,
@@ -7,7 +7,7 @@ notes and must not override it.
 
 ## Current product boundary
 
-- AetherIot is a headless, industry-neutral IoT edge kernel and SDK.
+- AetherEdge is a headless, industry-neutral IoT edge kernel and SDK.
 - The default runtime is six Rust processes and requires no Redis,
   PostgreSQL, browser application, or LLM.
 - SHM is authoritative for live point state. Optional stores are adapters or
