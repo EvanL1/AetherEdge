@@ -14,16 +14,33 @@ export function findCjkOccurrences(sourcePath, content) {
     .filter(({ text }) => CJK_PATTERN.test(text));
 }
 
-export function assertEnglishOnly(documents) {
-  const occurrences = documents.flatMap(({ path: sourcePath, content }) =>
-    findCjkOccurrences(sourcePath, content)
-  );
-  if (occurrences.length === 0) return;
+export function localeForPath(sourcePath) {
+  return sourcePath === 'en' || sourcePath.startsWith('en/') ? 'en' : 'zh-CN';
+}
 
-  const details = occurrences
+export function assertLocaleIsolation(documents) {
+  const englishOccurrences = documents
+    .filter(({ path: sourcePath }) => localeForPath(sourcePath) === 'en')
+    .flatMap(({ path: sourcePath, content }) => findCjkOccurrences(sourcePath, content));
+  const untranslatedChinese = documents
+    .filter(({ path: sourcePath }) => localeForPath(sourcePath) === 'zh-CN')
+    .filter(({ content }) => !CJK_PATTERN.test(content))
+    .map(({ path: sourcePath }) => sourcePath);
+
+  if (englishOccurrences.length === 0 && untranslatedChinese.length === 0) return;
+
+  const englishDetails = englishOccurrences
     .map(({ path: sourcePath, line, text }) => `  ${sourcePath}:${line}: ${text.trim()}`)
     .join('\n');
-  throw new Error(`Published documentation must be English-only:\n${details}`);
+  const chineseDetails = untranslatedChinese.map((sourcePath) => `  ${sourcePath}`).join('\n');
+  const sections = [];
+  if (englishDetails) {
+    sections.push(`English publication contains CJK text:\n${englishDetails}`);
+  }
+  if (chineseDetails) {
+    sections.push(`Chinese publication has no Chinese content:\n${chineseDetails}`);
+  }
+  throw new Error(`Published locale content must remain isolated:\n${sections.join('\n')}`);
 }
 
 /* v8 ignore start -- filesystem orchestration is exercised by npm run build. */
@@ -35,8 +52,11 @@ async function main() {
       content: await fs.readFile(path.join(CONTENT_DIR, sourcePath), 'utf8'),
     }))
   );
-  assertEnglishOnly(documents);
-  console.log(`check-language: verified ${documents.length} English-only documents`);
+  assertLocaleIsolation(documents);
+  const englishCount = documents.filter(({ path: sourcePath }) => localeForPath(sourcePath) === 'en').length;
+  console.log(
+    `check-language: verified ${documents.length - englishCount} Chinese and ${englishCount} English documents`
+  );
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {

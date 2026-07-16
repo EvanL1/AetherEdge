@@ -7,10 +7,10 @@ hero:
   tagline: Edge authority, cloud coordination, and open contracts.
   actions:
     - text: Explore the platform
-      link: /overview/platform/
+      link: /en/overview/platform/
       icon: right-arrow
     - text: Start with AetherEdge
-      link: /aetheredge/
+      link: /en/aetheredge/
       variant: minimal
       icon: open-book
 ---
@@ -21,22 +21,22 @@ platform rather than part of its industry-neutral core.
 
 Start with the product that owns your task:
 
-- [AetherEdge](/aetheredge/) runs acquisition, deterministic behavior, local
+- [AetherEdge](/en/aetheredge/) runs acquisition, deterministic behavior, local
   history, and final physical execution.
-- [AetherCloud](/aethercloud/) coordinates desired state, governed jobs, and
+- [AetherCloud](/en/aethercloud/) coordinates desired state, governed jobs, and
   provider-native cloud resources.
-- [AetherContracts](/aethercontracts/) defines the shared protocol, Schemas,
+- [AetherContracts](/en/aethercontracts/) defines the shared protocol, Schemas,
   fixtures, and TCK.
 
-- Understand boundaries at [Platform Overview](/overview/platform/).
-- Follow the complete [Edge to Contracts to Cloud tutorial](/tutorials/edge-contracts-cloud/).
-- Select tested versions in [Compatibility](/compatibility/version-matrix/).
-- Distinguish shipped and planned work at [Status and Roadmap](/roadmap/status/).
-- Install the edge runtime at [Agent Quickstart](/agent-quickstart/).
+- Understand boundaries at [Platform Overview](/en/overview/platform/).
+- Follow the complete [Edge to Contracts to Cloud tutorial](/en/tutorials/edge-contracts-cloud/).
+- Select tested versions in [Compatibility](/en/compatibility/version-matrix/).
+- Distinguish shipped and planned work at [Status and Roadmap](/en/roadmap/status/).
+- Install the edge runtime at [Agent Quickstart](/en/agent-quickstart/).
 - Discover every published document through
-  [`/llms.txt`](https://docs.aetheriot.workers.dev/llms.txt).
+  [`/en/llms.txt`](https://docs.aetheriot.workers.dev/en/llms.txt).
 - Fetch the complete corpus through
-  [`/llms-full.txt`](https://docs.aetheriot.workers.dev/llms-full.txt).
+  [`/en/llms-full.txt`](https://docs.aetheriot.workers.dev/en/llms-full.txt).
 
 Browsers receive the rendered documentation site. Agents can append `.md` to
 any document URL or send `Accept: text/markdown` to retrieve the Markdown

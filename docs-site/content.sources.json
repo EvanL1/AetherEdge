@@ -6,7 +6,7 @@
       "label": "AetherEdge",
       "root": "..",
       "manifest": "content.manifest.txt",
-      "destinationPrefix": "",
+      "destinationPrefix": "en",
       "stripPrefix": "docs/",
       "githubBlobBase": "https://github.com/EvanL1/AetherEdge/blob/main",
       "attribution": false
@@ -17,7 +17,7 @@
       "root": "../../AetherCloud",
       "rootEnv": "AETHER_CLOUD_DOCS_ROOT",
       "manifest": "content.aethercloud.manifest.txt",
-      "destinationPrefix": "aethercloud",
+      "destinationPrefix": "en/aethercloud",
       "stripPrefix": "docs/",
       "githubBlobBase": "https://github.com/EvanL1/AetherCloud/blob/main"
     },
@@ -27,9 +27,29 @@
       "root": "../../AetherContracts",
       "rootEnv": "AETHER_CONTRACTS_DOCS_ROOT",
       "manifest": "content.aethercontracts.manifest.txt",
-      "destinationPrefix": "aethercontracts",
+      "destinationPrefix": "en/aethercontracts",
       "stripPrefix": "docs/",
       "githubBlobBase": "https://github.com/EvanL1/AetherContracts/blob/main"
+    },
+    {
+      "id": "site-en",
+      "label": "AetherIoT Documentation",
+      "root": ".",
+      "manifest": "content.site-en.manifest.txt",
+      "destinationPrefix": "en",
+      "stripPrefix": "locales/en/",
+      "githubBlobBase": "https://github.com/EvanL1/AetherEdge/blob/main/docs-site/locales/en",
+      "attribution": false
+    },
+    {
+      "id": "site-zh-cn",
+      "label": "AetherIoT 中文文档",
+      "root": ".",
+      "manifest": "content.zh-cn.manifest.txt",
+      "destinationPrefix": "",
+      "stripPrefix": "locales/zh-CN/",
+      "githubBlobBase": "https://github.com/EvanL1/AetherEdge/blob/main/docs-site/locales/zh-CN",
+      "attribution": false
     }
   ]
 }

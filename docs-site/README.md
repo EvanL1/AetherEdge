@@ -8,14 +8,18 @@ The dual-mode unified documentation service for AetherIoT, covering
 
 - Browsers receive a searchable Astro + Starlight site.
 - Agents can append `.md` or request `Accept: text/markdown`.
-- `/llms.txt` provides the curated document index.
-- `/llms-full.txt` provides the complete published corpus.
+- Simplified Chinese is served from `/`; English is served from `/en/`.
+- `/llms.txt` and `/llms-full.txt` provide the Chinese agent indexes.
+- `/en/llms.txt` and `/en/llms-full.txt` provide the English agent indexes.
 
-Only English product documentation declared by
-[`content.sources.json`](./content.sources.json) and its three source manifests
-is published. Internal plans, ADRs, and competitive analysis are intentionally
-excluded. Mirrored AetherCloud and AetherContracts pages carry a direct link to
-their authoritative repository source.
+The English publication mirrors allowlisted product documentation from all
+three repositories. The complete Chinese publication is maintained under
+[`locales/zh-CN`](./locales/zh-CN) with an exact manifest so a new English page
+cannot silently appear untranslated. Internal plans, ADRs, and competitive
+analysis remain excluded. Mirrored English AetherCloud and AetherContracts
+pages carry a direct link to their authoritative repository source. Chinese
+contract specifications are reading aids; the tagged English release remains
+normative.
 
 Local development resolves AetherCloud and AetherContracts from sibling
 checkouts by default. Set `AETHER_CLOUD_DOCS_ROOT` or

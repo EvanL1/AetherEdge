@@ -82,10 +82,27 @@ export function renderDocument(source) {
   return { title, description, markdown };
 }
 
-export function renderLlmsIndex(documents, publicBaseUrl) {
+export function partitionDocumentsByLocale(documents) {
+  const partitions = { 'zh-CN': [], en: [] };
+  for (const document of documents) {
+    if (document.slug === 'en' || document.slug.startsWith('en/')) {
+      partitions.en.push({
+        ...document,
+        publicSlug: document.slug,
+        slug: document.slug === 'en' ? '' : document.slug.slice('en/'.length),
+      });
+    } else {
+      partitions['zh-CN'].push({ ...document, publicSlug: document.slug });
+    }
+  }
+  return partitions;
+}
+
+export function renderLlmsIndex(documents, publicBaseUrl, language = 'en') {
   const baseUrl = publicBaseUrl.replace(/\/$/, '');
+  const chinese = language === 'zh-CN';
   const sections = [
-    ['Overview', ({ slug }) => slug.startsWith('overview/')],
+    [chinese ? '概览' : 'Overview', ({ slug }) => slug.startsWith('overview/')],
     [
       'AetherEdge',
       ({ slug }) =>
@@ -104,10 +121,10 @@ export function renderLlmsIndex(documents, publicBaseUrl) {
       'AetherContracts',
       ({ slug }) => slug === 'aethercontracts' || slug.startsWith('aethercontracts/'),
     ],
-    ['Tutorials', ({ slug }) => slug.startsWith('tutorials/')],
-    ['Compatibility', ({ slug }) => slug.startsWith('compatibility/')],
-    ['Roadmap', ({ slug }) => slug.startsWith('roadmap/')],
-    ['Migration', ({ slug }) => slug.startsWith('migration/')],
+    [chinese ? '教程' : 'Tutorials', ({ slug }) => slug.startsWith('tutorials/')],
+    [chinese ? '兼容性' : 'Compatibility', ({ slug }) => slug.startsWith('compatibility/')],
+    [chinese ? '路线图' : 'Roadmap', ({ slug }) => slug.startsWith('roadmap/')],
+    [chinese ? '迁移' : 'Migration', ({ slug }) => slug.startsWith('migration/')],
   ];
   const remaining = documents.filter(({ slug }) => slug !== '');
   const renderedSections = [];
@@ -119,8 +136,8 @@ export function renderLlmsIndex(documents, publicBaseUrl) {
     renderedSections.push('');
     renderedSections.push(
       matched
-        .map(({ slug, title, description }) => {
-          const url = `${baseUrl}/${slug}`;
+        .map(({ slug, publicSlug, title, description }) => {
+          const url = `${baseUrl}/${publicSlug ?? slug}`;
           return `- [${title}](${url})${description ? `: ${description}` : ''}`;
         })
         .join('\n')
@@ -133,12 +150,12 @@ export function renderLlmsIndex(documents, publicBaseUrl) {
   }
 
   if (remaining.length > 0) {
-    renderedSections.push('## More');
+    renderedSections.push(chinese ? '## 更多' : '## More');
     renderedSections.push('');
     renderedSections.push(
       remaining
-        .map(({ slug, title, description }) =>
-          `- [${title}](${baseUrl}/${slug})${description ? `: ${description}` : ''}`
+        .map(({ slug, publicSlug, title, description }) =>
+          `- [${title}](${baseUrl}/${publicSlug ?? slug})${description ? `: ${description}` : ''}`
         )
         .join('\n')
     );
@@ -148,9 +165,13 @@ export function renderLlmsIndex(documents, publicBaseUrl) {
   return [
     '# AetherIoT',
     '',
-    '> Open-source edge, cloud, and interoperability building blocks for reliable IoT systems.',
+    chinese
+      ? '> 面向可靠物联网系统的开源边缘运行时、云端控制平面和互操作协议。'
+      : '> Open-source edge, cloud, and interoperability building blocks for reliable IoT systems.',
     '',
-    'Documentation pages are available as Markdown. Append `.md` to any document URL or send `Accept: text/markdown`.',
+    chinese
+      ? '文档页面支持 Markdown。在任意文档地址后添加 `.md`，或发送 `Accept: text/markdown`。'
+      : 'Documentation pages are available as Markdown. Append `.md` to any document URL or send `Accept: text/markdown`.',
     '',
     ...renderedSections,
     '',
@@ -207,14 +228,30 @@ async function main() {
   );
 
   const publicBaseUrl = process.env.PUBLIC_BASE_URL || DEFAULT_PUBLIC_BASE_URL;
+  const localizedDocuments = partitionDocumentsByLocale(documents);
   await fs.writeFile(
     path.join(DIST_DIR, 'llms.txt'),
-    renderLlmsIndex(documents, publicBaseUrl),
+    renderLlmsIndex(localizedDocuments['zh-CN'], publicBaseUrl, 'zh-CN'),
     'utf8'
   );
-  await fs.writeFile(path.join(DIST_DIR, 'llms-full.txt'), renderLlmsFull(documents), 'utf8');
+  await fs.writeFile(
+    path.join(DIST_DIR, 'llms-full.txt'),
+    renderLlmsFull(localizedDocuments['zh-CN']),
+    'utf8'
+  );
+  await fs.mkdir(path.join(DIST_DIR, 'en'), { recursive: true });
+  await fs.writeFile(
+    path.join(DIST_DIR, 'en', 'llms.txt'),
+    renderLlmsIndex(localizedDocuments.en, publicBaseUrl, 'en'),
+    'utf8'
+  );
+  await fs.writeFile(
+    path.join(DIST_DIR, 'en', 'llms-full.txt'),
+    renderLlmsFull(localizedDocuments.en),
+    'utf8'
+  );
 
-  console.log(`build-docs: added ${documents.length} Markdown twins and 2 text indexes`);
+  console.log(`build-docs: added ${documents.length} Markdown twins and 4 localized text indexes`);
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {

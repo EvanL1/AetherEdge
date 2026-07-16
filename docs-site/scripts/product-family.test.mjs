@@ -44,6 +44,8 @@ describe('AetherIoT product-family documentation', () => {
       'aetheredge',
       'aethercloud',
       'aethercontracts',
+      'site-en',
+      'site-zh-cn',
     ]);
 
     const cloudManifest = read('docs-site/content.aethercloud.manifest.txt');

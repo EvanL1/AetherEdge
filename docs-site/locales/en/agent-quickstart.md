@@ -28,7 +28,7 @@ cargo build --release -p aether
 sudo cp target/release/aether /usr/local/bin/aether
 ```
 
-See [Getting Started](/guides/getting-started/) for prerequisites if the
+See [Getting Started](/en/guides/getting-started/) for prerequisites if the
 build fails.
 
 Once a tagged release exists, a prebuilt binary is faster — download from
@@ -98,7 +98,7 @@ aether services start
 ```
 
 **Success criterion:** `aether --json services status` reports all requested
-services as running. See [Deployment](/guides/deployment/) if the
+services as running. See [Deployment](/en/guides/deployment/) if the
 the compatibility `aetherems:latest` runtime image doesn't exist yet on this
 machine — it needs to be built or loaded before `services start` can succeed.
 The retained image name does not make the EMS product part of this repository.
@@ -122,7 +122,7 @@ claude mcp add aether -- aether mcp
 ```
 
 For a session that needs to issue writes (device control, rule changes) —
-read [Safe Operations for Applications and Agents](/guides/safe-operations/)
+read [Safe Operations for Applications and Agents](/en/guides/safe-operations/)
 before doing this against real hardware:
 
 ```bash
@@ -138,7 +138,7 @@ request ID. Never automatically retry an incomplete write response.
 For a channel mutation, preserve `request_id`, `resulting_revision`, and
 `reconciliation_required`; successful desired-state commit can still report a
 degraded runtime projection.
-See [Connect AI Assistants](/guides/ai-assistants/) for Claude Desktop config
+See [Connect AI Assistants](/en/guides/ai-assistants/) for Claude Desktop config
 and pointing at a remote installation.
 
 Now ask the assistant:

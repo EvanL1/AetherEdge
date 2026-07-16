@@ -22,7 +22,7 @@ describe('dual-mode documentation service', () => {
     expect(response.status).toBe(200);
     expect(response.headers.get('Content-Type')).toContain('text/html');
     expect(response.headers.get('Vary')).toBe('Accept');
-    expect(await response.text()).toContain('<h1>Agent Quickstart</h1>');
+    expect(await response.text()).toContain('<h1>智能体快速入门</h1>');
   });
 
   it('serves Markdown when the client requests text/markdown', async () => {
@@ -33,7 +33,17 @@ describe('dual-mode documentation service', () => {
     expect(response.status).toBe(200);
     expect(response.headers.get('Content-Type')).toBe('text/markdown; charset=utf-8');
     expect(response.headers.get('Vary')).toBe('Accept');
-    expect(await response.text()).toMatch(/^# Agent Quickstart/);
+    expect(await response.text()).toMatch(/^# 智能体快速入门/);
+  });
+
+  it('serves the independent English locale under /en', async () => {
+    const html = await run('/en/agent-quickstart/');
+    const markdown = await run('/en/agent-quickstart/', {
+      headers: { Accept: 'text/markdown' },
+    });
+
+    expect(await html.text()).toContain('<h1>Agent Quickstart</h1>');
+    expect(await markdown.text()).toMatch(/^# Agent Quickstart/);
   });
 
   it('serves direct .md routes as Markdown', async () => {
@@ -54,9 +64,12 @@ describe('dual-mode documentation service', () => {
 
   it('serves generated agent indexes as text/plain', async () => {
     const response = await run('/llms.txt');
+    const english = await run('/en/llms.txt');
 
     expect(response.status).toBe(200);
     expect(response.headers.get('Content-Type')).toBe('text/plain; charset=utf-8');
+    expect(await response.text()).toContain('## 概览');
+    expect(await english.text()).toContain('## Overview');
   });
 
   it('returns a plain-text 404 when a requested Markdown twin does not exist', async () => {

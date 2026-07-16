@@ -2,11 +2,16 @@ import { describe, expect, it } from 'vitest';
 import worker from './entry.js';
 
 const files = new Map([
-  ['/index.html', '<!doctype html><h1>Aether Documentation</h1>'],
-  ['/agent-quickstart/index.html', '<!doctype html><h1>Agent Quickstart</h1>'],
-  ['/index.md', '# Aether\n'],
-  ['/agent-quickstart.md', '# Agent Quickstart\n'],
-  ['/llms.txt', '# Aether\n'],
+  ['/index.html', '<!doctype html><h1>Aether 文档</h1>'],
+  ['/agent-quickstart/index.html', '<!doctype html><h1>智能体快速入门</h1>'],
+  ['/index.md', '# Aether\n\nAether 中文文档。\n'],
+  ['/agent-quickstart.md', '# 智能体快速入门\n'],
+  ['/llms.txt', '# Aether 文档\n\n## 概览\n'],
+  ['/en/index.html', '<!doctype html><h1>Aether Documentation</h1>'],
+  ['/en/agent-quickstart/index.html', '<!doctype html><h1>Agent Quickstart</h1>'],
+  ['/en.md', '# Aether\n\nAether documentation.\n'],
+  ['/en/agent-quickstart.md', '# Agent Quickstart\n'],
+  ['/en/llms.txt', '# Aether Documentation\n\n## Overview\n'],
 ]);
 
 function environment(options = {}) {
@@ -41,8 +46,18 @@ describe('dual-mode Worker in the Node unit-test runtime', () => {
     });
 
     expect(html.headers.get('Content-Type')).toContain('text/html');
-    expect(await html.text()).toContain('<h1>Agent Quickstart</h1>');
+    expect(await html.text()).toContain('<h1>智能体快速入门</h1>');
     expect(markdown.headers.get('Content-Type')).toBe('text/markdown; charset=utf-8');
+    expect(await markdown.text()).toContain('# 智能体快速入门');
+  });
+
+  it('serves English HTML and Markdown under /en', async () => {
+    const html = await run('/en/agent-quickstart/');
+    const markdown = await run('/en/agent-quickstart/', {
+      headers: { Accept: 'text/markdown' },
+    });
+
+    expect(await html.text()).toContain('<h1>Agent Quickstart</h1>');
     expect(await markdown.text()).toContain('# Agent Quickstart');
   });
 
