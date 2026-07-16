@@ -79,7 +79,7 @@ export function synthesizeFrontmatter(content, gitDate) {
 }
 
 const MD_LINK_RE = /\[([^\]]*)\]\((?!https?:\/\/|mailto:|#|\/)([^)\s]+)\)/g;
-const GITHUB_BLOB_BASE = 'https://github.com/EvanL1/AetherIot/blob/main';
+const GITHUB_BLOB_BASE = 'https://github.com/EvanL1/AetherEdge/blob/main';
 
 // Rewrites every relative Markdown link into a stable published form. Links
 // whose target is in the synced manifest become extensionless document

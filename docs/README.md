@@ -56,5 +56,5 @@ Data Processing 是可选能力，不属于采集或硬实时安全闭环。
 - [ADR-0017](./adr/0017-experimental-cloudlink-mqtt-edge-foundation.md)
 - [严格 candidate schemas 与 fixtures](../contracts/cloudlink/README.md)
 
-该能力目前只代表可独立验证的 AetherIot edge foundation；默认仍运行 legacy MQTT。
+该能力目前只代表可独立验证的 AetherEdge edge foundation；默认仍运行 legacy MQTT。
 AetherCloud 尚未接受 wire candidate，因此不得表述为正式协议或已经完成生产联调。

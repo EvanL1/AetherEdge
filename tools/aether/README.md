@@ -2,7 +2,7 @@
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](../../LICENSE)
 
-Unified management tool for the [AetherIot](https://github.com/EvanL1/AetherIot)
+Unified management tool for the [AetherEdge](https://github.com/EvanL1/AetherEdge)
 AI-native, industry-neutral IoT edge kernel. Energy management is an optional
 domain pack rather than a CLI or runtime prerequisite.
 
@@ -11,7 +11,7 @@ domain pack rather than a CLI or runtime prerequisite.
 ### One-line install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/EvanL1/AetherIot/main/tools/aether/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/EvanL1/AetherEdge/main/tools/aether/install.sh | bash
 ```
 
 Auto-detects a published platform artifact and installs to `~/.local/bin`.

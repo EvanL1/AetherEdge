@@ -73,7 +73,7 @@ These rules are more important than the current directory layout.
     generation; business point facts remain distinct from operational telemetry
     and OpenTelemetry signals.
 29. Shared contract authority is the digest-pinned AetherContracts release.
-    AetherIot and AetherCloud keep the same closed consumer lock; local wire,
+    AetherEdge and AetherCloud keep the same closed consumer lock; local wire,
     authentication, fixture-manifest, and gate files cannot redefine the public
     core.
 30. Complete distribution integrity and public fixture execution are not

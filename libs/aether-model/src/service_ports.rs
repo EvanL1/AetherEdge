@@ -1,6 +1,6 @@
 //! Service Port Constants
 //!
-//! Single source of truth for legacy AetherIot service default ports.
+//! Single source of truth for legacy AetherEdge service default ports.
 //! These are used as fallback defaults when not overridden by configuration.
 
 /// Default port for aether-io.

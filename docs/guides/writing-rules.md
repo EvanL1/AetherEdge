@@ -55,7 +55,7 @@ The independent [AetherEMS](https://github.com/EvanL1/AetherEMS) Console
 is an optional energy-domain reference application with a Vue Flow rule editor.
 It edits the complete visual document — nodes
 with canvas positions, labels, edges, and viewport — and submits that document
-through the same authenticated rule command API. AetherIot does not bundle the
+through the same authenticated rule command API. AetherEdge does not bundle the
 Console or grant it direct SQLite/SHM access. The server derives both stored
 representations together, so `flow_json` and the execution topology cannot
 drift (see [Rule Engine](../concepts/rule-engine.md) for the invariant).

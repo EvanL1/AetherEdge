@@ -583,7 +583,7 @@ async fn external_cloud_dual_harness() {
 
     let final_status = telemetry_spool.status().await.expect("final Edge status");
     let evidence = json!({
-        "component": "AetherIot",
+        "component": "AetherEdge",
         "edge_transport": "aether-cloudlink-mqtt/rumqttc",
         "spool": "FileCloudLinkSpool",
         "sessions": 2,

@@ -51,9 +51,39 @@ describe('renderLlmsIndex', () => {
         description: 'Install Aether.',
       },
       {
-        slug: 'concepts/architecture',
-        title: 'Architecture',
-        description: 'Understand the runtime.',
+        slug: 'overview/platform',
+        title: 'Platform Overview',
+        description: 'Understand the product family.',
+      },
+      {
+        slug: 'aetheredge/index',
+        title: 'AetherEdge',
+        description: 'Run the edge runtime.',
+      },
+      {
+        slug: 'aethercloud/index',
+        title: 'AetherCloud',
+        description: 'Coordinate cloud workloads.',
+      },
+      {
+        slug: 'aethercontracts/index',
+        title: 'AetherContracts',
+        description: 'Share public contracts.',
+      },
+      {
+        slug: 'tutorials/edge-contracts-cloud',
+        title: 'Edge to Cloud',
+        description: 'Follow an end-to-end path.',
+      },
+      {
+        slug: 'compatibility/version-matrix',
+        title: 'Version Compatibility',
+        description: 'Choose compatible versions.',
+      },
+      {
+        slug: 'roadmap/status',
+        title: 'Status and Roadmap',
+        description: 'See implemented and planned capabilities.',
       },
       {
         slug: 'reference/cli',
@@ -63,10 +93,16 @@ describe('renderLlmsIndex', () => {
     ];
 
     const output = renderLlmsIndex(documents, 'https://docs.aetheriot.workers.dev');
-    expect(output).toMatch(/^# AetherIot\n/);
-    expect(output).toContain('## Start Here');
-    expect(output).toContain('## Concepts');
-    expect(output).toContain('## Reference');
+    expect(output).toMatch(/^# AetherIoT\n/);
+    expect(output).toContain('## Overview');
+    expect(output).toContain('## AetherEdge');
+    expect(output).toContain('## AetherCloud');
+    expect(output).toContain('## AetherContracts');
+    expect(output).toContain('## Tutorials');
+    expect(output).toContain('## Compatibility');
+    expect(output).toContain('## Roadmap');
+    expect(output).not.toContain('## Start Here');
+    expect(output).not.toContain('## Reference');
     expect(output).toContain(
       '- [Agent Quickstart](https://docs.aetheriot.workers.dev/agent-quickstart): Install Aether.'
     );

@@ -131,7 +131,7 @@ fn product_integration_manifest_and_hello_are_pinned() {
     assert_eq!(manifest["contracts_release"], "0.1.0-alpha.3");
     assert_eq!(manifest["status"], "product-local-implementation-overlay");
     assert_eq!(manifest["authority"], "AetherContracts v0.1.0-alpha.3");
-    assert_eq!(manifest["owner"], "AetherIot implementation evidence");
+    assert_eq!(manifest["owner"], "AetherEdge implementation evidence");
     assert_eq!(
         manifest["authoritative_artifacts"]["core_profile"],
         "AetherContracts profiles/cloudlink/v1alpha1/core.json"

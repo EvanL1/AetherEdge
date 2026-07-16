@@ -28,7 +28,7 @@ The default Compose application starts only the six Rust services, all with
 `data-processing-dev` profile; production requires the explicit override shown
 below.
 
-AetherIot is a headless Kernel distribution. It does not build or install a
+AetherEdge is a headless Kernel distribution. It does not build or install a
 browser client. The EMS operator console belongs to the independent
 [AetherEMS](https://github.com/EvanL1/AetherEMS) distribution and connects
 through the authenticated application API.

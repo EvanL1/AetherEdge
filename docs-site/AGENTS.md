@@ -1,7 +1,7 @@
-# Aether Documentation
+# AetherIoT Documentation
 
-This directory publishes Aether's English product documentation through a
-dual-mode Cloudflare Worker.
+This directory publishes unified English documentation for AetherEdge,
+AetherCloud, and AetherContracts through a dual-mode Cloudflare Worker.
 
 Production URL: `https://docs.aetheriot.workers.dev`.
 
@@ -18,9 +18,9 @@ content scope.
 ## Public content boundary
 
 `content.manifest.txt` is the publication allowlist. Only English product
-documentation belongs in it. Do not publish internal agent instructions,
-plans, migration narratives, ADRs, competitive analysis, or historical
-working notes.
+documentation belongs in it. Public compatibility and operator migration
+guides are product documentation. Do not publish internal agent instructions,
+plans, ADRs, competitive analysis, or historical working notes.
 
 `npm run sync` copies allowlisted repository Markdown into
 `src/content/docs/` and rewrites relative links. Everything in that directory

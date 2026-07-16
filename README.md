@@ -1,6 +1,6 @@
-# AetherIot
+# AetherEdge
 
-[![Code Check](https://github.com/EvanL1/AetherIot/actions/workflows/rust-check.yml/badge.svg)](https://github.com/EvanL1/AetherIot/actions/workflows/rust-check.yml)
+[![Code Check](https://github.com/EvanL1/AetherEdge/actions/workflows/rust-check.yml/badge.svg)](https://github.com/EvanL1/AetherEdge/actions/workflows/rust-check.yml)
 [![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-1.90%2B-orange.svg)](https://www.rust-lang.org/)
 [![Version](https://img.shields.io/badge/version-0.5.0-yellow.svg)](CHANGELOG.md)
@@ -10,26 +10,32 @@
 
 **Build reliable edge IoT applications with AI.**
 
-AetherIot is an open-source, industry-neutral IoT edge kernel, runtime, and Rust SDK for Linux
+AetherEdge is an open-source, industry-neutral IoT edge kernel, runtime, and Rust SDK for Linux
 gateways. It connects field devices, keeps authoritative live state in shared memory, runs
 deterministic local rules and alarms, and stores embedded history without requiring Redis,
 PostgreSQL, a cloud service, a browser, or an LLM.
 
-AI is a client of AetherIot, not part of the hard real-time loop. Agents, CLIs, generated apps, and
+AetherEdge is the edge product in the [AetherIoT platform](docs/overview/platform.md), alongside
+[AetherCloud](https://github.com/EvanL1/AetherCloud) and
+[AetherContracts](https://github.com/EvanL1/AetherContracts). This repository was formerly named
+`EvanL1/AetherIot`; software identifiers remain stable during the
+[migration](docs/migration/aetheriot-to-aetheredge.md).
+
+AI is a client of AetherEdge, not part of the hard real-time loop. Agents, CLIs, generated apps, and
 operator interfaces all use the same typed command/query boundary; device control remains
 deny-by-default, explicitly confirmed, and audited.
 
-> **Beta:** AetherIot is the industry-neutral Kernel, Runtime, and SDK. Existing crates, binaries,
+> **Beta:** AetherEdge is the industry-neutral Kernel, Runtime, and SDK. Existing crates, binaries,
 > the CLI, and some compatibility artifacts retain their `aether-*` / `aether` names. The official
 > energy-management implementation lives in [AetherEMS](https://github.com/EvanL1/AetherEMS).
 
-## Install AetherIot
+## Install AetherEdge
 
-AetherIot is not an npm or Bun package. `npx` and `bunx` do not install the Kernel, Runtime, CLI,
+AetherEdge is not an npm or Bun package. `npx` and `bunx` do not install the Kernel, Runtime, CLI,
 or Rust SDK.
 
 For a Docker-based Linux edge host, download the matching `AetherEdge-<arch>-<version>.run` file and
-its `.sha256` file from [GitHub Releases](https://github.com/EvanL1/AetherIot/releases). Verify and
+its `.sha256` file from [GitHub Releases](https://github.com/EvanL1/AetherEdge/releases). Verify and
 run the fresh-install package on the target host:
 
 ```bash
@@ -46,7 +52,7 @@ follow [Getting Started](docs/guides/getting-started.md). Running
 
 ## Optional: connect an AI agent
 
-The repository's Agent Skill is optional development guidance, not an AetherIot software package.
+The repository's Agent Skill is optional development guidance, not an AetherEdge software package.
 See [Build Applications with AI](docs/guides/build-applications-with-ai.md) if you want to add it to
 a compatible assistant.
 
@@ -59,7 +65,7 @@ claude mcp add aether -- aether mcp
 Then ask your assistant:
 
 ```text
-Get started with AetherIot. Inspect this repository and generate a read-only
+Get started with AetherEdge. Inspect this repository and generate a read-only
 operations app for the capabilities exposed by my edge runtime.
 ```
 
@@ -72,7 +78,7 @@ See [Build Applications with AI](docs/guides/build-applications-with-ai.md) for 
 and [Agent Quickstart](https://docs.aetheriot.workers.dev/agent-quickstart/) for a complete safe-empty
 runtime setup.
 
-## What AetherIot provides
+## What AetherEdge provides
 
 - **Deterministic edge runtime** — six isolated Rust services continue acquisition, rules, alarms,
   history, and uplink when no AI client is connected.
@@ -88,8 +94,8 @@ runtime setup.
 
 ## Headless by design
 
-AetherIot does not ship a generic Web Console. A fixed dashboard cannot express every industry
-Pack, and a browser must never become a second configuration authority. Instead, AetherIot ships
+AetherEdge does not ship a generic Web Console. A fixed dashboard cannot express every industry
+Pack, and a browser must never become a second configuration authority. Instead, AetherEdge ships
 the contracts, Agent Skill, and development guidance needed to generate or maintain fit-for-purpose
 applications.
 
@@ -143,7 +149,7 @@ internal ports.
 
 ## Project status
 
-AetherIot is beta software. The versioned SDK, Pack v1, six-service runtime, coherent point/health
+AetherEdge is beta software. The versioned SDK, Pack v1, six-service runtime, coherent point/health
 SHM epochs, embedded local operation, governed commands, MCP interface, and OpenAPI contract checks
 are available. The signed `v0.5.0` source/runtime/CLI release is published;
 replacement of the downstream bootstrap pin and removal of the remaining
@@ -169,7 +175,7 @@ experimental, opt-in candidate: strict JSON schemas/codecs, a dedicated
 application-ACK-driven memory/file spool, user-selected MQTT v3.1.1 broker
 binding, session/heartbeat/manifest/point telemetry, and replay tests. The
 legacy MQTT adapter remains the compatibility default. AetherCloud and
-AetherIot now consume the same digest-pinned AetherContracts
+AetherEdge now consume the same digest-pinned AetherContracts
 `v0.1.0-alpha.3` release with identical complete-consumer locks and no pending
 imports. This proves distribution integrity and public fixture execution, not
 production Rust/TypeScript transport conformance: key lifecycle, a future signed ACK,

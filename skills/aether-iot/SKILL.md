@@ -1,17 +1,18 @@
 ---
 name: aether-iot
-description: Build, integrate, diagnose, or generate applications for the AetherIot AI-native edge kernel. Use for AetherIot onboarding, SDK compositions, device and topology clients, read-only operations UIs, MCP integration, Domain Packs, or governed IoT commands where live-state authority and physical-device safety must be preserved.
+description: Build, integrate, diagnose, or generate applications for the AetherEdge AI-native edge kernel. Use for AetherEdge onboarding, SDK compositions, device and topology clients, read-only operations UIs, MCP integration, Domain Packs, or governed IoT commands where live-state authority and physical-device safety must be preserved.
 ---
 
-# AetherIot
+# AetherEdge
 
-Treat AetherIot as a headless edge runtime with machine-readable contracts. Use its documentation
+The Skill identifier remains `aether-iot` during the repository rename for
+downstream compatibility. Treat AetherEdge as a headless edge runtime with machine-readable contracts. Use its documentation
 for reasoning, OpenAPI and manifests for exact schemas, and MCP for live capabilities. Treat every
 generated application as an untrusted client of the application boundary.
 
 ## Establish context
 
-1. In an AetherIot checkout, read `AGENTS.md` before changing files.
+1. In an AetherEdge checkout, read `AGENTS.md` before changing files.
 2. Outside a checkout, fetch `https://docs.aetheriot.workers.dev/llms.txt`, then fetch only the
    relevant page as Markdown by appending `.md` or requesting `Accept: text/markdown`.
 3. Prefer documentation matching the installed release. Inspect local runtime facts with:
@@ -92,6 +93,6 @@ Run the narrowest checks for the generated project's stack, then require at leas
   uncertain command outcomes;
 - proof that remote clients never call internal service ports or direct storage;
 - a read-only default with write controls absent unless the application explicitly needs them;
-- no external service requirement introduced into the default AetherIot runtime.
+- no external service requirement introduced into the default AetherEdge runtime.
 
-For changes inside AetherIot, also run the repository verification commands from `AGENTS.md`.
+For changes inside AetherEdge, also run the repository verification commands from `AGENTS.md`.

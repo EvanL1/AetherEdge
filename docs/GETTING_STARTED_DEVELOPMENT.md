@@ -48,8 +48,8 @@ pnpm --version
 
 ```bash
 # 1. 克隆项目
-git clone https://github.com/EvanL1/AetherIot.git
-cd AetherIot
+git clone https://github.com/EvanL1/AetherEdge.git
+cd AetherEdge
 
 # 2. 生成并应用 fail-safe 空站点计划（无需外部数据库）
 cargo build --release -p aether
@@ -137,7 +137,7 @@ cargo test -p aether-example-minimal-gateway --test composition_contract
 
 ### 步骤 6：连接应用客户端
 
-AetherIot 是 headless runtime，不捆绑前端。远程应用只连接
+AetherEdge 是 headless runtime，不捆绑前端。远程应用只连接
 `aether-api:6005`；可从 OpenAPI 契约生成客户端，具体见
 [使用 AI 构建应用](./guides/build-applications-with-ai.md)。能源管理操作界面由
 [AetherEMS](https://github.com/EvanL1/AetherEMS) 独立维护。
@@ -147,7 +147,7 @@ AetherIot 是 headless runtime，不捆绑前端。远程应用只连接
 ## 项目结构
 
 ```
-AetherIot/
+AetherEdge/
 ├── services/                # 后端服务
 │   ├── io/             # 通信服务 - 工业协议驱动、通道管理 (Rust)
 │   │   ├── src/
@@ -391,5 +391,5 @@ aether --json doctor
 
 ## 联系支持
 
-- **Issues**: https://github.com/EvanL1/AetherIot/issues
+- **Issues**: https://github.com/EvanL1/AetherEdge/issues
 - **文档**: https://docs.aetheriot.workers.dev
