@@ -15,7 +15,9 @@ export function findCjkOccurrences(sourcePath, content) {
 }
 
 export function localeForPath(sourcePath) {
-  return sourcePath === 'en' || sourcePath.startsWith('en/') ? 'en' : 'zh-CN';
+  return sourcePath === 'en' || sourcePath === 'en.md' || sourcePath.startsWith('en/')
+    ? 'en'
+    : 'zh-CN';
 }
 
 export function assertLocaleIsolation(documents) {
@@ -45,11 +47,14 @@ export function assertLocaleIsolation(documents) {
 
 /* v8 ignore start -- filesystem orchestration is exercised by npm run build. */
 async function main() {
-  const files = (await fg('**/*.md', { cwd: CONTENT_DIR, onlyFiles: true })).sort();
+  const contentDir = process.argv[2]
+    ? path.resolve(process.cwd(), process.argv[2])
+    : CONTENT_DIR;
+  const files = (await fg(['**/*.md', '**/*.txt'], { cwd: contentDir, onlyFiles: true })).sort();
   const documents = await Promise.all(
     files.map(async (sourcePath) => ({
       path: sourcePath,
-      content: await fs.readFile(path.join(CONTENT_DIR, sourcePath), 'utf8'),
+      content: await fs.readFile(path.join(contentDir, sourcePath), 'utf8'),
     }))
   );
   assertLocaleIsolation(documents);

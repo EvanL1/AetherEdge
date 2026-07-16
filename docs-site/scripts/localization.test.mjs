@@ -58,7 +58,8 @@ describe('bilingual documentation', () => {
 
     expect(workflow).toContain('test -f dist/en/index.html');
     expect(workflow).toContain('test -f dist/en/llms.txt');
-    expect(workflow).toContain('English agent documentation must not contain CJK text.');
+    expect(workflow).toContain('node scripts/check-language.mjs dist');
+    expect(workflow).not.toContain('rg --pcre2');
     expect(workflow).not.toContain('Published agent documentation must be English-only.');
   });
 });
