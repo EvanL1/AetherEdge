@@ -220,7 +220,7 @@ when `AETHER_CLOUDLINK_RUN_INTEGRATION=1`:
 
 Plaintext is accepted only by the explicit development harness. Production
 validation requires TLS. MQTT v3.1.1, QoS 1, non-retained messages, and exact
-per-gateway topics are fixed by ADR-0017; MQTT 5 remains optional and cannot be
+per-gateway topics are fixed by the experimental CloudLink profile; MQTT 5 remains optional and cannot be
 required for correctness.
 
 For MCP writes, `--allow-write` only registers the 22-tool write allowlist. The

@@ -77,5 +77,6 @@ to the active domain Pack. For the official energy implementation, read the
 
 - [Build Applications with AI](build-applications-with-ai.md)
 - [Connect AI Assistants](ai-assistants.md)
-- [Application control boundary](../adr/0008-application-control-boundary.md)
+- [HTTP API reference](../reference/http-api.md)
+- [MCP tool reference](../reference/mcp-tools.md)
 - [Shared memory](../concepts/shared-memory.md)

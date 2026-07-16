@@ -69,4 +69,4 @@ draft -> validated -> published -> deprecated -> withdrawn
 - AetherEdge 工件下载和验证对应项；
 - 所需/报告/应用的部署和推出。
 
-请参阅 [ADR-0009](https://github.com/EvanL1/AetherCloud/blob/main/docs/adr/0009-immutable-artifact-publication.md) 了解决策，并参阅 [CloudLink 和核心状态机](/aethercloud/concepts/cloudlink-and-core-state-machines) 了解发布与部署的区别。
+接下来阅读[期望、报告与应用状态](/aethercloud/concepts/desired-reported-applied-deployment)，了解已发布工件如何进入受治理的部署流程，以及为什么“已发布”不等于“边缘已应用”。

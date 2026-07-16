@@ -43,7 +43,7 @@ AetherCloud 是 IoT 队列、数据、工件和受管工作控制平面。多云
 - PostgreSQL、对象存储、时间序列、持久发件箱、集成/导出工作进程、生产 Webhook 发送方/目标机密/签名、实时 SSE、WebSocket、MCP 线路/根和剩余工具、队列操作、配额或成本适配器
 - 生产网关 CA、KMS 令牌服务、证书吊销、恢复或注册 HTTP 端点
 
-以下计划项目是契约和交付方向，不可用端点或协议消息。此摘要背后的证据保留在[当前实施审核](/aethercloud/concepts/current-state-audit)中。
+以下计划项目代表契约和交付方向，并不是当前可调用的端点或协议消息。[物联网云路线图](/aethercloud/guides/iot-cloud-roadmap)会区分已经可用的能力和仍缺少的生产能力。
 
 ## 能力地图
 
@@ -62,7 +62,7 @@ AetherCloud 是 IoT 队列、数据、工件和受管工作控制平面。多云
 | 运营和成本护栏 | 通过 `FleetHealthProjection`、`Backlog`、`VersionDistribution`、`Quota` 和 `RetentionBudget` | 观察​​队列运行状况、滞后、版本、部署、漂移、配额、保留和成本，每个源事实均保持其权威；操作视图是带有新鲜度标签的预测；云拥有配额政策 | 问：健康、滞后、版本、漂移、成本。 C：设置配额、速率和保留策略 | PostgreSQL配置/摘要和分析 | 结合了心跳、清单、摄取延迟、部署和作业证据 | 以事实或配额形式呈现的陈旧运行状况会导致无声损失 | 增量；统一阶段 9 |
 | 操作可观察性 | 通过跟踪、低基数指标和相关结构化日志诊断 API、CloudLink、摄取、数据库、工作进程和交付行为 | 每个产品上下文都拥有其事实； OpenTelemetry 信号仅采样操作证据 | 无业务命令/查询；组合根配置无操作或 OTLP 适配器 | 通过 OTLP 可选的可观察性后端；无事务或审计角色 | 仅可选 W3C 跟踪上下文；行李绝不授权 | 高基数或秘密泄露；出口商失败改变了经营结果；审计错误的跟踪 | 适配器基础开始第 2 阶段，并通过第 9 阶段进行扩展 |
 | AI 原生合约和 MCP | 让代理发现真相并使用 `DocsManifest`、`CapabilityDefinition`、权限/错误/事件架构和黄金路径安全调用现有功能 | 版本化仓库合约和应用程序功能定义是权威； AI 输出不是 | 问：文档、能力元数据、预测。 C：MCP工具仅代理实现的应用程序命令 | Git Markdown和清单；运行时调用使用正常的审核持久性 | 没有备用CloudLink或控制路径 | 计划功能呈现为可调用，工具忽略风险/确认，代理绕过授权 | 每个阶段的文档； MCP 第 10 阶段 |
-| 提供商和基础设施融合 | 通过现有提供商适配器和基础设施决策放置云工作负载 | 请参阅 ADR-0004 | 在此 IoT 功能扩展之外 | 独立部署堆栈状态 | 仅通过放置和受管基础设施相关作业 | 物联网核心获得固定供应商枚举或全局状态 | 相邻现有轨道 |
+| 提供商和基础设施融合 | 通过能力驱动的 Provider Adapter 注册表放置云工作负载 | 提供商负责实际资源状态；AetherCloud 负责受治理的放置意图 | 在此 IoT 能力扩展之外 | 独立部署堆栈状态 | 仅通过放置和受治理的基础设施作业关联 | IoT 核心获得固定供应商枚举或全局状态 | 相邻能力轨道 |
 
 ## 跨上下文依赖关系
 ```text
@@ -97,4 +97,4 @@ Outbox -> projections, notifications, webhooks, exports, and SSE/WebSocket
 | 操作可观察性 | 部署配置仅 | 不是产品命令 | 有限的信号损失；永远不会改变业务成果 | 实现可选适配器和遥测装饰器；计划更广泛的根检测/部署 |
 | AI 原生/MCP | 与底层用例相同的权限 | 与底层命令相同的风险和确认 | 计划的功能被拒绝，从不模拟 | 部分：功能/审核资源和数据导出/作业工具接口已实现；线路/根、生产身份和计划的剩余暴露 |
 
-阅读[架构](/aethercloud/concepts/architecture)了解进程和持久性边界，阅读[CloudLink和核心状态机](/aethercloud/concepts/cloudlink-and-core-state-machines)了解故障语义，阅读[交付路线图](/aethercloud/guides/iot-cloud-roadmap)了解可执行切片。
+阅读[架构](/aethercloud/concepts/architecture)了解进程和持久化边界，阅读 [CloudLink 可靠传输与生命周期](/aethercloud/concepts/cloudlink-and-core-state-machines)了解故障语义，阅读[交付路线图](/aethercloud/guides/iot-cloud-roadmap)了解当前可用能力。

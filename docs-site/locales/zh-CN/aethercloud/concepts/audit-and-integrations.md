@@ -58,4 +58,4 @@ queued/ready/failed -> expired
 
 PostgreSQL仅附加审核、事务性发件箱消耗、目标注册表、秘密轮换、生产HTTP发送方、签名、DNS/重定向 SSRF 防御、重试租赁、实时 SSE 通知程序、WebSocket、对象存储、导出工作进程、保留/配额强制执行和公共 Webhook/导出API仍在计划中。当前的 API 使用内存审计仓库和配置的承载身份，因此它是用于本地组合和合约测试的可执行接口，而不是生产身份或持久性边界。
 
-阅读 [ADR-0012](https://github.com/EvanL1/AetherCloud/blob/main/docs/adr/0012-durable-audit-and-outbound-integrations.md)、[HTTP API 参考](/aethercloud/reference/http-api) 和[应用程序合约添加外部集成表面之前的目录](/aethercloud/reference/application-contracts)。
+使用 [HTTP API 参考](/aethercloud/reference/http-api)和[应用契约目录](/aethercloud/reference/application-contracts)，查找受支持的集成操作、所需权限和当前实现状态。

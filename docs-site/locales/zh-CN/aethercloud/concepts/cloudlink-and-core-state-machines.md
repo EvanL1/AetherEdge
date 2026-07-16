@@ -1,15 +1,15 @@
 ---
-title: "CloudLink 和核心状态机"
-description: "定义离线、重复、排序、超时、重试、部分成功和取消语义"
+title: "CloudLink 可靠传输与生命周期"
+description: "了解消息交付、重试、确认、离线恢复和当前生产限制"
 updated: 2026-07-16
 status: mixed
 ---
 
-# CloudLink 和核心状态机
+# CloudLink 可靠传输与生命周期
 
 > 权威来源：[AetherCloud](https://github.com/EvanL1/AetherCloud/blob/main/docs/concepts/cloudlink-and-core-state-machines.md)。此页面镜像到统一的 AetherIoT 文档中。
 
-此页面将可执行的内层基础与计划的端到端行为混合在一起。实验性 JSON/MQTT v1 编解码器、应用桥、可独立启动的入口生命周期、Schema、测试夹具和真实代理工具现已存在，并且公共 AetherContracts alpha.3 版本是唯一共享权限。选择加入真正的 Mosquitto 双线束和故障矩阵是可执行的 alpha 证据。它们不构成生产过程；生产认证和PostgreSQL耐用性仍然是门槛。 ADR-0015 还订购身份验证、单线配置文件、共享测试夹具、双真实 Broker 线束、故障注入、耐碰撞持久性和旧版切换，以便后续证据无法绕过早期安全门。
+实验性 JSON/MQTT v1 编解码器、应用桥、可独立启动的入口进程、Schema、测试夹具和真实 Broker 测试工具已经存在，公共 AetherContracts alpha.3 版本是唯一的共享协议权威。这些能力属于可执行的 alpha 证据，还不是生产级服务。达到生产就绪状态仍需依次完成身份验证、统一线路配置、共享测试夹具、边缘与云双端测试、故障注入、崩溃耐久持久化和明确的旧版本切换。
 
 ## CloudLink 责任
 
@@ -199,4 +199,4 @@ pending -> leased -> delivered
 - Redrive 是具有权限、幂等性、过期和审核功能的受控命令；它会创建另一个尝试，而不是另一个事件。
 - 部分扇出成功对每个端点仍然可见。订阅者之间不会声明分布式事务。
 
-这些规则扩展了 [ADR-0001](https://github.com/EvanL1/AetherCloud/blob/main/docs/adr/0001-edge-first-cloud-control-plane.md) 中的权限边界以及 [ADR-0006](https://github.com/EvanL1/AetherCloud/blob/main/docs/adr/0006-cloudlink-durable-delivery.md) 中的计划传输决策。
+这些规则保持边缘优先的权限边界：边缘仍负责实时状态和物理控制，云端只记录已接受的事实和受治理的意图，不会把未经证明的设备结果声明为成功。

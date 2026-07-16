@@ -8,9 +8,10 @@
   "scripts": {
     "sync": "node scripts/sync-content.mjs",
     "check:language": "node scripts/check-language.mjs",
-    "build": "npm run sync && npm run check:language && astro build && node scripts/build-docs.mjs",
-    "check": "npm run sync && npm run check:language && astro check",
-    "dev": "npm run sync && npm run check:language && astro dev",
+    "check:audience": "node scripts/check-audience.mjs",
+    "build": "npm run sync && npm run check:language && npm run check:audience && astro build && node scripts/build-docs.mjs",
+    "check": "npm run sync && npm run check:language && npm run check:audience && astro check",
+    "dev": "npm run sync && npm run check:language && npm run check:audience && astro dev",
     "preview": "npm run build && wrangler dev",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",

@@ -6,6 +6,8 @@
 [![Version](https://img.shields.io/badge/version-0.5.0-yellow.svg)](CHANGELOG.md)
 [![Status](https://img.shields.io/badge/status-beta-orange.svg)](CHANGELOG.md)
 
+**Documentation website:** [docs.aetheriot.workers.dev](https://docs.aetheriot.workers.dev/)
+
 [Get started](docs/guides/getting-started.md) · [Documentation](https://docs.aetheriot.workers.dev/) · [Agent Skill](skills/aether-iot/SKILL.md) · [MCP](docs/guides/ai-assistants.md) · [中文](README-CN.md)
 
 **Build reliable edge IoT applications with AI.**

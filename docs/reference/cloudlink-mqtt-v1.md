@@ -7,8 +7,8 @@ AetherContracts `v0.1.0-alpha.3` release is the sole authority, and AetherEdge a
 AetherCloud commit the same digest-pinned consumer lock. The current claim is
 complete distribution integrity, full fixture execution, and an opt-in real
 dual-product alpha harness, not production interoperability conformance.
-ADR-0017 owns the edge architecture;
-ADR-0018 owns public release consumption.
+The public AetherContracts release and compatibility guide define the shared
+protocol; this page only explains the AetherEdge integration.
 
 The lock imports the exact alpha.3 adoption closure. Strict Runtime Manifest
 SemVer and replay/digest/cursor context vectors execute in both products. Local wire,
@@ -59,7 +59,7 @@ CloudLink v1 exposes no physical control or arbitrary RPC.
 | Concern | AetherEdge before this slice | AetherCloud reference | Candidate resolution |
 |---|---|---|---|
 | Wire package | Unversioned legacy JSON | Strict TypeScript codec/ingress | Byte-identical alpha.3 schemas/fixtures and matching Rust/TypeScript vocabulary |
-| Delivery removal | After local `AsyncClient::publish` acceptance | ADR requires durable application ACK; memory foundations only | Dedicated spool removes only after validated durable ACK |
+| Delivery removal | After local `AsyncClient::publish` acceptance | Durable application ACK required; memory foundations only | Dedicated spool removes only after validated durable ACK |
 | Session | No CloudLink session/epoch | Domain/application memory implementation | Candidate hello/accepted and monotonic epoch binding |
 | Authentication | MQTT username/password or mTLS; product/device topic identity | Session verifier consumes alpha structural evidence | Hello carries the exact challenge and Gateway signature object, or trusted adapter metadata is required outside payload; production key lifecycle remains proposed |
 | Resume | Broker reconnect only | Server cursor intended as authority | Server cursor drives stable identity/digest replay |
@@ -71,8 +71,8 @@ CloudLink v1 exposes no physical control or arbitrary RPC.
 
 ## Topic policy
 
-See ADR-0017 for the complete topic set. All candidate publications and
-subscriptions use QoS 1 and `retain = false`. The prefix is configurable. Prefix
+All candidate publications and subscriptions use QoS 1 and `retain = false`.
+The prefix is configurable. Prefix
 and gateway segments reject empty values, `+`, `#`, NUL/control characters, and
 path traversal-like empty segments. A gateway receives only its own
 `down/session`, `down/ack`, and `down/replay` topics.

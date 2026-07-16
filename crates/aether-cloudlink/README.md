@@ -7,8 +7,9 @@ envelopes, Runtime Manifest checksum reuse, and truthful `PointSample` mapping.
 
 This crate contains no MQTT client and no device-control message. The matching
 AetherCloud codec consumes the same imported fixtures, while three public
-behavior artifacts and all production interoperability gates remain open; see
-ADR-0017, ADR-0018, and `contracts/cloudlink/`.
+behavior artifacts and all production interoperability gates remain open. See
+the [CloudLink MQTT reference](../../docs/reference/cloudlink-mqtt-v1.md) for
+current behavior and production limits.
 
 ```bash
 cargo test -p aether-cloudlink

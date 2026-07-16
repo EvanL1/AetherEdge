@@ -135,6 +135,6 @@ PostgreSQL支持的交付是默认设置。 Kafka 或其他代理仅在测量吞
 
 计划的 PostgreSQL 适配器将应用程序强制作用域、复合租户密钥和行级安全性结合起来作为深度防御。跨租户访问只能通过具有单独权限和审核证据的显式平台用例来实现。
 
-在定义有线契约之前，请阅读 [ADR-0006](https://github.com/EvanL1/AetherCloud/blob/main/docs/adr/0006-cloudlink-durable-delivery.md) 和 [CloudLink 和核心状态机](/aethercloud/concepts/cloudlink-and-core-state-machines)。
+实现 CloudLink 集成前，请阅读 [CloudLink MQTT 参考](/aethercloud/reference/cloudlink-mqtt-v1)和 [CloudLink 可靠传输与生命周期](/aethercloud/concepts/cloudlink-and-core-state-machines)。
 
-在增加历史记录或数据摄取前，请阅读 [IoT 业务遥测](/aethercloud/concepts/iot-telemetry)；在增加监测手段前，请阅读[运行可观测性](/aethercloud/concepts/operational-observability)。[当前实现审计](/aethercloud/concepts/current-state-audit)是由证据支撑的状态来源；目标进程图本身不能证明组合根已经存在。
+在增加历史记录或数据摄取前，请阅读 [IoT 业务遥测](/aethercloud/concepts/iot-telemetry)；在增加监测手段前，请阅读[运行可观测性](/aethercloud/concepts/operational-observability)。当前可用能力和仍在规划中的部分以[物联网云路线图](/aethercloud/guides/iot-cloud-roadmap)为准。

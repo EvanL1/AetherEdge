@@ -86,4 +86,4 @@ Each cell
 
 选择加入的 PostgreSQL 18 测试使用非超级用户/非`BYPASSRLS` 应用程序角色，并在提交两侧注入失败。预提交失败不会留下遥测事实和 ACK。提交后不确定的结果留下一个已提交的事实，并且工作进程随后发布相同的 ACK；重播不会创造第二个事实。该证据仅涵盖公认的遥测技术。生产数据库和工作线程组成、CloudLink会话/纪元持久性、数据丢失事实、多样本映射以及完整的生产耐崩溃发布门仍在计划中。
 
-阅读 [ADR-0013](https://github.com/EvanL1/AetherCloud/blob/main/docs/adr/0013-postgresql-control-plane-persistence.md) 了解决策，阅读 [网关身份和注册](/aethercloud/concepts/gateway-identity-and-enrollment) 了解持久聚合边界。
+阅读[网关身份和注册](/aethercloud/concepts/gateway-identity-and-enrollment)，了解面向网关用户的租户身份和持久化边界。

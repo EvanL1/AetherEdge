@@ -50,7 +50,8 @@ describe('AetherIoT product-family documentation', () => {
 
     const cloudManifest = read('docs-site/content.aethercloud.manifest.txt');
     expect(cloudManifest).toContain('docs/get-started/*');
-    expect(cloudManifest).toContain('docs/concepts/*');
+    expect(cloudManifest).toContain('docs/concepts/!(current-state-audit).md');
+    expect(cloudManifest).not.toContain('\ndocs/concepts/*\n');
     expect(cloudManifest).toContain('docs/guides/*');
     expect(cloudManifest).toContain('docs/reference/*');
 

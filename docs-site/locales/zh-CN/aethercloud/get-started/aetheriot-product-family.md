@@ -32,4 +32,5 @@ AetherEMS            industry solution built on the platform
 
 常见文档入口点是 [docs.aetheriot.workers.dev](https://docs.aetheriot.workers.dev/)。其主要部分包括概述、AetherEdge、AetherCloud、AetherContracts、教程、兼容性和路线图。产品仓库对于实施细节仍然具有权威性。
 
-请阅读 [ADR-0017](https://github.com/EvanL1/AetherCloud/blob/main/docs/adr/0017-aetheriot-product-family-naming.md) 了解本地决策和部署边界。
+仓库地址变化和保持稳定的软件标识，请参阅公开的
+[AetherIot 到 AetherEdge 迁移指南](/migration/aetheriot-to-aetheredge)。

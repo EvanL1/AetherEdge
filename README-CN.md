@@ -6,6 +6,8 @@
 [![版本](https://img.shields.io/badge/version-0.5.0-yellow.svg)](CHANGELOG.md)
 [![状态](https://img.shields.io/badge/status-beta-orange.svg)](CHANGELOG.md)
 
+**文档网站：** [docs.aetheriot.workers.dev](https://docs.aetheriot.workers.dev/)
+
 [快速开始](docs/guides/getting-started.md) · [在线文档](https://docs.aetheriot.workers.dev/) · [Agent Skill](skills/aether-iot/SKILL.md) · [MCP](docs/guides/ai-assistants.md) · [English](README.md)
 
 **用 AI 构建可靠的边缘 IoT 应用。**

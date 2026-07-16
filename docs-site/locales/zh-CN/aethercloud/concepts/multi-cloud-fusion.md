@@ -94,7 +94,7 @@ approved exact Plan → Apply → refresh → NormalizedResourceProjection
 
 `managed-postgresql`是可移植的提供商功能，而不是固定的供应商产品。未来的提供商配置文件将保留本机引擎变体、支持的版本和扩展、HA、备份、加密、专用连接、复制、区域、主权、RPO/RTO、价格证据和命名空间扩展。核心持久性代码仍然是一个 PostgreSQL 适配器，并且绝不会在提供程序枚举上分支。
 
-每个 AetherCloud 控制平面单元都有一个权威的 PostgreSQL 编写器拓扑。跨多个提供商管理资源不需要同步跨云数据库写入。租户主单元放置、副本升级、灾难恢复和迁移是显式管理的工作流程。请参阅[PostgreSQL持久性和多云单元](/aethercloud/concepts/persistence-and-multi-cloud-cells) 和 [ADR-0013](https://github.com/EvanL1/AetherCloud/blob/main/docs/adr/0013-postgresql-control-plane-persistence.md)。
+每个 AetherCloud 控制平面单元都有一个权威的 PostgreSQL 写入拓扑。跨多个提供商管理资源不需要同步跨云数据库写入。租户主单元放置、副本提升、灾难恢复和迁移都是显式受治理的流程。用户可见的放置与隔离模型见 [PostgreSQL 持久化和多云单元](/aethercloud/concepts/persistence-and-multi-cloud-cells)。
 
 ## HPC-NOW 中保留的经验教训
 

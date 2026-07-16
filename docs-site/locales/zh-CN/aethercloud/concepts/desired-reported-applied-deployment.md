@@ -54,4 +54,4 @@ running <-> paused -> cancel-requested
 
 目标快照、队列、金丝雀/批次限制、暂停门、每个目标部分成功、运行状况策略、推出计划和大型证据存储都建立在这个单目标聚合的基础上。生产CloudLink仅通过应用程序拥有的发件箱记录发送版本化的所需报价或不可变参考；它不能写入边缘缓存、SHM、点或设备寄存器。
 
-读取 [ADR-0010](https://github.com/EvanL1/AetherCloud/blob/main/docs/adr/0010-desired-reported-applied-deployment.md) 以了解决定，并读取 [Artifact 注册表](/aethercloud/concepts/artifact-registry) 以了解发布机构。
+阅读[工件注册表](/aethercloud/concepts/artifact-registry)，了解部署引用不可变修订版之前的发布流程。

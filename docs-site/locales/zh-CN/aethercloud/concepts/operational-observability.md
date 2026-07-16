@@ -66,4 +66,4 @@ W3C 跟踪上下文可以作为可选元数据跨越 CloudLink。跟踪上下文
 
 一致性测试使用无操作观察器和内存导出器。它们涵盖上下文传播、上下文缺失、导出器故障隔离、有界队列、修订、禁止的高基数标签以及审计持久性和跟踪采样之间的独立性。
 
-阅读 [ADR-0008](https://github.com/EvanL1/AetherCloud/blob/main/docs/adr/0008-operational-observability.md) 了解决策，阅读 [IoT 业务遥测](/aethercloud/concepts/iot-telemetry) 了解产品数据路径。
+阅读 [IoT 业务遥测](/aethercloud/concepts/iot-telemetry)，了解持久化业务数据路径，以及业务事实与运行信号之间的边界。

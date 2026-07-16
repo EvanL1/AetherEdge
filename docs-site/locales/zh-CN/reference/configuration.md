@@ -138,7 +138,7 @@ Docker Compose 和服务使用的关键变量（大多数可选值在 `.env.exam
 | `AETHER_CLOUDLINK_BROKER_CLIENT_KEY` | unset | 可选 mTLS PKCS#8 私钥，使用证书配置 |
 | `AETHERCLOUD_ROOT` | unset | 此仅边缘线束之外的联合编排使用的可选只读路径；测试不会修改或启动它 |
 
-纯文本仅被显式开发工具接受。生产验证需要 TLS。 MQTT v3.1.1、QoS 1、非保留消息和精确的每个网关主题已由 ADR-0017 修复； MQTT 5 仍然是可选的，并且不是正确性所必需的。
+纯文本只允许在显式开发工具中使用，生产环境必须启用 TLS。实验性 CloudLink 配置固定使用 MQTT v3.1.1、QoS 1、非保留消息和精确的单网关主题；MQTT 5 仍然是可选项，不能成为正确运行的前提。
 
 对于 MCP 写入，`--allow-write` 仅注册 22 工具写入允许列表。网桥发送 `AETHER_ACCESS_TOKEN` 作为 `Authorization: Bearer` 凭证并添加 `X-Request-ID`；每次调用仍需要 `confirmed: true`。保留返回的请求/命令 ID，并且不会自动重试超时或不完整的审核/发布结果。通道突变还会返回所需状态的修订，并且可能会在运行时投影降级的情况下成功；检查 `request_id`、`resulting_revision` 和 `reconciliation_required`，而不是自动重试。
 

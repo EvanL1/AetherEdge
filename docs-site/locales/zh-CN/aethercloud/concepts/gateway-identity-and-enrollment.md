@@ -82,4 +82,4 @@ registered -> awaiting-claim -> claimed -> credential-pending -> active
 
 索赔是短暂的并且可以更换；活动凭证是单独版本的。撤销将永久隔离凭证生成。恢复需要显式授权并创建新一代，而不是重新激活已撤销的材料。
 
-阅读 [ADR-0005](https://github.com/EvanL1/AetherCloud/blob/main/docs/adr/0005-gateway-identity-and-enrollment.md) 了解决策，阅读 [ADR-0013](https://github.com/EvanL1/AetherCloud/blob/main/docs/adr/0013-postgresql-control-plane-persistence.md) 了解其持久事务边界。 [物联网云路线图](/aethercloud/guides/iot-cloud-roadmap) 定义了剩余的交付门。
+[物联网云路线图](/aethercloud/guides/iot-cloud-roadmap)说明了当前可用的凭证、持久化和公共接口能力，以及仍在规划中的部分。

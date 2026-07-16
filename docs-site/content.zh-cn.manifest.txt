@@ -4,7 +4,6 @@ locales/zh-CN/aethercloud/concepts/architecture.md
 locales/zh-CN/aethercloud/concepts/artifact-registry.md
 locales/zh-CN/aethercloud/concepts/audit-and-integrations.md
 locales/zh-CN/aethercloud/concepts/cloudlink-and-core-state-machines.md
-locales/zh-CN/aethercloud/concepts/current-state-audit.md
 locales/zh-CN/aethercloud/concepts/desired-reported-applied-deployment.md
 locales/zh-CN/aethercloud/concepts/edge-cloud-boundary.md
 locales/zh-CN/aethercloud/concepts/gateway-identity-and-enrollment.md
