@@ -17,20 +17,27 @@ content scope.
 
 ## Public content boundary
 
-`content.manifest.txt` is the publication allowlist. Only English product
-documentation belongs in it. Public compatibility and operator migration
-guides are product documentation. Do not publish internal agent instructions,
-plans, ADRs, competitive analysis, or historical working notes.
+`content.sources.json` declares the AetherEdge, AetherCloud, and
+AetherContracts source repositories. Each source manifest is a publication
+allowlist. Only English product documentation belongs in those manifests.
+Public compatibility and operator migration guides are product documentation.
+Do not publish internal agent instructions, plans, ADRs, competitive analysis,
+or historical working notes.
 
-`npm run sync` copies allowlisted repository Markdown into
-`src/content/docs/` and rewrites relative links. Everything in that directory
-is generated except:
+`npm run sync` copies allowlisted Markdown from all three repositories into
+`src/content/docs/`, namespaces non-Edge routes by product, rewrites relative
+links, and marks cross-repository mirrors with their authoritative source.
+Everything in that directory is generated except:
 
 - `index.md`
 - `agent-quickstart.md`
 
 Edit generated content at its repository source. The next sync deletes edits
 made directly to generated mirrors.
+
+Local development expects sibling `AetherCloud` and `AetherContracts`
+checkouts unless `AETHER_CLOUD_DOCS_ROOT` and `AETHER_CONTRACTS_DOCS_ROOT`
+provide explicit roots. CI checks out all sources before synchronization.
 
 ## Build pipeline
 

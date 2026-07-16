@@ -37,4 +37,48 @@ describe('AetherIoT product-family documentation', () => {
     expect(migration).toContain('CloudLink, Thing Model, Schema, TCK');
     expect(migration).toContain('Never rewrite published artifacts');
   });
+
+  it('publishes detailed Cloud and Contracts source collections', () => {
+    const sources = JSON.parse(read('docs-site/content.sources.json'));
+    expect(sources.sources.map(({ id }) => id)).toEqual([
+      'aetheredge',
+      'aethercloud',
+      'aethercontracts',
+    ]);
+
+    const cloudManifest = read('docs-site/content.aethercloud.manifest.txt');
+    expect(cloudManifest).toContain('docs/get-started/*');
+    expect(cloudManifest).toContain('docs/concepts/*');
+    expect(cloudManifest).toContain('docs/guides/*');
+    expect(cloudManifest).toContain('docs/reference/*');
+
+    const contractsManifest = read('docs-site/content.aethercontracts.manifest.txt');
+    expect(contractsManifest).toContain('docs/getting-started.md');
+    expect(contractsManifest).toContain('docs/compatibility.md');
+    expect(contractsManifest).toContain('docs/conformance.md');
+    expect(contractsManifest).toContain('spec/*');
+    expect(contractsManifest).toContain('packages/*/README.md');
+  });
+
+  it('gives both products detailed generated sidebars', () => {
+    const config = read('docs-site/astro.config.mjs');
+
+    expect(config).toContain("directory: 'aethercloud/concepts'");
+    expect(config).toContain("directory: 'aethercloud/guides'");
+    expect(config).toContain("directory: 'aethercloud/reference'");
+    expect(config).toContain("directory: 'aethercontracts/spec'");
+    expect(config).toContain("directory: 'aethercontracts/packages'");
+  });
+
+  it('keeps pagination page names compact and subordinate to document headings', () => {
+    const config = read('docs-site/astro.config.mjs');
+    const styles = read('docs-site/src/styles/custom.css');
+
+    expect(config).toContain("customCss: ['./src/styles/custom.css']");
+    expect(styles).toMatch(
+      /\.pagination-links \.link-title[\s\S]*font-size:\s*clamp\(1rem, 0\.9rem \+ 0\.25vw, 1\.15rem\)/
+    );
+    expect(styles).toContain('text-wrap: balance');
+    expect(styles).not.toContain('var(--sl-text-2xl)');
+  });
 });

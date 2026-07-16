@@ -10,6 +10,7 @@ export default defineConfig({
       title: 'AetherIoT',
       description:
         'Unified documentation for AetherEdge, AetherCloud, and AetherContracts.',
+      customCss: ['./src/styles/custom.css'],
       social: [
         { icon: 'github', label: 'GitHub', href: 'https://github.com/EvanL1/AetherEdge' },
       ],
@@ -36,10 +37,45 @@ export default defineConfig({
             { label: 'Security', items: [{ autogenerate: { directory: 'security' } }] },
           ],
         },
-        { label: 'AetherCloud', items: [{ label: 'Product Overview', slug: 'aethercloud' }] },
+        {
+          label: 'AetherCloud',
+          items: [
+            { label: 'Product Overview', slug: 'aethercloud' },
+            {
+              label: 'Get Started',
+              items: [{ autogenerate: { directory: 'aethercloud/get-started' } }],
+            },
+            {
+              label: 'Concepts',
+              items: [{ autogenerate: { directory: 'aethercloud/concepts' } }],
+            },
+            {
+              label: 'Guides',
+              items: [{ autogenerate: { directory: 'aethercloud/guides' } }],
+            },
+            {
+              label: 'Reference',
+              items: [{ autogenerate: { directory: 'aethercloud/reference' } }],
+            },
+          ],
+        },
         {
           label: 'AetherContracts',
-          items: [{ label: 'Product Overview', slug: 'aethercontracts' }],
+          items: [
+            { label: 'Product Overview', slug: 'aethercontracts' },
+            { label: 'Getting Started', slug: 'aethercontracts/getting-started' },
+            { label: 'Compatibility', slug: 'aethercontracts/compatibility' },
+            { label: 'Conformance', slug: 'aethercontracts/conformance' },
+            {
+              label: 'Specifications',
+              items: [{ autogenerate: { directory: 'aethercontracts/spec' } }],
+            },
+            {
+              label: 'Language Bindings',
+              items: [{ autogenerate: { directory: 'aethercontracts/packages' } }],
+            },
+            { label: 'Migration', slug: 'aethercontracts/migration' },
+          ],
         },
         { label: 'Tutorials', items: [{ autogenerate: { directory: 'tutorials' } }] },
         { label: 'Compatibility', items: [{ autogenerate: { directory: 'compatibility' } }] },

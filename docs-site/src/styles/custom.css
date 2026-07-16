@@ -1,0 +1,26 @@
+.pagination-links a {
+  min-height: 7rem;
+  padding-block: 1rem;
+}
+
+.pagination-links a > span {
+  color: var(--sl-color-gray-3);
+  font-size: var(--sl-text-sm);
+  line-height: 1.35;
+}
+
+.pagination-links .link-title {
+  display: inline-block;
+  margin-top: 0.35rem;
+  color: var(--sl-color-white);
+  font-size: clamp(1rem, 0.9rem + 0.25vw, 1.15rem);
+  font-weight: 600;
+  line-height: 1.4;
+  text-wrap: balance;
+}
+
+@media (max-width: 30rem) {
+  .pagination-links a {
+    min-height: auto;
+  }
+}

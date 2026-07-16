@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  addSourceAttribution,
   computeDestPath,
   findBrokenExternalLinks,
   findCollisions,
@@ -26,12 +27,67 @@ describe('computeDestPath', () => {
     expect(computeDestPath('AGENTS.md')).toBe('AGENTS.md');
     expect(computeDestPath('ARCHITECTURE.md')).toBe('ARCHITECTURE.md');
   });
+
+  it('places Cloud docs under the AetherCloud product namespace', () => {
+    expect(
+      computeDestPath('docs/concepts/architecture.md', {
+        destinationPrefix: 'aethercloud',
+      })
+    ).toBe('aethercloud/concepts/architecture.md');
+  });
+
+  it('preserves Contracts specification paths under the product namespace', () => {
+    expect(
+      computeDestPath('spec/foundation.md', {
+        destinationPrefix: 'aethercontracts',
+      })
+    ).toBe('aethercontracts/spec/foundation.md');
+    expect(
+      computeDestPath('packages/rust/README.md', {
+        destinationPrefix: 'aethercontracts',
+      })
+    ).toBe('aethercontracts/packages/rust.md');
+  });
+});
+
+describe('addSourceAttribution', () => {
+  it('marks mirrored cross-repository pages with their authoritative source', () => {
+    const content = '# Architecture\n\nCloud architecture details.\n';
+    const out = addSourceAttribution(content, 'docs/concepts/architecture.md', {
+      label: 'AetherCloud',
+      githubBlobBase: 'https://github.com/EvanL1/AetherCloud/blob/main',
+    });
+
+    expect(out).toContain(
+      '> Authoritative source: [AetherCloud](https://github.com/EvanL1/AetherCloud/blob/main/docs/concepts/architecture.md).'
+    );
+    expect(out).toContain('This page is mirrored into the unified AetherIoT documentation.');
+  });
+
+  it('leaves local AetherEdge pages unchanged', () => {
+    const content = '# Local page\n';
+    expect(addSourceAttribution(content, 'docs/local.md', null)).toBe(content);
+  });
 });
 
 describe('synthesizeFrontmatter', () => {
   it('passes through content that already has frontmatter', () => {
     const content = '---\ntitle: Existing\n---\n\n# Existing\n';
     expect(synthesizeFrontmatter(content, '2026-01-01')).toBe(content);
+  });
+
+  it('adds Starlight metadata to existing specification frontmatter without losing fields', () => {
+    const content =
+      '---\nid: cloudlink-v1alpha1\nstatus: alpha\nversion: v1alpha1\nnormative: true\n---\n' +
+      '# CloudLink v1 alpha 1\n\nCloudLink defines the edge-to-cloud protocol.\n';
+    const out = synthesizeFrontmatter(content, '2026-07-16');
+
+    expect(out).toContain('title: "CloudLink v1 alpha 1"');
+    expect(out).toContain('description: "CloudLink defines the edge-to-cloud protocol."');
+    expect(out).toContain('updated: 2026-07-16');
+    expect(out).toContain('id: cloudlink-v1alpha1');
+    expect(out).toContain('normative: true');
+    expect(out.match(/^---$/gm)).toHaveLength(2);
   });
 
   it('derives title from the first heading and description from the next paragraph', () => {
@@ -194,6 +250,42 @@ describe('rewriteRelativeLinks', () => {
     ]);
     const out = rewriteRelativeLinks(content, 'crates/aether-testkit/README.md', syncedSourceSet);
     expect(out).toBe('See [aether-ports](/crates/aether-ports) for details.');
+  });
+
+  it('rewrites Cloud links into the AetherCloud namespace', () => {
+    const content = 'See [Telemetry](../concepts/iot-telemetry.md).';
+    const syncedSourceSet = new Set([
+      'docs/guides/iot-cloud-roadmap.md',
+      'docs/concepts/iot-telemetry.md',
+    ]);
+    const out = rewriteRelativeLinks(
+      content,
+      'docs/guides/iot-cloud-roadmap.md',
+      syncedSourceSet,
+      {
+        destinationPrefix: 'aethercloud',
+        githubBlobBase: 'https://github.com/EvanL1/AetherCloud/blob/main',
+      }
+    );
+
+    expect(out).toBe('See [Telemetry](/aethercloud/concepts/iot-telemetry).');
+  });
+
+  it('uses the owning repository for excluded cross-repository content', () => {
+    const content = 'Read [the invariants](../../ai/invariants.md).';
+    const out = rewriteRelativeLinks(
+      content,
+      'docs/guides/plan-infrastructure.md',
+      new Set(['docs/guides/plan-infrastructure.md']),
+      {
+        destinationPrefix: 'aethercloud',
+        githubBlobBase: 'https://github.com/EvanL1/AetherCloud/blob/main',
+      }
+    );
+
+    expect(out).toBe(
+      'Read [the invariants](https://github.com/EvanL1/AetherCloud/blob/main/ai/invariants.md).'
+    );
   });
 });
 

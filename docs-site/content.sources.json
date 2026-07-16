@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "sources": [
+    {
+      "id": "aetheredge",
+      "label": "AetherEdge",
+      "root": "..",
+      "manifest": "content.manifest.txt",
+      "destinationPrefix": "",
+      "stripPrefix": "docs/",
+      "githubBlobBase": "https://github.com/EvanL1/AetherEdge/blob/main",
+      "attribution": false
+    },
+    {
+      "id": "aethercloud",
+      "label": "AetherCloud",
+      "root": "../../AetherCloud",
+      "rootEnv": "AETHER_CLOUD_DOCS_ROOT",
+      "manifest": "content.aethercloud.manifest.txt",
+      "destinationPrefix": "aethercloud",
+      "stripPrefix": "docs/",
+      "githubBlobBase": "https://github.com/EvanL1/AetherCloud/blob/main"
+    },
+    {
+      "id": "aethercontracts",
+      "label": "AetherContracts",
+      "root": "../../AetherContracts",
+      "rootEnv": "AETHER_CONTRACTS_DOCS_ROOT",
+      "manifest": "content.aethercontracts.manifest.txt",
+      "destinationPrefix": "aethercontracts",
+      "stripPrefix": "docs/",
+      "githubBlobBase": "https://github.com/EvanL1/AetherContracts/blob/main"
+    }
+  ]
+}

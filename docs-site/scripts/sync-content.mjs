@@ -9,18 +9,26 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
 const DOCS_SITE_ROOT = path.resolve(__dirname, '..');
 const CONTENT_DIR = path.join(DOCS_SITE_ROOT, 'src', 'content', 'docs');
-const MANIFEST_PATH = path.join(DOCS_SITE_ROOT, 'content.manifest.txt');
+const SOURCE_CONFIG_PATH = path.join(DOCS_SITE_ROOT, 'content.sources.json');
 const HAND_AUTHORED = new Set(['index.md', 'agent-quickstart.md']);
 const DESCRIPTION_MAX_LEN = 155;
 
-export function computeDestPath(sourcePath) {
-  if (sourcePath.startsWith('docs/')) {
-    return sourcePath.slice('docs/'.length);
+export function computeDestPath(sourcePath, options = {}) {
+  const stripPrefix = options.stripPrefix ?? 'docs/';
+  const destinationPrefix = options.destinationPrefix ?? '';
+  let destination;
+
+  if (stripPrefix && sourcePath.startsWith(stripPrefix)) {
+    destination = sourcePath.slice(stripPrefix.length);
+  } else if (sourcePath.endsWith('/README.md')) {
+    destination = sourcePath.slice(0, -'/README.md'.length) + '.md';
+  } else {
+    destination = sourcePath;
   }
-  if (sourcePath.endsWith('/README.md')) {
-    return sourcePath.slice(0, -'/README.md'.length) + '.md';
-  }
-  return path.basename(sourcePath);
+
+  return destinationPrefix
+    ? path.posix.join(destinationPrefix, destination)
+    : destination;
 }
 
 function extractTitleAndBody(content) {
@@ -64,7 +72,22 @@ function extractTitleAndBody(content) {
 
 export function synthesizeFrontmatter(content, gitDate) {
   if (content.startsWith('---\n')) {
-    return content;
+    const existing = content.match(/^---\n([\s\S]*?)\n---\n?([\s\S]*)$/);
+    if (!existing || /^title\s*:/m.test(existing[1])) {
+      return content;
+    }
+
+    const metadata = existing[1];
+    const body = existing[2];
+    const { title, description } = extractTitleAndBody(body);
+    const additions = [`title: ${JSON.stringify(title)}`];
+    if (description && !/^description\s*:/m.test(metadata)) {
+      additions.push(`description: ${JSON.stringify(description)}`);
+    }
+    if (gitDate && !/^updated\s*:/m.test(metadata)) {
+      additions.push(`updated: ${gitDate}`);
+    }
+    return `---\n${additions.join('\n')}\n${metadata}\n---\n${body}`;
   }
   const { title, description } = extractTitleAndBody(content);
   const frontmatterLines = ['---', `title: ${JSON.stringify(title)}`];
@@ -81,6 +104,23 @@ export function synthesizeFrontmatter(content, gitDate) {
 const MD_LINK_RE = /\[([^\]]*)\]\((?!https?:\/\/|mailto:|#|\/)([^)\s]+)\)/g;
 const GITHUB_BLOB_BASE = 'https://github.com/EvanL1/AetherEdge/blob/main';
 
+export function addSourceAttribution(content, sourceRelPath, source) {
+  if (!source) return content;
+
+  const sourceUrl = `${source.githubBlobBase}/${sourceRelPath}`;
+  const notice =
+    `> Authoritative source: [${source.label}](${sourceUrl}). ` +
+    'This page is mirrored into the unified AetherIoT documentation.';
+  const heading = content.match(/^#\s+.+$/m);
+
+  if (!heading || heading.index === undefined) {
+    return `${notice}\n\n${content}`;
+  }
+
+  const insertAt = heading.index + heading[0].length;
+  return `${content.slice(0, insertAt)}\n\n${notice}${content.slice(insertAt)}`;
+}
+
 // Rewrites every relative Markdown link into a stable published form. Links
 // whose target is in the synced manifest become extensionless document
 // routes derived from computeDestPath + computeSlug. Links whose target is
@@ -89,19 +129,20 @@ const GITHUB_BLOB_BASE = 'https://github.com/EvanL1/AetherEdge/blob/main';
 // become dead links once mirrored. Callers must run findBrokenExternalLinks
 // first — this function does not itself verify that the GitHub-blob branch
 // points at a file that actually exists.
-export function rewriteRelativeLinks(content, sourceRelPath, syncedSourceSet) {
+export function rewriteRelativeLinks(content, sourceRelPath, syncedSourceSet, options = {}) {
   const sourceDir = path.posix.dirname(sourceRelPath);
+  const githubBlobBase = options.githubBlobBase ?? GITHUB_BLOB_BASE;
   return content.replace(MD_LINK_RE, (full, text, target) => {
     const [targetPath, anchor] = target.split('#');
     if (!targetPath) return full; // same-page anchor like [text](#section)
     const resolved = path.posix.normalize(path.posix.join(sourceDir, targetPath));
     const suffix = anchor ? `#${anchor}` : '';
     if (syncedSourceSet.has(resolved)) {
-      const destRelPath = computeDestPath(resolved);
+      const destRelPath = computeDestPath(resolved, options);
       const sitePath = slugToSitePath(computeSlug(destRelPath));
       return `[${text}](${sitePath}${suffix})`;
     }
-    return `[${text}](${GITHUB_BLOB_BASE}/${resolved}${suffix})`;
+    return `[${text}](${githubBlobBase}/${resolved}${suffix})`;
   });
 }
 
@@ -123,9 +164,9 @@ function findExternalLinkTargets(content, sourceRelPath, syncedSourceSet) {
   return targets;
 }
 
-async function pathExistsInRepo(repoRelativePath) {
+async function pathExistsInRepo(repoRelativePath, repoRoot = REPO_ROOT) {
   try {
-    await fs.access(path.join(REPO_ROOT, repoRelativePath));
+    await fs.access(path.join(repoRoot, repoRelativePath));
     return true;
   } catch {
     return false;
@@ -139,11 +180,16 @@ async function pathExistsInRepo(repoRelativePath) {
 // sync time, that every link resolving outside the synced manifest still
 // points at a file that actually exists in the repo — catching typos (e.g.
 // docs/doman/... missing an 'a') before they ship as silently-dead links.
-export async function findBrokenExternalLinks(content, sourceRelPath, syncedSourceSet) {
+export async function findBrokenExternalLinks(
+  content,
+  sourceRelPath,
+  syncedSourceSet,
+  options = {}
+) {
   const targets = findExternalLinkTargets(content, sourceRelPath, syncedSourceSet);
   const problems = [];
   for (const { text, resolved } of targets) {
-    if (!(await pathExistsInRepo(resolved))) {
+    if (!(await pathExistsInRepo(resolved, options.repoRoot))) {
       problems.push({ source: sourceRelPath, text, resolved });
     }
   }
@@ -180,10 +226,10 @@ export function findCollisions(sourceDestPairs) {
 }
 
 /* v8 ignore start -- CLI filesystem orchestration is exercised by npm run build. */
-function gitLastModifiedDate(repoRelativePath) {
+function gitLastModifiedDate(repoRoot, repoRelativePath) {
   try {
     const out = execFileSync('git', ['log', '-1', '--format=%cs', '--', repoRelativePath], {
-      cwd: REPO_ROOT,
+      cwd: repoRoot,
       encoding: 'utf8',
     }).trim();
     return out || null;
@@ -211,13 +257,23 @@ async function clearGeneratedContent() {
   );
 }
 
-async function syncFile(sourceRelPath, raw, syncedSourceSet) {
-  const destRelPath = computeDestPath(sourceRelPath);
+async function syncFile(source, sourceRelPath, raw, syncedSourceSet) {
+  const options = {
+    destinationPrefix: source.destinationPrefix,
+    githubBlobBase: source.githubBlobBase,
+    stripPrefix: source.stripPrefix,
+  };
+  const destRelPath = computeDestPath(sourceRelPath, options);
   const destAbsPath = path.join(CONTENT_DIR, destRelPath);
 
-  const rewritten = rewriteRelativeLinks(raw, sourceRelPath, syncedSourceSet);
-  const gitDate = gitLastModifiedDate(sourceRelPath);
-  const withFrontmatter = synthesizeFrontmatter(rewritten, gitDate);
+  const rewritten = rewriteRelativeLinks(raw, sourceRelPath, syncedSourceSet, options);
+  const attributed = addSourceAttribution(
+    rewritten,
+    sourceRelPath,
+    source.attribution === false ? null : source
+  );
+  const gitDate = gitLastModifiedDate(source.repoRoot, sourceRelPath);
+  const withFrontmatter = synthesizeFrontmatter(attributed, gitDate);
 
   await fs.mkdir(path.dirname(destAbsPath), { recursive: true });
   await fs.writeFile(destAbsPath, withFrontmatter, 'utf8');
@@ -225,22 +281,43 @@ async function syncFile(sourceRelPath, raw, syncedSourceSet) {
 }
 
 async function main() {
-  const manifestText = await fs.readFile(MANIFEST_PATH, 'utf8');
-  const patterns = readManifestPatterns(manifestText);
+  const sourceConfig = JSON.parse(await fs.readFile(SOURCE_CONFIG_PATH, 'utf8'));
+  const sourceContexts = await Promise.all(
+    sourceConfig.sources.map(async (source) => {
+      const configuredRoot = source.rootEnv ? process.env[source.rootEnv] : null;
+      const repoRoot = configuredRoot
+        ? path.resolve(configuredRoot)
+        : path.resolve(DOCS_SITE_ROOT, source.root);
+      const manifestPath = path.resolve(DOCS_SITE_ROOT, source.manifest);
+      const manifestText = await fs.readFile(manifestPath, 'utf8');
+      const patterns = readManifestPatterns(manifestText);
+      const perPatternMatches = await Promise.all(
+        patterns.map((pattern) => fg(pattern, { cwd: repoRoot, onlyFiles: true, dot: false }))
+      );
+      const emptyPatterns = patterns.filter((_, i) => perPatternMatches[i].length === 0);
+      if (emptyPatterns.length > 0) {
+        throw new Error(
+          `sync-content: ${source.id} manifest pattern(s) matched zero files ` +
+            `(typo, missing source checkout, or content moved?):\n` +
+            emptyPatterns.map((pattern) => `  ${pattern}`).join('\n')
+        );
+      }
 
-  const perPatternMatches = await Promise.all(
-    patterns.map((pattern) => fg(pattern, { cwd: REPO_ROOT, onlyFiles: true, dot: false }))
+      const files = [...new Set(perPatternMatches.flat())].sort();
+      return { ...source, repoRoot, files, syncedSourceSet: new Set(files), patterns };
+    })
   );
-  const emptyPatterns = patterns.filter((_, i) => perPatternMatches[i].length === 0);
-  if (emptyPatterns.length > 0) {
-    throw new Error(
-      `sync-content: manifest pattern(s) matched zero files (typo, or content moved?):\n` +
-        emptyPatterns.map((p) => `  ${p}`).join('\n')
-    );
-  }
 
-  const sources = [...new Set(perPatternMatches.flat())].sort();
-  const sourceDestPairs = sources.map((source) => [source, computeDestPath(source)]);
+  const entries = sourceContexts.flatMap((source) =>
+    source.files.map((sourceRelPath) => ({ source, sourceRelPath }))
+  );
+  const sourceDestPairs = entries.map(({ source, sourceRelPath }) => [
+    `${source.id}:${sourceRelPath}`,
+    computeDestPath(sourceRelPath, {
+      destinationPrefix: source.destinationPrefix,
+      stripPrefix: source.stripPrefix,
+    }),
+  ]);
 
   const collisions = findCollisions(sourceDestPairs);
   if (collisions.length > 0) {
@@ -250,14 +327,18 @@ async function main() {
     throw new Error(`sync-content: destination path collision(s) detected:\n${details}`);
   }
 
-  const syncedSourceSet = new Set(sources);
-
   const rawContents = await Promise.all(
-    sources.map((source) => fs.readFile(path.join(REPO_ROOT, source), 'utf8'))
+    entries.map(({ source, sourceRelPath }) =>
+      fs.readFile(path.join(source.repoRoot, sourceRelPath), 'utf8')
+    )
   );
 
   const brokenLinkGroups = await Promise.all(
-    sources.map((source, i) => findBrokenExternalLinks(rawContents[i], source, syncedSourceSet))
+    entries.map(({ source, sourceRelPath }, index) =>
+      findBrokenExternalLinks(rawContents[index], sourceRelPath, source.syncedSourceSet, {
+        repoRoot: source.repoRoot,
+      })
+    )
   );
   const brokenLinks = brokenLinkGroups.flat();
   if (brokenLinks.length > 0) {
@@ -271,10 +352,16 @@ async function main() {
 
   await clearGeneratedContent();
   const written = await Promise.all(
-    sources.map((source, i) => syncFile(source, rawContents[i], syncedSourceSet))
+    entries.map(({ source, sourceRelPath }, index) =>
+      syncFile(source, sourceRelPath, rawContents[index], source.syncedSourceSet)
+    )
   );
 
-  console.log(`sync-content: wrote ${written.length} file(s) from ${patterns.length} manifest pattern(s)`);
+  const patternCount = sourceContexts.reduce((total, source) => total + source.patterns.length, 0);
+  console.log(
+    `sync-content: wrote ${written.length} file(s) from ` +
+      `${sourceContexts.length} repositories and ${patternCount} manifest pattern(s)`
+  );
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {

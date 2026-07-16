@@ -1,0 +1,8 @@
+# Public AetherContracts guides, normative specifications, language bindings,
+# and the repository naming migration notice.
+docs/getting-started.md
+docs/compatibility.md
+docs/conformance.md
+spec/*
+packages/*/README.md
+MIGRATION.md
