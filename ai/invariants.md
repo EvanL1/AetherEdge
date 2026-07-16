@@ -55,3 +55,30 @@ These rules are more important than the current directory layout.
     create, update, delete, enable, or disable channels only through the
     confirmed, audited `io.channel.manage` application command and never
     coordinate SQLite and `ChannelManager` directly.
+24. MQTT client acceptance and MQTT PUBACK are transport evidence, never a
+    CloudLink durable business acknowledgement. A CloudLink record is removable
+    only after a matching application ACK validates session, stream epoch,
+    position, batch identity, and canonical digest.
+25. CloudLink replay preserves stream position, batch identity, and business
+    digest. Equal identity with different content is a fail-closed conflict;
+    unavailable retained ranges produce explicit data-loss evidence.
+26. CloudLink is broker neutral. A customer-selected MQTT broker is supported,
+    AetherCloud does not have to own the broker, and broker/cloud failure cannot
+    affect acquisition, rules, alarms, safety, history, or local control.
+27. CloudLink v1 has no physical-control, arbitrary-RPC, direct SHM-write, or
+    point/register-write capability. Legacy MQTT control topics are never
+    automatically translated into CloudLink.
+28. Edge telemetry never fabricates a Thing Model revision. It preserves the
+    real `PointAddress`, source timestamp, exposed quality, and coherent topology
+    generation; business point facts remain distinct from operational telemetry
+    and OpenTelemetry signals.
+29. Shared contract authority is the digest-pinned AetherContracts release.
+    AetherIot and AetherCloud keep the same closed consumer lock; local wire,
+    authentication, fixture-manifest, and gate files cannot redefine the public
+    core.
+30. Complete distribution integrity and public fixture execution are not
+    production state-machine, authentication, signed-ACK, real-Broker, or
+    crash-durability conformance.
+31. Contract consumption never follows `main`, `latest`, a floating tag, or a
+    version range and never falls back to a sibling checkout. Legacy remains
+    default, and contract adoption adds no physical-control operation.

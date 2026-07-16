@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "runtime-manifest-report.schema.json",
+  "title": "Experimental Aether CloudLink Runtime Manifest report v1",
+  "allOf": [
+    { "$ref": "envelope.schema.json" },
+    {
+      "properties": {
+        "message_kind": { "const": "runtime-manifest-report" },
+        "payload": {
+          "$ref": "envelope.schema.json#/$defs/runtimeManifestPayload"
+        }
+      }
+    }
+  ]
+}

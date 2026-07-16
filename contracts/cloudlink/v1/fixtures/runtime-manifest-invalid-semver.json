@@ -1,0 +1,36 @@
+{
+  "schema": "aether.cloudlink.envelope.v1",
+  "protocol": "aether.cloudlink",
+  "protocol_version": "1.0",
+  "message_kind": "runtime-manifest-report",
+  "gateway_id": "33333333-3333-4333-8333-333333333333",
+  "session_id": "44444444-4444-4444-8444-444444444444",
+  "session_epoch": "7",
+  "credential_generation": "3",
+  "sent_at_ms": "1721000000200",
+  "delivery": {
+    "stream_id": "manifest",
+    "stream_epoch": "2",
+    "position": "1",
+    "batch_id": "manifest-invalid-semver",
+    "digest": "sha256:41a92cc9abe3d8200dec66f54debdbaaa0d856b68c9c666d2a5f660c4a64b602"
+  },
+  "payload": {
+    "observed_at_ms": "1721000000123",
+    "manifest": {
+      "schema_version": 1,
+      "composition": "aether-edge-six-service",
+      "aether_version": "01.0.0",
+      "target_triple": "aarch64-unknown-linux-musl",
+      "target_os": "linux",
+      "services": ["aether-uplink"],
+      "cargo_features": [],
+      "capabilities": [],
+      "protocols": ["modbus_tcp"],
+      "checksum": {
+        "algorithm": "sha256",
+        "digest": "75643d71e08d67950578d0d7077f9de7b0c3ef907622dbc03e558f2763fcf19e"
+      }
+    }
+  }
+}

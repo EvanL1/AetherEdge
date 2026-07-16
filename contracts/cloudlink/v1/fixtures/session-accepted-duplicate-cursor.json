@@ -1,0 +1,24 @@
+{
+  "schema": "aether.cloudlink.session-accepted.v1",
+  "protocol": "aether.cloudlink",
+  "message_kind": "session-accepted",
+  "gateway_id": "33333333-3333-4333-8333-333333333333",
+  "selected_protocol_version": "1.0",
+  "session_id": "44444444-4444-4444-8444-444444444444",
+  "session_epoch": "7",
+  "credential_generation": "3",
+  "server_time_ms": "1721000000123",
+  "heartbeat_interval_ms": "30000",
+  "resume": [
+    {
+      "stream_id": "telemetry",
+      "stream_epoch": "4",
+      "acknowledged_position": "18"
+    },
+    {
+      "stream_id": "telemetry",
+      "stream_epoch": "4",
+      "acknowledged_position": "17"
+    }
+  ]
+}

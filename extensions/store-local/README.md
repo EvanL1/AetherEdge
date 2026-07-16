@@ -13,6 +13,8 @@ Local adapters for a gateway that must run without external services.
 | `SqliteAuditSink` (`sqlite-audit`) | embedded SQLite | mandatory command audit without an external service |
 | `MemoryOutbox` | process-local | conformance tests and ephemeral workloads |
 | `FileOutbox` | crash-recoverable file | production offline store-and-forward |
+| `MemoryCloudLinkSpool` | process-local | deterministic application-ACK/replay conformance |
+| `FileCloudLinkSpool` | crash-recoverable file | experimental CloudLink positions, replay, and loss evidence |
 
 `MemoryHistoryQuery` and `MemoryCovariateSource` are keyed by the complete
 versioned `BindingIdentity`. They project only requested logical features in
@@ -137,7 +139,7 @@ outbox
 Each successful mutation has been synchronized to the journal. Recovery
 replays complete checksum-valid records and treats an incomplete or
 checksum-invalid final record as a crash-torn tail. Corruption before a later
-committed record fails open instead of discarding the later data. The journal
+committed record fails closed instead of discarding the later data. The journal
 permits one process writer, is bounded by entry count, and can be reclaimed
 with `FileOutbox::compact()`.
 
@@ -147,3 +149,20 @@ compaction bounds obsolete acknowledged records in the journal.
 
 Disk durability does not define network delivery. The selected
 `UplinkPublisher` decides when an entry may be acknowledged.
+
+## CloudLink spools
+
+`MemoryCloudLinkSpool` and `FileCloudLinkSpool` implement the dedicated
+`CloudLinkSpool` port. They preserve stream epoch, monotonic position, stable
+batch identity/digest, offer/PUBACK state, last durable application ACK, and
+capacity-overflow data-loss evidence. A transport publish never removes a
+record. Stale-session, wrong-stream, wrong-batch, and wrong-digest ACKs fail
+closed; an exact duplicate ACK is idempotent.
+
+The file adapter owns an exclusive process lock and synchronizes every state
+transition in an incremental journal. Recovery truncates only an incomplete
+tail; a checksum or semantic failure is corruption and fails closed even in the
+last complete record. `FileCloudLinkSpool::compact()` atomically rewrites cursor
+metadata plus live records, and the adapter compacts before accepting more work
+after 256 mutations. Its file format is independent of legacy `FileOutbox` and
+cannot be opened through the generic outbox port.

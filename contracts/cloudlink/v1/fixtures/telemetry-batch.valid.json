@@ -1,0 +1,36 @@
+{
+  "schema": "aether.cloudlink.envelope.v1",
+  "protocol": "aether.cloudlink",
+  "protocol_version": "1.0",
+  "message_kind": "telemetry-batch",
+  "gateway_id": "33333333-3333-4333-8333-333333333333",
+  "session_id": "44444444-4444-4444-8444-444444444444",
+  "session_epoch": "7",
+  "credential_generation": "3",
+  "sent_at_ms": "1721000000200",
+  "expires_at_ms": "1721003600000",
+  "delivery": {
+    "stream_id": "telemetry",
+    "stream_epoch": "4",
+    "position": "19",
+    "batch_id": "batch-1",
+    "digest": "sha256:397dafb32f984e975221bb3aa13481808692d24850a201be8818dd1517f38c35"
+  },
+  "traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+  "payload": {
+    "topology": {
+      "publication_epoch": "11",
+      "snapshot_digest": "fx64:0123456789abcdef"
+    },
+    "samples": [
+      {
+        "instance_id": "42",
+        "point_kind": "telemetry",
+        "point_id": "8",
+        "value": 12.5,
+        "source_timestamp_ms": "1721000000123",
+        "quality": "uncertain"
+      }
+    ]
+  }
+}

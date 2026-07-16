@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.aether.dev/schemas/tck/v1alpha1/fixture-manifest.schema.json",
+  "title": "Aether fixture manifest v1 alpha 1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "contract", "status", "hash_algorithm", "fixtures"],
+  "properties": {
+    "schema": { "const": "aether.fixture-manifest.v1alpha1" },
+    "contract": { "enum": ["aether.cloudlink", "aether.thing-model"] },
+    "status": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "source": { "type": "string", "minLength": 1, "maxLength": 1024 },
+    "joint_core_import": { "$ref": "#/$defs/relativeJsonOrScriptPath" },
+    "derived_fixtures": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/relativeJsonPath" }
+    },
+    "hash_algorithm": { "const": "sha256" },
+    "fixtures": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/fixture" }
+    }
+  },
+  "$defs": {
+    "relativeJsonPath": {
+      "type": "string",
+      "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*\\\\)[^\\u0000]+\\.json$"
+    },
+    "relativeJsonOrScriptPath": {
+      "type": "string",
+      "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*\\\\)[^\\u0000]+(?:\\.json|\\.mjs)$"
+    },
+    "fixture": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["file", "expectation", "sha256"],
+      "properties": {
+        "file": { "$ref": "#/$defs/relativeJsonPath" },
+        "schema_id": { "type": "string", "minLength": 1, "maxLength": 512 },
+        "expectation": {
+          "enum": [
+            "valid",
+            "wire-invalid",
+            "context-invalid",
+            "legacy-source",
+            "provenance"
+          ]
+        },
+        "failure_code": { "type": "string", "pattern": "^[A-Z][A-Z0-9_]*$" },
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    }
+  }
+}

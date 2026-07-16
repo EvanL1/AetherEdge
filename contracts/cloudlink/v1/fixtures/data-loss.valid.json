@@ -1,0 +1,27 @@
+{
+  "schema": "aether.cloudlink.envelope.v1",
+  "protocol": "aether.cloudlink",
+  "protocol_version": "1.0",
+  "message_kind": "data-loss",
+  "gateway_id": "33333333-3333-4333-8333-333333333333",
+  "session_id": "44444444-4444-4444-8444-444444444444",
+  "session_epoch": "7",
+  "credential_generation": "3",
+  "sent_at_ms": "1721000000200",
+  "delivery": {
+    "stream_id": "loss-evidence",
+    "stream_epoch": "1",
+    "position": "1",
+    "batch_id": "loss-telemetry-2-1-3",
+    "digest": "sha256:681b01a633e4781329fa8eef9a16d7cda43f92c5cdad8a83d69cea92f775c0c2"
+  },
+  "payload": {
+    "stream_id": "telemetry",
+    "stream_epoch": "2",
+    "first_lost_position": "1",
+    "last_lost_position": "3",
+    "earliest_retained_position": "4",
+    "reason": "capacity-overflow",
+    "recorded_at_ms": "1721000000123"
+  }
+}

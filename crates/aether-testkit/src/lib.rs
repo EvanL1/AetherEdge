@@ -8,11 +8,90 @@ use aether_domain::{
     ProcessingStatus, SourceKind, TaskKind,
 };
 use aether_ports::{
-    DataProcessor, DataProcessorDescriptor, DurableOutbox, HistoryQuery, HistoryWindow, LiveState,
+    CloudLinkTransport, CloudLinkTransportEvent, CloudLinkTransportMessage, DataProcessor,
+    DataProcessorDescriptor, DurableOutbox, HistoryQuery, HistoryWindow, LiveState,
     LiveStateWriter, OutboxMessage, PortError, PortErrorKind, PortResult, ProcessorHealth,
     SourcedSegment,
 };
 use async_trait::async_trait;
+use tokio::sync::{Mutex as AsyncMutex, mpsc};
+
+/// One endpoint of a bounded in-memory CloudLink transport pair.
+///
+/// `send` delivers an inbound event to the peer. Durable messages also produce
+/// transport-published evidence for the sender; no application ACK is invented.
+pub struct MemoryCloudLinkTransport {
+    own_events: mpsc::Sender<PortResult<CloudLinkTransportEvent>>,
+    peer_events: mpsc::Sender<PortResult<CloudLinkTransportEvent>>,
+    events: AsyncMutex<mpsc::Receiver<PortResult<CloudLinkTransportEvent>>>,
+}
+
+impl MemoryCloudLinkTransport {
+    /// Creates two connected bounded endpoints.
+    pub fn pair(capacity: usize) -> PortResult<(Self, Self)> {
+        if capacity == 0 {
+            return Err(contract_error(
+                "memory CloudLink transport capacity must be greater than zero",
+            ));
+        }
+        let (a_tx, a_rx) = mpsc::channel(capacity);
+        let (b_tx, b_rx) = mpsc::channel(capacity);
+        a_tx.try_send(Ok(CloudLinkTransportEvent::Connected))
+            .map_err(|_| contract_error("cannot initialize memory CloudLink endpoint A"))?;
+        b_tx.try_send(Ok(CloudLinkTransportEvent::Connected))
+            .map_err(|_| contract_error("cannot initialize memory CloudLink endpoint B"))?;
+        Ok((
+            Self {
+                own_events: a_tx.clone(),
+                peer_events: b_tx.clone(),
+                events: AsyncMutex::new(a_rx),
+            },
+            Self {
+                own_events: b_tx,
+                peer_events: a_tx,
+                events: AsyncMutex::new(b_rx),
+            },
+        ))
+    }
+
+    /// Injects a deterministic disconnect observation at both endpoints.
+    pub async fn disconnect(&self) -> PortResult<()> {
+        self.own_events
+            .send(Ok(CloudLinkTransportEvent::Disconnected))
+            .await
+            .map_err(|_| contract_error("memory CloudLink endpoint is closed"))?;
+        self.peer_events
+            .send(Ok(CloudLinkTransportEvent::Disconnected))
+            .await
+            .map_err(|_| contract_error("memory CloudLink peer is closed"))
+    }
+}
+
+#[async_trait]
+impl CloudLinkTransport for MemoryCloudLinkTransport {
+    async fn send(&self, message: CloudLinkTransportMessage) -> PortResult<()> {
+        self.peer_events
+            .send(Ok(CloudLinkTransportEvent::Inbound(message.clone())))
+            .await
+            .map_err(|_| contract_error("memory CloudLink peer is closed"))?;
+        if let Some(identity) = message.delivery().cloned() {
+            self.own_events
+                .send(Ok(CloudLinkTransportEvent::TransportPublished(identity)))
+                .await
+                .map_err(|_| contract_error("memory CloudLink endpoint is closed"))?;
+        }
+        Ok(())
+    }
+
+    async fn receive(&self) -> PortResult<CloudLinkTransportEvent> {
+        self.events.lock().await.recv().await.unwrap_or_else(|| {
+            Err(PortError::new(
+                PortErrorKind::Unavailable,
+                "memory CloudLink event stream ended",
+            ))
+        })
+    }
+}
 
 /// Verifies exact projection, feature ordering, half-open bounds, and hard limits.
 ///

@@ -1,0 +1,223 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "envelope.schema.json",
+  "title": "Experimental Aether CloudLink delivery envelope v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "protocol",
+    "protocol_version",
+    "message_kind",
+    "gateway_id",
+    "session_id",
+    "session_epoch",
+    "credential_generation",
+    "sent_at_ms",
+    "delivery",
+    "payload"
+  ],
+  "properties": {
+    "schema": { "const": "aether.cloudlink.envelope.v1" },
+    "protocol": { "const": "aether.cloudlink" },
+    "protocol_version": { "const": "1.0" },
+    "message_kind": {
+      "enum": ["runtime-manifest-report", "telemetry-batch", "data-loss"]
+    },
+    "gateway_id": { "$ref": "#/$defs/uuid" },
+    "session_id": { "$ref": "#/$defs/uuid" },
+    "session_epoch": { "$ref": "#/$defs/positiveUint64" },
+    "credential_generation": { "$ref": "#/$defs/positiveUint64" },
+    "sent_at_ms": { "$ref": "#/$defs/uint64" },
+    "expires_at_ms": { "$ref": "#/$defs/uint64" },
+    "delivery": { "$ref": "#/$defs/delivery" },
+    "message_authentication": { "$ref": "#/$defs/messageAuthentication" },
+    "traceparent": { "$ref": "#/$defs/traceparent" },
+    "payload": {
+      "oneOf": [
+        { "$ref": "#/$defs/runtimeManifestPayload" },
+        { "$ref": "#/$defs/telemetryPayload" },
+        { "$ref": "#/$defs/dataLossPayload" }
+      ]
+    }
+  },
+  "$defs": {
+    "identifier": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+    },
+    "uuid": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    },
+    "credentialId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+    },
+    "uint64": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 20,
+      "pattern": "^(0|([1-9][0-9]{0,18}|1[0-7][0-9]{18}|18[0-3][0-9]{17}|184[0-3][0-9]{16}|1844[0-5][0-9]{15}|18446[0-6][0-9]{14}|184467[0-3][0-9]{13}|1844674[0-3][0-9]{12}|184467440[0-6][0-9]{10}|1844674407[0-2][0-9]{9}|18446744073[0-6][0-9]{8}|1844674407370[0-8][0-9]{6}|18446744073709[0-4][0-9]{5}|184467440737095[0-4][0-9]{4}|18446744073709550[0-9]{3}|18446744073709551[0-5][0-9]{2}|1844674407370955160[0-9]|1844674407370955161[0-5]))$"
+    },
+    "positiveUint64": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 20,
+      "pattern": "^([1-9][0-9]{0,18}|1[0-7][0-9]{18}|18[0-3][0-9]{17}|184[0-3][0-9]{16}|1844[0-5][0-9]{15}|18446[0-6][0-9]{14}|184467[0-3][0-9]{13}|1844674[0-3][0-9]{12}|184467440[0-6][0-9]{10}|1844674407[0-2][0-9]{9}|18446744073[0-6][0-9]{8}|1844674407370[0-8][0-9]{6}|18446744073709[0-4][0-9]{5}|184467440737095[0-4][0-9]{4}|18446744073709550[0-9]{3}|18446744073709551[0-5][0-9]{2}|1844674407370955160[0-9]|1844674407370955161[0-5])$"
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "nonce": {
+      "type": "string",
+      "minLength": 43,
+      "maxLength": 43,
+      "pattern": "^[A-Za-z0-9_-]{43}$"
+    },
+    "messageAuthentication": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["key_id", "algorithm", "signature"],
+      "properties": {
+        "key_id": { "$ref": "#/$defs/identifier" },
+        "algorithm": { "const": "Ed25519" },
+        "signature": {
+          "type": "string",
+          "minLength": 86,
+          "maxLength": 86,
+          "pattern": "^[A-Za-z0-9_-]{86}$"
+        }
+      }
+    },
+    "traceparent": {
+      "type": "string",
+      "minLength": 55,
+      "maxLength": 55,
+      "pattern": "^(?!ff)[0-9a-f]{2}-(?!0{32})[0-9a-f]{32}-(?!0{16})[0-9a-f]{16}-[0-9a-f]{2}$"
+    },
+    "delivery": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "stream_id",
+        "stream_epoch",
+        "position",
+        "batch_id",
+        "digest"
+      ],
+      "properties": {
+        "stream_id": { "$ref": "#/$defs/identifier" },
+        "stream_epoch": { "$ref": "#/$defs/positiveUint64" },
+        "position": { "$ref": "#/$defs/positiveUint64" },
+        "batch_id": { "$ref": "#/$defs/identifier" },
+        "digest": { "$ref": "#/$defs/digest" }
+      }
+    },
+    "resumeCursor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["stream_id", "stream_epoch", "acknowledged_position"],
+      "properties": {
+        "stream_id": { "$ref": "#/$defs/identifier" },
+        "stream_epoch": { "$ref": "#/$defs/positiveUint64" },
+        "acknowledged_position": { "$ref": "#/$defs/uint64" }
+      }
+    },
+    "runtimeManifestPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["observed_at_ms", "manifest"],
+      "properties": {
+        "observed_at_ms": { "$ref": "#/$defs/uint64" },
+        "manifest": { "$ref": "runtime-manifest.v1.schema.json" }
+      }
+    },
+    "telemetryPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["topology", "samples"],
+      "properties": {
+        "topology": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["publication_epoch", "snapshot_digest"],
+          "properties": {
+            "publication_epoch": { "$ref": "#/$defs/positiveUint64" },
+            "snapshot_digest": {
+              "type": "string",
+              "pattern": "^(fx64:[0-9a-f]{16}|sha256:[0-9a-f]{64})$"
+            }
+          }
+        },
+        "samples": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 256,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "instance_id",
+              "point_kind",
+              "point_id",
+              "value",
+              "source_timestamp_ms",
+              "quality"
+            ],
+            "properties": {
+              "instance_id": { "$ref": "#/$defs/uint64" },
+              "point_kind": { "enum": ["telemetry", "status"] },
+              "point_id": { "$ref": "#/$defs/uint64" },
+              "value": {
+                "type": "number",
+                "minimum": -1.7976931348623157e308,
+                "maximum": 1.7976931348623157e308
+              },
+              "source_timestamp_ms": { "$ref": "#/$defs/uint64" },
+              "quality": {
+                "enum": ["good", "uncertain", "bad", "unavailable"]
+              },
+              "model": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["model_id", "revision"],
+                "properties": {
+                  "model_id": { "$ref": "#/$defs/identifier" },
+                  "revision": { "$ref": "#/$defs/positiveUint64" }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "dataLossPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "stream_id",
+        "stream_epoch",
+        "first_lost_position",
+        "last_lost_position",
+        "earliest_retained_position",
+        "reason",
+        "recorded_at_ms"
+      ],
+      "properties": {
+        "stream_id": { "$ref": "#/$defs/identifier" },
+        "stream_epoch": { "$ref": "#/$defs/positiveUint64" },
+        "first_lost_position": { "$ref": "#/$defs/positiveUint64" },
+        "last_lost_position": { "$ref": "#/$defs/positiveUint64" },
+        "earliest_retained_position": { "$ref": "#/$defs/positiveUint64" },
+        "reason": { "$ref": "#/$defs/identifier" },
+        "recorded_at_ms": { "$ref": "#/$defs/uint64" }
+      }
+    }
+  }
+}

@@ -1,0 +1,96 @@
+{
+  "schema_version": 1,
+  "contract": "aether.cloudlink",
+  "status": "non-authoritative-product-fault-evidence-overlay",
+  "authoritative_gate_definition": "AetherContracts compatibility/cloudlink-v1alpha1-gates.json",
+  "execution": {
+    "command": "cd ../AetherCloud && pnpm test:cloudlink-alpha-harness",
+    "evidence": "../AetherCloud/evidence/cloudlink-alpha3-dual-harness.json"
+  },
+  "scenarios": [
+    {
+      "id": "broker-disconnect-reconnect",
+      "expected": "both real MQTT 3.1.1 clients reconnect and recover subscriptions",
+      "observed": "Mosquitto restarts once and the Edge flow continues on a new connection",
+      "result": "implemented-alpha3",
+      "failure_code": null
+    },
+    {
+      "id": "application-ack-loss",
+      "expected": "MQTT PUBACK does not delete the spool and identical business identity replays",
+      "observed": "one FileCloudLinkSpool record survives the lost application ACK and replays in the second Edge process",
+      "result": "implemented-alpha3",
+      "failure_code": null
+    },
+    {
+      "id": "server-authoritative-resume-cursor",
+      "expected": "Cloud returns its durable stream, epoch, and position tuple",
+      "observed": "the second Edge process receives manifest/1/1 while telemetry/1/1 still replays after its lost ACK",
+      "result": "implemented-alpha3",
+      "failure_code": null
+    },
+    {
+      "id": "edge-process-restart",
+      "expected": "a second Edge OS process recovers the retained file-spool record",
+      "observed": "phase two reopens the phase-one journal with one pending record",
+      "result": "implemented-alpha3",
+      "failure_code": null
+    },
+    {
+      "id": "cloud-ingress-process-restart",
+      "expected": "without a production durable store, continuity remains unknown",
+      "observed": "the new Cloud process detects session-epoch rollback and re-accepts the replay as unknown",
+      "result": "blocked",
+      "failure_code": "CLOUD_CRASH_DURABILITY_UNAVAILABLE"
+    },
+    {
+      "id": "mqtt-duplicate-delivery",
+      "expected": "repeated QoS 1 payload does not create a second business fact",
+      "observed": "the same position, batch, and digest return the same logical receipt",
+      "result": "implemented-alpha3",
+      "failure_code": null
+    },
+    {
+      "id": "same-position-same-digest-replay",
+      "expected": "the application accepts an idempotent replay",
+      "observed": "the repository reports replay and emits an unsigned application ACK",
+      "result": "implemented-alpha3",
+      "failure_code": null
+    },
+    {
+      "id": "same-position-conflicting-binding",
+      "expected": "the application emits neither receipt nor ACK",
+      "observed": "the changed binding and digest are rejected and Edge times out waiting for ACK",
+      "result": "implemented-alpha3",
+      "failure_code": "DIGEST_CONFLICT"
+    },
+    {
+      "id": "data-loss-range",
+      "expected": "loss is an explicit application fact and never a silent cursor jump",
+      "observed": "one data-loss fact receives its own unsigned application ACK",
+      "result": "implemented-alpha3",
+      "failure_code": null
+    },
+    {
+      "id": "out-of-order",
+      "expected": "retain the gap without advancing a cumulative Edge cursor",
+      "observed": "the repository returns a gap receipt and Cloud emits no ACK",
+      "result": "implemented-alpha3",
+      "failure_code": "CURSOR_GAP"
+    },
+    {
+      "id": "expiry-equality",
+      "expected": "evaluation time greater than or equal to expiry rejects before persistence",
+      "observed": "ingress returns message-expired and publishes no ACK",
+      "result": "implemented-alpha3",
+      "failure_code": "MESSAGE_EXPIRED"
+    },
+    {
+      "id": "partial-success",
+      "expected": "a non-durable buffered result never creates an application ACK",
+      "observed": "durablyAcknowledged=false and Edge receives no ACK",
+      "result": "implemented-alpha3",
+      "failure_code": "APPLICATION_NOT_DURABLE"
+    }
+  ]
+}

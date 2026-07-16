@@ -1,0 +1,367 @@
+{
+  "schema": "aether.contracts.consumer-lock.v1alpha1",
+  "status": "complete-consumer",
+  "repository": "https://github.com/EvanL1/AetherContracts",
+  "release": {
+    "version": "0.1.0-alpha.3",
+    "tag": "v0.1.0-alpha.3",
+    "tag_object": "2a7539284e65d43fb3b81abf74009c63e1a28d33",
+    "commit": "c5aad674f0844138e778963118e786e430ffb365",
+    "bundle": {
+      "name": "AetherContracts-0.1.0-alpha.3.tar.gz",
+      "url": "https://github.com/EvanL1/AetherContracts/releases/download/v0.1.0-alpha.3/AetherContracts-0.1.0-alpha.3.tar.gz",
+      "root": "AetherContracts-0.1.0-alpha.3",
+      "size": 115663,
+      "sha256": "0946391d015f00579751c007a6b7925d003455a731d2f6ae295d706ddcb5dfb2",
+      "limits": {
+        "maximum_path_bytes": 512,
+        "maximum_file_bytes": 8388608,
+        "maximum_total_file_bytes": 67108864,
+        "maximum_entries": 4096
+      }
+    }
+  },
+  "manifest": {
+    "release_path": "contract-manifest.json",
+    "local_path": "contracts/aether-contracts/v0.1.0-alpha.3/contract-manifest.json",
+    "sha256": "36a1c0cb2a6aa2a96ad8319cd1bc8ebe3cfe7784c5794a65e2008503d72ea4f3"
+  },
+  "policy": {
+    "conformance_claim": "distribution-only",
+    "production_release": false,
+    "legacy_default": true,
+    "physical_control": false
+  },
+  "adoption": {
+    "scope": "cloudlink-alpha3",
+    "modules": [
+      "cloudlink",
+      "distribution",
+      "tck"
+    ],
+    "closure": "required-artifacts",
+    "required_artifacts": [
+      ".github/actions/verify-consumer/action.yml",
+      "compatibility/cloudlink-v1alpha1-gates.json",
+      "compatibility/failure-codes.json",
+      "fixtures/cloudlink/v1alpha1/conflicting-replay.json",
+      "fixtures/cloudlink/v1alpha1/conflicting-replay.valid-digest.json",
+      "fixtures/cloudlink/v1alpha1/data-loss.valid.json",
+      "fixtures/cloudlink/v1alpha1/durable-ack.valid.json",
+      "fixtures/cloudlink/v1alpha1/fixture-manifest.json",
+      "fixtures/cloudlink/v1alpha1/heartbeat-ack.valid.json",
+      "fixtures/cloudlink/v1alpha1/heartbeat.valid.json",
+      "fixtures/cloudlink/v1alpha1/invalid-digest.json",
+      "fixtures/cloudlink/v1alpha1/overflow-uint64.json",
+      "fixtures/cloudlink/v1alpha1/oversized-payload.json",
+      "fixtures/cloudlink/v1alpha1/payload-broker-attestation.json",
+      "fixtures/cloudlink/v1alpha1/replay-request.valid.json",
+      "fixtures/cloudlink/v1alpha1/runtime-manifest-invalid-semver.json",
+      "fixtures/cloudlink/v1alpha1/runtime-manifest-report.valid.json",
+      "fixtures/cloudlink/v1alpha1/session-accepted-duplicate-cursor.json",
+      "fixtures/cloudlink/v1alpha1/session-accepted.valid.json",
+      "fixtures/cloudlink/v1alpha1/session-challenge.valid.json",
+      "fixtures/cloudlink/v1alpha1/session-hello-auth-invalid.json",
+      "fixtures/cloudlink/v1alpha1/session-hello-auth-required.json",
+      "fixtures/cloudlink/v1alpha1/session-hello.valid.json",
+      "fixtures/cloudlink/v1alpha1/stale-ack.json",
+      "fixtures/cloudlink/v1alpha1/telemetry-batch.valid.json",
+      "fixtures/cloudlink/v1alpha1/unknown-field.json",
+      "fixtures/cloudlink/v1alpha1/unsafe-uint64.json",
+      "fixtures/cloudlink/v1alpha1/unsupported-version.json",
+      "fixtures/cloudlink/v1alpha1/wrong-session-epoch.json",
+      "profiles/cloudlink/v1alpha1/authentication.json",
+      "profiles/cloudlink/v1alpha1/core.json",
+      "profiles/mqtt/v1alpha1/profile.json",
+      "schemas/cloudlink/v1alpha1/data-loss.schema.json",
+      "schemas/cloudlink/v1alpha1/durable-ack.schema.json",
+      "schemas/cloudlink/v1alpha1/envelope.schema.json",
+      "schemas/cloudlink/v1alpha1/heartbeat.schema.json",
+      "schemas/cloudlink/v1alpha1/replay-request.schema.json",
+      "schemas/cloudlink/v1alpha1/runtime-manifest-report.schema.json",
+      "schemas/cloudlink/v1alpha1/runtime-manifest.v1.schema.json",
+      "schemas/cloudlink/v1alpha1/session-accepted.schema.json",
+      "schemas/cloudlink/v1alpha1/session-challenge.schema.json",
+      "schemas/cloudlink/v1alpha1/session-hello.schema.json",
+      "schemas/cloudlink/v1alpha1/telemetry-batch.schema.json",
+      "schemas/distribution/v1alpha1/consumer-lock.schema.json",
+      "schemas/tck/v1alpha1/fixture-manifest.schema.json",
+      "schemas/tck/v1alpha1/scenario.schema.json",
+      "scripts/verify-consumer-lock.mjs",
+      "spec/cloudlink-v1alpha1.md",
+      "spec/distribution-v1alpha1.md",
+      "spec/tck-v1alpha1.md",
+      "tck/lib/scenario-runner.mjs",
+      "tck/lib/strict-json.mjs",
+      "tck/scenarios/core.json"
+    ]
+  },
+  "imports": [
+    {
+      "source": ".github/actions/verify-consumer/action.yml",
+      "destination": "contracts/aether-contracts/v0.1.0-alpha.3/.github/actions/verify-consumer/action.yml",
+      "sha256": "e14f5f538f6aa95ba32ec9e336eb07b5bb64ca6a46cc2f2468655004afabe6ec"
+    },
+    {
+      "source": "compatibility/cloudlink-v1alpha1-gates.json",
+      "destination": "contracts/aether-contracts/v0.1.0-alpha.3/compatibility/cloudlink-v1alpha1-gates.json",
+      "sha256": "725380e0fd53029cc9e8865b98a6fab2f328393c65b4fc32de8e9dbfdf74f8de"
+    },
+    {
+      "source": "compatibility/failure-codes.json",
+      "destination": "contracts/aether-contracts/v0.1.0-alpha.3/compatibility/failure-codes.json",
+      "sha256": "93acc147da6cf0da80b376e63b9f134e66adced26641f416151d9af66eb4f636"
+    },
+    {
+      "source": "fixtures/cloudlink/v1alpha1/conflicting-replay.json",
+      "destination": "contracts/cloudlink/v1/fixtures/conflicting-replay.json",
+      "sha256": "08285e9f5eb1575823b9f7f3cec8e802d2db004f8b79cd21006220c5ea9f9bac"
+    },
+    {
+      "source": "fixtures/cloudlink/v1alpha1/conflicting-replay.valid-digest.json",
+      "destination": "contracts/cloudlink/v1/fixtures/conflicting-replay.valid-digest.json",
+      "sha256": "4aead88da076ffab693897623e09365fa06956f33b6de4b131f817437f1dfdf2"
+    },
+    {
+      "source": "fixtures/cloudlink/v1alpha1/data-loss.valid.json",
+      "destination": "contracts/cloudlink/v1/fixtures/data-loss.valid.json",
+      "sha256": "a9a1f36c1a93d826f3414f3b161d55f52b6f65ac0661bc3c1b574106938ba358"
+    },
+    {
+      "source": "fixtures/cloudlink/v1alpha1/durable-ack.valid.json",
+      "destination": "contracts/cloudlink/v1/fixtures/durable-ack.valid.json",
+      "sha256": "46bde2887299f3924308812d50045001fefc3c7242421bfa4d57892c8c90d7c7"
+    },
+    {
+      "source": "fixtures/cloudlink/v1alpha1/fixture-manifest.json",
+      "destination": "contracts/cloudlink/v1/fixture-manifest.json",
+      "sha256": "5070c3e3e53024437ba6a0ab0a677d5352037fa252749e2dbe25b036893b1d72"
+    },
+    {
+      "source": "fixtures/cloudlink/v1alpha1/heartbeat-ack.valid.json",
+      "destination": "contracts/cloudlink/v1/fixtures/heartbeat-ack.valid.json",
+      "sha256": "1de47595b2c909e2bbc2df31200824331d038a42aaf1e146ad8d7fb43900ba0b"
+    },
+    {
+      "source": "fixtures/cloudlink/v1alpha1/heartbeat.valid.json",
+      "destination": "contracts/cloudlink/v1/fixtures/heartbeat.valid.json",
+      "sha256": "f6bf99148da328e94c39d1e5e2be7104f450aff2c6a15fdfc506d8e2a768dca6"
+    },
+    {
+      "source": "fixtures/cloudlink/v1alpha1/invalid-digest.json",
+      "destination": "contracts/cloudlink/v1/fixtures/invalid-digest.json",
+      "sha256": "a757baace924824e9c17c7f635270dca8369b74ce803acbdbdc9fa2c8c6a383d"
+    },
+    {
+      "source": "fixtures/cloudlink/v1alpha1/overflow-uint64.json",
+      "destination": "contracts/cloudlink/v1/fixtures/overflow-uint64.json",
+      "sha256": "8a7f8e8f54efe52a3b4269dc3c63ee3ee9f35c5a1b9da141f21098df3f0a1174"
+    },
+    {
+      "source": "fixtures/cloudlink/v1alpha1/oversized-payload.json",
+      "destination": "contracts/cloudlink/v1/fixtures/oversized-payload.json",
+      "sha256": "475d3f6afa5aa1532f025a75f04566aa4ae8af0da64e18baeae204abaaba7061"
+    },
+    {
+      "source": "fixtures/cloudlink/v1alpha1/payload-broker-attestation.json",
+      "destination": "contracts/cloudlink/v1/fixtures/payload-broker-attestation.json",
+      "sha256": "367ec35d7129c189615a43785ce8490229391510847fb476720a305dd1d29be9"
+    },
+    {
+      "source": "fixtures/cloudlink/v1alpha1/replay-request.valid.json",
+      "destination": "contracts/cloudlink/v1/fixtures/replay-request.valid.json",
+      "sha256": "7b2493328a3b7afec9a75b54736eb2610ce5d668bfb59185ce117db4f2f7880f"
+    },
+    {
+      "source": "fixtures/cloudlink/v1alpha1/runtime-manifest-invalid-semver.json",
+      "destination": "contracts/cloudlink/v1/fixtures/runtime-manifest-invalid-semver.json",
+      "sha256": "92444aa861e10e1aebbba839824bd8619338b28b7cb08405f82e9c133486f8fc"
+    },
+    {
+      "source": "fixtures/cloudlink/v1alpha1/runtime-manifest-report.valid.json",
+      "destination": "contracts/cloudlink/v1/fixtures/runtime-manifest-report.valid.json",
+      "sha256": "eb5a3c5a437392d245eea9560cc7b28d40c8a85b06b27fa8911b15393b024ff9"
+    },
+    {
+      "source": "fixtures/cloudlink/v1alpha1/session-accepted-duplicate-cursor.json",
+      "destination": "contracts/cloudlink/v1/fixtures/session-accepted-duplicate-cursor.json",
+      "sha256": "7afdf51e19b499ef58c358c81325004d807c0ba81389028eea3aa162cc15cdc2"
+    },
+    {
+      "source": "fixtures/cloudlink/v1alpha1/session-accepted.valid.json",
+      "destination": "contracts/cloudlink/v1/fixtures/session-accepted.valid.json",
+      "sha256": "580113f3a7a0bacaa4d83f6f20a13144dcf41db15baba997fd8a9a3dc4f19a26"
+    },
+    {
+      "source": "fixtures/cloudlink/v1alpha1/session-challenge.valid.json",
+      "destination": "contracts/cloudlink/v1/fixtures/session-challenge.valid.json",
+      "sha256": "9adf970a7a0f25f8c03bd14b3b95f180e143dc1c2ab6ff3cf1a51e6de8b2335e"
+    },
+    {
+      "source": "fixtures/cloudlink/v1alpha1/session-hello-auth-invalid.json",
+      "destination": "contracts/cloudlink/v1/fixtures/session-hello-auth-invalid.json",
+      "sha256": "1010b57b8f3b335256b88a8375d3b3bcc34e8bb622225de8dcd910b319edbad4"
+    },
+    {
+      "source": "fixtures/cloudlink/v1alpha1/session-hello-auth-required.json",
+      "destination": "contracts/cloudlink/v1/fixtures/session-hello-auth-required.json",
+      "sha256": "b6694adeaf56dc71742104dd7e36a8a3a155e0c66c25daf064a42c06d2aeec51"
+    },
+    {
+      "source": "fixtures/cloudlink/v1alpha1/session-hello.valid.json",
+      "destination": "contracts/cloudlink/v1/fixtures/session-hello.valid.json",
+      "sha256": "122cb9340405ace75c090ea284564ca584324b7a7d380b4c7c630e6e97d2918d"
+    },
+    {
+      "source": "fixtures/cloudlink/v1alpha1/stale-ack.json",
+      "destination": "contracts/cloudlink/v1/fixtures/stale-ack.json",
+      "sha256": "59c4c2c35ca6fc3ec623cd79b5976758114e15d930887673dbcd6733b834405d"
+    },
+    {
+      "source": "fixtures/cloudlink/v1alpha1/telemetry-batch.valid.json",
+      "destination": "contracts/cloudlink/v1/fixtures/telemetry-batch.valid.json",
+      "sha256": "8d472ef492123b479376060c1a6bf46e682bdde18d94d1d7126695e0fbacba49"
+    },
+    {
+      "source": "fixtures/cloudlink/v1alpha1/unknown-field.json",
+      "destination": "contracts/cloudlink/v1/fixtures/unknown-field.json",
+      "sha256": "b2e295229acb43fed82fdae590aa2782e27e65c5123df40f522728294d4ac35e"
+    },
+    {
+      "source": "fixtures/cloudlink/v1alpha1/unsafe-uint64.json",
+      "destination": "contracts/cloudlink/v1/fixtures/unsafe-uint64.json",
+      "sha256": "f50ba201d748b356a20f04453e5403612b5abd684bed37580a5749043abbe691"
+    },
+    {
+      "source": "fixtures/cloudlink/v1alpha1/unsupported-version.json",
+      "destination": "contracts/cloudlink/v1/fixtures/unsupported-version.json",
+      "sha256": "4338824e50571ad7c6afbaae0a41c463a59d5adec8590d4aa05197764e1c860d"
+    },
+    {
+      "source": "fixtures/cloudlink/v1alpha1/wrong-session-epoch.json",
+      "destination": "contracts/cloudlink/v1/fixtures/wrong-session-epoch.json",
+      "sha256": "d33413b8508a2a36c4eb7bee59fd589a4c64966e054fa9af2b2274c2f52f759a"
+    },
+    {
+      "source": "profiles/cloudlink/v1alpha1/authentication.json",
+      "destination": "contracts/aether-contracts/v0.1.0-alpha.3/profiles/cloudlink/v1alpha1/authentication.json",
+      "sha256": "17b23382c7fe7c84a95e6b58dd3ee3d0f1c67faf4c4f6ceeed7957c0c09f44cf"
+    },
+    {
+      "source": "profiles/cloudlink/v1alpha1/core.json",
+      "destination": "contracts/aether-contracts/v0.1.0-alpha.3/profiles/cloudlink/v1alpha1/core.json",
+      "sha256": "d8c62035acdcac4e5786dbce350dd3af9af45f58329daf8a8110de411947f720"
+    },
+    {
+      "source": "profiles/mqtt/v1alpha1/profile.json",
+      "destination": "contracts/aether-contracts/v0.1.0-alpha.3/profiles/mqtt/v1alpha1/profile.json",
+      "sha256": "e2256add779a8a2002276049cd83042c3e0002b826431460b1a616f7f68d33ff"
+    },
+    {
+      "source": "schemas/cloudlink/v1alpha1/data-loss.schema.json",
+      "destination": "contracts/cloudlink/v1/data-loss.schema.json",
+      "sha256": "2a2f53f1932d53d46785571d0d1353e737748b9ee5c216e3f6468fde820f6829"
+    },
+    {
+      "source": "schemas/cloudlink/v1alpha1/durable-ack.schema.json",
+      "destination": "contracts/cloudlink/v1/durable-ack.schema.json",
+      "sha256": "9c75e350004f45ab7cec79e2270cfdc4391975a08444ec11ae1d97802f383baa"
+    },
+    {
+      "source": "schemas/cloudlink/v1alpha1/envelope.schema.json",
+      "destination": "contracts/cloudlink/v1/envelope.schema.json",
+      "sha256": "c22c32293bdd2aaaec10cd4fd311cd5947ac3ac435d39caacb55ca390ffda5f1"
+    },
+    {
+      "source": "schemas/cloudlink/v1alpha1/heartbeat.schema.json",
+      "destination": "contracts/cloudlink/v1/heartbeat.schema.json",
+      "sha256": "ecdc567ca1064eb43fae2674737f0d39b0f6b651f0fac8e8b231fbcd6917b309"
+    },
+    {
+      "source": "schemas/cloudlink/v1alpha1/replay-request.schema.json",
+      "destination": "contracts/cloudlink/v1/replay-request.schema.json",
+      "sha256": "a02aba3c8adcafd259549aa869d6d605df739ab58b3b071b987c1b214732e7ab"
+    },
+    {
+      "source": "schemas/cloudlink/v1alpha1/runtime-manifest-report.schema.json",
+      "destination": "contracts/cloudlink/v1/runtime-manifest-report.schema.json",
+      "sha256": "0d97fff9ab55eff0042e31d531408b42bb7b93bfa868d0e06851a0a34c67efc0"
+    },
+    {
+      "source": "schemas/cloudlink/v1alpha1/runtime-manifest.v1.schema.json",
+      "destination": "contracts/cloudlink/v1/runtime-manifest.v1.schema.json",
+      "sha256": "631a62d0568d2d51fe09ea73b398f4a2974c324cc3bbc31f2a5a89675831191b"
+    },
+    {
+      "source": "schemas/cloudlink/v1alpha1/session-accepted.schema.json",
+      "destination": "contracts/cloudlink/v1/session-accepted.schema.json",
+      "sha256": "92561df5d2ebe73e82a6641774cdd0cdc1b2edbcb08527e22262816bb090dd73"
+    },
+    {
+      "source": "schemas/cloudlink/v1alpha1/session-challenge.schema.json",
+      "destination": "contracts/cloudlink/v1/session-challenge.schema.json",
+      "sha256": "e9b408a65efa64c53a3789aef7650c283c4aaede546b7c4e1ed97db734fa1d74"
+    },
+    {
+      "source": "schemas/cloudlink/v1alpha1/session-hello.schema.json",
+      "destination": "contracts/cloudlink/v1/session-hello.schema.json",
+      "sha256": "bf6808a6ecfb5c7d77cda7731c0fff5bc3df1c3b909a2f99e28fd37e4664366b"
+    },
+    {
+      "source": "schemas/cloudlink/v1alpha1/telemetry-batch.schema.json",
+      "destination": "contracts/cloudlink/v1/telemetry-batch.schema.json",
+      "sha256": "3c80349f4f3ef60a17fcc0ed27cf2dd7a1dea36df909f96b488c0cc6b58a2bc0"
+    },
+    {
+      "source": "schemas/distribution/v1alpha1/consumer-lock.schema.json",
+      "destination": "contracts/aether-contracts/v0.1.0-alpha.3/schemas/distribution/v1alpha1/consumer-lock.schema.json",
+      "sha256": "39bfc21d6d6908b2e3091b4b84fbfcd0769f545cf27bb0a0fe3b60186d04c8d3"
+    },
+    {
+      "source": "schemas/tck/v1alpha1/fixture-manifest.schema.json",
+      "destination": "contracts/aether-contracts/v0.1.0-alpha.3/schemas/tck/v1alpha1/fixture-manifest.schema.json",
+      "sha256": "f6cc1c3bacdc0d7fa698cd7bcd16ec27e911a407cd89b9f302a4b49f8b37acb7"
+    },
+    {
+      "source": "schemas/tck/v1alpha1/scenario.schema.json",
+      "destination": "contracts/aether-contracts/v0.1.0-alpha.3/schemas/tck/v1alpha1/scenario.schema.json",
+      "sha256": "24e4670ab8b62b1e3348ad09040ca94c658ee0eb60a542324b800a8fab71ddf9"
+    },
+    {
+      "source": "scripts/verify-consumer-lock.mjs",
+      "destination": "contracts/aether-contracts/v0.1.0-alpha.3/scripts/verify-consumer-lock.mjs",
+      "sha256": "1b818dd7befd86d68a1ad96c2e07f4cc912efbe8a7d738ba2c98a960142a8669"
+    },
+    {
+      "source": "spec/cloudlink-v1alpha1.md",
+      "destination": "contracts/aether-contracts/v0.1.0-alpha.3/spec/cloudlink-v1alpha1.md",
+      "sha256": "c12f94277c7aefcce27b4dd40bbe9e8ab1fcfc936d2ecd6c74c7de5994e5d0d1"
+    },
+    {
+      "source": "spec/distribution-v1alpha1.md",
+      "destination": "contracts/aether-contracts/v0.1.0-alpha.3/spec/distribution-v1alpha1.md",
+      "sha256": "42a3fb4f292b5dc95d9a6548b48b0656a5555a7cecb21c0beb5a2fdae6826f28"
+    },
+    {
+      "source": "spec/tck-v1alpha1.md",
+      "destination": "contracts/aether-contracts/v0.1.0-alpha.3/spec/tck-v1alpha1.md",
+      "sha256": "45d831e3e69dc14e20e6e77eae7e372a6fbfc8aa34b312ce4d75d34c3980b8a0"
+    },
+    {
+      "source": "tck/lib/scenario-runner.mjs",
+      "destination": "contracts/aether-contracts/v0.1.0-alpha.3/tck/lib/scenario-runner.mjs",
+      "sha256": "b1eeef77af302c76f35b826861d8a9fc3f4f035b370ed1dbc1e099237f34554f"
+    },
+    {
+      "source": "tck/lib/strict-json.mjs",
+      "destination": "contracts/aether-contracts/v0.1.0-alpha.3/tck/lib/strict-json.mjs",
+      "sha256": "003394acc331121856b448c61a0c0f925063f9c863b350be898568c6cf2d9241"
+    },
+    {
+      "source": "tck/scenarios/core.json",
+      "destination": "contracts/aether-contracts/v0.1.0-alpha.3/tck/scenarios/core.json",
+      "sha256": "b8aacdc5e4762da235a13af371b5fe0d7af3278fa208387fb97b5d9c57e3c912"
+    }
+  ],
+  "pending_imports": []
+}

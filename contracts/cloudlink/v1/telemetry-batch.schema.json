@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "telemetry-batch.schema.json",
+  "title": "Experimental Aether CloudLink point telemetry batch v1",
+  "allOf": [
+    { "$ref": "envelope.schema.json" },
+    {
+      "properties": {
+        "message_kind": { "const": "telemetry-batch" },
+        "payload": { "$ref": "envelope.schema.json#/$defs/telemetryPayload" }
+      }
+    }
+  ]
+}

@@ -5,6 +5,7 @@ resolver = "3"
 exclude = ["firmware"]
 default-members = [
     "crates/aether-domain",
+    "crates/aether-cloudlink",
     "crates/aether-data-processing",
     "crates/aether-dataplane",
     "crates/aether-ports",
@@ -19,6 +20,7 @@ default-members = [
 members = [
     "workspace-hack",
     "crates/aether-domain",
+    "crates/aether-cloudlink",
     "crates/aether-data-processing",
     "crates/aether-dataplane",
     "crates/aether-ports",
@@ -27,6 +29,7 @@ members = [
     "crates/aether-sdk",
     "crates/aether-testkit",
     "extensions/store-local",
+    "extensions/cloudlink-mqtt",
     "extensions/shm-bridge",
     "extensions/auth-jwt",
     "extensions/http-data-processor",

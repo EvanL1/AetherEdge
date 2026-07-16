@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "durable-ack.schema.json",
+  "title": "Experimental Aether CloudLink durable application ACK v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "protocol",
+    "protocol_version",
+    "message_kind",
+    "gateway_id",
+    "session_id",
+    "session_epoch",
+    "credential_generation",
+    "stream_id",
+    "stream_epoch",
+    "acknowledged_position",
+    "batch_id",
+    "digest",
+    "receipt_id",
+    "acknowledged_at_ms"
+  ],
+  "properties": {
+    "schema": { "const": "aether.cloudlink.durable-ack.v1" },
+    "protocol": { "const": "aether.cloudlink" },
+    "protocol_version": { "const": "1.0" },
+    "message_kind": { "const": "durable-ack" },
+    "gateway_id": { "$ref": "envelope.schema.json#/$defs/uuid" },
+    "session_id": { "$ref": "envelope.schema.json#/$defs/uuid" },
+    "session_epoch": { "$ref": "envelope.schema.json#/$defs/positiveUint64" },
+    "credential_generation": {
+      "$ref": "envelope.schema.json#/$defs/positiveUint64"
+    },
+    "stream_id": { "$ref": "envelope.schema.json#/$defs/identifier" },
+    "stream_epoch": { "$ref": "envelope.schema.json#/$defs/positiveUint64" },
+    "acknowledged_position": {
+      "$ref": "envelope.schema.json#/$defs/positiveUint64"
+    },
+    "batch_id": { "$ref": "envelope.schema.json#/$defs/identifier" },
+    "digest": { "$ref": "envelope.schema.json#/$defs/digest" },
+    "receipt_id": { "$ref": "envelope.schema.json#/$defs/identifier" },
+    "acknowledged_at_ms": { "$ref": "envelope.schema.json#/$defs/uint64" }
+  }
+}

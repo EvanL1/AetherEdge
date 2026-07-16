@@ -7,6 +7,7 @@ mod automation;
 mod channel;
 mod channel_health;
 mod clock;
+mod cloudlink;
 mod control;
 mod data_processing;
 mod error;
@@ -41,6 +42,13 @@ pub use channel::{
 };
 pub use channel_health::{ChannelHealthObservation, ChannelHealthSource};
 pub use clock::Clock;
+pub use cloudlink::{
+    CloudLinkDataLossEvidence, CloudLinkDeliveryState, CloudLinkDurableAck, CloudLinkEnqueue,
+    CloudLinkMessageKind, CloudLinkRecord, CloudLinkRecordIdentity, CloudLinkReplayWindow,
+    CloudLinkSessionBinding, CloudLinkSpool, CloudLinkSpoolError, CloudLinkSpoolErrorReason,
+    CloudLinkSpoolStatus, CloudLinkTransport, CloudLinkTransportEvent, CloudLinkTransportMessage,
+    CloudLinkTransportRoute, DurableAckOutcome,
+};
 pub use control::{CommandDispatcher, CommandReceipt, CommandTopologyFence, DeviceCommandSink};
 pub use data_processing::{
     CovariateSource, CovariateWindow, DataBoundary, DataProcessor, DataProcessorDescriptor,

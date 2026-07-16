@@ -1,0 +1,16 @@
+{
+  "schema": "aether.cloudlink.session-hello.v1",
+  "protocol": "aether.cloudlink",
+  "message_kind": "session-hello",
+  "gateway_id": "33333333-3333-4333-8333-333333333333",
+  "credential_binding": {
+    "credential_id": "development-binding-17",
+    "generation": "3",
+    "origin_model": "gateway-signed"
+  },
+  "challenge_id": "22222222-2222-4222-8222-222222222222",
+  "gateway_key_id": "development-gateway-key-17",
+  "offered_protocol_versions": ["1.0"],
+  "client_nonce": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+  "resume": []
+}

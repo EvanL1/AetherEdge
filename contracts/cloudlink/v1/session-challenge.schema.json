@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "session-challenge.schema.json",
+  "title": "Experimental Aether CloudLink signed session challenge v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "protocol",
+    "message_kind",
+    "gateway_id",
+    "challenge_id",
+    "cloud_nonce",
+    "issued_at_ms",
+    "expires_at_ms",
+    "cloud_signature"
+  ],
+  "properties": {
+    "schema": { "const": "aether.cloudlink.session-challenge.v1" },
+    "protocol": { "const": "aether.cloudlink" },
+    "message_kind": { "const": "session-challenge" },
+    "gateway_id": { "$ref": "envelope.schema.json#/$defs/uuid" },
+    "challenge_id": { "$ref": "envelope.schema.json#/$defs/uuid" },
+    "cloud_nonce": { "$ref": "envelope.schema.json#/$defs/nonce" },
+    "issued_at_ms": { "$ref": "envelope.schema.json#/$defs/uint64" },
+    "expires_at_ms": { "$ref": "envelope.schema.json#/$defs/uint64" },
+    "cloud_signature": {
+      "$ref": "envelope.schema.json#/$defs/messageAuthentication"
+    }
+  }
+}

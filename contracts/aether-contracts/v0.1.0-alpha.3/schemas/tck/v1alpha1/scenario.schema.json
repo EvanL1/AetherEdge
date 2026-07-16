@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.aether.dev/schemas/tck/v1alpha1/scenario.schema.json",
+  "title": "Aether language-neutral TCK scenario set v1 alpha 1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "contract_version", "scenarios"],
+  "properties": {
+    "schema": { "const": "aether.tck.scenarios.v1alpha1" },
+    "contract_version": { "const": "0.1.0-alpha.3" },
+    "scenarios": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/scenario" }
+    }
+  },
+  "$defs": {
+    "scenario": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "operation", "input", "expected", "status"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z][a-z0-9-]{2,95}$" },
+        "operation": {
+          "enum": ["validate", "canonicalize", "digest", "verify-signature", "check-compatibility"]
+        },
+        "input": { "type": "object" },
+        "expected": { "type": "object" },
+        "status": { "enum": ["implemented", "planned", "blocked"] }
+      }
+    }
+  }
+}

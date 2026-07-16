@@ -36,6 +36,14 @@ generated application as an untrusted client of the application boundary.
 - For device onboarding, read `guides/connect-devices.md` and the active Pack knowledge.
 - For SDK embedding, read `crates/aether-sdk.md`, the minimal gateway example, and the local
   `AGENTS.md` files governing the target directory.
+- For CloudLink or MQTT uplink work, read
+  `docs/adr/0017-experimental-cloudlink-mqtt-edge-foundation.md`,
+  `docs/adr/0018-pinned-aethercontracts-consumption.md`,
+  `docs/reference/cloudlink-mqtt-v1.md`, and `contracts/cloudlink/README.md`.
+  Treat the digest-pinned AetherContracts release as shared authority and the
+  current product subset as distribution-only. Alpha.3 has 53 exact imports,
+  no pending imports, and 25 fixture outcomes in both codecs; never equate MQTT
+  PUBACK with cloud persistence or alpha evidence with production authentication.
 - Before any write that can reach configuration or hardware, read
   `guides/safe-operations.md`, then the active Pack's additional safety guidance, and inspect the
   capability's current OpenAPI or MCP metadata.
@@ -56,6 +64,9 @@ generated application as an untrusted client of the application boundary.
    building, factory, or vendor concepts into an industry-neutral application.
 6. Keep UI state non-authoritative. Never write SHM, SQLite, Pack files, or runtime configuration
    directly from a browser, AI tool, CLI wrapper, or generated backend.
+7. Preserve CloudLink stream epoch, position, batch identity, business digest,
+   source timestamp, point quality, and topology generation. Do not invent a
+   Thing Model revision or turn legacy write/call topics into CloudLink control.
 
 ## Handle commands safely
 

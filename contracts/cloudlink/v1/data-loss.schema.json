@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "data-loss.schema.json",
+  "title": "Experimental Aether CloudLink data-loss evidence v1",
+  "allOf": [
+    { "$ref": "envelope.schema.json" },
+    {
+      "properties": {
+        "message_kind": { "const": "data-loss" },
+        "payload": { "$ref": "envelope.schema.json#/$defs/dataLossPayload" }
+      }
+    }
+  ]
+}

@@ -10,6 +10,11 @@ for request-driven `DataProcessor` implementations. Processor conformance also
 checks finite ordered forecast output and requires `unavailable` responses to
 contain no derived output.
 
+`MemoryCloudLinkTransport::pair` is the transport-neutral fake binding for
+session/replay tests. It emits transport-published evidence for durable sends
+but never invents a cloud application ACK, so tests must create the receipt
+explicitly.
+
 `ScriptedDataProcessor` is a queue-driven `DataProcessor` test double. It
 reports a configurable health result, consumes queued `ProcessingResult` or
 `PortError` values in FIFO order, and retains the complete

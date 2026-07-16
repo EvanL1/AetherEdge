@@ -1,0 +1,180 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.aether.dev/schemas/distribution/v1alpha1/consumer-lock.schema.json",
+  "title": "AetherContracts consumer lock v1 alpha 1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "status",
+    "repository",
+    "release",
+    "manifest",
+    "policy",
+    "adoption",
+    "imports",
+    "pending_imports"
+  ],
+  "properties": {
+    "schema": { "const": "aether.contracts.consumer-lock.v1alpha1" },
+    "status": { "enum": ["partial-consumer", "complete-consumer"] },
+    "repository": { "const": "https://github.com/EvanL1/AetherContracts" },
+    "release": { "$ref": "#/$defs/release" },
+    "manifest": { "$ref": "#/$defs/manifest" },
+    "policy": { "$ref": "#/$defs/policy" },
+    "adoption": { "$ref": "#/$defs/adoption" },
+    "imports": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/import" }
+    },
+    "pending_imports": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/pendingImport" }
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "status": { "const": "partial-consumer" } } },
+      "then": { "properties": { "pending_imports": { "minItems": 1 } } }
+    },
+    {
+      "if": { "properties": { "status": { "const": "complete-consumer" } } },
+      "then": { "properties": { "pending_imports": { "maxItems": 0 } } }
+    }
+  ],
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "gitObject": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "semver": {
+      "type": "string",
+      "maxLength": 128,
+      "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(?:-(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(?:\\.(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?$"
+    },
+    "relativePath": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512,
+      "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*\\\\)(?!.*//)[A-Za-z0-9._/-]+$"
+    },
+    "release": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "tag", "tag_object", "commit", "bundle"],
+      "properties": {
+        "version": { "$ref": "#/$defs/semver" },
+        "tag": { "type": "string", "pattern": "^v[0-9A-Za-z.+-]+$", "maxLength": 129 },
+        "tag_object": { "$ref": "#/$defs/gitObject" },
+        "commit": { "$ref": "#/$defs/gitObject" },
+        "bundle": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["name", "url", "root", "size", "sha256", "limits"],
+          "properties": {
+            "name": { "type": "string", "pattern": "^AetherContracts-[0-9A-Za-z.+-]+\\.tar\\.gz$", "maxLength": 180 },
+            "url": { "type": "string", "format": "uri", "maxLength": 1024 },
+            "root": { "type": "string", "pattern": "^AetherContracts-[0-9A-Za-z.+-]+$", "maxLength": 170 },
+            "size": { "type": "integer", "minimum": 1, "maximum": 52428800 },
+            "sha256": { "$ref": "#/$defs/sha256" },
+            "limits": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "maximum_path_bytes",
+                "maximum_file_bytes",
+                "maximum_total_file_bytes",
+                "maximum_entries"
+              ],
+              "properties": {
+                "maximum_path_bytes": { "type": "integer", "minimum": 1, "maximum": 512 },
+                "maximum_file_bytes": { "type": "integer", "minimum": 1, "maximum": 8388608 },
+                "maximum_total_file_bytes": { "type": "integer", "minimum": 1, "maximum": 67108864 },
+                "maximum_entries": { "type": "integer", "minimum": 1, "maximum": 4096 }
+              }
+            }
+          }
+        }
+      }
+    },
+    "manifest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["release_path", "local_path", "sha256"],
+      "properties": {
+        "release_path": { "const": "contract-manifest.json" },
+        "local_path": { "$ref": "#/$defs/relativePath" },
+        "sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "conformance_claim",
+        "production_release",
+        "legacy_default",
+        "physical_control"
+      ],
+      "properties": {
+        "conformance_claim": { "const": "distribution-only" },
+        "production_release": { "const": false },
+        "legacy_default": { "const": true },
+        "physical_control": { "const": false }
+      }
+    },
+    "adoption": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["scope", "modules", "closure", "required_artifacts"],
+      "properties": {
+        "scope": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+        },
+        "modules": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "enum": ["cloudlink", "distribution", "tck", "thing-model"]
+          }
+        },
+        "closure": { "const": "required-artifacts" },
+        "required_artifacts": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/relativePath" }
+        }
+      }
+    },
+    "import": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source", "destination", "sha256"],
+      "properties": {
+        "source": { "$ref": "#/$defs/relativePath" },
+        "destination": { "$ref": "#/$defs/relativePath" },
+        "sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "pendingImport": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source", "sha256", "reason"],
+      "properties": {
+        "source": { "$ref": "#/$defs/relativePath" },
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "reason": { "type": "string", "minLength": 1, "maxLength": 512 }
+      }
+    }
+  }
+}

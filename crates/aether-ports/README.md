@@ -14,6 +14,12 @@ into Aether data sources. It deliberately does not expose a generic database,
 cache, model, or script-runner API. Hosts choose concrete adapters at the
 composition boundary.
 
+`CloudLinkSpool` is intentionally separate from `DurableOutbox`: it owns stream
+epoch/position, stable batch identity/digest, replay and explicit loss evidence,
+and removes records only after a validated cloud application receipt.
+`CloudLinkTransport` carries bounded logical routes without exposing MQTT topic
+strings to core callers. There is no CloudLink command or arbitrary-RPC route.
+
 `HistoryQuery` bounds event time but does not implicitly promise bitemporal or
 source-epoch history; an implementation must declare stronger point-in-time
 semantics explicitly. Likewise, artifact chronology is not a history-port

@@ -1,0 +1,333 @@
+{
+  "schema": "aether.failure-taxonomy.v1alpha1",
+  "status": "experimental",
+  "stability": "string-codes-are-contractual-numeric-abi-is-binding-specific",
+  "failures": [
+    {
+      "code": "INVALID_ARGUMENT",
+      "scope": "binding-api-misuse-only",
+      "retryable": false,
+      "description": "The caller violated a language binding API precondition, such as passing a null required pointer. It is not a wire failure."
+    },
+    {
+      "code": "INTEGER_NON_CANONICAL",
+      "scope": "wire-and-artifact",
+      "retryable": false,
+      "examples": ["", "-1", "+1", "01", "1.0", "abc"],
+      "description": "A decimal integer string is empty, signed, padded, fractional, or contains non-digits."
+    },
+    {
+      "code": "INTEGER_OUT_OF_RANGE",
+      "scope": "wire-and-artifact",
+      "retryable": false,
+      "maximum": "18446744073709551615",
+      "description": "A uint64 representation exceeds 20 UTF-8 bytes or its canonical decimal value exceeds 18446744073709551615; the byte-length check precedes lexical validation."
+    },
+    {
+      "code": "JSON_CYCLIC_VALUE",
+      "scope": "binding-input",
+      "retryable": false,
+      "description": "A binding received a cyclic in-memory value that cannot be represented as JSON."
+    },
+    {
+      "code": "JSON_INVALID_UNICODE",
+      "scope": "wire-and-artifact",
+      "retryable": false,
+      "description": "A string contains invalid Unicode, including an unpaired surrogate."
+    },
+    {
+      "code": "JSON_NON_FINITE_NUMBER",
+      "scope": "wire-and-artifact",
+      "retryable": false,
+      "description": "A number is NaN or infinite and therefore is not a JSON number."
+    },
+    {
+      "code": "JSON_UNSAFE_NUMBER",
+      "scope": "wire-artifact-and-binding-input",
+      "retryable": false,
+      "description": "A finite binary64 value is integer-valued outside the safe-integer range and its RFC 8785 serialization does not retain a decimal point; use a contract-declared string representation."
+    },
+    {
+      "code": "JSON_UNSUPPORTED_VALUE",
+      "scope": "binding-input",
+      "retryable": false,
+      "description": "A binding received a language-specific value that has no JSON representation."
+    },
+    {
+      "code": "JSON_SYNTAX_ERROR",
+      "scope": "wire-and-artifact",
+      "retryable": false,
+      "description": "Raw JSON is malformed; a binding should report an offset or path when available."
+    },
+    {
+      "code": "UNKNOWN_FIELD",
+      "scope": "wire-and-artifact",
+      "retryable": false,
+      "description": "A closed core object contains an undeclared field."
+    },
+    {
+      "code": "FIELD_BOUND",
+      "scope": "wire-and-artifact",
+      "retryable": false,
+      "description": "Input exceeds a declared byte, depth, string, member, array, or token bound."
+    },
+    {
+      "code": "DUPLICATE_JSON_KEY",
+      "scope": "wire-and-artifact",
+      "retryable": false,
+      "description": "Raw JSON contains the same object member name more than once."
+    },
+    {
+      "code": "DIGEST_CONFLICT",
+      "scope": "cloudlink-context",
+      "retryable": false,
+      "description": "A previously observed durable position identity is reused with a different stable batch_id or business digest binding."
+    },
+    {
+      "code": "INVALID_DIGEST",
+      "scope": "wire-and-artifact",
+      "retryable": false,
+      "description": "A digest does not use the required sha256 lowercase hexadecimal representation."
+    },
+    {
+      "code": "DIGEST_MISMATCH",
+      "scope": "cloudlink-context",
+      "retryable": false,
+      "description": "A declared business digest differs from the digest computed over the frozen canonical projection."
+    },
+    {
+      "code": "STALE_SESSION",
+      "scope": "cloudlink-context",
+      "retryable": false,
+      "description": "A message is bound to a gateway, session, epoch, or credential generation that is no longer current."
+    },
+    {
+      "code": "INVALID_EXPIRY_WINDOW",
+      "scope": "cloudlink-context",
+      "retryable": false,
+      "description": "A message declares expires_at_ms earlier than sent_at_ms."
+    },
+    {
+      "code": "MESSAGE_EXPIRED",
+      "scope": "cloudlink-context",
+      "retryable": false,
+      "description": "The explicit evaluation_time_ms is equal to or later than expires_at_ms."
+    },
+    {
+      "code": "DATA_LOSS_RANGE_INVALID",
+      "scope": "cloudlink-context",
+      "retryable": false,
+      "description": "Data-loss evidence violates first_lost_position <= last_lost_position < earliest_retained_position."
+    },
+    {
+      "code": "CURSOR_CONFLICT",
+      "scope": "cloudlink-context",
+      "retryable": false,
+      "description": "One message repeats the same stream_id and stream_epoch cursor identity."
+    },
+    {
+      "code": "UNSUPPORTED_VERSION",
+      "scope": "wire-and-artifact",
+      "retryable": false,
+      "description": "The declared protocol or contract version is not supported by the selected profile."
+    },
+    {
+      "code": "AUTH_PROFILE_UNRESOLVED",
+      "scope": "cloudlink-profile",
+      "retryable": false,
+      "description": "The experimental transcript is selected where production key lifecycle, verifier ownership, or trusted-adapter configuration is unavailable."
+    },
+    {
+      "code": "AUTHENTICATION_REQUIRED",
+      "scope": "cloudlink-wire-and-context",
+      "retryable": false,
+      "description": "The selected origin model requires authentication material that is absent."
+    },
+    {
+      "code": "AUTHENTICATION_INVALID",
+      "scope": "cloudlink-wire-and-context",
+      "retryable": false,
+      "description": "Authentication material is malformed or does not satisfy the selected experimental origin profile."
+    },
+    {
+      "code": "SEMVER_INVALID",
+      "scope": "wire-and-artifact",
+      "retryable": false,
+      "description": "A runtime version is not a strict Semantic Versioning 2.0.0 string."
+    },
+    {
+      "code": "CAPABILITY_DENIED",
+      "scope": "application-policy",
+      "retryable": false,
+      "description": "A capability declaration does not grant execution; the governed job or edge policy denied it."
+    },
+    {
+      "code": "CAPABILITY_EXECUTION_FORBIDDEN",
+      "scope": "wire-and-artifact",
+      "retryable": false,
+      "description": "A Thing Model attempted to declare direct execution instead of a governed job."
+    },
+    {
+      "code": "KEY_CONFLICT",
+      "scope": "artifact-context",
+      "retryable": false,
+      "description": "A key is reused within or across the property, point, or capability namespaces of one Thing Model, or a parameter key is repeated within one capability."
+    },
+    {
+      "code": "PROPERTY_NOT_FOUND",
+      "scope": "binding-lookup",
+      "retryable": false,
+      "description": "The requested property key is absent from the supplied Thing Model."
+    },
+    {
+      "code": "POINT_NOT_FOUND",
+      "scope": "binding-lookup",
+      "retryable": false,
+      "description": "The requested point key is absent from the supplied Thing Model."
+    },
+    {
+      "code": "CAPABILITY_NOT_FOUND",
+      "scope": "binding-lookup",
+      "retryable": false,
+      "description": "The requested capability key is absent from the supplied Thing Model."
+    },
+    {
+      "code": "ARGUMENT_INVALID",
+      "scope": "distribution-tool",
+      "retryable": false,
+      "description": "The consumer verifier command line is malformed or selects mutually exclusive modes."
+    },
+    {
+      "code": "ACTION_COMMIT_MISMATCH",
+      "scope": "distribution",
+      "retryable": false,
+      "description": "The composite consumer Action was not invoked at the exact peeled release commit recorded by the consumer lock."
+    },
+    {
+      "code": "ADOPTION_CLOSURE_MISMATCH",
+      "scope": "distribution",
+      "retryable": false,
+      "description": "The imported and pending source set is not the exact required-artifact closure declared by the lock, or complete-consumer is claimed before that closure is imported."
+    },
+    {
+      "code": "ARCHIVE_LAYOUT_MISMATCH",
+      "scope": "distribution",
+      "retryable": false,
+      "description": "The authenticated release archive does not have the single locked root or bounded entry layout."
+    },
+    {
+      "code": "ARCHIVE_UNSAFE",
+      "scope": "distribution",
+      "retryable": false,
+      "description": "The authenticated archive cannot be inspected or contains an escaping path, link, device, or another unsupported entry type."
+    },
+    {
+      "code": "BUNDLE_DIGEST_MISMATCH",
+      "scope": "distribution",
+      "retryable": false,
+      "description": "The downloaded release bundle SHA-256 differs from the consumer-reviewed lock."
+    },
+    {
+      "code": "BUNDLE_SIZE_MISMATCH",
+      "scope": "distribution",
+      "retryable": false,
+      "description": "The downloaded release bundle size differs from the consumer-reviewed lock."
+    },
+    {
+      "code": "BUNDLE_UNAVAILABLE",
+      "scope": "distribution",
+      "retryable": true,
+      "description": "The one exact release URL in the lock could not be fetched; no alternate source is selected automatically."
+    },
+    {
+      "code": "CONSUMER_ARTIFACT_DIGEST_MISMATCH",
+      "scope": "distribution",
+      "retryable": false,
+      "description": "An imported consumer artifact no longer has the release digest recorded by the lock."
+    },
+    {
+      "code": "CONSUMER_ARTIFACT_INVALID",
+      "scope": "distribution",
+      "retryable": false,
+      "description": "An imported consumer path is not a regular file contained by the consumer root."
+    },
+    {
+      "code": "CONSUMER_ARTIFACT_MISSING",
+      "scope": "distribution",
+      "retryable": false,
+      "description": "An imported consumer artifact required by the lock is absent."
+    },
+    {
+      "code": "LOCK_MISSING",
+      "scope": "distribution",
+      "retryable": false,
+      "description": "The selected AetherContracts consumer lock is absent."
+    },
+    {
+      "code": "LOCK_PATH_CONFLICT",
+      "scope": "distribution",
+      "retryable": false,
+      "description": "A consumer lock repeats an import path or declares one source as both imported and pending."
+    },
+    {
+      "code": "LOCK_SCHEMA_INVALID",
+      "scope": "distribution",
+      "retryable": false,
+      "description": "The consumer lock is not strict JSON or violates the closed v1 alpha 1 lock contract."
+    },
+    {
+      "code": "MANIFEST_ARTIFACT_MISMATCH",
+      "scope": "distribution",
+      "retryable": false,
+      "description": "An import or pending import is absent from the release manifest or declares a different digest."
+    },
+    {
+      "code": "MANIFEST_DIGEST_MISMATCH",
+      "scope": "distribution",
+      "retryable": false,
+      "description": "The release manifest bytes differ from the SHA-256 fixed by the consumer lock."
+    },
+    {
+      "code": "MANIFEST_IDENTITY_MISMATCH",
+      "scope": "distribution",
+      "retryable": false,
+      "description": "The manifest contract name or release version differs from the consumer lock."
+    },
+    {
+      "code": "MANIFEST_INVALID",
+      "scope": "distribution",
+      "retryable": false,
+      "description": "The release manifest is not strict JSON or has an invalid closed artifact declaration."
+    },
+    {
+      "code": "MANIFEST_MISSING",
+      "scope": "distribution",
+      "retryable": false,
+      "description": "The digest-pinned release manifest is absent from the consumer or authenticated release root."
+    },
+    {
+      "code": "RELEASE_ARTIFACT_DIGEST_MISMATCH",
+      "scope": "distribution",
+      "retryable": false,
+      "description": "An imported or pending source in the authenticated release archive differs from its locked digest."
+    },
+    {
+      "code": "RELEASE_ARTIFACT_INVALID",
+      "scope": "distribution",
+      "retryable": false,
+      "description": "A locked source path in the authenticated release is not a contained regular file."
+    },
+    {
+      "code": "RELEASE_ARTIFACT_MISSING",
+      "scope": "distribution",
+      "retryable": false,
+      "description": "An imported or pending source declared by the lock is absent from the authenticated release."
+    },
+    {
+      "code": "SAFETY_REQUIREMENT_MISMATCH",
+      "scope": "distribution",
+      "retryable": false,
+      "description": "The release manifest disagrees with the lock about production status, legacy default, or physical-control exclusion."
+    }
+  ]
+}

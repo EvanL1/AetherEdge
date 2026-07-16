@@ -1,0 +1,76 @@
+{
+  "schema": "aether.cloudlink.interoperability-gates.v1alpha1",
+  "contract_version": "0.1.0-alpha.3",
+  "status": "experimental-auth-proposal",
+  "default_mode": "legacy",
+  "physical_control": "forbidden",
+  "gates": [
+    {
+      "id": "shared-broker-authentication",
+      "status": "proposal",
+      "exit_criteria": [
+        "the alpha.3 replay-bounded transcript and signing objects remain byte stable",
+        "production key provisioning, rotation, revocation, and verifier ownership are implemented",
+        "generic shared-Broker deliveries prove publisher identity per accepted publish through one declared origin model",
+        "topic, payload identity, and MQTT credentials are never sufficient authentication",
+        "valid and invalid fixtures pass every conformant binding"
+      ]
+    },
+    {
+      "id": "single-wire-contract",
+      "status": "experimental",
+      "depends_on": "shared-broker-authentication",
+      "exit_criteria": [
+        "envelope, time, identity, digest, and ACK schemas have one authority",
+        "all language bindings report the same failure classes"
+      ]
+    },
+    {
+      "id": "cross-language-fixtures",
+      "status": "passed-experimental",
+      "depends_on": "single-wire-contract",
+      "exit_criteria": [
+        "TypeScript, Rust, C, and C++ execute the same fixture manifest",
+        "canonical bytes and digests are byte identical"
+      ]
+    },
+    {
+      "id": "real-broker-dual-harness",
+      "status": "consumer-evidence-required",
+      "depends_on": "cross-language-fixtures",
+      "exit_criteria": [
+        "one real Broker runs an edge harness and Cloud ingress concurrently",
+        "session resume, Runtime Manifest, and telemetry traverse application use cases"
+      ]
+    },
+    {
+      "id": "fault-injection",
+      "status": "consumer-evidence-required",
+      "depends_on": "real-broker-dual-harness",
+      "exit_criteria": [
+        "disconnect, ACK loss, process restart, duplicate delivery, digest conflict, and data-loss pass",
+        "no successful receipt is produced for a conflict or uncommitted fact"
+      ]
+    },
+    {
+      "id": "signed-durable-ack",
+      "status": "planned",
+      "depends_on": "fault-injection",
+      "exit_criteria": [
+        "the signed ACK schema and Cloud signing transcript are frozen",
+        "successful ACK creation and outbox insertion share the production fact transaction",
+        "post-commit crash recovery republishes the identical ACK"
+      ]
+    },
+    {
+      "id": "legacy-cutover",
+      "status": "blocked",
+      "depends_on": "signed-durable-ack",
+      "exit_criteria": [
+        "every preceding gate passes",
+        "legacy remains available for rollback",
+        "CloudLink contains no physical-control operation"
+      ]
+    }
+  ]
+}

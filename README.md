@@ -23,19 +23,37 @@ deny-by-default, explicitly confirmed, and audited.
 > the CLI, and some compatibility artifacts retain their `aether-*` / `aether` names. The official
 > energy-management implementation lives in [AetherEMS](https://github.com/EvanL1/AetherEMS).
 
-## Start with an AI agent
+## Install AetherIot
 
-Install the repository's Agent Skill in any compatible coding assistant:
+AetherIot is not an npm or Bun package. `npx` and `bunx` do not install the Kernel, Runtime, CLI,
+or Rust SDK.
+
+For a Docker-based Linux edge host, download the matching `AetherEdge-<arch>-<version>.run` file and
+its `.sha256` file from [GitHub Releases](https://github.com/EvanL1/AetherIot/releases). Verify and
+run the fresh-install package on the target host:
 
 ```bash
-npx skills add EvanL1/AetherIot -s aether-iot
+sha256sum -c AetherEdge-<arch>-<version>.run.sha256
+chmod +x AetherEdge-<arch>-<version>.run
+sudo ./AetherEdge-<arch>-<version>.run
 ```
 
-Build the CLI and expose the running edge system as read-only MCP tools:
+The `.run` package installs the six-service edge Runtime and the `aether` CLI. Releases also contain
+standalone CLI archives; those do not install the Runtime. For a source checkout or SDK development,
+follow [Getting Started](docs/guides/getting-started.md). Running
+`cargo install --path tools/aether --locked` installs only the CLI. See
+[Deployment](docs/guides/deployment.md) for Docker and bare-metal package contracts.
+
+## Optional: connect an AI agent
+
+The repository's Agent Skill is optional development guidance, not an AetherIot software package.
+See [Build Applications with AI](docs/guides/build-applications-with-ai.md) if you want to add it to
+a compatible assistant.
+
+Expose a running edge system as read-only MCP tools:
 
 ```bash
-cargo build --release -p aether
-claude mcp add aether -- ./target/release/aether mcp
+claude mcp add aether -- aether mcp
 ```
 
 Then ask your assistant:
@@ -45,10 +63,10 @@ Get started with AetherIot. Inspect this repository and generate a read-only
 operations app for the capabilities exposed by my edge runtime.
 ```
 
-The Skill supplies the development method and pulls current Markdown from the online docs. MCP
-supplies live, structured capabilities. Write tools are not registered unless the operator starts
-an explicitly write-enabled session, and every write still crosses the server-enforced permission,
-confirmation, validation, and audit boundary.
+The optional Skill supplies the development method and pulls current Markdown from the online docs.
+MCP supplies live, structured capabilities. Write tools are not registered unless the operator
+starts an explicitly write-enabled session, and every write still crosses the server-enforced
+permission, confirmation, validation, and audit boundary.
 
 See [Build Applications with AI](docs/guides/build-applications-with-ai.md) for the client contract
 and [Agent Quickstart](https://docs.aetheriot.workers.dev/agent-quickstart/) for a complete safe-empty
@@ -61,7 +79,8 @@ runtime setup.
 - **Local-first data plane** — shared memory is authoritative for live point state; SQLite provides
   embedded desired state, history, audit, and durable outbox storage.
 - **Machine-readable contracts** — runtime manifests, OpenAPI, capability metadata, Pack manifests,
-  MCP tools, and Markdown documentation give agents facts instead of prompt folklore.
+  experimental CloudLink schemas, MCP tools, and Markdown documentation give agents facts instead
+  of prompt folklore.
 - **One application boundary** — HTTP, CLI, MCP, and generated clients share governed queries and
   commands instead of writing SHM or storage directly.
 - **Domain Packs** — industry knowledge, models, mappings, rules, and processing declarations layer
@@ -105,7 +124,7 @@ composition. They are SDK smoke tests, not the supervised production runtime.
 | `aether-alarm` | Alarm evaluation and lifecycle |
 | `aether-history` | Embedded history and optional history adapters |
 | `aether-api` | Authenticated remote application API and WebSocket |
-| `aether-uplink` | Cloud/MQTT delivery through a durable local outbox |
+| `aether-uplink` | Legacy Cloud/MQTT delivery through a durable local outbox; experimental CloudLink foundation |
 
 ```text
 Devices -> aether-io -> authoritative SHM
@@ -144,6 +163,21 @@ that every workspace package is source-only, and signs the Kernel source,
 runtime, manifest, and CLI artifacts. The physical AetherEMS split and its
 downstream bootstrap CI exist, but AetherEMS has not yet replaced its bootstrap
 Git pin with the signed release evidence.
+
+The broker-neutral CloudLink MQTT v1 **edge foundation** is implemented as an
+experimental, opt-in candidate: strict JSON schemas/codecs, a dedicated
+application-ACK-driven memory/file spool, user-selected MQTT v3.1.1 broker
+binding, session/heartbeat/manifest/point telemetry, and replay tests. The
+legacy MQTT adapter remains the compatibility default. AetherCloud and
+AetherIot now consume the same digest-pinned AetherContracts
+`v0.1.0-alpha.3` release with identical complete-consumer locks and no pending
+imports. This proves distribution integrity and public fixture execution, not
+production Rust/TypeScript transport conformance: key lifecycle, a future signed ACK,
+Cloud batch-position persistence, and crash-durable Cloud stores remain open.
+The dual-process Broker harness is development evidence only. See
+[ADR-0017](docs/adr/0017-experimental-cloudlink-mqtt-edge-foundation.md) and the
+[CloudLink reference](docs/reference/cloudlink-mqtt-v1.md). Public release
+authority is defined by [ADR-0018](docs/adr/0018-pinned-aethercontracts-consumption.md).
 
 ## Documentation
 

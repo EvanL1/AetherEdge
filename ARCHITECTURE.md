@@ -10,6 +10,8 @@ rules are defined in:
 - [ADR-0009: Aether Data Processing](docs/adr/0009-aether-data-processing.md)
 - [ADR-0010: Physical acquisition addresses](docs/adr/0010-physical-acquisition-addresses.md)
 - [ADR-0011: Governed channel desired state](docs/adr/0011-governed-channel-desired-state.md)
+- [ADR-0017: Experimental CloudLink MQTT edge foundation](docs/adr/0017-experimental-cloudlink-mqtt-edge-foundation.md)
+- [ADR-0018: Pinned AetherContracts consumption](docs/adr/0018-pinned-aethercontracts-consumption.md)
 - [Target repository layout](docs/architecture/target-layout.md)
 - [AI invariants](ai/invariants.md)
 - [Capability safety policy](ai/safety-policy.yaml)
@@ -30,7 +32,10 @@ plane, and typed SHM port adapters. In particular:
   accepts the frame. Neither writer port is exposed to HTTP, CLI, MCP, or AI
   clients. The legacy aggregate is test-only in the default service and CLI
   graphs.
-- `FileOutbox` provides bounded local store-and-forward with crash recovery.
+- `FileOutbox` provides bounded legacy store-and-forward with crash recovery.
+  The experimental `CloudLinkSpool` is separate: it preserves stream
+  epoch/position, canonical business digests, replay and loss evidence, and
+  removes a record only after a matching cloud application ACK.
 - Local SQLite is authoritative for commissioned channel desired state. The
   active protocol runtime is a rebuildable projection, and channel
   create/update/delete/enable/disable cross the same confirmed, audited
@@ -44,6 +49,11 @@ plane, and typed SHM port adapters. In particular:
 - `aether-history` uses embedded SQLite history by default; PostgreSQL/TimescaleDB are
   enabled with the `postgres-storage` feature. `aether-uplink` retains its durable
   local outbox before MQTT.
+- `aether-cloudlink` implements the transport-neutral experimental candidate
+  codec and truthful Runtime Manifest/`PointSample` mapping.
+  `aether-cloudlink-mqtt` is a user-broker-neutral MQTT v3.1.1/QoS 1 extension.
+  Legacy MQTT remains the runtime default while public AetherContracts alpha.3
+  is experimental and production credential and durable-store gates remain open.
 - Domain models and knowledge are absent by default. Automation and MCP load
   them only from manifest-validated Packs explicitly selected by
   `<AETHER_CONFIG_PATH>/global.yaml`; `packs: []` is the safe empty kernel.
@@ -82,6 +92,30 @@ compatibility mirror and never the live-state authority.
 
 Optional adapters may add Redis state mirroring, PostgreSQL history, MQTT
 uplink, or HTTP APIs. They do not change the source-of-truth rules.
+
+## Experimental CloudLink boundary
+
+CloudLink is an application delivery protocol, not another name for MQTT. Its
+stream identity, digest, resume cursor, replay, conflict handling, data-loss
+evidence, and durable application ACK remain transport neutral. MQTT owns only
+connection/TLS/broker authentication, exact topic ACLs, QoS, PUBACK, keepalive,
+and reconnect. Neither MQTT client acceptance nor PUBACK removes a CloudLink
+record.
+
+The endpoint and topic prefix may name any operator-selected MQTT v3.1.1
+broker. An AetherCloud broker is not a runtime dependency. A private broker
+that AetherCloud cannot reach needs a planned bridge/site connector. Broker or
+cloud outage cannot enter acquisition, automation, alarms, safety interlocks,
+history, or local control loops.
+
+CloudLink v1 carries no arbitrary RPC, physical command, point/register write,
+or SHM mutation. Point telemetry contains only edge-owned address, finite
+value, source timestamp, exposed quality, and coherent topology generation. It
+does not fabricate a Thing Model revision. AetherCloud and AetherIot now share
+the digest-pinned public AetherContracts subset. Three public behavior artifacts
+remain pending, so distribution integrity does not imply codec conformance.
+Remaining implementation mismatches and release gates are recorded in ADR-0017,
+ADR-0018, and `contracts/cloudlink/v1/MIGRATION.md`.
 
 ## Data-processing capability
 

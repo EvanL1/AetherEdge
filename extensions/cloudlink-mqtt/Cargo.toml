@@ -1,0 +1,29 @@
+[package]
+name = "aether-cloudlink-mqtt"
+version.workspace = true
+publish = false
+edition = "2024"
+rust-version = "1.90"
+description = "Broker-neutral MQTT v3.1.1 binding for experimental CloudLink"
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+aether-cloudlink = { version = "0.5.0", path = "../../crates/aether-cloudlink" }
+aether-ports = { version = "0.5.0", path = "../../crates/aether-ports" }
+async-trait = { workspace = true }
+tokio = { workspace = true }
+rumqttc = { version = "0.25.1", default-features = false, features = ["use-native-tls"] }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+aether-domain = { version = "0.5.0", path = "../../crates/aether-domain" }
+aether-store-local = { version = "0.5.0", path = "../store-local" }
+serde_json = { workspace = true }
+tempfile = { workspace = true }
+
+[target.'cfg(not(any(target_os = "windows", target_vendor = "apple")))'.dependencies]
+native-tls = { version = "0.2.18", features = ["vendored"] }
+
+[lints]
+workspace = true

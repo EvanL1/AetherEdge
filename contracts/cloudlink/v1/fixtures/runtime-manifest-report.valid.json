@@ -1,0 +1,73 @@
+{
+  "schema": "aether.cloudlink.envelope.v1",
+  "protocol": "aether.cloudlink",
+  "protocol_version": "1.0",
+  "message_kind": "runtime-manifest-report",
+  "gateway_id": "33333333-3333-4333-8333-333333333333",
+  "session_id": "44444444-4444-4444-8444-444444444444",
+  "session_epoch": "7",
+  "credential_generation": "3",
+  "sent_at_ms": "1721000000200",
+  "delivery": {
+    "stream_id": "manifest",
+    "stream_epoch": "2",
+    "position": "1",
+    "batch_id": "manifest-75643d71",
+    "digest": "sha256:98c67f2da74471e1ac9bcc295eb0202aa3d4410ce8c3d81fb4e07a7e52461618"
+  },
+  "payload": {
+    "observed_at_ms": "1721000000123",
+    "manifest": {
+      "schema_version": 1,
+      "composition": "aether-edge-six-service",
+      "aether_version": "0.5.0",
+      "target_triple": "aarch64-unknown-linux-musl",
+      "target_os": "linux",
+      "services": [
+        "aether-alarm",
+        "aether-api",
+        "aether-automation",
+        "aether-history",
+        "aether-io",
+        "aether-uplink"
+      ],
+      "cargo_features": [
+        "aether-io/aether_485",
+        "aether-io/can",
+        "aether-io/gpio",
+        "aether-io/iec61850",
+        "aether-io/modbus"
+      ],
+      "capabilities": [
+        "alarm.alert.resolve",
+        "alarm.rule.manage",
+        "automation.instance.manage",
+        "automation.routing.manage",
+        "automation.rule.execute",
+        "automation.rule.manage",
+        "data_processing.process",
+        "data_processing.processors.health",
+        "data_processing.tasks.list",
+        "device.read_point",
+        "device.write_point",
+        "io.channel.manage",
+        "io.channel.reconcile"
+      ],
+      "protocols": [
+        "aether_485",
+        "can",
+        "di_do",
+        "iec61850",
+        "modbus_rtu",
+        "modbus_tcp",
+        "sunspec_rtu",
+        "sunspec_tcp",
+        "virtual"
+      ],
+      "checksum": {
+        "algorithm": "sha256",
+        "digest": "75643d71e08d67950578d0d7077f9de7b0c3ef907622dbc03e558f2763fcf19e"
+      }
+    }
+  }
+}

@@ -4,6 +4,9 @@ use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 use std::time::Duration;
 
+use aether_domain::{
+    InstanceId, PointAddress, PointId, PointKind, PointQuality, PointSample, TimestampMs,
+};
 use aether_ports::{ChannelHealthObservation, PortError, PortErrorKind, PortResult};
 use aether_shm_bridge::{
     PhysicalPointAddress, ShmClientConfig, ShmReadTopologyGeneration, SlotSource,
@@ -93,6 +96,22 @@ impl UplinkTopologyGeneration {
         self.values.collect_entries(patterns, excludes)
     }
 
+    /// Collects acquisition-owned business point facts for CloudLink.
+    ///
+    /// The current SHM slot encoding has value/raw/timestamp but no quality
+    /// field, so accepted finite values are exposed as `Good`, matching the
+    /// read-only `ShmLiveState` adapter. This is not a claim that the physical
+    /// source supplied original quality metadata.
+    #[allow(dead_code)]
+    pub fn collect_point_samples(
+        &self,
+        patterns: &[String],
+        excludes: &[Regex],
+    ) -> PortResult<Vec<PointSample>> {
+        self.read.validate_layouts()?;
+        self.values.collect_point_samples(patterns, excludes)
+    }
+
     /// Iterates the channels this generation's health manifest configures.
     ///
     /// Deterministic order, so a telemetry pass reports the same channel set
@@ -113,6 +132,14 @@ impl UplinkTopologyGeneration {
     #[must_use]
     pub const fn digest(&self) -> u64 {
         self.digest
+    }
+
+    /// Returns the existing snapshot digest with an explicit non-cryptographic
+    /// algorithm tag for the experimental CloudLink topology binding.
+    #[allow(dead_code)]
+    #[must_use]
+    pub fn cloudlink_snapshot_digest(&self) -> String {
+        format!("fx64:{:016x}", self.digest)
     }
 
     /// Returns the committed point/health IO epoch paired with the snapshot.
@@ -285,6 +312,78 @@ impl ShmNetValueSource {
             });
         }
         Ok(entries)
+    }
+
+    /// Reads selected instance measurement groups as truthful `PointSample`s.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn collect_point_samples(
+        &self,
+        patterns: &[String],
+        excludes: &[Regex],
+    ) -> PortResult<Vec<PointSample>> {
+        let selectors = compile_globs(patterns);
+        let slot_count = self.slots.slot_count()?;
+        let mut samples = Vec::new();
+        for group in self.groups.values() {
+            if group.source != "inst"
+                || group.data_type != "M"
+                || !selectors
+                    .iter()
+                    .any(|selector| selector.is_match(&group.key))
+                || excludes.iter().any(|exclude| exclude.is_match(&group.key))
+            {
+                continue;
+            }
+            let instance_id = group.device.parse::<u32>().map_err(|_| {
+                PortError::new(
+                    PortErrorKind::InvalidData,
+                    format!("logical group {} has a non-numeric instance ID", group.key),
+                )
+            })?;
+            for (point_id, &slot) in &group.points {
+                if slot >= slot_count {
+                    return Err(PortError::new(
+                        PortErrorKind::InvalidData,
+                        format!(
+                            "logical point {}:{point_id} maps outside SHM slot_count",
+                            group.key
+                        ),
+                    ));
+                }
+                let point_id = point_id.parse::<u32>().map_err(|_| {
+                    PortError::new(
+                        PortErrorKind::InvalidData,
+                        format!(
+                            "logical point {}:{point_id} has a non-numeric point ID",
+                            group.key
+                        ),
+                    )
+                })?;
+                let Some(sample) = self.slots.read_slot(slot)? else {
+                    continue;
+                };
+                if sample.value().is_nan() {
+                    continue;
+                }
+                if !sample.value().is_finite() {
+                    return Err(PortError::new(
+                        PortErrorKind::InvalidData,
+                        format!("logical point {}:{point_id} is non-finite", group.key),
+                    ));
+                }
+                samples.push(PointSample::new(
+                    PointAddress::new(
+                        InstanceId::new(instance_id),
+                        PointKind::Telemetry,
+                        PointId::new(point_id),
+                    ),
+                    sample.value(),
+                    TimestampMs::new(sample.timestamp_ms()),
+                    PointQuality::Good,
+                ));
+            }
+        }
+        Ok(samples)
     }
 }
 
@@ -577,6 +676,10 @@ mod tests {
         assert!(handle.refresh(&pool, &config).await.expect("first refresh"));
         let pinned = handle.load();
         assert_eq!(pinned.publication_epoch(), 10);
+        assert_eq!(
+            pinned.cloudlink_snapshot_digest(),
+            format!("fx64:{:016x}", pinned.digest())
+        );
 
         sqlx::query("UPDATE measurement_routing SET measurement_id = 6")
             .execute(&pool)
@@ -729,6 +832,29 @@ mod tests {
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].device, "12");
         assert_eq!(entries[0].value["5"], 42.5);
+    }
+
+    #[test]
+    fn cloudlink_samples_preserve_logical_address_value_and_source_timestamp() {
+        let source = ShmNetValueSource::new(
+            Arc::new(StubSlots(HashMap::from([(
+                0,
+                SlotSnapshot::new(42.5, 1_234),
+            )]))),
+            vec![LogicalGroup::new("inst", "12", "M", [("5", 0)])],
+        );
+
+        let samples = source
+            .collect_point_samples(&["inst:*:M".to_string()], &[])
+            .expect("collect CloudLink samples");
+
+        assert_eq!(samples.len(), 1);
+        assert_eq!(samples[0].address().instance_id(), InstanceId::new(12));
+        assert_eq!(samples[0].address().point_id(), PointId::new(5));
+        assert_eq!(samples[0].address().kind(), PointKind::Telemetry);
+        assert_eq!(samples[0].value(), 42.5);
+        assert_eq!(samples[0].timestamp(), TimestampMs::new(1_234));
+        assert_eq!(samples[0].quality(), PointQuality::Good);
     }
 
     #[test]
