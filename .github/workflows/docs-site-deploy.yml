@@ -89,12 +89,7 @@ jobs:
           test -f dist/en.md
           test -f dist/en/llms.txt
           test -f dist/en/llms-full.txt
-          if rg --pcre2 '\p{Han}|\p{Hiragana}|\p{Katakana}|\p{Hangul}' dist/en \
-            --glob '*.md' --glob '*.txt'; then
-            echo "English agent documentation must not contain CJK text."
-            exit 1
-          fi
-          rg --quiet --pcre2 '\p{Han}' dist/index.md dist/llms.txt
+          node scripts/check-language.mjs dist
 
       - name: Normalize Cloudflare API token
         id: cloudflare-token

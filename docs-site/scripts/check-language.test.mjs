@@ -20,6 +20,7 @@ describe('findCjkOccurrences', () => {
 describe('localeForPath', () => {
   it('treats /en as English and the root locale as Simplified Chinese', () => {
     expect(localeForPath('en/guides/getting-started.md')).toBe('en');
+    expect(localeForPath('en.md')).toBe('en');
     expect(localeForPath('aethercontracts/getting-started.md')).toBe('zh-CN');
   });
 });
