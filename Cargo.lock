@@ -220,6 +220,42 @@ dependencies = [
 ]
 
 [[package]]
+name = "aether-cloudlink"
+version = "0.5.0"
+dependencies = [
+ "aether-domain",
+ "aether-ports",
+ "aether-runtime-catalog",
+ "aether-store-local",
+ "aether-testkit",
+ "async-trait",
+ "semver",
+ "serde",
+ "serde_json",
+ "serde_json_canonicalizer",
+ "sha2",
+ "thiserror 2.0.18",
+ "tokio",
+]
+
+[[package]]
+name = "aether-cloudlink-mqtt"
+version = "0.5.0"
+dependencies = [
+ "aether-cloudlink",
+ "aether-domain",
+ "aether-ports",
+ "aether-store-local",
+ "async-trait",
+ "native-tls",
+ "rumqttc",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+]
+
+[[package]]
 name = "aether-config"
 version = "0.5.0"
 dependencies = [
@@ -478,6 +514,7 @@ version = "0.5.0"
 dependencies = [
  "aether-domain",
  "async-trait",
+ "serde",
 ]
 
 [[package]]

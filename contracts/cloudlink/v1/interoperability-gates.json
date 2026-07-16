@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "contract": "aether.cloudlink",
+  "contracts_release": "0.1.0-alpha.3",
+  "status": "non-authoritative-aetheriot-readiness-overlay",
+  "authoritative_gate_definition": "AetherContracts compatibility/cloudlink-v1alpha1-gates.json",
+  "default_mode": "legacy",
+  "physical_control": "forbidden",
+  "gate_evidence": {
+    "shared-broker-authentication": {
+      "status": "proposal",
+      "evidence": ["session-authentication.schema.json", "ADR-0017"]
+    },
+    "single-wire-contract": {
+      "status": "implemented-alpha3",
+      "evidence": ["aether-contracts.lock.json", "wire-profile.json"]
+    },
+    "cross-language-fixtures": {
+      "status": "implemented-alpha3",
+      "evidence": ["fixture-manifest.json", "25 Rust fixture outcomes"]
+    },
+    "real-broker-dual-harness": {
+      "status": "implemented-alpha3",
+      "evidence": [
+        "AetherCloud: pnpm test:cloudlink-alpha-harness",
+        "AetherCloud: evidence/cloudlink-alpha3-dual-harness.json"
+      ]
+    },
+    "fault-injection": {
+      "status": "implemented-alpha3",
+      "evidence": [
+        "interoperability-scenarios.json",
+        "AetherCloud: evidence/cloudlink-alpha3-dual-harness.json"
+      ]
+    },
+    "signed-durable-ack": {
+      "status": "blocked",
+      "evidence": [
+        "alpha.3 ACK is unsigned",
+        "PostgreSQL transactional inbox/cursor/receipt/ACK outbox is absent"
+      ]
+    },
+    "legacy-cutover": {
+      "status": "blocked",
+      "evidence": ["legacy remains the explicit default"]
+    }
+  }
+}

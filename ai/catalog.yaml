@@ -70,6 +70,27 @@ components:
     responsibility: Strict Draft 2020-12 wire schemas for every v1 Data Processing trust boundary
     verify:
       - uvx --from check-jsonschema check-jsonschema --check-metaschema contracts/data-processing/*.schema.json
+  cloudlink_candidate_codec:
+    path: crates/aether-cloudlink
+    responsibility: Experimental transport-neutral CloudLink v1 strict codec, session binding, canonical business digests, and truthful Runtime Manifest/PointSample mapping
+    verify:
+      - cargo test -p aether-cloudlink
+  cloudlink_candidate_contracts:
+    path: contracts/cloudlink/v1
+    responsibility: Product integration copies and migration proposals for the digest-pinned public AetherContracts CloudLink subset
+    verify:
+      - uvx --from check-jsonschema check-jsonschema --check-metaschema contracts/cloudlink/v1/*.schema.json
+      - cargo test -p aether-cloudlink --test codec_contract
+  aether_contracts_consumer:
+    path: aether-contracts.lock.json
+    responsibility: Offline digest pin for the public release, 27 imported protocol artifacts, verifier closure, and three explicit pending behavior artifacts
+    verify:
+      - cargo test -p aether-cloudlink --test codec_contract aether_contracts_distribution_lock_pins_imported_bytes -- --exact
+  cloudlink_mqtt_binding:
+    path: extensions/cloudlink-mqtt
+    responsibility: User-broker-neutral MQTT 3.1.1/QoS 1/TLS binding with exact per-gateway topics, PUBACK evidence, reconnect, and opt-in shared-broker harness
+    verify:
+      - cargo test -p aether-cloudlink-mqtt
   data_processing_ai_evals:
     path: ai/evals/data-processing.yaml
     responsibility: AI-facing permission, confirmation, audit, non-idempotency, failure-isolation, and no-control scenarios backed by Rust tests
@@ -85,7 +106,7 @@ components:
       - cargo test -p aether-testkit
   local_store:
     path: extensions/store-local
-    responsibility: Zero-external-service state, history, audit, and crash-recoverable outbox adapters
+    responsibility: Zero-external-service state, history, audit, legacy outbox, and application-ACK-driven CloudLink spool adapters
     verify:
       - cargo test -p aether-store-local
   jwt_auth_adapter:

@@ -1,0 +1,15 @@
+{
+  "schema": "aether.cloudlink.session-challenge.v1",
+  "protocol": "aether.cloudlink",
+  "message_kind": "session-challenge",
+  "gateway_id": "33333333-3333-4333-8333-333333333333",
+  "challenge_id": "22222222-2222-4222-8222-222222222222",
+  "cloud_nonce": "CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC",
+  "issued_at_ms": "1721000000000",
+  "expires_at_ms": "1721000060000",
+  "cloud_signature": {
+    "key_id": "development-cloud-key-1",
+    "algorithm": "Ed25519",
+    "signature": "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD"
+  }
+}

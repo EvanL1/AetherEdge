@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "runtime-manifest.v1.schema.json",
+  "title": "Aether Runtime Manifest v1 embedded CloudLink dependency",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "composition",
+    "aether_version",
+    "target_triple",
+    "target_os",
+    "services",
+    "cargo_features",
+    "capabilities",
+    "protocols",
+    "checksum"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "composition": { "$ref": "#/$defs/identifier" },
+    "aether_version": { "$ref": "#/$defs/semver" },
+    "target_triple": { "$ref": "#/$defs/identifier" },
+    "target_os": { "enum": ["freebsd", "linux", "macos", "windows"] },
+    "services": {
+      "allOf": [{ "$ref": "#/$defs/identifierList" }, { "minItems": 1 }]
+    },
+    "cargo_features": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^aether-io/[A-Za-z0-9][A-Za-z0-9._:-]*$"
+      }
+    },
+    "capabilities": { "$ref": "#/$defs/identifierList" },
+    "protocols": {
+      "allOf": [{ "$ref": "#/$defs/identifierList" }, { "minItems": 1 }]
+    },
+    "checksum": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["algorithm", "digest"],
+      "properties": {
+        "algorithm": { "const": "sha256" },
+        "digest": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    }
+  },
+  "$defs": {
+    "identifier": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+    },
+    "identifierList": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/identifier" }
+    },
+    "semver": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(?:-(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(?:\\.(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?$"
+    }
+  }
+}

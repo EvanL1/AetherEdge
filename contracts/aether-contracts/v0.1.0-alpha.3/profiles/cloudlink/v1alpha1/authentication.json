@@ -1,0 +1,113 @@
+{
+  "schema": "aether.cloudlink.authentication-profile.v1alpha1",
+  "status": "experimental",
+  "gate_status": "experimental",
+  "signature_algorithm": "Ed25519",
+  "signature_encoding": "unpadded-base64url",
+  "origin_models": {
+    "gateway-signed": {
+      "session_establishment": {
+        "transcript": [
+          "Cloud publishes one session-challenge on the Gateway down/session topic",
+          "Gateway validates the challenge identity, Cloud signature, issue time, expiry, and one-time challenge state",
+          "Gateway publishes one session-hello whose gateway_signature covers the exact signed object",
+          "Cloud validates the active credential generation and Gateway key before accepting a session",
+          "Cloud consumes the challenge exactly once and returns session-accepted"
+        ],
+        "challenge_schema": "session-challenge.schema.json",
+        "hello_schema": "session-hello.schema.json",
+        "cloud_challenge_signing": {
+          "signed_object_schema": "aether.cloudlink.session-challenge-signing.v1alpha1",
+          "signed_object_fields": [
+            "schema",
+            "gateway_id",
+            "challenge_id",
+            "cloud_nonce",
+            "issued_at_ms",
+            "expires_at_ms"
+          ],
+          "canonicalization": "RFC 8785 JCS UTF-8 bytes"
+        },
+        "signed_object_schema": "aether.cloudlink.session-establishment-signing.v1alpha1",
+        "signed_object_fields": [
+          "schema",
+          "gateway_id",
+          "credential_id",
+          "credential_generation",
+          "gateway_key_id",
+          "challenge_id",
+          "cloud_nonce",
+          "client_nonce",
+          "offered_protocol_versions",
+          "resume"
+        ],
+        "canonicalization": "RFC 8785 JCS UTF-8 bytes",
+        "replay_bounds": {
+          "challenge_id_unique": true,
+          "challenge_single_use": true,
+          "challenge_deadline_check": "evaluation_time_ms < expires_at_ms",
+          "credential_generation_exact_match": true,
+          "gateway_id_exact_match": true
+        }
+      },
+      "per_uplink": {
+        "requirement": "every-uplink",
+        "authentication_field": "message_authentication",
+        "signed_object_schema": "aether.cloudlink.uplink-signing.v1alpha1",
+        "signed_object_fields": [
+          "schema",
+          "gateway_id",
+          "credential_generation",
+          "session_id",
+          "session_epoch",
+          "message_kind",
+          "sent_at_ms",
+          "expires_at_ms",
+          "stream_id",
+          "stream_epoch",
+          "position",
+          "batch_id",
+          "business_digest"
+        ],
+        "canonicalization": "RFC 8785 JCS UTF-8 bytes",
+        "absent_optional_values": "JSON null",
+        "non_delivery_values": "stream_id, stream_epoch, position, batch_id, and business_digest are JSON null",
+        "replay_bounds": {
+          "accepted_session_exact_match": true,
+          "credential_generation_exact_match": true,
+          "deadline_check": "evaluation_time_ms < expires_at_ms when expires_at_ms is present",
+          "signature_scope": "one exact canonical signing object",
+          "replay_identity": ["gateway_id", "stream_id", "stream_epoch", "position"],
+          "stable_bindings": ["batch_id", "business_digest"]
+        }
+      }
+    },
+    "trusted-connector-broker-attestation": {
+      "attestation_location": "outside-payload-ingress-metadata",
+      "required_for_every_publish": true,
+      "required_bindings": [
+        "trusted_ingress_adapter_id",
+        "broker_connection_id",
+        "publisher_principal",
+        "topic",
+      "payload_sha256",
+      "observed_at_ms"
+      ],
+      "payload_sha256_definition": "SHA-256 over the exact MQTT PUBLISH payload bytes received by the trusted adapter, encoded as 64 lowercase hexadecimal characters",
+      "acceptance_boundary": "the application boundary validates the configured adapter identity, connection identity, observation time, payload digest, and uniqueness before decoding a Gateway identity claim",
+      "payload_attestation_permitted": false,
+      "adapter_trust_configuration": "operator-reviewed external configuration"
+    }
+  },
+  "insufficient_origin_evidence": [
+    "topic",
+    "payload-identity",
+    "mqtt-credential-alone"
+  ],
+  "payload_supplied_attestation": "reject",
+  "production_key_lifecycle": "planned",
+  "rotation": "planned",
+  "revocation": "planned",
+  "production_verification": "planned",
+  "logs_and_evidence": "signatures, nonces, credential identifiers, and raw authentication transcripts are excluded from ordinary logs and public evidence"
+}

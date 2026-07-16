@@ -1,0 +1,23 @@
+{
+  "contract": "aether.cloudlink",
+  "contracts_release": "0.1.0-alpha.3",
+  "status": "non-authoritative-aetheriot-implementation-overlay",
+  "authority": "AetherContracts v0.1.0-alpha.3",
+  "authoritative_artifacts": {
+    "specification": "AetherContracts spec/cloudlink-v1alpha1.md",
+    "core_profile": "AetherContracts profiles/cloudlink/v1alpha1/core.json",
+    "mqtt_profile": "AetherContracts profiles/mqtt/v1alpha1/profile.json",
+    "failure_taxonomy": "AetherContracts compatibility/failure-codes.json"
+  },
+  "implementation": {
+    "codec": "Rust alpha.3 fixtures implemented",
+    "mqtt_adapter": "rumqttc MQTT 3.1.1 opt-in alpha harness implemented",
+    "file_spool": "application-ACK-gated cursor and process recovery implemented",
+    "resume_cursor": "Cloud-owned stream/epoch/position tuple validation implemented",
+    "authentication": "proposal",
+    "application_ack": "unsigned-alpha3",
+    "production_crash_durability": "blocked",
+    "legacy_default": true,
+    "physical_control": "forbidden"
+  }
+}

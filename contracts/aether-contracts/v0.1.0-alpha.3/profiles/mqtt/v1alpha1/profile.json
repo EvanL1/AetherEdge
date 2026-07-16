@@ -1,0 +1,39 @@
+{
+  "schema": "aether.cloudlink.mqtt-profile.v1alpha1",
+  "status": "experimental-auth-proposal",
+  "transport": {
+    "mqtt_baseline": "3.1.1",
+    "qos": 1,
+    "retain": false,
+    "maximum_message_bytes": 262144,
+    "encoding": "UTF-8 JSON"
+  },
+  "topics": {
+    "up_session": "{prefix}/v1/gateways/{gatewayId}/up/session",
+    "up_heartbeat": "{prefix}/v1/gateways/{gatewayId}/up/heartbeat",
+    "up_manifest": "{prefix}/v1/gateways/{gatewayId}/up/manifest",
+    "up_telemetry": "{prefix}/v1/gateways/{gatewayId}/up/telemetry",
+    "up_data_loss": "{prefix}/v1/gateways/{gatewayId}/up/data-loss",
+    "down_session": "{prefix}/v1/gateways/{gatewayId}/down/session",
+    "down_ack": "{prefix}/v1/gateways/{gatewayId}/down/ack",
+    "down_replay": "{prefix}/v1/gateways/{gatewayId}/down/replay"
+  },
+  "authentication": {
+    "status": "proposal",
+    "shared_broker": "alpha.3 declares gateway-signed and trusted-connector external-attestation origin models; production key lifecycle and verifier ownership remain undefined",
+    "topic_identity_is_authentication": false,
+    "payload_identity_is_authentication": false,
+    "mqtt_credentials_are_gateway_attestation": false
+  },
+  "acknowledgement": {
+    "mqtt_puback_is_application_durable": false,
+    "application_ack": "unsigned in alpha.3",
+    "signed_durable_ack": "planned"
+  },
+  "forbidden": [
+    "physical-control topics",
+    "direct SHM writes",
+    "direct device-register writes",
+    "payload-supplied trusted Broker attestation"
+  ]
+}

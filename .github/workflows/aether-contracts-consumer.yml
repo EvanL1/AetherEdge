@@ -1,0 +1,30 @@
+name: AetherContracts consumer
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - aether-contracts.lock.json
+      - contracts/aether-contracts/**
+      - contracts/cloudlink/**
+      - crates/aether-cloudlink/tests/codec_contract.rs
+      - .github/workflows/aether-contracts-consumer.yml
+  push:
+    branches: [main]
+    paths:
+      - aether-contracts.lock.json
+      - contracts/aether-contracts/**
+      - contracts/cloudlink/**
+      - crates/aether-cloudlink/tests/codec_contract.rs
+      - .github/workflows/aether-contracts-consumer.yml
+
+permissions:
+  contents: read
+
+jobs:
+  verify-release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+      - uses: EvanL1/AetherContracts/.github/actions/verify-consumer@c5aad674f0844138e778963118e786e430ffb365

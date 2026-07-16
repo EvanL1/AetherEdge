@@ -1,0 +1,183 @@
+{
+  "schema": "aether.fixture-manifest.v1alpha1",
+  "contract": "aether.cloudlink",
+  "status": "experimental-key-lifecycle-unresolved",
+  "source": "AetherContracts is the sole authority; product copies are non-authoritative consumer imports",
+  "derived_fixtures": [
+    "conflicting-replay.valid-digest.json",
+    "payload-broker-attestation.json",
+    "runtime-manifest-invalid-semver.json",
+    "session-hello-auth-invalid.json",
+    "session-hello-auth-required.json",
+    "session-challenge.valid.json",
+    "session-accepted-duplicate-cursor.json"
+  ],
+  "hash_algorithm": "sha256",
+  "fixtures": [
+    {
+      "file": "conflicting-replay.json",
+      "schema_id": "telemetry-batch.schema.json",
+      "expectation": "context-invalid",
+      "failure_code": "DIGEST_MISMATCH",
+      "sha256": "08285e9f5eb1575823b9f7f3cec8e802d2db004f8b79cd21006220c5ea9f9bac"
+    },
+    {
+      "file": "conflicting-replay.valid-digest.json",
+      "schema_id": "telemetry-batch.schema.json",
+      "expectation": "context-invalid",
+      "failure_code": "DIGEST_CONFLICT",
+      "sha256": "4aead88da076ffab693897623e09365fa06956f33b6de4b131f817437f1dfdf2"
+    },
+    {
+      "file": "data-loss.valid.json",
+      "schema_id": "data-loss.schema.json",
+      "expectation": "valid",
+      "sha256": "a9a1f36c1a93d826f3414f3b161d55f52b6f65ac0661bc3c1b574106938ba358"
+    },
+    {
+      "file": "durable-ack.valid.json",
+      "schema_id": "durable-ack.schema.json",
+      "expectation": "valid",
+      "sha256": "46bde2887299f3924308812d50045001fefc3c7242421bfa4d57892c8c90d7c7"
+    },
+    {
+      "file": "heartbeat-ack.valid.json",
+      "schema_id": "heartbeat.schema.json",
+      "expectation": "valid",
+      "sha256": "1de47595b2c909e2bbc2df31200824331d038a42aaf1e146ad8d7fb43900ba0b"
+    },
+    {
+      "file": "heartbeat.valid.json",
+      "schema_id": "heartbeat.schema.json",
+      "expectation": "valid",
+      "sha256": "f6bf99148da328e94c39d1e5e2be7104f450aff2c6a15fdfc506d8e2a768dca6"
+    },
+    {
+      "file": "invalid-digest.json",
+      "schema_id": "durable-ack.schema.json",
+      "expectation": "wire-invalid",
+      "failure_code": "INVALID_DIGEST",
+      "sha256": "a757baace924824e9c17c7f635270dca8369b74ce803acbdbdc9fa2c8c6a383d"
+    },
+    {
+      "file": "overflow-uint64.json",
+      "schema_id": "heartbeat.schema.json",
+      "expectation": "wire-invalid",
+      "failure_code": "INTEGER_OUT_OF_RANGE",
+      "sha256": "8a7f8e8f54efe52a3b4269dc3c63ee3ee9f35c5a1b9da141f21098df3f0a1174"
+    },
+    {
+      "file": "oversized-payload.json",
+      "schema_id": "session-hello.schema.json",
+      "expectation": "wire-invalid",
+      "failure_code": "FIELD_BOUND",
+      "sha256": "475d3f6afa5aa1532f025a75f04566aa4ae8af0da64e18baeae204abaaba7061"
+    },
+    {
+      "file": "payload-broker-attestation.json",
+      "schema_id": "telemetry-batch.schema.json",
+      "expectation": "wire-invalid",
+      "failure_code": "UNKNOWN_FIELD",
+      "sha256": "367ec35d7129c189615a43785ce8490229391510847fb476720a305dd1d29be9"
+    },
+    {
+      "file": "replay-request.valid.json",
+      "schema_id": "replay-request.schema.json",
+      "expectation": "valid",
+      "sha256": "7b2493328a3b7afec9a75b54736eb2610ce5d668bfb59185ce117db4f2f7880f"
+    },
+    {
+      "file": "runtime-manifest-invalid-semver.json",
+      "schema_id": "runtime-manifest-report.schema.json",
+      "expectation": "wire-invalid",
+      "failure_code": "SEMVER_INVALID",
+      "sha256": "92444aa861e10e1aebbba839824bd8619338b28b7cb08405f82e9c133486f8fc"
+    },
+    {
+      "file": "runtime-manifest-report.valid.json",
+      "schema_id": "runtime-manifest-report.schema.json",
+      "expectation": "valid",
+      "sha256": "eb5a3c5a437392d245eea9560cc7b28d40c8a85b06b27fa8911b15393b024ff9"
+    },
+    {
+      "file": "session-accepted-duplicate-cursor.json",
+      "schema_id": "session-accepted.schema.json",
+      "expectation": "context-invalid",
+      "failure_code": "CURSOR_CONFLICT",
+      "sha256": "7afdf51e19b499ef58c358c81325004d807c0ba81389028eea3aa162cc15cdc2"
+    },
+    {
+      "file": "session-accepted.valid.json",
+      "schema_id": "session-accepted.schema.json",
+      "expectation": "valid",
+      "sha256": "580113f3a7a0bacaa4d83f6f20a13144dcf41db15baba997fd8a9a3dc4f19a26"
+    },
+    {
+      "file": "session-challenge.valid.json",
+      "schema_id": "session-challenge.schema.json",
+      "expectation": "valid",
+      "sha256": "9adf970a7a0f25f8c03bd14b3b95f180e143dc1c2ab6ff3cf1a51e6de8b2335e"
+    },
+    {
+      "file": "session-hello-auth-invalid.json",
+      "schema_id": "session-hello.schema.json",
+      "expectation": "wire-invalid",
+      "failure_code": "AUTHENTICATION_INVALID",
+      "sha256": "1010b57b8f3b335256b88a8375d3b3bcc34e8bb622225de8dcd910b319edbad4"
+    },
+    {
+      "file": "session-hello-auth-required.json",
+      "schema_id": "session-hello.schema.json",
+      "expectation": "wire-invalid",
+      "failure_code": "AUTHENTICATION_REQUIRED",
+      "sha256": "b6694adeaf56dc71742104dd7e36a8a3a155e0c66c25daf064a42c06d2aeec51"
+    },
+    {
+      "file": "session-hello.valid.json",
+      "schema_id": "session-hello.schema.json",
+      "expectation": "valid",
+      "sha256": "122cb9340405ace75c090ea284564ca584324b7a7d380b4c7c630e6e97d2918d"
+    },
+    {
+      "file": "stale-ack.json",
+      "schema_id": "durable-ack.schema.json",
+      "expectation": "context-invalid",
+      "failure_code": "STALE_SESSION",
+      "sha256": "59c4c2c35ca6fc3ec623cd79b5976758114e15d930887673dbcd6733b834405d"
+    },
+    {
+      "file": "telemetry-batch.valid.json",
+      "schema_id": "telemetry-batch.schema.json",
+      "expectation": "valid",
+      "sha256": "8d472ef492123b479376060c1a6bf46e682bdde18d94d1d7126695e0fbacba49"
+    },
+    {
+      "file": "unknown-field.json",
+      "schema_id": "session-hello.schema.json",
+      "expectation": "wire-invalid",
+      "failure_code": "UNKNOWN_FIELD",
+      "sha256": "b2e295229acb43fed82fdae590aa2782e27e65c5123df40f522728294d4ac35e"
+    },
+    {
+      "file": "unsafe-uint64.json",
+      "schema_id": "heartbeat.schema.json",
+      "expectation": "wire-invalid",
+      "failure_code": "INTEGER_NON_CANONICAL",
+      "sha256": "f50ba201d748b356a20f04453e5403612b5abd684bed37580a5749043abbe691"
+    },
+    {
+      "file": "unsupported-version.json",
+      "schema_id": "heartbeat.schema.json",
+      "expectation": "wire-invalid",
+      "failure_code": "UNSUPPORTED_VERSION",
+      "sha256": "4338824e50571ad7c6afbaae0a41c463a59d5adec8590d4aa05197764e1c860d"
+    },
+    {
+      "file": "wrong-session-epoch.json",
+      "schema_id": "heartbeat.schema.json",
+      "expectation": "context-invalid",
+      "failure_code": "STALE_SESSION",
+      "sha256": "d33413b8508a2a36c4eb7bee59fd589a4c64966e054fa9af2b2274c2f52f759a"
+    }
+  ]
+}

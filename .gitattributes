@@ -1,0 +1,4 @@
+aether-contracts.lock.json -text
+contracts/aether-contracts/** -text
+contracts/cloudlink/v1/*.json -text
+contracts/cloudlink/v1/fixtures/*.json -text

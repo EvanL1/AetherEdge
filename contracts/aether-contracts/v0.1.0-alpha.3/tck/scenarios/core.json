@@ -1,0 +1,593 @@
+{
+  "schema": "aether.tck.scenarios.v1alpha1",
+  "contract_version": "0.1.0-alpha.3",
+  "scenarios": [
+    {
+      "id": "uint64-leading-zero",
+      "operation": "validate",
+      "input": { "type": "uint64", "value": "01" },
+      "expected": { "accepted": false, "failure_code": "INTEGER_NON_CANONICAL" },
+      "status": "implemented"
+    },
+    {
+      "id": "uint64-overflow",
+      "operation": "validate",
+      "input": { "type": "uint64", "value": "18446744073709551616" },
+      "expected": { "accepted": false, "failure_code": "INTEGER_OUT_OF_RANGE" },
+      "status": "implemented"
+    },
+    {
+      "id": "uint64-long-mixed-out-of-range",
+      "operation": "validate",
+      "input": { "type": "uint64", "value": "11111111111111111111x" },
+      "expected": { "accepted": false, "failure_code": "INTEGER_OUT_OF_RANGE" },
+      "status": "implemented"
+    },
+    {
+      "id": "uint64-arabic-indic-byte-overflow",
+      "operation": "validate",
+      "input": { "type": "uint64", "value": "١١١١١١١١١١١" },
+      "expected": { "accepted": false, "failure_code": "INTEGER_OUT_OF_RANGE" },
+      "status": "implemented"
+    },
+    {
+      "id": "cloudlink-new-delivery",
+      "operation": "validate",
+      "input": {
+        "fixture": "fixtures/cloudlink/v1alpha1/telemetry-batch.valid.json",
+        "evaluation_time_ms": "1721000000300",
+        "current_session": {
+          "gateway_id": "33333333-3333-4333-8333-333333333333",
+          "session_id": "44444444-4444-4444-8444-444444444444",
+          "session_epoch": "7",
+          "credential_generation": "3"
+        }
+      },
+      "expected": {
+        "wire_accepted": true,
+        "context_accepted": true,
+        "state_changed": true,
+        "successful_receipt_permitted": true
+      },
+      "status": "implemented"
+    },
+    {
+      "id": "cloudlink-idempotent-replay",
+      "operation": "validate",
+      "input": {
+        "fixture": "fixtures/cloudlink/v1alpha1/telemetry-batch.valid.json",
+        "prior_fixture": "fixtures/cloudlink/v1alpha1/telemetry-batch.valid.json",
+        "replay_identity_fields": [
+          "gateway_id",
+          "delivery.stream_id",
+          "delivery.stream_epoch",
+          "delivery.position"
+        ],
+        "evaluation_time_ms": "1721000000300",
+        "current_session": {
+          "gateway_id": "33333333-3333-4333-8333-333333333333",
+          "session_id": "44444444-4444-4444-8444-444444444444",
+          "session_epoch": "7",
+          "credential_generation": "3"
+        }
+      },
+      "expected": {
+        "wire_accepted": true,
+        "prior_wire_accepted": true,
+        "context_accepted": true,
+        "state_changed": false,
+        "successful_receipt_permitted": true
+      },
+      "status": "implemented"
+    },
+    {
+      "id": "cloudlink-conflicting-digest",
+      "operation": "validate",
+      "input": {
+        "fixture": "fixtures/cloudlink/v1alpha1/conflicting-replay.valid-digest.json",
+        "prior_fixture": "fixtures/cloudlink/v1alpha1/telemetry-batch.valid.json",
+        "replay_identity_fields": [
+          "gateway_id",
+          "delivery.stream_id",
+          "delivery.stream_epoch",
+          "delivery.position"
+        ],
+        "evaluation_time_ms": "1721000000300",
+        "current_session": {
+          "gateway_id": "33333333-3333-4333-8333-333333333333",
+          "session_id": "44444444-4444-4444-8444-444444444444",
+          "session_epoch": "7",
+          "credential_generation": "3"
+        }
+      },
+      "expected": {
+        "wire_accepted": true,
+        "prior_wire_accepted": true,
+        "context_accepted": false,
+        "failure_code": "DIGEST_CONFLICT",
+        "state_changed": false,
+        "successful_receipt_permitted": false
+      },
+      "status": "implemented"
+    },
+    {
+      "id": "cloudlink-conflicting-batch-binding",
+      "operation": "validate",
+      "input": {
+        "fixture": "fixtures/cloudlink/v1alpha1/telemetry-batch.valid.json",
+        "prior_fixture": "fixtures/cloudlink/v1alpha1/telemetry-batch.valid.json",
+        "replay_identity_fields": [
+          "gateway_id",
+          "delivery.stream_id",
+          "delivery.stream_epoch",
+          "delivery.position"
+        ],
+        "semantic_mutation": {
+          "delivery_overrides": { "batch_id": "batch-2" },
+          "recompute_business_digest": true
+        },
+        "evaluation_time_ms": "1721000000300",
+        "current_session": {
+          "gateway_id": "33333333-3333-4333-8333-333333333333",
+          "session_id": "44444444-4444-4444-8444-444444444444",
+          "session_epoch": "7",
+          "credential_generation": "3"
+        }
+      },
+      "expected": {
+        "wire_accepted": true,
+        "prior_wire_accepted": true,
+        "context_accepted": false,
+        "failure_code": "DIGEST_CONFLICT",
+        "state_changed": false,
+        "successful_receipt_permitted": false
+      },
+      "status": "implemented"
+    },
+    {
+      "id": "cloudlink-digest-mismatch",
+      "operation": "validate",
+      "input": {
+        "fixture": "fixtures/cloudlink/v1alpha1/conflicting-replay.json",
+        "current_session": {
+          "gateway_id": "33333333-3333-4333-8333-333333333333",
+          "session_id": "44444444-4444-4444-8444-444444444444",
+          "session_epoch": "7",
+          "credential_generation": "3"
+        }
+      },
+      "expected": {
+        "wire_accepted": true,
+        "context_accepted": false,
+        "failure_code": "DIGEST_MISMATCH",
+        "state_changed": false,
+        "successful_receipt_permitted": false
+      },
+      "status": "implemented"
+    },
+    {
+      "id": "cloudlink-gateway-mismatch",
+      "operation": "validate",
+      "input": {
+        "fixture": "fixtures/cloudlink/v1alpha1/telemetry-batch.valid.json",
+        "evaluation_time_ms": "1721000000300",
+        "current_session": {
+          "gateway_id": "77777777-7777-4777-8777-777777777777",
+          "session_id": "44444444-4444-4444-8444-444444444444",
+          "session_epoch": "7",
+          "credential_generation": "3"
+        }
+      },
+      "expected": {
+        "wire_accepted": true,
+        "context_accepted": false,
+        "failure_code": "STALE_SESSION",
+        "state_changed": false,
+        "successful_receipt_permitted": false
+      },
+      "status": "implemented"
+    },
+    {
+      "id": "cloudlink-session-id-mismatch",
+      "operation": "validate",
+      "input": {
+        "fixture": "fixtures/cloudlink/v1alpha1/telemetry-batch.valid.json",
+        "evaluation_time_ms": "1721000000300",
+        "current_session": {
+          "gateway_id": "33333333-3333-4333-8333-333333333333",
+          "session_id": "77777777-7777-4777-8777-777777777777",
+          "session_epoch": "7",
+          "credential_generation": "3"
+        }
+      },
+      "expected": {
+        "wire_accepted": true,
+        "context_accepted": false,
+        "failure_code": "STALE_SESSION",
+        "state_changed": false,
+        "successful_receipt_permitted": false
+      },
+      "status": "implemented"
+    },
+    {
+      "id": "cloudlink-session-epoch-mismatch",
+      "operation": "validate",
+      "input": {
+        "fixture": "fixtures/cloudlink/v1alpha1/telemetry-batch.valid.json",
+        "evaluation_time_ms": "1721000000300",
+        "current_session": {
+          "gateway_id": "33333333-3333-4333-8333-333333333333",
+          "session_id": "44444444-4444-4444-8444-444444444444",
+          "session_epoch": "8",
+          "credential_generation": "3"
+        }
+      },
+      "expected": {
+        "wire_accepted": true,
+        "context_accepted": false,
+        "failure_code": "STALE_SESSION",
+        "state_changed": false,
+        "successful_receipt_permitted": false
+      },
+      "status": "implemented"
+    },
+    {
+      "id": "cloudlink-credential-generation-mismatch",
+      "operation": "validate",
+      "input": {
+        "fixture": "fixtures/cloudlink/v1alpha1/telemetry-batch.valid.json",
+        "evaluation_time_ms": "1721000000300",
+        "current_session": {
+          "gateway_id": "33333333-3333-4333-8333-333333333333",
+          "session_id": "44444444-4444-4444-8444-444444444444",
+          "session_epoch": "7",
+          "credential_generation": "4"
+        }
+      },
+      "expected": {
+        "wire_accepted": true,
+        "context_accepted": false,
+        "failure_code": "STALE_SESSION",
+        "state_changed": false,
+        "successful_receipt_permitted": false
+      },
+      "status": "implemented"
+    },
+    {
+      "id": "cloudlink-invalid-expiry-window",
+      "operation": "validate",
+      "input": {
+        "fixture": "fixtures/cloudlink/v1alpha1/telemetry-batch.valid.json",
+        "semantic_mutation": {
+          "top_level_overrides": { "expires_at_ms": "1721000000199" }
+        },
+        "evaluation_time_ms": "1721000000200",
+        "current_session": {
+          "gateway_id": "33333333-3333-4333-8333-333333333333",
+          "session_id": "44444444-4444-4444-8444-444444444444",
+          "session_epoch": "7",
+          "credential_generation": "3"
+        }
+      },
+      "expected": {
+        "wire_accepted": true,
+        "context_accepted": false,
+        "failure_code": "INVALID_EXPIRY_WINDOW",
+        "state_changed": false,
+        "successful_receipt_permitted": false
+      },
+      "status": "implemented"
+    },
+    {
+      "id": "cloudlink-expired-delivery",
+      "operation": "validate",
+      "input": {
+        "fixture": "fixtures/cloudlink/v1alpha1/telemetry-batch.valid.json",
+        "evaluation_time_ms": "1721003600000",
+        "current_session": {
+          "gateway_id": "33333333-3333-4333-8333-333333333333",
+          "session_id": "44444444-4444-4444-8444-444444444444",
+          "session_epoch": "7",
+          "credential_generation": "3"
+        }
+      },
+      "expected": {
+        "wire_accepted": true,
+        "context_accepted": false,
+        "failure_code": "MESSAGE_EXPIRED",
+        "state_changed": false,
+        "successful_receipt_permitted": false
+      },
+      "status": "implemented"
+    },
+    {
+      "id": "cloudlink-stale-ack",
+      "operation": "validate",
+      "input": {
+        "fixture": "fixtures/cloudlink/v1alpha1/stale-ack.json",
+        "accepted_delivery_fixture": "fixtures/cloudlink/v1alpha1/telemetry-batch.valid.json",
+        "current_session": {
+          "gateway_id": "33333333-3333-4333-8333-333333333333",
+          "session_id": "44444444-4444-4444-8444-444444444444",
+          "session_epoch": "7",
+          "credential_generation": "3"
+        }
+      },
+      "expected": {
+        "wire_accepted": true,
+        "accepted_delivery_wire_accepted": true,
+        "context_accepted": false,
+        "failure_code": "STALE_SESSION",
+        "state_changed": false,
+        "successful_receipt_permitted": false
+      },
+      "status": "implemented"
+    },
+    {
+      "id": "cloudlink-wrong-session-epoch",
+      "operation": "validate",
+      "input": {
+        "fixture": "fixtures/cloudlink/v1alpha1/wrong-session-epoch.json",
+        "current_session": {
+          "gateway_id": "33333333-3333-4333-8333-333333333333",
+          "session_id": "44444444-4444-4444-8444-444444444444",
+          "session_epoch": "7",
+          "credential_generation": "3"
+        }
+      },
+      "expected": {
+        "wire_accepted": true,
+        "context_accepted": false,
+        "failure_code": "STALE_SESSION",
+        "state_changed": false,
+        "successful_receipt_permitted": false
+      },
+      "status": "implemented"
+    },
+    {
+      "id": "cloudlink-data-loss-invalid-range",
+      "operation": "validate",
+      "input": {
+        "fixture": "fixtures/cloudlink/v1alpha1/data-loss.valid.json",
+        "semantic_mutation": {
+          "payload_overrides": {
+            "last_lost_position": "4",
+            "earliest_retained_position": "4"
+          },
+          "recompute_business_digest": true
+        },
+        "current_session": {
+          "gateway_id": "33333333-3333-4333-8333-333333333333",
+          "session_id": "44444444-4444-4444-8444-444444444444",
+          "session_epoch": "7",
+          "credential_generation": "3"
+        }
+      },
+      "expected": {
+        "wire_accepted": true,
+        "context_accepted": false,
+        "failure_code": "DATA_LOSS_RANGE_INVALID",
+        "state_changed": false,
+        "successful_receipt_permitted": false
+      },
+      "status": "implemented"
+    },
+    {
+      "id": "cloudlink-duplicate-cursor",
+      "operation": "validate",
+      "input": {
+        "fixture": "fixtures/cloudlink/v1alpha1/heartbeat.valid.json",
+        "semantic_mutation": { "duplicate_cursor_index": 0 },
+        "current_session": {
+          "gateway_id": "33333333-3333-4333-8333-333333333333",
+          "session_id": "44444444-4444-4444-8444-444444444444",
+          "session_epoch": "7",
+          "credential_generation": "3"
+        }
+      },
+      "expected": {
+        "wire_accepted": true,
+        "context_accepted": false,
+        "failure_code": "CURSOR_CONFLICT",
+        "state_changed": false,
+        "successful_receipt_permitted": false
+      },
+      "status": "implemented"
+    },
+    {
+      "id": "cloudlink-session-accepted-duplicate-cursor",
+      "operation": "validate",
+      "input": {
+        "fixture": "fixtures/cloudlink/v1alpha1/session-accepted-duplicate-cursor.json"
+      },
+      "expected": {
+        "wire_accepted": true,
+        "context_accepted": false,
+        "failure_code": "CURSOR_CONFLICT",
+        "state_changed": false,
+        "successful_receipt_permitted": false
+      },
+      "status": "implemented"
+    },
+    {
+      "id": "thing-model-cross-namespace-key-conflict",
+      "operation": "validate",
+      "input": {
+        "fixture": "fixtures/thing-model/v1alpha1/invalid/duplicate-cross-namespace-key.json"
+      },
+      "expected": {
+        "wire_accepted": true,
+        "context_accepted": false,
+        "failure_code": "KEY_CONFLICT",
+        "state_changed": false,
+        "successful_receipt_permitted": false
+      },
+      "status": "implemented"
+    },
+    {
+      "id": "thing-model-duplicate-capability-parameter",
+      "operation": "validate",
+      "input": {
+        "fixture": "fixtures/thing-model/v1alpha1/invalid/duplicate-capability-parameter.json"
+      },
+      "expected": {
+        "wire_accepted": true,
+        "context_accepted": false,
+        "failure_code": "KEY_CONFLICT",
+        "state_changed": false,
+        "successful_receipt_permitted": false
+      },
+      "status": "implemented"
+    },
+    {
+      "id": "runtime-manifest-checksum",
+      "operation": "digest",
+      "input": {
+        "fixture": "fixtures/cloudlink/v1alpha1/runtime-manifest-report.valid.json",
+        "projection": "runtime-manifest-without-checksum"
+      },
+      "expected": {
+        "wire_accepted": true,
+        "digest": "75643d71e08d67950578d0d7077f9de7b0c3ef907622dbc03e558f2763fcf19e"
+      },
+      "status": "implemented"
+    },
+    {
+      "id": "thing-model-publication-digest",
+      "operation": "digest",
+      "input": {
+        "fixture": "fixtures/thing-model/v1alpha1/valid/voltage-battery.golden.json",
+        "projection": "complete-thing-model"
+      },
+      "expected": {
+        "wire_accepted": true,
+        "digest": "sha256:1243202251189f81c07e30bd4848b317f40f5f7bf684ca22d4e81f2df4052f5e"
+      },
+      "status": "implemented"
+    },
+    {
+      "id": "raw-json-valid-large-finite-float",
+      "operation": "validate",
+      "input": {
+        "type": "raw-json",
+        "encoding": "utf8",
+        "raw": "{\"message\":\"Aether 🌍\",\"large\":1.7976931348623157e308}"
+      },
+      "expected": { "accepted": true },
+      "status": "implemented"
+    },
+    {
+      "id": "raw-json-duplicate-key",
+      "operation": "validate",
+      "input": {
+        "type": "raw-json",
+        "encoding": "utf8",
+        "raw": "{\"gateway_id\":\"first\",\"gateway_id\":\"second\"}"
+      },
+      "expected": { "accepted": false, "failure_code": "DUPLICATE_JSON_KEY" },
+      "status": "implemented"
+    },
+    {
+      "id": "raw-json-escaped-duplicate-key",
+      "operation": "validate",
+      "input": {
+        "type": "raw-json",
+        "encoding": "utf8",
+        "raw": "{\"gateway_id\":\"first\",\"gateway\\u005fid\":\"second\"}"
+      },
+      "expected": { "accepted": false, "failure_code": "DUPLICATE_JSON_KEY" },
+      "status": "implemented"
+    },
+    {
+      "id": "raw-json-invalid-utf8",
+      "operation": "validate",
+      "input": {
+        "type": "raw-json",
+        "encoding": "hex",
+        "raw": "7b2276223a22c328227d"
+      },
+      "expected": { "accepted": false, "failure_code": "JSON_INVALID_UNICODE" },
+      "status": "implemented"
+    },
+    {
+      "id": "raw-json-lone-surrogate",
+      "operation": "validate",
+      "input": {
+        "type": "raw-json",
+        "encoding": "utf8",
+        "raw": "{\"value\":\"\\ud800\"}"
+      },
+      "expected": { "accepted": false, "failure_code": "JSON_INVALID_UNICODE" },
+      "status": "implemented"
+    },
+    {
+      "id": "raw-json-unsafe-integer",
+      "operation": "validate",
+      "input": {
+        "type": "raw-json",
+        "encoding": "utf8",
+        "raw": "{\"value\":9007199254740993}"
+      },
+      "expected": { "accepted": false, "failure_code": "JSON_UNSAFE_NUMBER" },
+      "status": "implemented"
+    },
+    {
+      "id": "raw-json-unsafe-integer-exponent",
+      "operation": "validate",
+      "input": {
+        "type": "raw-json",
+        "encoding": "utf8",
+        "raw": "{\"value\":9007199254740993e0}"
+      },
+      "expected": { "accepted": false, "failure_code": "JSON_UNSAFE_NUMBER" },
+      "status": "implemented"
+    },
+    {
+      "id": "raw-json-unsafe-integer-fraction",
+      "operation": "validate",
+      "input": {
+        "type": "raw-json",
+        "encoding": "utf8",
+        "raw": "{\"value\":9007199254740993.0}"
+      },
+      "expected": { "accepted": false, "failure_code": "JSON_UNSAFE_NUMBER" },
+      "status": "implemented"
+    },
+    {
+      "id": "raw-json-truncated-object",
+      "operation": "validate",
+      "input": { "type": "raw-json", "encoding": "utf8", "raw": "{" },
+      "expected": { "accepted": false, "failure_code": "JSON_SYNTAX_ERROR" },
+      "status": "implemented"
+    },
+    {
+      "id": "raw-json-trailing-comma",
+      "operation": "validate",
+      "input": {
+        "type": "raw-json",
+        "encoding": "utf8",
+        "raw": "{\"value\":1,}"
+      },
+      "expected": { "accepted": false, "failure_code": "JSON_SYNTAX_ERROR" },
+      "status": "implemented"
+    },
+    {
+      "id": "raw-json-malformed-number",
+      "operation": "validate",
+      "input": {
+        "type": "raw-json",
+        "encoding": "utf8",
+        "raw": "{\"value\":01}"
+      },
+      "expected": { "accepted": false, "failure_code": "JSON_SYNTAX_ERROR" },
+      "status": "implemented"
+    },
+    {
+      "id": "cloudlink-shared-broker-attestation",
+      "operation": "verify-signature",
+      "input": { "profile": "shared-broker" },
+      "expected": { "accepted": false, "failure_code": "AUTH_PROFILE_UNRESOLVED" },
+      "status": "blocked"
+    }
+  ]
+}

@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "session-accepted.schema.json",
+  "title": "Experimental Aether CloudLink session accepted v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "protocol",
+    "message_kind",
+    "gateway_id",
+    "selected_protocol_version",
+    "session_id",
+    "session_epoch",
+    "credential_generation",
+    "server_time_ms",
+    "heartbeat_interval_ms",
+    "resume"
+  ],
+  "properties": {
+    "schema": { "const": "aether.cloudlink.session-accepted.v1" },
+    "protocol": { "const": "aether.cloudlink" },
+    "message_kind": { "const": "session-accepted" },
+    "gateway_id": { "$ref": "envelope.schema.json#/$defs/uuid" },
+    "selected_protocol_version": { "const": "1.0" },
+    "session_id": { "$ref": "envelope.schema.json#/$defs/uuid" },
+    "session_epoch": { "$ref": "envelope.schema.json#/$defs/positiveUint64" },
+    "credential_generation": {
+      "$ref": "envelope.schema.json#/$defs/positiveUint64"
+    },
+    "server_time_ms": { "$ref": "envelope.schema.json#/$defs/uint64" },
+    "heartbeat_interval_ms": {
+      "$ref": "envelope.schema.json#/$defs/positiveUint64"
+    },
+    "resume": {
+      "type": "array",
+      "maxItems": 32,
+      "items": { "$ref": "envelope.schema.json#/$defs/resumeCursor" }
+    }
+  }
+}

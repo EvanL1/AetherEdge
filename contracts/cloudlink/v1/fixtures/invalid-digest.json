@@ -1,0 +1,17 @@
+{
+  "schema": "aether.cloudlink.durable-ack.v1",
+  "protocol": "aether.cloudlink",
+  "protocol_version": "1.0",
+  "message_kind": "durable-ack",
+  "gateway_id": "33333333-3333-4333-8333-333333333333",
+  "session_id": "44444444-4444-4444-8444-444444444444",
+  "session_epoch": "7",
+  "credential_generation": "3",
+  "stream_id": "telemetry",
+  "stream_epoch": "4",
+  "acknowledged_position": "19",
+  "batch_id": "batch-1",
+  "digest": "sha256:not-a-digest",
+  "receipt_id": "receipt-19",
+  "acknowledged_at_ms": "1721000000300"
+}

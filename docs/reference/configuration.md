@@ -196,6 +196,33 @@ gates):
 | `AETHER_LOAD_FORECASTING_PORT` | `8989` | Host-loopback published processor port for the Compose sidecar |
 | `RUST_LOG` | `info` | Log level for the Rust services; supports filter syntax such as `info,io=debug,automation=trace` |
 
+### Experimental CloudLink MQTT settings
+
+The current `aether-uplink` production composition stays in deprecated
+`legacy` mode. The experimental `aether-cloudlink-mqtt` embedding API exposes
+the explicit `legacy`, `cloudlink-v1`, and `dual` migration values; it does not
+silently enable CloudLink in an existing installation. The first real-broker
+vertical slice is the opt-in test harness below. These variables are read only
+when `AETHER_CLOUDLINK_RUN_INTEGRATION=1`:
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `AETHER_CLOUDLINK_RUN_INTEGRATION` | unset | Set exactly `1` to run the external-broker harness |
+| `AETHER_CLOUDLINK_BROKER_HOST` | `127.0.0.1` | User-selected MQTT broker hostname/IP |
+| `AETHER_CLOUDLINK_BROKER_PORT` | `1883` | User-selected broker port |
+| `AETHER_CLOUDLINK_BROKER_USERNAME` | unset | Optional broker username |
+| `AETHER_CLOUDLINK_BROKER_PASSWORD` | unset | Optional write-only broker password; never printed or serialized |
+| `AETHER_CLOUDLINK_BROKER_TLS` | unset | Set `1` to use platform TLS roots |
+| `AETHER_CLOUDLINK_BROKER_CA` | unset | Custom PEM CA path; selects custom TLS when present |
+| `AETHER_CLOUDLINK_BROKER_CLIENT_CERT` | unset | Optional mTLS client certificate, configured with the key |
+| `AETHER_CLOUDLINK_BROKER_CLIENT_KEY` | unset | Optional mTLS PKCS#8 private key, configured with the certificate |
+| `AETHERCLOUD_ROOT` | unset | Optional read-only path used by joint orchestration outside this edge-only harness; the test does not modify or start it |
+
+Plaintext is accepted only by the explicit development harness. Production
+validation requires TLS. MQTT v3.1.1, QoS 1, non-retained messages, and exact
+per-gateway topics are fixed by ADR-0017; MQTT 5 remains optional and cannot be
+required for correctness.
+
 For MCP writes, `--allow-write` only registers the 22-tool write allowlist. The
 bridge sends `AETHER_ACCESS_TOKEN` as an `Authorization: Bearer` credential and
 adds an `X-Request-ID`; every invocation still requires `confirmed: true`.

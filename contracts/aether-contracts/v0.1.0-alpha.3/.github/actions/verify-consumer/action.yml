@@ -1,0 +1,30 @@
+name: Verify AetherContracts consumer
+description: Verify one consumer against its exact digest-pinned AetherContracts release
+
+inputs:
+  lock-path:
+    description: Repository-relative path to the consumer lock
+    required: false
+    default: aether-contracts.lock.json
+
+runs:
+  using: composite
+  steps:
+    - name: Select the supported Node.js runtime
+      uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+      with:
+        node-version: 24
+    - name: Verify the pinned release and imported artifacts
+      shell: bash
+      env:
+        AETHER_CONSUMER_ROOT: ${{ github.workspace }}
+        AETHER_CONSUMER_LOCK: ${{ inputs.lock-path }}
+        AETHER_ACTION_COMMIT: ${{ github.action_ref }}
+        AETHER_CONTRACT_VERIFIER: ${{ github.action_path }}/../../../scripts/verify-consumer-lock.mjs
+      run: |
+        set -euo pipefail
+        node "${AETHER_CONTRACT_VERIFIER}" \
+          --consumer-root "${AETHER_CONSUMER_ROOT}" \
+          --lock-path "${AETHER_CONSUMER_LOCK}" \
+          --action-commit "${AETHER_ACTION_COMMIT}" \
+          --online

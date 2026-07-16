@@ -1,7 +1,7 @@
 ---
 title: Build Applications with AI
 description: Generate contract-first IoT applications without turning a Web UI or an AI agent into a second runtime authority
-updated: 2026-07-13
+updated: 2026-07-15
 ---
 
 # Build Applications with AI
@@ -13,12 +13,14 @@ safety authority.
 
 This guide defines the development method shared by reference applications and downstream products.
 
-## Install the Agent Skill
+## Optional Agent Skill
 
-Install the repository's `aether-iot` Skill in a compatible coding assistant:
+Optionally add the repository's `aether-iot` Skill to a compatible coding assistant. Bun is used
+only to run the third-party `skills` CLI; this command does not install the AetherIot runtime or
+Rust SDK:
 
 ```bash
-npx skills add EvanL1/AetherIot -s aether-iot
+bunx skills add EvanL1/AetherIot --skill aether-iot
 ```
 
 The Skill is deliberately small. It teaches the workflow and routes the agent to the current online

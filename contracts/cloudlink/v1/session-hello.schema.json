@@ -1,0 +1,80 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "session-hello.schema.json",
+  "title": "Experimental Aether CloudLink session hello v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "protocol",
+    "message_kind",
+    "gateway_id",
+    "credential_binding",
+    "challenge_id",
+    "offered_protocol_versions",
+    "client_nonce",
+    "resume"
+  ],
+  "properties": {
+    "schema": { "const": "aether.cloudlink.session-hello.v1" },
+    "protocol": { "const": "aether.cloudlink" },
+    "message_kind": { "const": "session-hello" },
+    "gateway_id": { "$ref": "envelope.schema.json#/$defs/uuid" },
+    "credential_binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["credential_id", "generation", "origin_model"],
+      "properties": {
+        "credential_id": { "$ref": "envelope.schema.json#/$defs/credentialId" },
+        "generation": { "$ref": "envelope.schema.json#/$defs/positiveUint64" },
+        "origin_model": {
+          "enum": [
+            "gateway-signed",
+            "trusted-connector-broker-attestation"
+          ]
+        }
+      }
+    },
+    "challenge_id": { "$ref": "envelope.schema.json#/$defs/uuid" },
+    "gateway_key_id": { "$ref": "envelope.schema.json#/$defs/identifier" },
+    "gateway_signature": {
+      "$ref": "envelope.schema.json#/$defs/messageAuthentication"
+    },
+    "offered_protocol_versions": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 8,
+      "uniqueItems": true,
+      "items": { "const": "1.0" }
+    },
+    "client_nonce": { "$ref": "envelope.schema.json#/$defs/nonce" },
+    "resume": {
+      "type": "array",
+      "maxItems": 32,
+      "items": { "$ref": "envelope.schema.json#/$defs/resumeCursor" }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "credential_binding": {
+            "properties": { "origin_model": { "const": "gateway-signed" } },
+            "required": ["origin_model"]
+          }
+        }
+      },
+      "then": {
+        "required": ["gateway_key_id", "gateway_signature"]
+      },
+      "else": {
+        "not": {
+          "anyOf": [
+            { "required": ["gateway_key_id"] },
+            { "required": ["gateway_signature"] }
+          ]
+        }
+      }
+    }
+  ]
+}

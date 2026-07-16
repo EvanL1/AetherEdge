@@ -7,6 +7,11 @@ the repository generation task rather than edited manually.
 During migration, Rust application types are the source of truth. Schema drift
 will be checked before legacy HTTP payloads are removed.
 
+- [`cloudlink/`](cloudlink/) contains the **experimental**, partially adopted
+  CloudLink integration copies and product-local migration files. The root
+  AetherContracts consumer lock and public release are shared authority; this
+  path does not advertise complete codec or production interoperability.
+
 - [`pack/pack-manifest.v1.schema.json`](pack/pack-manifest.v1.schema.json) defines
   the fail-closed, industry-neutral domain-pack manifest accepted by
   `aether-pack`.

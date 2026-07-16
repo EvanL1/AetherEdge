@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "heartbeat.schema.json",
+  "title": "Experimental Aether CloudLink heartbeat v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "protocol",
+    "protocol_version",
+    "message_kind",
+    "gateway_id",
+    "session_id",
+    "session_epoch",
+    "credential_generation",
+    "observed_at_ms",
+    "cursors"
+  ],
+  "properties": {
+    "schema": { "const": "aether.cloudlink.heartbeat.v1" },
+    "protocol": { "const": "aether.cloudlink" },
+    "protocol_version": { "const": "1.0" },
+    "message_kind": { "enum": ["heartbeat", "heartbeat-ack"] },
+    "gateway_id": { "$ref": "envelope.schema.json#/$defs/uuid" },
+    "session_id": { "$ref": "envelope.schema.json#/$defs/uuid" },
+    "session_epoch": { "$ref": "envelope.schema.json#/$defs/positiveUint64" },
+    "credential_generation": {
+      "$ref": "envelope.schema.json#/$defs/positiveUint64"
+    },
+    "observed_at_ms": { "$ref": "envelope.schema.json#/$defs/uint64" },
+    "message_authentication": {
+      "$ref": "envelope.schema.json#/$defs/messageAuthentication"
+    },
+    "cursors": {
+      "type": "array",
+      "maxItems": 32,
+      "items": { "$ref": "envelope.schema.json#/$defs/resumeCursor" }
+    }
+  }
+}

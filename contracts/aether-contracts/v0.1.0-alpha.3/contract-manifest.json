@@ -1,0 +1,429 @@
+{
+  "contract": "aether.contracts",
+  "release_version": "0.1.0-alpha.3",
+  "source_authority": "spec-schema-fixtures-tck",
+  "production_release": false,
+  "legacy_default": true,
+  "physical_control": false,
+  "formats": {
+    "logical_model": "JSON",
+    "wire_encoding": "UTF-8 JSON",
+    "schema": "JSON Schema Draft 2020-12",
+    "canonicalization": "RFC 8785 when an exact signing projection is frozen",
+    "tck": "JSON scenarios and black-box runner contract"
+  },
+  "modules": {
+    "thing_model": {
+      "version": "v1alpha1",
+      "status": "experimental"
+    },
+    "cloudlink": {
+      "version": "v1alpha1",
+      "status": "experimental-auth-proposal"
+    },
+    "tck": {
+      "version": "v1alpha1",
+      "status": "experimental-fixture-manifest"
+    },
+    "distribution": {
+      "version": "v1alpha1",
+      "status": "experimental-fixture-manifest"
+    }
+  },
+  "bindings": {
+    "typescript": {
+      "status": "experimental-fixture-manifest"
+    },
+    "rust": {
+      "status": "experimental-fixture-manifest"
+    },
+    "c": {
+      "status": "experimental-fixture-manifest"
+    },
+    "cpp": {
+      "status": "experimental-fixture-manifest",
+      "implementation": "c-core-wrapper"
+    },
+    "go": {
+      "status": "planned"
+    },
+    "java": {
+      "status": "planned"
+    },
+    "python": {
+      "status": "planned"
+    }
+  },
+  "unresolved": [
+    "production key provisioning, rotation, revocation, and verifier ownership for the experimental authentication transcript",
+    "Cloud signature projection and key lifecycle for durable ACK",
+    "production crash-durable ACK evidence",
+    "consumer-owned real-Broker dual-harness and fault-matrix evidence"
+  ],
+  "artifacts": [
+    {
+      "path": ".github/actions/verify-consumer/action.yml",
+      "sha256": "e14f5f538f6aa95ba32ec9e336eb07b5bb64ca6a46cc2f2468655004afabe6ec"
+    },
+    {
+      "path": ".node-version",
+      "sha256": "55075b5ec4e8b31936cbbc282b8829116d1fd48f2f2f1856dee592a6650700ce"
+    },
+    {
+      "path": "AGENTS.md",
+      "sha256": "b511c2035e9fa1a5d4ea12489fc531844d32fce1f71fadd0a2dafc51bcce3ab3"
+    },
+    {
+      "path": "CONTRIBUTING.md",
+      "sha256": "d04cb4e57430b71d88fbea1e8f6efb80bc372290bb57b9c13438be65a9156824"
+    },
+    {
+      "path": "GOVERNANCE.md",
+      "sha256": "43ec5461cde5d0e50113320f70be591663b6397a591d1cbc31ce7ce165d9aaac"
+    },
+    {
+      "path": "LICENSE",
+      "sha256": "5022d9302e36a722ded81da7dfbfc5b703ec3e6340d9b52be5d12e9a966b8996"
+    },
+    {
+      "path": "README.md",
+      "sha256": "b38fb41caf2bebd6ad32f13acc6ea6a65374e0a2eaeae5dbe2c61d058ecf9e47"
+    },
+    {
+      "path": "SECURITY.md",
+      "sha256": "87f737e1f7e9177fa332e726eccc075f4068b0fe63ce1c5b0357fa14cbfeed79"
+    },
+    {
+      "path": "ai/docs-manifest.json",
+      "sha256": "37db317a4d3d074e51e1b92bcc8587f5b9910f4e79eecd1d71abcf39f8ac0e49"
+    },
+    {
+      "path": "ai/invariants.md",
+      "sha256": "8a378f5d6cceb84b1cfc610daf60506bd819f6c93529a2f41fa9062c2b937445"
+    },
+    {
+      "path": "compatibility/cloudlink-joint-core-provenance.json",
+      "sha256": "f1d5f768e02c2bf27f834389d1f0ee693eceefb5761db4d2aae1082c5fd94832"
+    },
+    {
+      "path": "compatibility/cloudlink-v1alpha1-gates.json",
+      "sha256": "725380e0fd53029cc9e8865b98a6fab2f328393c65b4fc32de8e9dbfdf74f8de"
+    },
+    {
+      "path": "compatibility/failure-codes.json",
+      "sha256": "93acc147da6cf0da80b376e63b9f134e66adced26641f416151d9af66eb4f636"
+    },
+    {
+      "path": "compatibility/thing-model-v1alpha1.json",
+      "sha256": "002297347e3742bffa0aa67f284ff55d94603c2243329b57ec61f34e511f0945"
+    },
+    {
+      "path": "fixtures/cloudlink/v1alpha1/conflicting-replay.json",
+      "sha256": "08285e9f5eb1575823b9f7f3cec8e802d2db004f8b79cd21006220c5ea9f9bac"
+    },
+    {
+      "path": "fixtures/cloudlink/v1alpha1/conflicting-replay.valid-digest.json",
+      "sha256": "4aead88da076ffab693897623e09365fa06956f33b6de4b131f817437f1dfdf2"
+    },
+    {
+      "path": "fixtures/cloudlink/v1alpha1/data-loss.valid.json",
+      "sha256": "a9a1f36c1a93d826f3414f3b161d55f52b6f65ac0661bc3c1b574106938ba358"
+    },
+    {
+      "path": "fixtures/cloudlink/v1alpha1/durable-ack.valid.json",
+      "sha256": "46bde2887299f3924308812d50045001fefc3c7242421bfa4d57892c8c90d7c7"
+    },
+    {
+      "path": "fixtures/cloudlink/v1alpha1/fixture-manifest.json",
+      "sha256": "5070c3e3e53024437ba6a0ab0a677d5352037fa252749e2dbe25b036893b1d72"
+    },
+    {
+      "path": "fixtures/cloudlink/v1alpha1/heartbeat-ack.valid.json",
+      "sha256": "1de47595b2c909e2bbc2df31200824331d038a42aaf1e146ad8d7fb43900ba0b"
+    },
+    {
+      "path": "fixtures/cloudlink/v1alpha1/heartbeat.valid.json",
+      "sha256": "f6bf99148da328e94c39d1e5e2be7104f450aff2c6a15fdfc506d8e2a768dca6"
+    },
+    {
+      "path": "fixtures/cloudlink/v1alpha1/invalid-digest.json",
+      "sha256": "a757baace924824e9c17c7f635270dca8369b74ce803acbdbdc9fa2c8c6a383d"
+    },
+    {
+      "path": "fixtures/cloudlink/v1alpha1/overflow-uint64.json",
+      "sha256": "8a7f8e8f54efe52a3b4269dc3c63ee3ee9f35c5a1b9da141f21098df3f0a1174"
+    },
+    {
+      "path": "fixtures/cloudlink/v1alpha1/oversized-payload.json",
+      "sha256": "475d3f6afa5aa1532f025a75f04566aa4ae8af0da64e18baeae204abaaba7061"
+    },
+    {
+      "path": "fixtures/cloudlink/v1alpha1/payload-broker-attestation.json",
+      "sha256": "367ec35d7129c189615a43785ce8490229391510847fb476720a305dd1d29be9"
+    },
+    {
+      "path": "fixtures/cloudlink/v1alpha1/replay-request.valid.json",
+      "sha256": "7b2493328a3b7afec9a75b54736eb2610ce5d668bfb59185ce117db4f2f7880f"
+    },
+    {
+      "path": "fixtures/cloudlink/v1alpha1/runtime-manifest-invalid-semver.json",
+      "sha256": "92444aa861e10e1aebbba839824bd8619338b28b7cb08405f82e9c133486f8fc"
+    },
+    {
+      "path": "fixtures/cloudlink/v1alpha1/runtime-manifest-report.valid.json",
+      "sha256": "eb5a3c5a437392d245eea9560cc7b28d40c8a85b06b27fa8911b15393b024ff9"
+    },
+    {
+      "path": "fixtures/cloudlink/v1alpha1/session-accepted-duplicate-cursor.json",
+      "sha256": "7afdf51e19b499ef58c358c81325004d807c0ba81389028eea3aa162cc15cdc2"
+    },
+    {
+      "path": "fixtures/cloudlink/v1alpha1/session-accepted.valid.json",
+      "sha256": "580113f3a7a0bacaa4d83f6f20a13144dcf41db15baba997fd8a9a3dc4f19a26"
+    },
+    {
+      "path": "fixtures/cloudlink/v1alpha1/session-challenge.valid.json",
+      "sha256": "9adf970a7a0f25f8c03bd14b3b95f180e143dc1c2ab6ff3cf1a51e6de8b2335e"
+    },
+    {
+      "path": "fixtures/cloudlink/v1alpha1/session-hello-auth-invalid.json",
+      "sha256": "1010b57b8f3b335256b88a8375d3b3bcc34e8bb622225de8dcd910b319edbad4"
+    },
+    {
+      "path": "fixtures/cloudlink/v1alpha1/session-hello-auth-required.json",
+      "sha256": "b6694adeaf56dc71742104dd7e36a8a3a155e0c66c25daf064a42c06d2aeec51"
+    },
+    {
+      "path": "fixtures/cloudlink/v1alpha1/session-hello.valid.json",
+      "sha256": "122cb9340405ace75c090ea284564ca584324b7a7d380b4c7c630e6e97d2918d"
+    },
+    {
+      "path": "fixtures/cloudlink/v1alpha1/stale-ack.json",
+      "sha256": "59c4c2c35ca6fc3ec623cd79b5976758114e15d930887673dbcd6733b834405d"
+    },
+    {
+      "path": "fixtures/cloudlink/v1alpha1/telemetry-batch.valid.json",
+      "sha256": "8d472ef492123b479376060c1a6bf46e682bdde18d94d1d7126695e0fbacba49"
+    },
+    {
+      "path": "fixtures/cloudlink/v1alpha1/unknown-field.json",
+      "sha256": "b2e295229acb43fed82fdae590aa2782e27e65c5123df40f522728294d4ac35e"
+    },
+    {
+      "path": "fixtures/cloudlink/v1alpha1/unsafe-uint64.json",
+      "sha256": "f50ba201d748b356a20f04453e5403612b5abd684bed37580a5749043abbe691"
+    },
+    {
+      "path": "fixtures/cloudlink/v1alpha1/unsupported-version.json",
+      "sha256": "4338824e50571ad7c6afbaae0a41c463a59d5adec8590d4aa05197764e1c860d"
+    },
+    {
+      "path": "fixtures/cloudlink/v1alpha1/wrong-session-epoch.json",
+      "sha256": "d33413b8508a2a36c4eb7bee59fd589a4c64966e054fa9af2b2274c2f52f759a"
+    },
+    {
+      "path": "fixtures/thing-model/v1alpha1/fixture-manifest.json",
+      "sha256": "baaac8955239ba008794530c4ce0441d3902b1c1de0aa6b483900eaa5ae91a2a"
+    },
+    {
+      "path": "fixtures/thing-model/v1alpha1/invalid/direct-action-execution.json",
+      "sha256": "b6edfaf43e332acb775d81feb3968062044e7f13139aac5c51dc90d7cf602394"
+    },
+    {
+      "path": "fixtures/thing-model/v1alpha1/invalid/duplicate-capability-parameter.json",
+      "sha256": "c6bd88792e028eaddbcd6a5f96dbdb356fa30425b061b9316a576f2cdc3b98f8"
+    },
+    {
+      "path": "fixtures/thing-model/v1alpha1/invalid/duplicate-cross-namespace-key.json",
+      "sha256": "9d7d4a18bcabff03b5dc8c5958e1aeb50220167e6d59e9ef76c24dca083cd90e"
+    },
+    {
+      "path": "fixtures/thing-model/v1alpha1/invalid/noncanonical-revision.json",
+      "sha256": "1c9db6a93ca8dec4bd9e682f4eae68d5d5444cc45297c674525d0fbf1252de08"
+    },
+    {
+      "path": "fixtures/thing-model/v1alpha1/invalid/unknown-core-field.json",
+      "sha256": "dc1c921796c71165143767550a1e2a6e0de20f5d7a7f870a04d070017230e209"
+    },
+    {
+      "path": "fixtures/thing-model/v1alpha1/valid/voltage-battery.golden.json",
+      "sha256": "34323feb2dea16416fe2208ca805b078981e33d8417406b72617e7aa40fed58e"
+    },
+    {
+      "path": "fixtures/thing-model/v1alpha1/voltage/battery-minimal.legacy.json",
+      "sha256": "ff44ace510b5863d880ec7963f52f039e5e16cc2df49f6a5420e0243d64d03d8"
+    },
+    {
+      "path": "fixtures/thing-model/v1alpha1/voltage/provenance.json",
+      "sha256": "9fadbb70b5cfa99ecf9a8395af2ba7f5a3e37afb9bd4217b71ea2f03f6a78452"
+    },
+    {
+      "path": "llms.txt",
+      "sha256": "519a28e9d5ac45b70cbc67d839435613203ab9179ebf23af8d2d2e5c075ab54e"
+    },
+    {
+      "path": "profiles/cloudlink/v1alpha1/authentication.json",
+      "sha256": "17b23382c7fe7c84a95e6b58dd3ee3d0f1c67faf4c4f6ceeed7957c0c09f44cf"
+    },
+    {
+      "path": "profiles/cloudlink/v1alpha1/core.json",
+      "sha256": "d8c62035acdcac4e5786dbce350dd3af9af45f58329daf8a8110de411947f720"
+    },
+    {
+      "path": "profiles/mqtt/v1alpha1/profile.json",
+      "sha256": "e2256add779a8a2002276049cd83042c3e0002b826431460b1a616f7f68d33ff"
+    },
+    {
+      "path": "profiles/thing-model/v1alpha1/publication.json",
+      "sha256": "b35b5ac1799f5f11e568a2d32df82e7d331b714eeaddfa2d9e45198ef4aa6234"
+    },
+    {
+      "path": "profiles/wot/v1alpha1/profile.json",
+      "sha256": "040b90e928f6a39cf6c585a02da7d8331b4d7e7896233045575df7f1478f04ba"
+    },
+    {
+      "path": "schemas/cloudlink/v1alpha1/data-loss.schema.json",
+      "sha256": "2a2f53f1932d53d46785571d0d1353e737748b9ee5c216e3f6468fde820f6829"
+    },
+    {
+      "path": "schemas/cloudlink/v1alpha1/durable-ack.schema.json",
+      "sha256": "9c75e350004f45ab7cec79e2270cfdc4391975a08444ec11ae1d97802f383baa"
+    },
+    {
+      "path": "schemas/cloudlink/v1alpha1/envelope.schema.json",
+      "sha256": "c22c32293bdd2aaaec10cd4fd311cd5947ac3ac435d39caacb55ca390ffda5f1"
+    },
+    {
+      "path": "schemas/cloudlink/v1alpha1/heartbeat.schema.json",
+      "sha256": "ecdc567ca1064eb43fae2674737f0d39b0f6b651f0fac8e8b231fbcd6917b309"
+    },
+    {
+      "path": "schemas/cloudlink/v1alpha1/replay-request.schema.json",
+      "sha256": "a02aba3c8adcafd259549aa869d6d605df739ab58b3b071b987c1b214732e7ab"
+    },
+    {
+      "path": "schemas/cloudlink/v1alpha1/runtime-manifest-report.schema.json",
+      "sha256": "0d97fff9ab55eff0042e31d531408b42bb7b93bfa868d0e06851a0a34c67efc0"
+    },
+    {
+      "path": "schemas/cloudlink/v1alpha1/runtime-manifest.v1.schema.json",
+      "sha256": "631a62d0568d2d51fe09ea73b398f4a2974c324cc3bbc31f2a5a89675831191b"
+    },
+    {
+      "path": "schemas/cloudlink/v1alpha1/session-accepted.schema.json",
+      "sha256": "92561df5d2ebe73e82a6641774cdd0cdc1b2edbcb08527e22262816bb090dd73"
+    },
+    {
+      "path": "schemas/cloudlink/v1alpha1/session-challenge.schema.json",
+      "sha256": "e9b408a65efa64c53a3789aef7650c283c4aaede546b7c4e1ed97db734fa1d74"
+    },
+    {
+      "path": "schemas/cloudlink/v1alpha1/session-hello.schema.json",
+      "sha256": "bf6808a6ecfb5c7d77cda7731c0fff5bc3df1c3b909a2f99e28fd37e4664366b"
+    },
+    {
+      "path": "schemas/cloudlink/v1alpha1/telemetry-batch.schema.json",
+      "sha256": "3c80349f4f3ef60a17fcc0ed27cf2dd7a1dea36df909f96b488c0cc6b58a2bc0"
+    },
+    {
+      "path": "schemas/distribution/v1alpha1/consumer-lock.schema.json",
+      "sha256": "39bfc21d6d6908b2e3091b4b84fbfcd0769f545cf27bb0a0fe3b60186d04c8d3"
+    },
+    {
+      "path": "schemas/tck/v1alpha1/fixture-manifest.schema.json",
+      "sha256": "f6cc1c3bacdc0d7fa698cd7bcd16ec27e911a407cd89b9f302a4b49f8b37acb7"
+    },
+    {
+      "path": "schemas/tck/v1alpha1/scenario.schema.json",
+      "sha256": "24e4670ab8b62b1e3348ad09040ca94c658ee0eb60a542324b800a8fab71ddf9"
+    },
+    {
+      "path": "schemas/thing-model/v1alpha1/deployment-observation.schema.json",
+      "sha256": "d5f567346f0a63fd9a19b47df90ead401a9b96cdd0d2cbdce8195a1b40eb40c2"
+    },
+    {
+      "path": "schemas/thing-model/v1alpha1/thing-model.schema.json",
+      "sha256": "e60d9b50bf2ef37ce530b55979b7e5b9c0ff5c30fe1f69ef608ef4e70a2772d3"
+    },
+    {
+      "path": "scripts/verify-consumer-lock.mjs",
+      "sha256": "1b818dd7befd86d68a1ad96c2e07f4cc912efbe8a7d738ba2c98a960142a8669"
+    },
+    {
+      "path": "spec/cloudlink-v1alpha1.md",
+      "sha256": "c12f94277c7aefcce27b4dd40bbe9e8ab1fcfc936d2ecd6c74c7de5994e5d0d1"
+    },
+    {
+      "path": "spec/distribution-v1alpha1.md",
+      "sha256": "42a3fb4f292b5dc95d9a6548b48b0656a5555a7cecb21c0beb5a2fdae6826f28"
+    },
+    {
+      "path": "spec/foundation.md",
+      "sha256": "de5219c9ef559a5db996d688751a473c5395bc39fa8ec0fd994c0e451373812c"
+    },
+    {
+      "path": "spec/tck-v1alpha1.md",
+      "sha256": "45d831e3e69dc14e20e6e77eae7e372a6fbfc8aa34b312ce4d75d34c3980b8a0"
+    },
+    {
+      "path": "spec/thing-model-v1alpha1.md",
+      "sha256": "601b46808f1eebc627855769ed78f60797998d7b940bdd06aef360ec320b4788"
+    },
+    {
+      "path": "tck/lib/scenario-runner.mjs",
+      "sha256": "b1eeef77af302c76f35b826861d8a9fc3f4f035b370ed1dbc1e099237f34554f"
+    },
+    {
+      "path": "tck/lib/strict-json.mjs",
+      "sha256": "003394acc331121856b448c61a0c0f925063f9c863b350be898568c6cf2d9241"
+    },
+    {
+      "path": "tck/scenarios/core.json",
+      "sha256": "b8aacdc5e4762da235a13af371b5fe0d7af3278fa208387fb97b5d9c57e3c912"
+    },
+    {
+      "path": "tck/test/consumer-lock.test.mjs",
+      "sha256": "8a25f2d0dfc74ab36bd9b0265c4ced7e532f42a9f9f7c3300f7e8bb90898b210"
+    },
+    {
+      "path": "tck/test/contract-manifest.test.mjs",
+      "sha256": "bb98d7d00cb2709ba4aad29416f7f3c352efad8daeee074e7359fb72e9e9a15e"
+    },
+    {
+      "path": "tck/test/core-scenarios.test.mjs",
+      "sha256": "b53bf756726844268e94e81f69bc69856119a9b7bede308c476e6594a87f6113"
+    },
+    {
+      "path": "tck/test/fixture-integrity.test.mjs",
+      "sha256": "55978c28715bfa1f030e9aa2a25605295fe23eeff0ab8ff20185f522da640f26"
+    },
+    {
+      "path": "tck/test/fixture-manifest-exactness.test.mjs",
+      "sha256": "0e7341576dc19c8dc1aec792bc6f1920fe78abaa74a2e1b4b42a973d85540fb5"
+    },
+    {
+      "path": "tck/test/portable-contract-gaps.test.mjs",
+      "sha256": "2e4e6f7c83d989f6c42d8bb7a7068abcfa3e92f3ffbced5067c6eeaa1c6593c3"
+    },
+    {
+      "path": "tck/test/release-version.test.mjs",
+      "sha256": "d5ed3359d6ee4910906f8407169c8ffd7598e81db2d66b56dd2bc095722fb163"
+    },
+    {
+      "path": "tck/test/safety-contract.test.mjs",
+      "sha256": "49bded14e84a9eb0bde1e493a66ae2a5fdf37347b596955a5ae0e70c35f21398"
+    },
+    {
+      "path": "tck/test/schema-conformance.test.mjs",
+      "sha256": "fb70702d44b2447cafd5b26f79689162a16cce92683489a6d6e707ce3b44faa3"
+    },
+    {
+      "path": "tck/test/strict-json.test.mjs",
+      "sha256": "6b2a6bfa0ebe0dc53a0236b9e52f812e9fe059b7819d3a0d6efa6f431c52b4fa"
+    },
+    {
+      "path": "tck/test/strict-repository-json.test.mjs",
+      "sha256": "75e4d457c69d03a2e14ada707b32aecaeee5636cf4aacf38f9b1a084e45370fe"
+    }
+  ]
+}

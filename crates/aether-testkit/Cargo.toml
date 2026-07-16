@@ -16,6 +16,7 @@ categories = ["development-tools::testing"]
 aether-domain = { version = "0.5.0", path = "../aether-domain" }
 aether-ports = { version = "0.5.0", path = "../aether-ports" }
 async-trait = { workspace = true }
+tokio = { version = "1.35", default-features = false, features = ["sync"] }
 
 [dev-dependencies]
 tokio = { workspace = true }

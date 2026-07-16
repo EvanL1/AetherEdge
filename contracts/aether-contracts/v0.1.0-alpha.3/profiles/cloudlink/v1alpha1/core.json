@@ -1,0 +1,115 @@
+{
+  "schema": "aether.cloudlink.core-profile.v1alpha1",
+  "status": "experimental-auth-proposal",
+  "entry_schemas": {
+    "runtime-manifest-report": "runtime-manifest-report.schema.json",
+    "telemetry-batch": "telemetry-batch.schema.json",
+    "data-loss": "data-loss.schema.json"
+  },
+  "replay": {
+    "position_identity": [
+      "gateway_id",
+      "delivery.stream_id",
+      "delivery.stream_epoch",
+      "delivery.position"
+    ],
+    "required_stable_bindings": [
+      "delivery.batch_id",
+      "delivery.digest"
+    ],
+    "same_position_different_binding": "DIGEST_CONFLICT",
+    "successful_ack_on_conflict": false
+  },
+  "business_digest": {
+    "algorithm": "SHA-256",
+    "encoding": "sha256:<64 lowercase hexadecimal characters>",
+    "canonicalization": "RFC 8785 JCS",
+    "projection": {
+      "protocol_version": "envelope.protocol_version",
+      "message_kind": "envelope.message_kind",
+      "payload": "envelope.payload"
+    },
+    "excluded": [
+      "gateway_id",
+      "session_id",
+      "session_epoch",
+      "credential_generation",
+      "sent_at_ms",
+      "expires_at_ms",
+      "traceparent",
+      "delivery",
+      "transport metadata",
+      "authentication material"
+    ],
+    "purpose": "content integrity and replay conflict detection, not publisher authentication"
+  },
+  "runtime_manifest_checksum": {
+    "algorithm": "SHA-256",
+    "encoding": "64 lowercase hexadecimal characters",
+    "canonicalization": "RFC 8785 JCS",
+    "projection": "the complete manifest object with its top-level checksum member omitted"
+  },
+  "session_context": {
+    "required_current_bindings": [
+      "gateway_id",
+      "session_id",
+      "session_epoch",
+      "credential_generation"
+    ],
+    "mismatch": "STALE_SESSION"
+  },
+  "expiry": {
+    "field_presence": "expires_at_ms is optional; omission declares no deadline through this field",
+    "window_constraint": "expires_at_ms >= sent_at_ms",
+    "invalid_window": "INVALID_EXPIRY_WINDOW",
+    "evaluation_input": "evaluation_time_ms is an explicit canonical uint64 contextual input; the TCK never reads an ambient wall clock",
+    "expiration_check_passes_when": "evaluation_time_ms < expires_at_ms",
+    "deadline_or_later": "MESSAGE_EXPIRED"
+  },
+  "context_rules": {
+    "data_loss_range": "first_lost_position <= last_lost_position < earliest_retained_position",
+    "cursor_identity": ["stream_id", "stream_epoch"],
+    "cursor_arrays": [
+      "heartbeat.cursors",
+      "heartbeat-ack.cursors",
+      "session-accepted.resume"
+    ],
+    "duplicate_cursor": "CURSOR_CONFLICT",
+    "rejected_fact_state_changed": false,
+    "rejected_fact_successful_receipt_permitted": false
+  },
+  "telemetry_projection": {
+    "status": "limited-joint-core",
+    "point_kinds": ["telemetry", "status"],
+    "value_types": ["finite-JSON-number"],
+    "event_transport": "planned",
+    "non_numeric_value_transport": "planned",
+    "topology_point_resolution": "planned"
+  },
+  "authentication": {
+    "shared_broker_profile": "experimental",
+    "profile": "authentication.json",
+    "production_key_lifecycle": "planned",
+    "topic_or_payload_identity_is_authentication": false
+  },
+  "acknowledgement": {
+    "schema": "durable-ack.schema.json",
+    "persistence": "success means the application fact and receipt are durable before publication",
+    "production_crash_durability": "unproven-until-a-production-store-and-outbox-pass-restart-evidence",
+    "signature": "absent-in-alpha.3",
+    "accepted_delivery_binding": [
+      "gateway_id",
+      "session_id",
+      "session_epoch",
+      "credential_generation",
+      "stream_id",
+      "stream_epoch",
+      "acknowledged_position",
+      "batch_id",
+      "digest",
+      "receipt_id"
+    ],
+    "mqtt_puback_is_application_ack": false
+  },
+  "physical_control": "forbidden"
+}

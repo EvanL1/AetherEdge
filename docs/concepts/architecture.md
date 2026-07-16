@@ -116,7 +116,7 @@ qualification uses the current cross-process stress and soak gates.
 | aether-automation → aether-io (control commands) | Shared-memory write plus UDS notification (`ShmCommandListener` on the aether-io side) | sub-millisecond; ~215 µs P50 including rule evaluation (measured) |
 | aether-io → device (protocol write) | Field bus (Modbus, IEC 104, etc.) | +5–10 ms; dominates the physical control loop |
 | aether-alarm → aether-api, aether-uplink | HTTP (targets configured via `AETHER_API_URL` / `AETHER_UPLINK_URL`) | local HTTP |
-| aether-uplink → cloud | MQTT | network |
+| aether-uplink → cloud | Legacy MQTT by default; experimental broker-neutral CloudLink MQTT v1 is opt-in | network |
 | aether-api → generated/downstream clients | Authenticated HTTP and WebSocket | network |
 | all services ↔ SQLite | In-process configuration discovery (`AETHER_DB_PATH`); aether-history uses a separate embedded history file | local |
 

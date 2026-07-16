@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "replay-request.schema.json",
+  "title": "Experimental Aether CloudLink replay request v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "protocol",
+    "protocol_version",
+    "message_kind",
+    "gateway_id",
+    "session_id",
+    "session_epoch",
+    "credential_generation",
+    "stream_id",
+    "stream_epoch",
+    "from_position",
+    "requested_at_ms"
+  ],
+  "properties": {
+    "schema": { "const": "aether.cloudlink.replay-request.v1" },
+    "protocol": { "const": "aether.cloudlink" },
+    "protocol_version": { "const": "1.0" },
+    "message_kind": { "const": "replay-request" },
+    "gateway_id": { "$ref": "envelope.schema.json#/$defs/uuid" },
+    "session_id": { "$ref": "envelope.schema.json#/$defs/uuid" },
+    "session_epoch": { "$ref": "envelope.schema.json#/$defs/positiveUint64" },
+    "credential_generation": {
+      "$ref": "envelope.schema.json#/$defs/positiveUint64"
+    },
+    "stream_id": { "$ref": "envelope.schema.json#/$defs/identifier" },
+    "stream_epoch": { "$ref": "envelope.schema.json#/$defs/positiveUint64" },
+    "from_position": { "$ref": "envelope.schema.json#/$defs/positiveUint64" },
+    "requested_at_ms": { "$ref": "envelope.schema.json#/$defs/uint64" }
+  }
+}

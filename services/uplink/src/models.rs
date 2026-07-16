@@ -156,7 +156,7 @@ fn always_omit_mqtt_password(_: &Option<String>) -> bool {
 ///
 /// Changes take effect immediately — uplink reconnects to the broker without
 /// requiring a service restart.
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[derive(Clone, Serialize, Deserialize, ToSchema)]
 #[schema(example = json!({
     "product_sn": "AetherHub",
     "device_sn": "auto",
@@ -304,6 +304,38 @@ pub struct NetConfig {
     /// automation 服务地址，用于设备同步查询
     #[schema(example = "http://localhost:6002")]
     pub automation_url: String,
+}
+
+impl std::fmt::Debug for NetConfig {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("NetConfig")
+            .field("product_sn", &self.product_sn)
+            .field("device_sn", &self.device_sn)
+            .field("broker_host", &self.broker_host)
+            .field("broker_port", &self.broker_port)
+            .field("broker_keepalive_secs", &self.broker_keepalive_secs)
+            .field("client_id", &self.client_id)
+            .field("username", &self.username)
+            .field("password", &self.password.as_ref().map(|_| "[REDACTED]"))
+            .field("ssl_enabled", &self.ssl_enabled)
+            .field("reconnect_delay_secs", &self.reconnect_delay_secs)
+            .field("reconnect_max_attempts", &self.reconnect_max_attempts)
+            .field("report_interval_secs", &self.report_interval_secs)
+            .field("report_batch_size", &self.report_batch_size)
+            .field("system_monitor_enabled", &self.system_monitor_enabled)
+            .field(
+                "system_monitor_interval_secs",
+                &self.system_monitor_interval_secs,
+            )
+            .field("telemetry_enabled", &self.telemetry_enabled)
+            .field("telemetry_interval_secs", &self.telemetry_interval_secs)
+            .field("subscribe_patterns", &self.subscribe_patterns)
+            .field("exclude_patterns", &self.exclude_patterns)
+            .field("alarm_url", &self.alarm_url)
+            .field("automation_url", &self.automation_url)
+            .finish()
+    }
 }
 
 impl Default for NetConfig {
@@ -479,11 +511,14 @@ mod config_tests {
         let config: NetConfig = serde_json::from_value(input).expect("deserialize MQTT password");
         assert_eq!(config.password.as_deref(), Some("private-broker-secret"));
 
-        let serialized = serde_json::to_value(config).expect("serialize redacted config");
+        let serialized = serde_json::to_value(&config).expect("serialize redacted config");
         assert!(
             serialized.get("password").is_none(),
             "MQTT password must never appear in API serialization"
         );
+        let debug = format!("{config:?}");
+        assert!(!debug.contains("private-broker-secret"));
+        assert!(debug.contains("[REDACTED]"));
     }
 
     #[test]

@@ -2,7 +2,9 @@
 
 mod audit;
 mod clock;
+mod cloudlink_spool;
 mod data_processing;
+mod file_cloudlink_spool;
 mod file_outbox;
 mod history;
 mod live_state;
@@ -17,7 +19,9 @@ pub use audit::MemoryAuditSink;
 #[cfg(feature = "sqlite-audit")]
 pub use audit::SqliteAuditSink;
 pub use clock::{ManualClock, SystemClock};
+pub use cloudlink_spool::MemoryCloudLinkSpool;
 pub use data_processing::{MemoryCovariateSource, MemoryHistoryQuery};
+pub use file_cloudlink_spool::FileCloudLinkSpool;
 pub use file_outbox::FileOutbox;
 pub use history::MemoryHistorySink;
 pub use live_state::MemoryLiveState;

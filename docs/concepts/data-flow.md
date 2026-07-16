@@ -1,7 +1,7 @@
 ---
 title: Data Flow
 description: SHM-native uplink and downlink paths end to end, with latency budgets
-updated: 2026-07-13
+updated: 2026-07-15
 ---
 
 # Data Flow
@@ -34,6 +34,15 @@ transport. No default service needs Redis or PostgreSQL for live data.
    Uplink bind their exact configured points and needed routes to one committed
    point/health epoch, then pin that immutable generation for a whole
    collection/upload pass. Events do not silently change their cadence.
+
+The production `aether-uplink` composition still uses deprecated legacy MQTT
+topics and its generic `FileOutbox` delivery boundary. The experimental
+CloudLink path converts the same pinned generation into `PointSample` facts,
+adds publication epoch plus topology digest, and places canonical business
+content in a separate `CloudLinkSpool`. MQTT QoS 1/PUBACK advances only the
+transport state; a matching cloud durable application ACK is the sole removal
+authority. Disconnect keeps records replayable under the same stream
+position/batch ID/digest and does not block any SHM consumer.
 ```
 Device ──frame──► aether-io protocol adapter (decode)
                         │
@@ -177,4 +186,5 @@ to core service startup dependencies.
 - [Data Model](data-model.md) — points, instances, and NaN/absence semantics
 - [Data Processing](data-processing.md) — the optional industry-neutral processing boundary
 - [Data Processing Flow](data-processing-flow.md) — processor-request data flow and failure semantics
+- [CloudLink MQTT v1](../reference/cloudlink-mqtt-v1.md) — experimental application-ACK/replay edge path
 - [Rule Engine](rule-engine.md) — what happens after a PointWatch event arrives

@@ -1,0 +1,33 @@
+{
+  "contract": "aether.cloudlink",
+  "contracts_release": "0.1.0-alpha.3",
+  "status": "product-local-implementation-overlay",
+  "authority": "AetherContracts v0.1.0-alpha.3",
+  "owner": "AetherIot implementation evidence",
+  "authoritative_artifacts": {
+    "specification": "AetherContracts spec/cloudlink-v1alpha1.md",
+    "core_profile": "AetherContracts profiles/cloudlink/v1alpha1/core.json",
+    "mqtt_profile": "AetherContracts profiles/mqtt/v1alpha1/profile.json",
+    "gate_definition": "AetherContracts compatibility/cloudlink-v1alpha1-gates.json",
+    "failure_taxonomy": "AetherContracts compatibility/failure-codes.json",
+    "tck_manifest": "AetherContracts tck/scenarios/core.json"
+  },
+  "product_files": {
+    "imported_schema_and_fixture_root": "contracts/cloudlink/v1",
+    "implementation_overlays": [
+      "MIGRATION.md",
+      "README.md",
+      "interoperability-gates.json",
+      "interoperability-scenarios.json",
+      "session-authentication.schema.json",
+      "wire-profile.json"
+    ]
+  },
+  "implementation_limits": {
+    "authentication": "proposal",
+    "application_ack": "unsigned-alpha3",
+    "production_crash_durability": "blocked",
+    "legacy_default": true,
+    "physical_control": "forbidden"
+  }
+}

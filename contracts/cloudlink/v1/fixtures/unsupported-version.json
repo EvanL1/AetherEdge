@@ -1,0 +1,12 @@
+{
+  "schema": "aether.cloudlink.heartbeat.v1",
+  "protocol": "aether.cloudlink",
+  "protocol_version": "2.0",
+  "message_kind": "heartbeat",
+  "gateway_id": "33333333-3333-4333-8333-333333333333",
+  "session_id": "44444444-4444-4444-8444-444444444444",
+  "session_epoch": "7",
+  "credential_generation": "3",
+  "observed_at_ms": "1721000000123",
+  "cursors": []
+}
