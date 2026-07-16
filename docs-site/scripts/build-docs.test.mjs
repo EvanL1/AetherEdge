@@ -3,6 +3,7 @@ import {
   assertFilesFound,
   assertHtmlBuildPresent,
   findOutputCollisions,
+  partitionDocumentsByLocale,
   renderDocument,
   renderLlmsFull,
   renderLlmsIndex,
@@ -107,6 +108,40 @@ describe('renderLlmsIndex', () => {
       '- [Agent Quickstart](https://docs.aetheriot.workers.dev/agent-quickstart): Install Aether.'
     );
     expect(output).not.toContain('[Aether](https://docs.aetheriot.workers.dev/)');
+  });
+
+  it('renders Chinese labels for the root locale without English-prefixed pages', () => {
+    const documents = [
+      { slug: '', title: 'AetherIoT 中文文档', description: '统一中文文档。' },
+      { slug: 'overview/platform', title: '平台概览', description: '了解产品关系。' },
+    ];
+
+    const output = renderLlmsIndex(
+      documents,
+      'https://docs.aetheriot.workers.dev',
+      'zh-CN'
+    );
+    expect(output).toContain('## 概览');
+    expect(output).toContain('文档页面支持 Markdown');
+    expect(output).not.toContain('## Overview');
+    expect(output).not.toContain('/en/');
+  });
+});
+
+describe('partitionDocumentsByLocale', () => {
+  it('separates English documents and normalizes their locale-relative slugs', () => {
+    const partitions = partitionDocumentsByLocale([
+      { slug: '', title: '中文首页' },
+      { slug: 'aethercloud/index', title: '中文云端' },
+      { slug: 'en', title: 'English home' },
+      { slug: 'en/aethercloud/index', title: 'English cloud' },
+    ]);
+
+    expect(partitions['zh-CN'].map(({ slug }) => slug)).toEqual(['', 'aethercloud/index']);
+    expect(partitions.en.map(({ slug, publicSlug }) => ({ slug, publicSlug }))).toEqual([
+      { slug: '', publicSlug: 'en' },
+      { slug: 'aethercloud/index', publicSlug: 'en/aethercloud/index' },
+    ]);
   });
 });
 

@@ -167,18 +167,14 @@ describe('findCollisions', () => {
     ]);
   });
 
-  it('flags a single source that would overwrite a hand-authored page', () => {
+  it('allows the site-owned root page because all published content is generated', () => {
     const pairs = [['docs/index.md', 'index.md']];
-    const collisions = findCollisions(pairs);
-    expect(collisions).toHaveLength(1);
-    expect(collisions[0]).toEqual({ dest: 'index.md', sources: ['docs/index.md'] });
+    expect(findCollisions(pairs)).toEqual([]);
   });
 
-  it('flags docs/agent-quickstart.md the same way', () => {
+  it('allows the site-owned agent quickstart source', () => {
     const pairs = [['docs/agent-quickstart.md', 'agent-quickstart.md']];
-    expect(findCollisions(pairs)).toEqual([
-      { dest: 'agent-quickstart.md', sources: ['docs/agent-quickstart.md'] },
-    ]);
+    expect(findCollisions(pairs)).toEqual([]);
   });
 });
 

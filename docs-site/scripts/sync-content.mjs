@@ -10,7 +10,6 @@ const REPO_ROOT = path.resolve(__dirname, '..', '..');
 const DOCS_SITE_ROOT = path.resolve(__dirname, '..');
 const CONTENT_DIR = path.join(DOCS_SITE_ROOT, 'src', 'content', 'docs');
 const SOURCE_CONFIG_PATH = path.join(DOCS_SITE_ROOT, 'content.sources.json');
-const HAND_AUTHORED = new Set(['index.md', 'agent-quickstart.md']);
 const DESCRIPTION_MAX_LEN = 155;
 
 export function computeDestPath(sourcePath, options = {}) {
@@ -205,8 +204,7 @@ function readManifestPatterns(manifestText) {
 }
 
 // sourceDestPairs: array of [sourceRelPath, destRelPath]. Returns one entry
-// per problem destination: either two-or-more sources mapping to the same
-// dest, or a dest that would silently overwrite a hand-authored page.
+// for each destination produced by two or more source files.
 export function findCollisions(sourceDestPairs) {
   const sourcesByDest = new Map();
   for (const [source, dest] of sourceDestPairs) {
@@ -218,7 +216,7 @@ export function findCollisions(sourceDestPairs) {
 
   const collisions = [];
   for (const [dest, sources] of sourcesByDest) {
-    if (sources.length > 1 || HAND_AUTHORED.has(dest)) {
+    if (sources.length > 1) {
       collisions.push({ dest, sources });
     }
   }
@@ -251,7 +249,6 @@ async function clearGeneratedContent() {
   }
   await Promise.all(
     entries.map(async (entry) => {
-      if (HAND_AUTHORED.has(entry.name)) return;
       await fs.rm(path.join(CONTENT_DIR, entry.name), { recursive: true, force: true });
     })
   );
@@ -360,7 +357,7 @@ async function main() {
   const patternCount = sourceContexts.reduce((total, source) => total + source.patterns.length, 0);
   console.log(
     `sync-content: wrote ${written.length} file(s) from ` +
-      `${sourceContexts.length} repositories and ${patternCount} manifest pattern(s)`
+      `${sourceContexts.length} sources and ${patternCount} manifest pattern(s)`
   );
 }
 

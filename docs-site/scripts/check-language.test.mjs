@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { assertEnglishOnly, findCjkOccurrences } from './check-language.mjs';
+import {
+  assertLocaleIsolation,
+  findCjkOccurrences,
+  localeForPath,
+} from './check-language.mjs';
 
 describe('findCjkOccurrences', () => {
   it('reports the source path, line, and offending text', () => {
@@ -13,19 +17,36 @@ describe('findCjkOccurrences', () => {
   });
 });
 
-describe('assertEnglishOnly', () => {
-  it('throws one actionable error containing every offending file', () => {
+describe('localeForPath', () => {
+  it('treats /en as English and the root locale as Simplified Chinese', () => {
+    expect(localeForPath('en/guides/getting-started.md')).toBe('en');
+    expect(localeForPath('aethercontracts/getting-started.md')).toBe('zh-CN');
+  });
+});
+
+describe('assertLocaleIsolation', () => {
+  it('rejects CJK text from the English publication', () => {
     expect(() =>
-      assertEnglishOnly([
-        { path: 'first.md', content: 'English.\n中文。\n' },
-        { path: 'second.md', content: '# 标题\n' },
+      assertLocaleIsolation([
+        { path: 'en/first.md', content: 'English.\n中文。\n' },
       ])
-    ).toThrow(/first\.md:2[\s\S]*second\.md:1/);
+    ).toThrow(/en\/first\.md:2/);
   });
 
-  it('does not throw for an English-only publication set', () => {
+  it('rejects untranslated prose from the Chinese publication', () => {
     expect(() =>
-      assertEnglishOnly([{ path: 'guide.md', content: '# Guide\n\nEnglish only.\n' }])
+      assertLocaleIsolation([
+        { path: 'aethercloud/guide.md', content: '# Cloud guide\n\nEnglish only.\n' },
+      ])
+    ).toThrow(/Chinese publication/);
+  });
+
+  it('accepts isolated Chinese and English documents', () => {
+    expect(() =>
+      assertLocaleIsolation([
+        { path: 'guide.md', content: '# 中文指南\n\n使用 AetherEdge。\n' },
+        { path: 'en/guide.md', content: '# English guide\n\nUse AetherEdge.\n' },
+      ])
     ).not.toThrow();
   });
 });

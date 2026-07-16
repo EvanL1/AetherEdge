@@ -1,3 +1,3 @@
 # Aether
 
-Plain-text documentation for Aether.
+Aether 中文文档。
