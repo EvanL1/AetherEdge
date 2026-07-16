@@ -1,6 +1,6 @@
 //! `aether-api` — management API and WebSocket service.
 //!
-//! Unified remote application entry for AetherIot clients:
+//! Unified remote application entry for AetherEdge clients:
 //! - JWT auth (users, roles)
 //! - WebSocket real-time data push with subscriptions
 //! - POST /broadcast – push any JSON to all WebSocket clients

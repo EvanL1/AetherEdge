@@ -1,4 +1,4 @@
-# AetherIot
+# AetherEdge
 
 > Build reliable edge IoT applications with AI on an industry-neutral,
 > deterministic Rust runtime.
@@ -7,7 +7,7 @@
 > (with explicit authorization) operate the system. Energy management is an
 > optional domain pack, not a core dependency.
 
-AetherIot is headless. It publishes machine-readable runtime and application
+AetherEdge is the edge product in the AetherIoT platform. It is headless and publishes machine-readable runtime and application
 contracts, an Agent Skill, MCP tools/resources, and online Markdown so AI
 agents can build fit-for-purpose clients without turning a Web UI into a
 second authority. AetherEMS is the independent official energy distribution.
@@ -25,7 +25,11 @@ read-only historian directory/identity for `aether-api`; the base
 ## AI-native Architecture
 
 - [Canonical Agent Instructions](AGENTS.md): Architecture boundaries, safety rules, Rust conventions, and verification commands
-- [AetherIot Agent Skill](skills/aether-iot/SKILL.md): Contract-first workflow for onboarding, SDK integrations, generated applications, and governed commands
+- [AetherIoT Platform Overview](docs/overview/platform.md): Product family, authority boundaries, and naming rules
+- [AetherEdge Agent Skill](skills/aether-iot/SKILL.md): Contract-first workflow for onboarding, SDK integrations, generated applications, and governed commands
+- [AetherIoT to AetherEdge Migration](docs/migration/aetheriot-to-aetheredge.md): Repository rename, stable identifiers, rollout, and rollback
+- [Product Compatibility](docs/compatibility/version-matrix.md): Tested Edge, Contracts, and Cloud combinations
+- [Platform Status](docs/roadmap/status.md): Implemented, experimental, and planned capabilities across products
 - [Architecture Entry Point](ARCHITECTURE.md): Target runtime and dependency direction
 - [ADR-0001](docs/adr/0001-ai-native-edge-kernel.md): Decision to migrate to an industry-neutral, external-database-free edge kernel
 - [ADR-0002](docs/adr/0002-dataplane-and-local-outbox.md): Physical SHM extraction, local journal durability, and MQTT delivery boundary

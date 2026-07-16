@@ -378,7 +378,7 @@ jobs:
           source_name="aetheriot-source-${GITHUB_REF_NAME}.tar.gz"
           git archive \
             --format=tar \
-            --prefix="AetherIot-${GITHUB_REF_NAME}/" \
+            --prefix="AetherEdge-${GITHUB_REF_NAME}/" \
             "$GITHUB_SHA" \
             | gzip -n > "release/$source_name"
           (cd release && sha256sum "$source_name" > "$source_name.sha256")
@@ -407,8 +407,8 @@ jobs:
             python3 -m json.tool "$manifest" >/dev/null
           done
           source_contents=$(tar tzf "release/aetheriot-source-${GITHUB_REF_NAME}.tar.gz")
-          grep -Fxq "AetherIot-${GITHUB_REF_NAME}/LICENSE" <<< "$source_contents"
-          grep -Fxq "AetherIot-${GITHUB_REF_NAME}/NOTICE" <<< "$source_contents"
+          grep -Fxq "AetherEdge-${GITHUB_REF_NAME}/LICENSE" <<< "$source_contents"
+          grep -Fxq "AetherEdge-${GITHUB_REF_NAME}/NOTICE" <<< "$source_contents"
           (cd release && sha256sum -c ./*.sha256)
 
       - name: Generate signed build provenance
@@ -469,14 +469,14 @@ jobs:
 
           Every source archive, binary, installer, and runtime manifest has an adjacent
           SHA-256 file. GitHub's Sigstore-backed artifact attestation can be
-          verified with \`gh attestation verify <asset> -R EvanL1/AetherIot\`.
+          verified with \`gh attestation verify <asset> -R EvanL1/AetherEdge\`.
 
           ### Quick Start
 
           \`\`\`bash
           # Rust SDK: consume the single facade from this exact release commit.
           # Cargo.toml:
-          # aether-sdk = { package = "aether-edge-sdk", git = "https://github.com/EvanL1/AetherIot.git", rev = "${GITHUB_SHA}", features = ["local-runtime"] }
+          # aether-sdk = { package = "aether-edge-sdk", git = "https://github.com/EvanL1/AetherEdge.git", rev = "${GITHUB_SHA}", features = ["local-runtime"] }
 
           # Full deployment
           scp AetherEdge-<arch>-${VERSION}.run user@device:/tmp/

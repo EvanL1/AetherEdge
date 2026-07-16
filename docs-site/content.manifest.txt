@@ -1,4 +1,4 @@
-# Aether kernel docs sync manifest.
+# AetherIoT platform and AetherEdge docs sync manifest.
 # One glob per line, relative to the repo root. Lines starting with # and
 # blank lines are ignored. Adding or removing a line here is the only change
 # needed to change what the docs site publishes — see sync-content.mjs for
@@ -6,6 +6,14 @@
 docs/concepts/*
 docs/guides/*
 docs/reference/*
+docs/overview/*
+docs/aetheredge/*
+docs/aethercloud/*
+docs/aethercontracts/*
+docs/tutorials/*
+docs/compatibility/*
+docs/roadmap/*
+docs/migration/*
 docs/security/dependency-exceptions.md
 crates/*/README.md
 extensions/*/README.md

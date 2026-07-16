@@ -23,11 +23,11 @@ modules and do not define independent registry products.
 
 ```toml
 [dependencies]
-aether-sdk = { package = "aether-edge-sdk", git = "https://github.com/EvanL1/AetherIot.git", tag = "v0.5.0", features = ["local-runtime"] }
+aether-sdk = { package = "aether-edge-sdk", git = "https://github.com/EvanL1/AetherEdge.git", tag = "v0.5.0", features = ["local-runtime"] }
 ```
 
 For a runnable zero-external-service composition, see the repository's
-[`examples/minimal-gateway`](https://github.com/EvanL1/AetherIot/tree/main/examples/minimal-gateway).
+[`examples/minimal-gateway`](https://github.com/EvanL1/AetherEdge/tree/main/examples/minimal-gateway).
 
 ```bash
 cargo test -p aether-edge-sdk

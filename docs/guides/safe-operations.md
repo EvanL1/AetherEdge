@@ -1,12 +1,12 @@
 ---
 title: Safe Operations for Applications and Agents
-description: Preserve identity, confirmation, audit, topology fencing, and uncertain command outcomes when operating AetherIot
+description: Preserve identity, confirmation, audit, topology fencing, and uncertain command outcomes when operating AetherEdge
 updated: 2026-07-13
 ---
 
 # Safe Operations for Applications and Agents
 
-AetherIot treats every browser, CLI, AI assistant, and generated backend as an
+AetherEdge treats every browser, CLI, AI assistant, and generated backend as an
 untrusted application client. Read operations and commands use the same
 application boundary, but commands additionally require an authenticated
 actor, an explicit permission, the declared confirmation policy, and durable

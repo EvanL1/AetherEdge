@@ -1,18 +1,18 @@
 ---
 title: Agent Quickstart
-description: Install the AetherIot Skill, start a safe-empty runtime, and connect an AI agent from zero.
+description: Install the AetherEdge Skill, start a safe-empty runtime, and connect an AI agent from zero.
 ---
 
 This page is written for an AI agent driving a shell, not a human reading
 prose. Each step states the command and the exact signal that means "this
 step succeeded, move on."
 
-## 1. Install the AetherIot Skill
+## 1. Install the AetherEdge Skill
 
 From the application repository where the agent will work:
 
 ```bash
-npx skills add EvanL1/AetherIot -s aether-iot
+npx skills add EvanL1/AetherEdge -s aether-iot
 ```
 
 Restart the coding assistant if it does not reload project Skills automatically.
@@ -21,8 +21,7 @@ Restart the coding assistant if it does not reload project Skills automatically.
 
 ## 2. Install the `aether` CLI
 
-Building from a source checkout is the reliable path today (this project has
-not cut a tagged release yet):
+Building from a source checkout is the most direct development path:
 
 ```bash
 cargo build --release -p aether
@@ -44,7 +43,7 @@ your platform:
 | Windows x86_64 | `aether-windows-x86_64.zip` |
 
 ```bash
-REPO="EvanL1/AetherIot"
+REPO="EvanL1/AetherEdge"
 ASSET="aether-linux-x86_64.tar.gz"   # substitute your platform's asset name
 
 TAG=$(curl -fsSL "https://api.github.com/repos/$REPO/releases/latest" \
@@ -145,6 +144,6 @@ and pointing at a remote installation.
 Now ask the assistant:
 
 ```text
-Get started with AetherIot. Inspect the runtime in read-only mode and explain
+Get started with AetherEdge. Inspect the runtime in read-only mode and explain
 which application capabilities are available before proposing any changes.
 ```

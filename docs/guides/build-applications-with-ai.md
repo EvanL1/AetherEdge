@@ -6,7 +6,7 @@ updated: 2026-07-15
 
 # Build Applications with AI
 
-AetherIot is headless by design. It provides a deterministic edge runtime and the machine-readable
+AetherEdge is headless by design. It provides a deterministic edge runtime and the machine-readable
 contracts an AI agent needs to build a site-specific application. A generated Web UI, mobile app,
 CLI, or backend is a replaceable client: it is never part of the live-state, desired-state, or
 safety authority.
@@ -16,11 +16,11 @@ This guide defines the development method shared by reference applications and d
 ## Optional Agent Skill
 
 Optionally add the repository's `aether-iot` Skill to a compatible coding assistant. Bun is used
-only to run the third-party `skills` CLI; this command does not install the AetherIot runtime or
+only to run the third-party `skills` CLI; this command does not install the AetherEdge runtime or
 Rust SDK:
 
 ```bash
-bunx skills add EvanL1/AetherIot --skill aether-iot
+bunx skills add EvanL1/AetherEdge --skill aether-iot
 ```
 
 The Skill is deliberately small. It teaches the workflow and routes the agent to the current online
@@ -36,7 +36,7 @@ read-only; do not enable writes merely to generate an application.
 
 ## Use the contract stack
 
-An application should discover AetherIot in this order:
+An application should discover AetherEdge in this order:
 
 | Source | What it establishes |
 |---|---|
@@ -55,7 +55,7 @@ contract says so.
 Write the first prompt as a bounded outcome, for example:
 
 ```text
-Build a read-only operations page for this AetherIot site. Show service health,
+Build a read-only operations page for this AetherEdge site. Show service health,
 the current topology revision, point values with quality and freshness, active
 alarms, and the last hour of available history. Do not add device controls.
 ```
@@ -106,7 +106,7 @@ progress, keep the last coherent generation visible or show that a coherent view
 
 Presentation names, groups, units, enums, and recommended visualizations belong to the active
 Domain Pack or the downstream application. A generic client must not infer energy semantics from
-the AetherIot kernel.
+the AetherEdge kernel.
 
 ## Add commands as a separate phase
 
@@ -135,7 +135,7 @@ Every maintained reference or downstream application should pass:
 2. contract fixtures for healthy, stale, unauthorized, degraded, and uncertain outcomes;
 3. a check that no request targets direct process ports, SHM, or SQLite;
 4. a read-only default in which control components and write credentials are absent;
-5. an integration check against a safe-empty or simulated AetherIot composition.
+5. an integration check against a safe-empty or simulated AetherEdge composition.
 
 Reference applications demonstrate the contract and can be replaced. They do not define API
 behavior, configuration authority, or domain truth.

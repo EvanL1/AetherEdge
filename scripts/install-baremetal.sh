@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Bare-metal AetherIot installer. Packaged by build-installer.sh --bare-metal;
+# Bare-metal AetherEdge installer. Packaged by build-installer.sh --bare-metal;
 # this script is what makeself runs after extracting the .run archive.
 set -Eeuo pipefail
 umask 022
@@ -805,7 +805,7 @@ fi
 
 REDIS_INCLUDED=$(detect_bundled_redis .)
 
-echo "=== AetherIot bare-metal installer ==="
+echo "=== AetherEdge bare-metal installer ==="
 
 validate_bare_metal_install_dir "$INSTALL_DIR"
 
@@ -969,14 +969,14 @@ systemctl daemon-reload
 cat > "$INSTALL_DIR/uninstall.sh" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
-echo "Stopping AetherIot..."
+echo "Stopping AetherEdge..."
 systemctl stop aether.target || true
 systemctl disable aether.target || true
 rm -f $SYSTEMD_DIR/aether-*.service $SYSTEMD_DIR/aether.target
 systemctl daemon-reload
 rm -f /usr/local/bin/aether /etc/profile.d/aether.sh
 rm -rf "$INSTALL_DIR"
-echo "AetherIot removed. Configuration and data preserved at $CONFIG_DIR and $DATA_DIR."
+echo "AetherEdge removed. Configuration and data preserved at $CONFIG_DIR and $DATA_DIR."
 echo "Delete those manually if you want a full wipe."
 EOF
 chown 0:0 "$INSTALL_DIR/uninstall.sh"

@@ -1,7 +1,9 @@
 # Aether Documentation
 
-The dual-mode documentation service for
-[AetherIot](https://github.com/EvanL1/AetherIot), deployed at
+The dual-mode unified documentation service for AetherIoT, covering
+[AetherEdge](https://github.com/EvanL1/AetherEdge),
+[AetherCloud](https://github.com/EvanL1/AetherCloud), and
+[AetherContracts](https://github.com/EvanL1/AetherContracts). It is deployed at
 [`docs.aetheriot.workers.dev`](https://docs.aetheriot.workers.dev).
 
 - Browsers receive a searchable Astro + Starlight site.
@@ -11,7 +13,8 @@ The dual-mode documentation service for
 
 Only English product documentation listed in
 [`content.manifest.txt`](./content.manifest.txt) is published. Internal plans,
-ADRs, migration notes, and competitive analysis are intentionally excluded.
+internal plans, ADRs, and competitive analysis are intentionally excluded.
+Public migration guides listed in the manifest are part of the product docs.
 
 ```bash
 npm ci

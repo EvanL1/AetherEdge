@@ -3,7 +3,7 @@
 ## Status and scope
 
 This document describes the experimental CloudLink candidate. The public
-AetherContracts `v0.1.0-alpha.3` release is the sole authority, and AetherIot and
+AetherContracts `v0.1.0-alpha.3` release is the sole authority, and AetherEdge and
 AetherCloud commit the same digest-pinned consumer lock. The current claim is
 complete distribution integrity, full fixture execution, and an opt-in real
 dual-product alpha harness, not production interoperability conformance.
@@ -23,7 +23,7 @@ Implemented by this slice:
 - memory and crash-recoverable file spools removed only by application ACK;
 - MQTT v3.1.1/QoS 1 binding for a user-selected broker;
 - deterministic fake-transport tests, an Edge-only Broker harness, and an
-  opt-in real Mosquitto AetherIot/AetherCloud dual harness.
+  opt-in real Mosquitto AetherEdge/AetherCloud dual harness.
 
 Present in the imported experimental subset:
 
@@ -32,7 +32,7 @@ Present in the imported experimental subset:
   proposal shapes; production key lifecycle remains unresolved;
 - edge-native telemetry without a mandatory Thing Model revision.
 
-The incompatible repository-local AetherIot and AetherCloud vocabularies are
+The incompatible repository-local AetherEdge and AetherCloud vocabularies are
 superseded by public alpha.3; migration findings are retained in
 `contracts/cloudlink/v1/MIGRATION.md`.
 
@@ -56,7 +56,7 @@ CloudLink v1 exposes no physical control or arbitrary RPC.
 
 ## Compatibility matrix
 
-| Concern | AetherIot before this slice | AetherCloud reference | Candidate resolution |
+| Concern | AetherEdge before this slice | AetherCloud reference | Candidate resolution |
 |---|---|---|---|
 | Wire package | Unversioned legacy JSON | Strict TypeScript codec/ingress | Byte-identical alpha.3 schemas/fixtures and matching Rust/TypeScript vocabulary |
 | Delivery removal | After local `AsyncClient::publish` acceptance | ADR requires durable application ACK; memory foundations only | Dedicated spool removes only after validated durable ACK |
