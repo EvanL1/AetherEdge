@@ -79,6 +79,7 @@ locales/zh-CN/guides/writing-rules.md
 locales/zh-CN/index.md
 locales/zh-CN/migration/aetheriot-to-aetheredge.md
 locales/zh-CN/overview/deployment-topologies.md
+locales/zh-CN/overview/ai-native-platform.md
 locales/zh-CN/overview/platform.md
 locales/zh-CN/overview/user-journeys.md
 locales/zh-CN/reference/cli.md

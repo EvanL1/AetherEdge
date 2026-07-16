@@ -1,14 +1,15 @@
 # AetherIoT platform overview
 
-AetherIoT is the open-source project identity for a family of interoperable,
-edge-first IoT products. It is not a fourth runtime and does not own a separate
-wire protocol.
+AetherIoT is the open-source, AI-native project identity for a family of
+interoperable products that turn human intent into governed, verifiable
+behavior across physical spaces. It is not a fourth runtime and does not own a
+separate wire protocol.
 
 ```text
 AetherIoT
-├── AetherEdge       edge runtime, Kernel, CLI, and SDK
-├── AetherCloud      cloud fusion and governed control plane
-└── AetherContracts  public specifications, Schemas, fixtures, and TCK
+├── AetherEdge       deterministic edge runtime, Kernel, CLI, and SDK
+├── AetherCloud      evolving agent, fusion, and governed control plane
+└── AetherContracts  typed specifications, Schemas, fixtures, and TCK
 
 AetherEMS            energy-management solution built on the platform
 ```
@@ -21,6 +22,14 @@ AetherEMS            energy-management solution built on the platform
 | AetherCloud | Desired placement, governed cloud jobs, tenant control-plane state, and multi-cloud coordination | Edge live-state authority or provider-native actual state |
 | AetherContracts | Language-neutral protocol semantics, closed Schemas, fixtures, stable failure classes, and executable conformance evidence | Product runtime behavior, credentials, cloud durability, or deployment policy |
 | AetherEMS | Energy-domain models, workflows, and solution experience | The industry-neutral platform core |
+
+The long-term product experience starts with conversation rather than a fixed
+configuration UI: a user describes an outcome, an agent discovers available
+capabilities, generates a governed proposal, and commissions deterministic edge
+behavior. The complete end-user agent lifecycle is planned; the current beta
+provides the runtime, application, documentation, MCP, contract, and cloud-side
+foundations it requires. See the [AI-native platform](ai-native-platform.md)
+for the exact boundary.
 
 Every infrastructure provider remains authoritative for the actual existence
 and provider-native state of its resources. Cloud failure must not stop a
@@ -46,6 +55,7 @@ of truth for its implementation details, while AetherContracts remains the sole
 authority for shared protocol behavior. The unified pages link to those sources
 instead of copying normative content into a second authority.
 
-Continue with [deployment topologies](deployment-topologies.md),
+Continue with the [AI-native platform](ai-native-platform.md),
+[deployment topologies](deployment-topologies.md),
 [user journeys](user-journeys.md), or the
 [Edge to Contracts to Cloud tutorial](../tutorials/edge-contracts-cloud.md).

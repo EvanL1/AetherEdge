@@ -1,19 +1,19 @@
 ---
-title: "AetherContracts 产品总览"
-description: "AetherContracts 是 AetherEdge、AetherCloud 和独立实现的公共、语言中立的互操作性权威。"
+title: "AetherContracts 产品概览"
+description: "AetherContracts 是 AetherEdge、AetherCloud 与独立实现共同使用的语言中立互操作权威。"
 updated: 2026-07-16
 ---
 
-# AetherContracts 产品总览
+# AetherContracts 产品概览
 
-AetherContracts 是 AetherEdge、AetherCloud 和独立实现的公共、语言中立的互操作性权威。
+AetherContracts 是 AetherEdge、AetherCloud 与独立实现共同使用的语言中立互操作权威。规范定义语义，JSON Schema Draft 2020-12 定义结构，测试夹具固定可观察示例，黑盒 TCK 提供可执行一致性证据。产品仓库中的副本或语言绑定都不能成为第二套事实来源。
 
-规范定义行为，JSON Schema 草案 2020-12 定义结构接受、测试夹具引脚可观察示例和黑盒 TCK提供可执行的证据。产品本地副本或语言绑定永远不会成为第二个事实来源。
+在 AI 原生架构中，AetherContracts 负责让智能体只能引用真实存在、带版本且可以验证的能力。当前版本提供 Thing Model 与 CloudLink 基础；未来如果增加意图、方案、策略或自动化契约，也必须先完成规范、Schema、测试夹具和 TCK，不能依靠提示词自行约定。
 
 ## 当前版本
 
-`v0.1.0-alpha.3` 冻结了实验性 CloudLink 线/轮廓/TCK 表面，并提供 TypeScript、Rust、C 和 C++ 夹具绑定。它不是生产 CloudLink 切换版本。
+`v0.1.0-alpha.3` 冻结了实验性 CloudLink 线格式、配置档和 TCK，并提供 TypeScript、Rust、C 与 C++ 测试夹具绑定。它不是生产 CloudLink 切换版本，也不包含完整的智能体意图编译契约。
 
-该版本在签名和摘要固定的工件中保留了历史 AetherIot 消费者名称。在仓库重命名为 AetherEdge 后，这些字节保持不变。后续版本可能会更新产品显示名称而不更改协议标识符。
+这个版本在已经签名和摘要锁定的制品中保留历史 AetherIot 消费者名称。仓库改名为 AetherEdge 后，这些历史字节仍保持不变；后续版本可以更新显示名称，但不能随意更改协议标识。
 
-阅读[AetherContracts 仓库](https://github.com/EvanL1/AetherContracts)、[兼容性矩阵](/compatibility/version-matrix) 和[Edge to Contracts to Cloud 教程](/tutorials/edge-contracts-cloud)。
+继续阅读 [AI 原生平台](/overview/ai-native-platform/)、[AetherContracts 快速开始](/aethercontracts/getting-started/)、[兼容性矩阵](/compatibility/version-matrix/)和[边缘、契约与云端联动教程](/tutorials/edge-contracts-cloud/)。

@@ -1,7 +1,7 @@
 # AetherEdge
 
-> Build reliable edge IoT applications with AI on an industry-neutral,
-> deterministic Rust runtime.
+> Build the deterministic edge foundation for agents to turn human intent into
+> governed, verifiable physical behavior.
 > Multi-protocol device acquisition, a sub-millisecond shared-memory data
 > plane, isolated runtime processes, and an MCP server let AI agents query and
 > (with explicit authorization) operate the system. Energy management is an
@@ -11,6 +11,9 @@ AetherEdge is the edge product in the AetherIoT platform. It is headless and pub
 contracts, an Agent Skill, MCP tools/resources, and online Markdown so AI
 agents can build fit-for-purpose clients without turning a Web UI into a
 second authority. AetherEMS is the independent official energy distribution.
+The complete end-user conversational agent, intent compiler, simulation, and
+continuous-adaptation loop remain product direction rather than shipped beta
+capabilities.
 
 For Data Processing, `as_of` is an event-time frame bound. The current SQLite
 history has no ingestion/source epoch and artifact provenance has no
@@ -26,6 +29,7 @@ read-only historian directory/identity for `aether-api`; the base
 
 - [Canonical Agent Instructions](AGENTS.md): Architecture boundaries, safety rules, Rust conventions, and verification commands
 - [AetherIoT Platform Overview](docs/overview/platform.md): Product family, authority boundaries, and naming rules
+- [AI-native Platform](docs/overview/ai-native-platform.md): Human intent, governed generation, deterministic execution, and the boundary between current foundations and planned end-user experience
 - [AetherEdge Agent Skill](skills/aether-iot/SKILL.md): Contract-first workflow for onboarding, SDK integrations, generated applications, and governed commands
 - [AetherIoT to AetherEdge Migration](docs/migration/aetheriot-to-aetheredge.md): Repository rename, stable identifiers, rollout, and rollback
 - [Product Compatibility](docs/compatibility/version-matrix.md): Tested Edge, Contracts, and Cloud combinations

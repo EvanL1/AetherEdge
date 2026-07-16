@@ -8,13 +8,17 @@
 
 **文档网站：** [docs.aetheriot.workers.dev](https://docs.aetheriot.workers.dev/)
 
-[快速开始](docs/guides/getting-started.md) · [在线文档](https://docs.aetheriot.workers.dev/) · [Agent Skill](skills/aether-iot/SKILL.md) · [MCP](docs/guides/ai-assistants.md) · [English](README.md)
+[AI 原生平台](https://docs.aetheriot.workers.dev/overview/ai-native-platform/) · [快速开始](docs/guides/getting-started.md) · [在线文档](https://docs.aetheriot.workers.dev/) · [Agent Skill](skills/aether-iot/SKILL.md) · [MCP](docs/guides/ai-assistants.md) · [English](README.md)
 
-**用 AI 构建可靠的边缘 IoT 应用。**
+**面向智能体配置物理世界的确定性边缘运行时。**
 
 AetherEdge 是开源、行业中立的 Linux 网关 IoT Edge Kernel、Runtime 与 Rust SDK。它连接
 现场设备，以共享内存保存权威实时状态，在本地确定性地执行规则与告警，并保存嵌入式历史；
 默认运行不依赖 Redis、PostgreSQL、云服务、浏览器或 LLM。
+
+AetherIoT 的产品方向是让用户通过对话描述想要的结果，不必在固定配置页面中编排设备编号、
+触发器、条件和动作。智能体发现类型化能力、生成受治理方案并完成行为投运；AetherEdge 在本地
+执行已经接受的行为，执行过程不依赖模型。
 
 AetherEdge 是 [AetherIoT 平台](docs/overview/platform.md)的边缘产品，与
 [AetherCloud](https://github.com/EvanL1/AetherCloud) 和
@@ -28,6 +32,23 @@ AI 是 AetherEdge 的客户端，不进入硬实时闭环。Agent、CLI、生成
 > **Beta：** AetherEdge 是行业中立的 Kernel、Runtime 与 SDK。现有 crate、二进制、CLI 和
 > 部分兼容产物仍使用 `aether-*` / `aether` 名称。官方能源管理实现位于独立的
 > [AetherEMS](https://github.com/EvanL1/AetherEMS) 仓库。
+
+## AI 原生产品方向
+
+完整的最终用户对话智能体尚未作为当前测试版交付。AetherEdge 已经提供它所需要的基础：
+运行时与 Pack 发现、面向智能体的文档、OpenAPI、MCP 工具与资源、受治理命令、带版本配置、
+审计证据和确定性本地执行。
+
+```text
+人的意图 -> 智能体方案 -> 类型化契约 -> 策略检查与必要确认
+         -> 行为投运 -> 边缘确定性执行
+         -> 观察、解释与受治理修订
+```
+
+未来的意图、方案、仿真、有效期和持续调整能力必须通过明确的应用接口与 AetherContracts 契约
+提供。智能体不能编造设备能力、直接写入 SHM 或 SQLite、绕过确认，或者成为隐藏的第二配置
+权威。具体边界见 [AI 原生平台](https://docs.aetheriot.workers.dev/overview/ai-native-platform/)和
+[平台状态](https://docs.aetheriot.workers.dev/roadmap/status/)。
 
 ## 安装 AetherEdge
 
@@ -87,11 +108,14 @@ claude mcp add aether -- aether mcp
 - **Domain Pack**：行业知识、模型、mapping、规则和处理声明可以叠加在 Kernel 之上，而不
   成为核心依赖。
 
-## 默认无头
+## 对话优先，默认无头
 
 AetherEdge 不交付一个固定的通用 Web Console。固定 Dashboard 无法表达所有行业 Pack，浏览器
 也不能成为第二套配置权威。AetherEdge 交付的是生成或维护专用应用所需的契约、Agent Skill 和
 开发规范。
+
+长期配置体验以对话为主：用户描述期望结果，智能体生成可检查、带版本的变更。重要变更仍可以
+按需生成摘要、风险说明、仿真或确认内容；这些内容只负责解释变更，不拥有配置权威。
 
 UI 是下游客户端和参考实现：它只消费公开 application API，可被替换，不能直接访问 SHM、
 SQLite 或内部服务。可选的 AetherEMS Console 是这种模式下的一个能源领域实现。
@@ -170,6 +194,7 @@ Broker harness、Cloud batch-position 应用模型和 durable Cloud store 仍未
 ## 文档
 
 - [Agent Quickstart](https://docs.aetheriot.workers.dev/agent-quickstart/)
+- [AI 原生平台](https://docs.aetheriot.workers.dev/overview/ai-native-platform/)
 - [使用 AI 构建应用](docs/guides/build-applications-with-ai.md)
 - [连接 AI 助手](docs/guides/ai-assistants.md)
 - [连接设备](docs/guides/connect-devices.md)

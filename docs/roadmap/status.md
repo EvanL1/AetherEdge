@@ -3,6 +3,23 @@
 Status is reported separately for implemented, experimental, and planned
 capabilities. Product names do not upgrade technical readiness.
 
+## AI-native end-user experience
+
+**Implemented foundations:** agent-readable Markdown and indexes, an Agent
+Skill, runtime capability discovery, OpenAPI, governed application commands,
+AetherEdge MCP tools/resources, deterministic local rules, audit evidence, and
+the public contract/conformance repositories.
+
+**Experimental or partial:** AetherCloud's transport-neutral MCP application
+interface, desired/reported/applied deployment, governed jobs, CloudLink,
+telemetry persistence, and Edge/Cloud development harnesses.
+
+**Planned:** the household or site semantic context, conversational end-user
+agent, typed intent/proposal/policy contracts, intent-to-automation compiler,
+historical simulation, generated confirmation experience, temporary behavior
+expiry, outcome evaluation, and continuous governed adaptation. No current
+release should present these as a complete product.
+
 ## AetherEdge
 
 **Implemented:** six-service runtime, SHM live-state authority, embedded local
@@ -44,6 +61,6 @@ ACK, complete production codecs, and a production CloudLink cutover release.
 deployment topologies, user journeys, end-to-end alpha tutorial, compatibility
 matrix, status page, and AetherIot to AetherEdge migration guide.
 
-**Planned:** custom `aetheriot.dev` and `docs.aetheriot.dev` domains, automated
+**Planned:** automated
 cross-repository version aggregation, release-channel status feeds, and a
 future GitHub organization when an appropriate address is available.

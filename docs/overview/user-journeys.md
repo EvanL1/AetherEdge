@@ -3,6 +3,25 @@
 Choose the shortest path that matches your role. All write paths remain governed
 and deny by default.
 
+## Describe a physical-space outcome to an agent
+
+The complete end-user conversation lifecycle remains product direction. The
+available beta foundation supports a narrower, explicit workflow:
+
+1. Connect an agent to the documentation and the default read-only MCP surface.
+2. Ask it to inspect the runtime, active Pack, live capabilities, and current
+   state before proposing a change.
+3. Review which parts of the request map to implemented queries or governed
+   commands and which parts are still unavailable.
+4. Enable a bounded write session only for a specific task, preserve its
+   confirmation and audit evidence, and return to read-only afterward.
+5. Ask the agent to explain the observed outcome or reverse the versioned
+   change rather than editing SHM, SQLite, or internal services.
+
+Future releases will add typed intent/proposal contracts, simulation, temporary
+behavior with expiry, and continuous outcome evaluation. See the
+[AI-native platform](ai-native-platform.md) for that target lifecycle.
+
 ## Evaluate a local edge runtime
 
 1. Open the [AetherEdge overview](../aetheredge/index.md).
@@ -10,7 +29,7 @@ and deny by default.
 3. Inspect runtime health and the machine-readable manifest.
 4. Add a protocol adapter and domain Pack only when the application requires it.
 
-## Build an edge application
+## Build an agent-generated edge application
 
 1. Generate clients from the running AetherEdge OpenAPI contract.
 2. Start read-only and preserve quality, freshness, topology generation, and

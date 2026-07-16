@@ -1,13 +1,13 @@
 ---
 title: AetherIoT
-description: Open-source edge, cloud, and interoperability building blocks for reliable IoT systems.
+description: The open-source, AI-native runtime foundation for governed behavior across physical spaces.
 template: splash
 hero:
   title: AetherIoT
-  tagline: Edge authority, cloud coordination, and open contracts.
+  tagline: Describe the outcome. Let agents generate governed behavior.
   actions:
-    - text: Explore the platform
-      link: /en/overview/platform/
+    - text: Explore the AI-native platform
+      link: /en/overview/ai-native-platform/
       icon: right-arrow
     - text: Start with AetherEdge
       link: /en/aetheredge/
@@ -15,7 +15,14 @@ hero:
       icon: open-book
 ---
 
-AetherIoT is the open-source project for AetherEdge, AetherCloud, and
+AetherIoT is the open-source, AI-native runtime foundation for agents to turn
+human intent into governed, verifiable behavior across physical spaces. The
+current beta provides deterministic edge execution, typed application
+boundaries, public contracts, agent-readable documentation, and cloud-side
+foundations. The complete end-user conversational lifecycle remains product
+direction.
+
+AetherIoT is the shared project for AetherEdge, AetherCloud, and
 AetherContracts. AetherEMS is an energy-management solution built on the
 platform rather than part of its industry-neutral core.
 
@@ -28,7 +35,8 @@ Start with the product that owns your task:
 - [AetherContracts](/en/aethercontracts/) defines the shared protocol, Schemas,
   fixtures, and TCK.
 
-- Understand boundaries at [Platform Overview](/en/overview/platform/).
+- Start with the [AI-native platform](/en/overview/ai-native-platform/) and
+  continue to [Platform Overview](/en/overview/platform/).
 - Follow the complete [Edge to Contracts to Cloud tutorial](/en/tutorials/edge-contracts-cloud/).
 - Select tested versions in [Compatibility](/en/compatibility/version-matrix/).
 - Distinguish shipped and planned work at [Status and Roadmap](/en/roadmap/status/).

@@ -1,34 +1,38 @@
 ---
 title: "AetherIoT 中文文档"
-description: "用于可靠物联网系统的开源边缘、云和互操作性构建块。"
+description: "面向物理空间的开源 AI 原生运行平台，让智能体把人的意图转化为受治理、可验证的现实行为。"
 template: splash
 hero:
   title: AetherIoT
-  tagline: Edge authority, cloud coordination, and open contracts.
+  tagline: 用语言描述目标，让智能体生成受治理的现实行为。
   actions:
-    - text: Explore the platform
-      link: /overview/platform/
+    - text: 了解 AI 原生平台
+      link: /overview/ai-native-platform/
       icon: right-arrow
-    - text: Start with AetherEdge
+    - text: 从 AetherEdge 开始
       link: /aetheredge/
       variant: minimal
       icon: open-book
 ---
 
-AetherIoT 是 AetherEdge、AetherCloud 和 AetherContracts 的开源项目。 AetherEMS 是构建在平台上的能源管理解决方案，而不是其行业中立核心的一部分。
+AetherIoT 是面向物理空间的开源 AI 原生运行平台，让智能体把人的意图转化为受治理、可验证、可回滚的现实行为。
+
+当前测试版已经提供确定性的边缘运行时、类型化应用边界、公开契约、面向智能体的文档，以及云端领域与应用基础。面向最终用户的完整对话配置、仿真和持续调整闭环仍在开发中，不能当作已经交付的功能。
+
+AetherIoT 是 AetherEdge、AetherCloud 和 AetherContracts 的共同项目。AetherEMS 是构建在平台上的能源管理解决方案，不属于行业中立的核心产品。
 
 从负责您任务的产品开始：
 
-- [AetherEdge](/aetheredge/) 运行数据采集、确定性行为、本地历史记录，并负责最终的物理执行。
-- [AetherCloud](/aethercloud/) 协调期望状态、受管作业和云提供商原生资源。
-- [AetherContracts](/aethercontracts/) 定义共享协议、Schema、夹具和 TCK。
+- [AetherEdge](/aetheredge/) 掌握实时状态，并确定性地执行已经投运的行为。
+- [AetherCloud](/aethercloud/) 承载逐步演进的智能体上下文、期望状态、受治理作业和多云协调能力。
+- [AetherContracts](/aethercontracts/) 定义类型化能力、共享协议、Schema、测试夹具和 TCK。
 
-- 通过[平台概览](/overview/platform/)了解产品边界。
+- 先阅读 [AI 原生平台](/overview/ai-native-platform/)，再通过[平台概览](/overview/platform/)了解产品边界。
 - 按照完整的[边缘、协议与云端联动教程](/tutorials/edge-contracts-cloud/)完成端到端接入。
 - 在[兼容性矩阵](/compatibility/version-matrix/)中选择经过验证的版本组合。
 - 在[状态与路线图](/roadmap/status/)中区分已实现、实验性和规划中的能力。
-- 按照[智能体快速入门](/agent-quickstart/)安装边缘运行时。
+- 按照[智能体快速入门](/agent-quickstart/)安装边缘运行时并连接只读能力。
 - 通过 [`/llms.txt`](https://docs.aetheriot.workers.dev/llms.txt) 查找全部中文文档。
 - 通过 [`/llms-full.txt`](https://docs.aetheriot.workers.dev/llms-full.txt) 获取完整中文语料。
 
-浏览器接收呈现的文档站点。代理可以将 `.md` 附加到任何文档 URL 或发送 `Accept: text/markdown` 以直接检索 Markdown 源。产品仓库仍然对实现细节具有权威性，并且 AetherContracts 仍然是唯一的共享协议权威。
+浏览器访问时会得到渲染后的文档页面。智能体可以在任意文档地址后添加 `.md`，或者发送 `Accept: text/markdown` 请求头，直接获取 Markdown 原文。各产品仓库仍是实现细节的权威来源，AetherContracts 仍是共享协议的唯一权威来源。

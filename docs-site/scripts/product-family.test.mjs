@@ -13,11 +13,12 @@ describe('AetherIoT product-family documentation', () => {
   it('defines one umbrella project and three core products', () => {
     const overview = read('docs/overview/platform.md');
 
-    expect(overview).toContain('AetherIoT is the open-source project identity');
-    expect(overview).toContain('AetherEdge       edge runtime');
-    expect(overview).toContain('AetherCloud      cloud fusion');
-    expect(overview).toContain('AetherContracts  public specifications');
+    expect(overview).toContain('AetherIoT is the open-source, AI-native project identity');
+    expect(overview).toContain('AetherEdge       deterministic edge runtime');
+    expect(overview).toContain('AetherCloud      evolving agent, fusion');
+    expect(overview).toContain('AetherContracts  typed specifications');
     expect(overview).toContain('AetherEMS            energy-management solution');
+    expect(overview).toContain('[AI-native platform](ai-native-platform.md)');
   });
 
   it('pins a tested compatibility baseline without claiming production CloudLink', () => {
@@ -73,14 +74,13 @@ describe('AetherIoT product-family documentation', () => {
     expect(config).toContain("directory: 'aethercontracts/packages'");
   });
 
-  it('keeps pagination page names compact and subordinate to document headings', () => {
+  it('makes pagination direction labels primary and keeps page names compact', () => {
     const config = read('docs-site/astro.config.mjs');
     const styles = read('docs-site/src/styles/custom.css');
 
     expect(config).toContain("customCss: ['./src/styles/custom.css']");
-    expect(styles).toMatch(
-      /\.pagination-links \.link-title[\s\S]*font-size:\s*clamp\(1rem, 0\.9rem \+ 0\.25vw, 1\.15rem\)/
-    );
+    expect(styles).toMatch(/\.pagination-links a > span[\s\S]*font-size:\s*1rem/);
+    expect(styles).toMatch(/\.pagination-links \.link-title[\s\S]*font-size:\s*0\.9375rem/);
     expect(styles).toContain('text-wrap: balance');
     expect(styles).not.toContain('var(--sl-text-2xl)');
   });

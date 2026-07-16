@@ -25,6 +25,11 @@ export default defineConfig({
           translations: { 'zh-CN': '概览' },
           items: [
             {
+              label: 'AI-native Platform',
+              translations: { 'zh-CN': '智能原生平台' },
+              slug: 'overview/ai-native-platform',
+            },
+            {
               label: 'Platform',
               translations: { 'zh-CN': '平台' },
               slug: 'overview/platform',

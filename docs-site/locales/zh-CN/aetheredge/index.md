@@ -1,30 +1,34 @@
 ---
-title: "AetherEdge 产品总览"
-description: "AetherEdge 是开源、行业中立的 Linux 边缘运行时、内核、CLI 和 Rust SDK，以前以 AetherIot 仓库名称发布。"
+title: "AetherEdge 产品概览"
+description: "AetherEdge 是 AetherIoT 的确定性边缘运行时、内核、CLI 和 Rust SDK，负责实时状态与最终物理执行。"
 updated: 2026-07-16
 ---
 
-# AetherEdge 产品总览
+# AetherEdge 产品概览
 
-AetherEdge 是开源、行业中立的 Linux 边缘运行时、内核、CLI 和 Rust SDK，以前以 AetherIot 仓库名称发布。
+AetherEdge 是 AetherIoT 的确定性边缘运行时。它连接现场设备，掌握实时状态，在本地运行已经投运的规则、告警和历史记录，并负责最终物理执行。
 
-## 今天实施
+在 AI 原生架构中，智能体通过公开能力发现、查询和受治理命令与 AetherEdge 交互。模型不进入数据采集、安全联锁或硬实时闭环；即使智能体、云端或互联网不可用，已经投运的行为仍然继续运行。
 
-- 六个独立的运行时服务，用于采集、自动化、警报、历史记录、应用程序API 和上行链路。
-- 当前点和运行状况的共享内存权限。
-- 嵌入式 SQLite 所需状态、历史记录、审核和持久本地发件箱。
-- `aether` CLI、受控 HTTP 和 MCP 应用程序边界、域包和`aether-edge-sdk` 外观。
-- 已签名的 `v0.5.0` 源代码、运行时、安装程序和 CLI 版本。
+## 已经实现
 
-## 今天处于实验阶段
+- 六个独立运行时服务，负责数据采集、自动化、告警、历史、应用接口和上行链路。
+- 以共享内存作为实时点与健康状态权威。
+- 使用嵌入式 SQLite 保存期望状态、历史、审计和持久本地发件箱。
+- `aether` CLI、受治理 HTTP 与 MCP 应用边界、领域 Pack 和 `aether-edge-sdk`。
+- 已签名的 `v0.5.0` 源码、运行时、安装包和 CLI 发行制品。
 
-- 代理中立的 CloudLink MQTT v1 会话、遥测、重播和应用程序确认持久队列。
-- 摘要固定的 AetherContracts `v0.1.0-alpha.3` 消耗和公共装置执行。
+## 实验性能力
 
-实验 CloudLink 证据无法建立生产身份验证、签名确认或端到端崩溃持久性。旧版 MQTT 保留兼容性默认值。
+- 与 Broker 厂商无关的 CloudLink MQTT v1 会话、遥测、重放和应用确认持久队列。
+- 通过摘要锁定的 AetherContracts `v0.1.0-alpha.3` 消费与公开测试夹具执行。
 
-## 稳定的兼容性名称
+这些实验证据不能证明生产认证、签名确认或端到端崩溃持久性，旧版 MQTT 仍是兼容默认路径。
 
-仓库显示名称更改为 AetherEdge。现有包名称、二进制名称、`aether`、CLI、`aether-edge-sdk`、配置密钥、服务标识、安装程序名称和协议标识符在此迁移中不会更改。
+## 尚未完成
 
-从[代理快速入门](/agent-quickstart)、[入门](/guides/getting-started) 或[迁移] 开始指南](/migration/aetheriot-to-aetheredge)。
+最终用户对话智能体、意图到自动化编译、历史仿真和持续效果调整不属于当前 AetherEdge 测试版。AetherEdge 提供的是这些能力未来安全落地所需要的确定性执行基础。
+
+仓库显示名称已经改为 AetherEdge。现有 crate、二进制、`aether` CLI、`aether-edge-sdk`、配置键、服务标识、安装包和协议标识在本次迁移中保持稳定。
+
+从 [AI 原生平台](/overview/ai-native-platform/)、[智能体快速入门](/agent-quickstart/)或[快速开始](/guides/getting-started/)继续。

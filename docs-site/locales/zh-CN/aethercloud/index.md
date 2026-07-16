@@ -1,25 +1,27 @@
 ---
-title: "AetherCloud 产品总览"
-description: "AetherCloud 是适用于 AetherEdge 运行时和云端工作负载的 AI 原生、行业中立、多云 IoT 融合和控制平面。这是一个…"
+title: "AetherCloud 产品概览"
+description: "AetherCloud 是逐步演进的智能体、多云融合与受治理控制平面，不是边缘运行时的托管副本。"
 updated: 2026-07-16
 ---
 
-# AetherCloud 产品总览
+# AetherCloud 产品概览
 
-AetherCloud 是适用于 AetherEdge 运行时和云端工作负载的 AI 原生、行业中立、多云 IoT 融合和控制平面。它是一个单独的产品，而不是边缘运行时的托管副本。
+AetherCloud 是逐步演进的智能体、多云融合与受治理控制平面。它面向 AetherEdge 节点和云端工作负载，未来负责长期上下文、期望状态、受治理作业、集成和多云协调，但不直接拥有实时物理状态。
 
-## 实现了基础
+AetherEdge 继续负责数据采集、确定性规则、安全联锁和最终物理执行。云端故障不能停止已经投运的边缘行为。
 
-- 通过功能驱动的适配器进行与提供商无关的发现和受管基础设施规划。
-- 具有锁定和进程安全证据的仅规划 OpenTofu 基础设施引擎。
-- 网关身份和注册、CloudLink 会话和运行时清单应用程序
-- 网关的部分 PostgreSQL 持久性和接受的遥测事实，包括持久的确认发件箱证据。
-- 部分工件、部署、受治理的作业、审计、集成、可观察性和传输中立的 MCP 应用程序切片。
+## 已经实现的基础
 
-## 仍计划用于生产
+- 能力驱动的提供方发现与受治理基础设施规划。
+- 带锁定和进程安全证据的仅规划 OpenTofu 基础设施引擎。
+- 网关身份与注册、CloudLink 会话和运行时清单应用基础。
+- 网关和已接受遥测事实的部分 PostgreSQL 持久化，包括持久确认发件箱证据。
+- 部分制品、部署、受治理作业、审计、集成、可观测性和传输中立 MCP 应用切片。
 
-生产身份和凭证生命周期，公共CloudLink 组合、完整的崩溃持久性、多样本映射、生产数据库组合、工作进程、强化的外向交付以及可连接的 MCP 服务器仍处于规划或门控状态。
+## 仍在规划或受门槛限制
 
-AetherCloud 拥有所需的布局。提供商拥有其实际资源。 AetherEdge 仍然对实时点状态和最终物理执行具有权威性。
+面向最终用户的对话智能体、站点语义上下文、意图编译与持续调整闭环尚未完成。生产身份与凭证生命周期、公开 CloudLink 组合、完整崩溃持久性、生产数据库组合、工作进程、强化的外发交付和可连接的 MCP 服务器也仍在规划或受发行门槛限制。
 
-阅读[AetherCloud 仓库](https://github.com/EvanL1/AetherCloud)、[平台概述](/overview/platform) 和[状态页面](/roadmap/status)。
+AetherCloud 管理期望状态，基础设施提供方管理其实际资源，AetherEdge 管理实时点状态与最终物理执行。
+
+继续阅读 [AI 原生平台](/overview/ai-native-platform/)、[AetherCloud 架构](/aethercloud/concepts/architecture/)和[平台状态](/roadmap/status/)。

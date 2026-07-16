@@ -11,6 +11,13 @@ contracts an AI agent needs to build a site-specific application. A generated We
 CLI, or backend is a replaceable client: it is never part of the live-state, desired-state, or
 safety authority.
 
+This is one available foundation for AetherIoT's broader AI-native direction:
+people describe outcomes, agents discover the physical space and generate
+governed changes, contracts make those changes inspectable, and AetherEdge
+executes commissioned behavior without the model. The complete end-user
+conversation, simulation, and continuous-adaptation lifecycle is not yet a
+shipped product. See [AI-native platform](../overview/ai-native-platform.md).
+
 This guide defines the development method shared by reference applications and downstream products.
 
 ## Optional Agent Skill
@@ -70,6 +77,11 @@ Before generating code, the agent should produce a short capability inventory:
 
 A missing public query is an application-boundary gap. It is not permission to expose an internal
 service port, scrape SQLite, attach to SHM, or invent an endpoint.
+
+The same rule applies to conversational configuration. If the runtime does not
+declare a capability, the agent must report the gap. It cannot fabricate a
+device feature, silently approximate a policy, or convert natural-language
+confidence into physical authority.
 
 ## Keep one remote boundary
 

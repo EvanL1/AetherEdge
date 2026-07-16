@@ -8,14 +8,19 @@
 
 **Documentation website:** [docs.aetheriot.workers.dev](https://docs.aetheriot.workers.dev/)
 
-[Get started](docs/guides/getting-started.md) · [Documentation](https://docs.aetheriot.workers.dev/) · [Agent Skill](skills/aether-iot/SKILL.md) · [MCP](docs/guides/ai-assistants.md) · [中文](README-CN.md)
+[AI-native platform](docs/overview/ai-native-platform.md) · [Get started](docs/guides/getting-started.md) · [Documentation](https://docs.aetheriot.workers.dev/) · [Agent Skill](skills/aether-iot/SKILL.md) · [MCP](docs/guides/ai-assistants.md) · [中文](README-CN.md)
 
-**Build reliable edge IoT applications with AI.**
+**The deterministic edge runtime for an agent-configured physical world.**
 
 AetherEdge is an open-source, industry-neutral IoT edge kernel, runtime, and Rust SDK for Linux
 gateways. It connects field devices, keeps authoritative live state in shared memory, runs
 deterministic local rules and alarms, and stores embedded history without requiring Redis,
 PostgreSQL, a cloud service, a browser, or an LLM.
+
+AetherIoT's product direction is to let people describe outcomes in conversation instead of
+programming device identifiers, triggers, conditions, and actions through fixed configuration
+screens. Agents discover typed capabilities, generate governed proposals, and commission behavior;
+AetherEdge executes the accepted behavior locally without the model.
 
 AetherEdge is the edge product in the [AetherIoT platform](docs/overview/platform.md), alongside
 [AetherCloud](https://github.com/EvanL1/AetherCloud) and
@@ -30,6 +35,27 @@ deny-by-default, explicitly confirmed, and audited.
 > **Beta:** AetherEdge is the industry-neutral Kernel, Runtime, and SDK. Existing crates, binaries,
 > the CLI, and some compatibility artifacts retain their `aether-*` / `aether` names. The official
 > energy-management implementation lives in [AetherEMS](https://github.com/EvanL1/AetherEMS).
+
+## AI-native product direction
+
+The complete end-user conversational agent is not shipped in the current beta. AetherEdge provides
+the foundations it requires today: runtime and Pack discovery, agent-readable documentation,
+OpenAPI, MCP tools and resources, governed commands, revisioned configuration, audit evidence, and
+deterministic local execution.
+
+The planned platform lifecycle is:
+
+```text
+human intent -> agent proposal -> typed contracts -> policy and confirmation
+             -> commissioned behavior -> deterministic edge execution
+             -> observation, explanation, and governed revision
+```
+
+Future intent, proposal, simulation, expiry, and continuous-adaptation capabilities must be added
+as explicit application and AetherContracts surfaces. An agent cannot fabricate a device feature,
+write SHM or SQLite, bypass confirmation, or become a hidden second configuration authority. See
+the [AI-native platform](docs/overview/ai-native-platform.md) and
+[platform status](docs/roadmap/status.md) for the delivery boundary.
 
 ## Install AetherEdge
 
@@ -94,12 +120,17 @@ runtime setup.
 - **Domain Packs** — industry knowledge, models, mappings, rules, and processing declarations layer
   over the kernel without becoming core dependencies.
 
-## Headless by design
+## Conversation-first, headless by design
 
 AetherEdge does not ship a generic Web Console. A fixed dashboard cannot express every industry
 Pack, and a browser must never become a second configuration authority. Instead, AetherEdge ships
 the contracts, Agent Skill, and development guidance needed to generate or maintain fit-for-purpose
 applications.
+
+The long-term configuration experience is conversation-first: users describe the result they want,
+while an agent generates an inspectable, versioned change. Consequential changes may still produce
+an on-demand summary, risk explanation, simulation, or confirmation surface. Those generated views
+explain a change; they do not own it.
 
 User interfaces are downstream clients and reference implementations. They consume published
 application APIs, remain replaceable, and receive no direct SHM, SQLite, or internal-service
@@ -190,6 +221,7 @@ authority is defined by [ADR-0018](docs/adr/0018-pinned-aethercontracts-consumpt
 ## Documentation
 
 - [Agent Quickstart](https://docs.aetheriot.workers.dev/agent-quickstart/)
+- [AI-native Platform](docs/overview/ai-native-platform.md)
 - [Build Applications with AI](docs/guides/build-applications-with-ai.md)
 - [Connect AI Assistants](docs/guides/ai-assistants.md)
 - [Connect Devices](docs/guides/connect-devices.md)

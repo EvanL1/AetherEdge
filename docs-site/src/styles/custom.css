@@ -5,7 +5,8 @@
 
 .pagination-links a > span {
   color: var(--sl-color-gray-3);
-  font-size: var(--sl-text-sm);
+  font-size: 1rem;
+  font-weight: 650;
   line-height: 1.35;
 }
 
@@ -13,8 +14,8 @@
   display: inline-block;
   margin-top: 0.35rem;
   color: var(--sl-color-white);
-  font-size: clamp(1rem, 0.9rem + 0.25vw, 1.15rem);
-  font-weight: 600;
+  font-size: 0.9375rem;
+  font-weight: 500;
   line-height: 1.4;
   text-wrap: balance;
 }
