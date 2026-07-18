@@ -1,0 +1,17 @@
+{
+  "schema": "aether.cloudlink.durable-ack.v1",
+  "protocol": "aether.cloudlink",
+  "protocol_version": "1.0",
+  "message_kind": "durable-ack",
+  "gateway_id": "33333333-3333-4333-8333-333333333333",
+  "session_id": "44444444-4444-4444-8444-444444444444",
+  "session_epoch": "7",
+  "credential_generation": "3",
+  "stream_id": "integration-topology-home",
+  "stream_epoch": "1",
+  "acknowledged_position": "1",
+  "batch_id": "topology-1",
+  "digest": "sha256:32193a4724adc86e721802aca209e68438b7baf433b2f6c01565c0a82767f146",
+  "receipt_id": "receipt-integration-topology-1",
+  "acknowledged_at_ms": "1784217600200"
+}

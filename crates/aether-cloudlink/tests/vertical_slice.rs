@@ -1,8 +1,8 @@
 use std::path::Path;
 
 use aether_cloudlink::{
-    CandidateMessage, CloudLinkCodec, HeartbeatMessage, MessageAuthentication, SessionBinding,
-    SessionHello, TopologyBinding,
+    CandidateMessage, CloudLinkCodec, GatewaySessionAuthenticator, HeartbeatMessage,
+    MessageAuthentication, SessionBinding, SessionHello, TopologyBinding, UplinkAuthentication,
 };
 use aether_domain::{
     InstanceId, PointAddress, PointId, PointKind, PointQuality, PointSample, TimestampMs,
@@ -13,10 +13,21 @@ use aether_ports::{
 };
 use aether_store_local::MemoryCloudLinkSpool;
 use aether_testkit::MemoryCloudLinkTransport;
+use ed25519_dalek::SigningKey;
 use serde_json::{Value, json};
 
 #[tokio::test]
 async fn deterministic_edge_slice_negotiates_reports_and_replays_until_application_ack() {
+    let authentication = GatewaySessionAuthenticator::new(
+        "development-cloud-key-1",
+        SigningKey::from_bytes(&[7_u8; 32])
+            .verifying_key()
+            .to_bytes(),
+        "development-gateway-key-17",
+        [9_u8; 32],
+    )
+    .expect("session authenticator")
+    .uplink_authentication();
     let (edge, cloud) = MemoryCloudLinkTransport::pair(32).expect("transport pair");
     assert_eq!(
         edge.receive().await.expect("edge connected"),
@@ -33,7 +44,7 @@ async fn deterministic_edge_slice_negotiates_reports_and_replays_until_applicati
         3,
         "22222222-2222-4222-8222-222222222222",
         "development-gateway-key-17",
-        MessageAuthentication::new("development-gateway-key-17", "B".repeat(86))
+        MessageAuthentication::new("development-gateway-key-17", "E".repeat(86))
             .expect("signature shape"),
         vec!["1.0".to_string()],
         "A".repeat(43),
@@ -72,9 +83,9 @@ async fn deterministic_edge_slice_negotiates_reports_and_replays_until_applicati
 
     let heartbeat = HeartbeatMessage::new(
         &session,
-        false,
         TimestampMs::new(1_721_000_000_123),
         Vec::new(),
+        &authentication,
     )
     .expect("heartbeat");
     edge.send(CloudLinkTransportMessage::new(
@@ -89,13 +100,9 @@ async fn deterministic_edge_slice_negotiates_reports_and_replays_until_applicati
         CloudLinkCodec::decode(heartbeat_up.payload()).expect("heartbeat decode"),
         CandidateMessage::Heartbeat(_)
     ));
-    let heartbeat_ack = HeartbeatMessage::new(
-        &session,
-        true,
-        TimestampMs::new(1_721_000_000_124),
-        Vec::new(),
-    )
-    .expect("heartbeat ACK");
+    let heartbeat_ack =
+        HeartbeatMessage::ack(&session, TimestampMs::new(1_721_000_000_124), Vec::new())
+            .expect("heartbeat ACK");
     cloud
         .send(CloudLinkTransportMessage::new(
             CloudLinkTransportRoute::AckDown,
@@ -136,6 +143,7 @@ async fn deterministic_edge_slice_negotiates_reports_and_replays_until_applicati
         &session,
         &manifest_record,
         CloudLinkTransportRoute::ManifestUp,
+        &authentication,
     )
     .await;
     let manifest_envelope =
@@ -173,6 +181,7 @@ async fn deterministic_edge_slice_negotiates_reports_and_replays_until_applicati
         &session,
         &record,
         CloudLinkTransportRoute::TelemetryUp,
+        &authentication,
     )
     .await;
     let first_delivery = inbound(&cloud).await;
@@ -208,6 +217,7 @@ async fn deterministic_edge_slice_negotiates_reports_and_replays_until_applicati
         &resumed,
         &replayed,
         CloudLinkTransportRoute::TelemetryUp,
+        &authentication,
     )
     .await;
     let replay = inbound(&cloud).await;
@@ -222,18 +232,14 @@ async fn offer(
     session: &SessionBinding,
     record: &aether_ports::CloudLinkRecord,
     route: CloudLinkTransportRoute,
+    authentication: &UplinkAuthentication,
 ) {
     spool
         .mark_offered(record.identity(), &session.spool_binding())
         .await
         .expect("mark offered");
-    let envelope = CloudLinkCodec::delivery_envelope(
-        session,
-        record,
-        TimestampMs::new(1_721_000_000_200),
-        None,
-    )
-    .expect("envelope");
+    let envelope =
+        CloudLinkCodec::delivery_envelope(session, record, None, authentication).expect("envelope");
     transport
         .send(CloudLinkTransportMessage::new(
             route,

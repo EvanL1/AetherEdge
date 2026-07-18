@@ -6,6 +6,8 @@ exclude = ["firmware"]
 default-members = [
     "crates/aether-domain",
     "crates/aether-cloudlink",
+    "crates/aether-integration-contract",
+    "crates/aether-integration-control",
     "crates/aether-data-processing",
     "crates/aether-dataplane",
     "crates/aether-ports",
@@ -21,6 +23,8 @@ members = [
     "workspace-hack",
     "crates/aether-domain",
     "crates/aether-cloudlink",
+    "crates/aether-integration-contract",
+    "crates/aether-integration-control",
     "crates/aether-data-processing",
     "crates/aether-dataplane",
     "crates/aether-ports",
@@ -30,6 +34,7 @@ members = [
     "crates/aether-testkit",
     "extensions/store-local",
     "extensions/cloudlink-mqtt",
+    "extensions/home-assistant-bridge",
     "extensions/shm-bridge",
     "extensions/auth-jwt",
     "extensions/http-data-processor",
@@ -134,6 +139,7 @@ chrono = { version = "0.4", features = ["serde"] }
 
 # UUID
 uuid = { version = "1.6", features = ["v4", "serde"] }
+zeroize = "1.8.2"
 
 # HTTP clients
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "multipart", "stream"] }

@@ -9,11 +9,15 @@ Runtime 已可使用，但部分生产路径仍在从兼容层迁移，AetherEMS
 [ADR-0015](./adr/0015-configuration-authority-and-reconciliation.md) 规定了配置权威与运行时协调边界；
 [ADR-0017](./adr/0017-experimental-cloudlink-mqtt-edge-foundation.md) 规定了实验性 CloudLink
 MQTT 边端基础、application ACK 与 legacy 迁移边界。
+[ADR-0020](./adr/0020-home-assistant-edge-bridge.md) 规定了 Home Assistant
+边缘桥接、厂商中立契约、状态权威、断线重同步和安全控制边界。
 
 ## 开始使用
 
 - [快速开始](./guides/getting-started.md) — 安全空配置、首次启动与验收
 - [连接设备](./guides/connect-devices.md) — 协议、通道、点位与投运流程
+- [接入 Home Assistant](https://docs.aetheriot.workers.dev/guides/home-assistant/) —
+  本地设备投影、密钥引用、重同步，以及单独启用的受治理开关控制
 - [部署指南](./guides/deployment.md) — Compose、安装包与生产检查
 - [配置参考](./reference/configuration.md) — 配置文件与环境变量
 

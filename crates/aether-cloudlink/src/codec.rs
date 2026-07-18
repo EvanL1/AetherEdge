@@ -1,6 +1,7 @@
 //! Strict JSON codec, canonical business digests, and delivery envelopes.
 
 use aether_domain::{PointSample, TimestampMs};
+use aether_integration_contract::IntegrationContractCodec;
 use aether_ports::{
     CloudLinkDurableAck, CloudLinkEnqueue, CloudLinkMessageKind, CloudLinkRecord,
     CloudLinkSessionBinding,
@@ -9,7 +10,11 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
-use crate::session::{SessionAccepted, SessionBinding, SessionChallenge, SessionHello};
+use crate::session::{
+    MessageAuthentication, SessionAccepted, SessionBinding, SessionChallenge,
+    SessionChallengeRequest, SessionHello,
+};
+use crate::session_authentication::{UplinkAuthentication, UplinkSigningProjection};
 use crate::telemetry::{TelemetryBatch, TopologyBinding};
 use crate::validation::{
     canonical_u64, digest, identifier, positive_u64, protocol_version, schema, traceparent, uuid,
@@ -39,6 +44,11 @@ impl CloudLinkCodec {
             },
         )?;
         match schema_value {
+            "aether.cloudlink.session-challenge-request.v1" => {
+                let value: SessionChallengeRequest = serde_json::from_slice(bytes)?;
+                value.validate()?;
+                Ok(CandidateMessage::SessionChallengeRequest(value))
+            },
             "aether.cloudlink.session-challenge.v1" => {
                 let value: SessionChallenge = serde_json::from_slice(bytes)?;
                 value.validate()?;
@@ -140,6 +150,7 @@ impl CloudLinkCodec {
         validate_business_payload(message_kind, &payload)?;
         let batch_id = batch_id.into();
         identifier(&batch_id, "batch_id", 128)?;
+        validate_integration_batch_binding(message_kind, &batch_id, &payload)?;
         if expires_at.is_some_and(|expires| expires.get() < created_at.get()) {
             return Err(CloudLinkCodecError::InvalidField {
                 field: "expires_at_ms",
@@ -160,13 +171,17 @@ impl CloudLinkCodec {
         ))
     }
 
-    /// Wraps a retained record for one current session without changing identity.
+    /// Wraps a retained record for one current session without changing any durable fact.
+    ///
+    /// The envelope send time is the record's persisted creation time. Replays
+    /// therefore change only session-bound fields and authentication.
     pub fn delivery_envelope(
         session: &SessionBinding,
         record: &CloudLinkRecord,
-        sent_at: TimestampMs,
         trace: Option<&str>,
+        authentication: &UplinkAuthentication,
     ) -> Result<DeliveryEnvelope, CloudLinkCodecError> {
+        let sent_at = record.created_at();
         if let Some(value) = trace {
             traceparent(value)?;
         }
@@ -181,6 +196,7 @@ impl CloudLinkCodec {
         }
         let payload: Value = serde_json::from_slice(record.payload())?;
         validate_business_payload(record.message_kind(), &payload)?;
+        validate_integration_batch_binding(record.message_kind(), record.batch_id(), &payload)?;
         if business_digest(record.message_kind(), &payload)? != record.digest() {
             return Err(CloudLinkCodecError::DigestMismatch);
         }
@@ -202,9 +218,12 @@ impl CloudLinkCodec {
                 batch_id: record.batch_id().to_string(),
                 digest: record.digest().to_string(),
             },
+            message_authentication: None,
             traceparent: trace.map(str::to_string),
             payload,
         };
+        let mut value = value;
+        value.message_authentication = authentication.authenticate(&value.signing_projection()?)?;
         value.validate()?;
         Ok(value)
     }
@@ -213,6 +232,8 @@ impl CloudLinkCodec {
 /// Every strictly decoded candidate message.
 #[derive(Debug, Clone, PartialEq)]
 pub enum CandidateMessage {
+    /// Gateway request for one Cloud-signed session challenge.
+    SessionChallengeRequest(SessionChallengeRequest),
     /// Cloud-issued one-time session challenge.
     SessionChallenge(SessionChallenge),
     /// Session negotiation request.
@@ -237,9 +258,10 @@ impl CandidateMessage {
             Self::Delivery(value) => value.validate_session(session),
             Self::DurableAck(value) => value.validate_session(session),
             Self::ReplayRequest(value) => value.validate_session(session),
-            Self::SessionChallenge(_) | Self::SessionHello(_) | Self::SessionAccepted(_) => {
-                Err(CloudLinkCodecError::SessionMismatch)
-            },
+            Self::SessionChallengeRequest(_)
+            | Self::SessionChallenge(_)
+            | Self::SessionHello(_)
+            | Self::SessionAccepted(_) => Err(CloudLinkCodecError::SessionMismatch),
         }
     }
 }
@@ -257,14 +279,42 @@ pub struct HeartbeatMessage {
     session_epoch: String,
     credential_generation: String,
     observed_at_ms: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    message_authentication: Option<MessageAuthentication>,
     cursors: Vec<crate::ResumeCursor>,
 }
 
 impl HeartbeatMessage {
-    /// Creates an edge heartbeat or cloud heartbeat ACK.
+    /// Creates one edge heartbeat using the selected session origin evidence.
     pub fn new(
         session: &SessionBinding,
-        acknowledged: bool,
+        observed_at: TimestampMs,
+        cursors: Vec<crate::ResumeCursor>,
+        authentication: &UplinkAuthentication,
+    ) -> Result<Self, CloudLinkCodecError> {
+        let mut value = Self {
+            schema: HEARTBEAT_SCHEMA.to_string(),
+            protocol: CLOUDLINK_PROTOCOL.to_string(),
+            protocol_version: session.protocol_version().to_string(),
+            message_kind: "heartbeat".to_string(),
+            gateway_id: session.gateway_id().to_string(),
+            session_id: session.session_id().to_string(),
+            session_epoch: session.session_epoch().to_string(),
+            credential_generation: session.credential_generation().to_string(),
+            observed_at_ms: observed_at.get().to_string(),
+            message_authentication: None,
+            cursors,
+        };
+        value.message_authentication = authentication.authenticate(&value.signing_projection()?)?;
+        value.validate()?;
+        Ok(value)
+    }
+
+    /// Creates the existing unsigned Cloud heartbeat acknowledgement wire value.
+    ///
+    /// The frozen alpha profile does not define an ACK signing projection.
+    pub fn ack(
+        session: &SessionBinding,
         observed_at: TimestampMs,
         cursors: Vec<crate::ResumeCursor>,
     ) -> Result<Self, CloudLinkCodecError> {
@@ -272,20 +322,28 @@ impl HeartbeatMessage {
             schema: HEARTBEAT_SCHEMA.to_string(),
             protocol: CLOUDLINK_PROTOCOL.to_string(),
             protocol_version: session.protocol_version().to_string(),
-            message_kind: if acknowledged {
-                "heartbeat-ack".to_string()
-            } else {
-                "heartbeat".to_string()
-            },
+            message_kind: "heartbeat-ack".to_string(),
             gateway_id: session.gateway_id().to_string(),
             session_id: session.session_id().to_string(),
             session_epoch: session.session_epoch().to_string(),
             credential_generation: session.credential_generation().to_string(),
             observed_at_ms: observed_at.get().to_string(),
+            message_authentication: None,
             cursors,
         };
         value.validate()?;
         Ok(value)
+    }
+
+    fn signing_projection(&self) -> Result<UplinkSigningProjection, CloudLinkCodecError> {
+        UplinkSigningProjection::heartbeat(
+            &self.gateway_id,
+            &self.credential_generation,
+            &self.session_id,
+            &self.session_epoch,
+            &self.message_kind,
+            &self.observed_at_ms,
+        )
     }
 
     fn validate(&self) -> Result<(), CloudLinkCodecError> {
@@ -305,6 +363,15 @@ impl HeartbeatMessage {
             &self.credential_generation,
         )?;
         canonical_u64(&self.observed_at_ms, "observed_at_ms")?;
+        if self.message_kind == "heartbeat-ack" && self.message_authentication.is_some() {
+            return Err(CloudLinkCodecError::InvalidField {
+                field: "message_authentication",
+                message: "heartbeat acknowledgements have no frozen signing projection",
+            });
+        }
+        if let Some(authentication) = &self.message_authentication {
+            authentication.validate()?;
+        }
         if self.cursors.len() > 32 {
             return Err(CloudLinkCodecError::InvalidField {
                 field: "cursors",
@@ -328,6 +395,12 @@ impl HeartbeatMessage {
             &self.session_epoch,
             &self.credential_generation,
         )
+    }
+
+    /// Returns payload authentication when this is a Gateway-signed heartbeat.
+    #[must_use]
+    pub const fn message_authentication(&self) -> Option<&MessageAuthentication> {
+        self.message_authentication.as_ref()
     }
 }
 
@@ -399,6 +472,8 @@ pub struct DeliveryEnvelope {
     expires_at_ms: Option<String>,
     delivery: DeliveryDescriptor,
     #[serde(skip_serializing_if = "Option::is_none")]
+    message_authentication: Option<MessageAuthentication>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     traceparent: Option<String>,
     payload: Value,
 }
@@ -428,15 +503,36 @@ impl DeliveryEnvelope {
             });
         }
         self.delivery.validate()?;
+        if let Some(authentication) = &self.message_authentication {
+            authentication.validate()?;
+        }
         if let Some(value) = &self.traceparent {
             traceparent(value)?;
         }
         let kind = message_kind(&self.message_kind)?;
         validate_business_payload(kind, &self.payload)?;
+        validate_integration_batch_binding(kind, &self.delivery.batch_id, &self.payload)?;
         if business_digest(kind, &self.payload)? != self.delivery.digest {
             return Err(CloudLinkCodecError::DigestMismatch);
         }
         Ok(())
+    }
+
+    fn signing_projection(&self) -> Result<UplinkSigningProjection, CloudLinkCodecError> {
+        UplinkSigningProjection::delivery(
+            &self.gateway_id,
+            &self.credential_generation,
+            &self.session_id,
+            &self.session_epoch,
+            &self.message_kind,
+            &self.sent_at_ms,
+            self.expires_at_ms.as_deref(),
+            &self.delivery.stream_id,
+            &self.delivery.stream_epoch,
+            &self.delivery.position,
+            &self.delivery.batch_id,
+            &self.delivery.digest,
+        )
     }
 
     fn validate_session(&self, session: &SessionBinding) -> Result<(), CloudLinkCodecError> {
@@ -466,6 +562,12 @@ impl DeliveryEnvelope {
     #[must_use]
     pub const fn payload(&self) -> &Value {
         &self.payload
+    }
+
+    /// Returns payload authentication when this is a Gateway-signed delivery.
+    #[must_use]
+    pub const fn message_authentication(&self) -> Option<&MessageAuthentication> {
+        self.message_authentication.as_ref()
     }
 }
 
@@ -752,9 +854,46 @@ fn validate_business_payload(
         CloudLinkMessageKind::TelemetryBatch => {
             serde_json::from_value::<TelemetryBatch>(payload.clone())?.validate()
         },
+        CloudLinkMessageKind::IntegrationTopologySnapshot => {
+            let bytes = serde_json_canonicalizer::to_vec(payload)
+                .map_err(|source| CloudLinkCodecError::CanonicalJson { source })?;
+            IntegrationContractCodec::decode_topology(&bytes)?;
+            Ok(())
+        },
+        CloudLinkMessageKind::IntegrationObservationBatch => {
+            let bytes = serde_json_canonicalizer::to_vec(payload)
+                .map_err(|source| CloudLinkCodecError::CanonicalJson { source })?;
+            IntegrationContractCodec::decode_observation_batch_wire(&bytes)?;
+            Ok(())
+        },
         CloudLinkMessageKind::DataLoss => {
             serde_json::from_value::<DataLossPayload>(payload.clone())?.validate()
         },
+    }
+}
+
+fn validate_integration_batch_binding(
+    kind: CloudLinkMessageKind,
+    delivery_batch_id: &str,
+    payload: &Value,
+) -> Result<(), CloudLinkCodecError> {
+    let expected = match kind {
+        CloudLinkMessageKind::IntegrationTopologySnapshot => payload
+            .get("snapshot_generation")
+            .and_then(Value::as_str)
+            .map(|generation| format!("topology-{generation}")),
+        CloudLinkMessageKind::IntegrationObservationBatch => payload
+            .get("batch_id")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        CloudLinkMessageKind::RuntimeManifestReport
+        | CloudLinkMessageKind::TelemetryBatch
+        | CloudLinkMessageKind::DataLoss => return Ok(()),
+    };
+    if expected.as_deref() == Some(delivery_batch_id) {
+        Ok(())
+    } else {
+        Err(CloudLinkCodecError::IntegrationBatchIdMismatch)
     }
 }
 
@@ -781,6 +920,8 @@ fn message_kind(value: &str) -> Result<CloudLinkMessageKind, CloudLinkCodecError
     match value {
         "runtime-manifest-report" => Ok(CloudLinkMessageKind::RuntimeManifestReport),
         "telemetry-batch" => Ok(CloudLinkMessageKind::TelemetryBatch),
+        "integration-topology-snapshot" => Ok(CloudLinkMessageKind::IntegrationTopologySnapshot),
+        "integration-observation-batch" => Ok(CloudLinkMessageKind::IntegrationObservationBatch),
         "data-loss" => Ok(CloudLinkMessageKind::DataLoss),
         other => Err(CloudLinkCodecError::UnsupportedMessage {
             found: other.to_string(),

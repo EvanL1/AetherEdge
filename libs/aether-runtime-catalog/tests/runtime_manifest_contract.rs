@@ -76,6 +76,55 @@ fn trimmed_manifest_does_not_advertise_uncompiled_protocols() {
 }
 
 #[test]
+fn integration_cloudlink_protocol_requires_its_explicit_io_feature() {
+    let home_assistant_only = linux_manifest(&["home-assistant"]);
+    assert!(
+        !home_assistant_only
+            .protocols()
+            .any(|protocol| protocol == "aether.cloudlink.integration.v1alpha1")
+    );
+
+    let enabled = linux_manifest(&["home-assistant-cloudlink"]);
+    assert!(
+        enabled
+            .protocols()
+            .any(|protocol| protocol == "aether.cloudlink.integration.v1alpha1")
+    );
+    assert!(
+        enabled
+            .cargo_features()
+            .any(|feature| feature == "aether-io/home-assistant-cloudlink")
+    );
+}
+
+#[test]
+fn integration_control_protocol_requires_its_explicit_default_off_io_feature() {
+    let read_only = linux_manifest(&["home-assistant-cloudlink"]);
+    assert!(
+        !read_only
+            .protocols()
+            .any(|protocol| protocol == "aether.cloudlink.integration-control.v1alpha1")
+    );
+
+    let enabled = linux_manifest(&["home-assistant-integration-control"]);
+    assert!(
+        enabled
+            .protocols()
+            .any(|protocol| protocol == "aether.cloudlink.integration-control.v1alpha1")
+    );
+    assert!(
+        enabled
+            .protocols()
+            .any(|protocol| protocol == "aether.cloudlink.integration.v1alpha1")
+    );
+    assert!(
+        enabled
+            .cargo_features()
+            .any(|feature| feature == "aether-io/home-assistant-integration-control")
+    );
+}
+
+#[test]
 fn manifest_round_trip_validates_schema_version_release_and_checksum() {
     let config = tempfile::tempdir().expect("temporary config directory");
     let manifest = linux_manifest(&["modbus", "mqtt"]);

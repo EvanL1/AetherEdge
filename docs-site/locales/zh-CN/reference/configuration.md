@@ -1,7 +1,7 @@
 ---
 title: "配置参考"
 description: "YAML 配置架构、同步管道和环境变量"
-updated: 2026-07-11
+updated: 2026-07-17
 ---
 
 # 配置参考
@@ -97,46 +97,109 @@ Docker Compose 和服务使用的关键变量（大多数可选值在 `.env.exam
 | `INFLUXDB_URL`、`INFLUXDB_ORG`、`INFLUXDB_BUCKET`、`INFLUXDB_TOKEN`、 `INFLUXDB_PASSWORD` | 取消设置 | 仅限可选的 InfluxDB 历史记录适配器；未由默认运行时 |
 | `AETHER_IO_URL` | `http://127.0.0.1:6001` | API 网关和 `aether` 的 io 基本 URL 未使用CLI |
 | `AETHER_AUTOMATION_URL` | `http://127.0.0.1:6002` | API 网关和 `aether` 的自动化基本 URL CLI |
-| `AETHER_SHM_PATH` | 平台选择的 tmpfs path | io 和只读消费者共享的规范权威点状态段 |
+| `AETHER_SHM_PATH` | 平台选择的 tmpfs 路径 | io 和只读消费者共享的规范权威点状态段 |
 | `AETHER_CHANNEL_HEALTH_SHM_PATH` | 同级 `*-health` 路径 | 单独的权威通道连接段；通常源自 `AETHER_SHM_PATH` |
 | `SHM_WRITER_STALE_AFTER_MS` | `30000` | 读取端 SHM 适配器接受的最大写入心跳期限 |
 | `SHM_IDENTITY_CHECK_INTERVAL_MS` | `250` | 用于检查规范 SHM inode 是否已替换的回退间隔；生成防护立即处理正常交换 |
 | `SHM_TOPOLOGY_REFRESH_INTERVAL_MS` | `1000`（最小 `100`） | API、警报和自动化用于重新加载一个 SQLite 拓扑快照并以原子方式发布经过验证的点/运行状况/路由的时间间隔生成 |
 | `JWT_SECRET_KEY` | 取消设置（必需） | 用于 aether-api 以及受控 io、自动化和警报操作的共享 32 字节或更长的访问 JWT 签名/验证密钥；安装程序生成它并将其保留在配置资产之外 |
-| `AETHER_ACCESS_TOKEN` | unset | 受治理的 CLI 通道调试/生命周期、设备命令、操作路由更改和自动化/警报策略操作（包括 MCP 的 22 个受治理写入工具）所需的签名管理员/工程师访问 JWT；查询命令在本地接口上不需要它 |
-| `AETHER_UPLINK_CONTROL_TOKEN` | unset | 单独的 32 字节或更长的服务凭据仅用于上行链路到自动化设备命令；安装程序生成它并且从不打印它 |
+| `AETHER_ACCESS_TOKEN` | 未设置 | 受治理的 CLI 通道调试/生命周期、设备命令、操作路由更改和自动化/警报策略操作（包括 MCP 的 22 个受治理写入工具）所需的签名管理员/工程师访问 JWT；查询命令在本地接口上不需要它 |
+| `AETHER_UPLINK_CONTROL_TOKEN` | 未设置 | 单独的 32 字节或更长的服务凭据，仅用于上行链路到自动化设备命令；安装程序生成它并且从不打印它 |
 | `AETHER_ALLOW_SIMULATION_WRITES` | `false` | 仅开发选择将 io T/S 模拟写入权威 SHM；在生产环境中保持禁用状态 |
-| `AETHER_CONFIG_PATH` | unset | 自动化和`aether mcp`使用的共享配置目录； CLI 路径解析可以通过部署上下文或 `--config-path` |
-| `AETHER_DATA_PATH` | unset | 覆盖 `aether` 的安装上下文数据目录 CLI |
+| `AETHER_CONFIG_PATH` | 未设置 | 自动化和 `aether mcp` 使用的共享配置目录；CLI 路径解析可以通过部署上下文或 `--config-path` 覆盖它 |
+| `AETHER_DATA_PATH` | 未设置 | 覆盖 `aether` CLI 安装上下文中的数据目录 |
 | `AETHER_INSTALL_CONTEXT_PATH` | `/etc/aether/install.yaml` | 覆盖已安装的布局描述符； CLI 标志和两个路径变量优先 |
 | `AETHER_BOOTSTRAP_ADMIN_PASSWORD` | 取消设置 | 仅当 `users` 为空时才需要；安装程序会在其 mode-0600 环境文件中生成一个强值，并且应在第一次更改密码后将其删除 |
 | `AETHER_ALLOW_PUBLIC_REGISTRATION` | `false` | 显式选择加入匿名查看者注册；管理员创建永远无法通过公共注册 |
 | `AETHER_DATA_PROCESSING_ENABLED` | `false` | 显式启用选择加入的数据处理应用程序和 HTTP 路由；如果启用的配置无效，则启动失败关闭 |
 | `AETHER_DATA_PROCESSING_CONFIG` | `/app/data/config/data-processing/runtime.yaml` | 包含委托任务、绑定、历史记录、协变量、处理器和审核组合的严格运行时 YAML |
-| `AETHER_LOAD_FORECASTING_BEARER_TOKEN` | unset | 共享部署密钥`aether-api` 对负载预测 sidecar 进行身份验证；开发中生产覆盖 |
+| `AETHER_LOAD_FORECASTING_BEARER_TOKEN` | 未设置 | 供 `aether-api` 验证负载预测伴生服务身份的共享部署密钥；生产部署必须覆盖开发值 |
 | `AETHER_LOAD_FORECASTING_REQUIRE_AUTH` | `false`所需 | 处理器端启动门；生产覆盖将其修复为 `true` |
 | `AETHER_LOAD_FORECASTING_MAX_CONCURRENCY` | `1` | 限制占用的模型执行槽；在后台工作实际完成之前，取消不会释放插槽 |
 | `AETHER_LOAD_FORECASTING_ARTIFACT_BUNDLES` | 取消设置 | 严格的 JSON 数组固定每个实际委托的模型/缩放器/配置工件；生产准备就绪所需 |
 | `AETHER_LOAD_FORECASTING_IMAGE` | 可变本地开发映像 | 生产必须通过显式 Compose 覆盖和预检验证器使用不可变 `@sha256` 映像引用 |
-| `AETHER_LOAD_FORECASTING_PORT` | `8989` | Compose 的主机环回已发布处理器端口sidecar |
+| `AETHER_LOAD_FORECASTING_PORT` | `8989` | Compose 发布到主机环回地址的处理器伴生服务端口 |
 | `RUST_LOG` | `info` | Rust 服务的日志级别；支持过滤器语法，例如 `info,io=debug,automation=trace` |
+
+### 实验性 Home Assistant 桥接设置
+
+只有使用 `home-assistant` 构建特性从源码编译的 `aether-io` 才会读取这些设置。它们不代表
+安装器已经支持生产部署。
+
+| 环境变量 | 默认值 | 用途 |
+|---|---|---|
+| `AETHER_HOME_ASSISTANT_ENABLED` | `false` | 显式启用实验性的只读桥接扩展 |
+| `AETHER_HOME_ASSISTANT_ORIGIN` | 未设置 | 必填的 HTTP(S) 站点根地址，不能包含凭据、路径、查询参数或片段 |
+| `AETHER_HOME_ASSISTANT_ACCESS_TOKEN_REF` | 未设置 | 必填的 `env:变量名` 引用；令牌原文保存在普通配置之外 |
+| `AETHER_GATEWAY_ID` | 未设置 | 必填的所属边缘网关标识 |
+| `AETHER_HOME_ASSISTANT_INTEGRATION_ID` | `home-assistant` | 这条 Home Assistant 连接的稳定标识 |
+| `AETHER_HOME_ASSISTANT_GENERATION_STORE_PATH` | 未设置 | 必填的绝对文件路径，用于保存可跨重启恢复且由进程独占锁定的拓扑世代号账本 |
+
+系统禁止使用 `AETHER_HOME_ASSISTANT_ACCESS_TOKEN`，因为它会把凭据原文放入普通配置。完整的
+源码构建和存储约束见[接入 Home Assistant](/guides/home-assistant)。
+
+以下变量启用独立且默认关闭的只读 CloudLink 发布路径。只有包含
+`home-assistant-cloudlink` 构建特性的二进制文件才会接受这组配置。
+
+| 环境变量 | 默认值 | 用途 |
+|---|---|---|
+| `AETHER_HOME_ASSISTANT_CLOUDLINK_ENABLED` | `false` | 显式启用发布；只启用 Home Assistant 不会自动发布 |
+| `AETHER_HOME_ASSISTANT_CLOUDLINK_RUNTIME_CONFIG_DIR` | 未设置 | 包含经过校验的 `runtime-manifest.json` 的绝对目录 |
+| `AETHER_HOME_ASSISTANT_CLOUDLINK_CLOUD_EXTENSION` | 未设置 | 必须等于 `aether.cloudlink.integration.v1alpha1` |
+| `AETHER_HOME_ASSISTANT_CLOUDLINK_TOPOLOGY_SPOOL_PATH` | 未设置 | 拓扑持久队列的绝对文件路径 |
+| `AETHER_HOME_ASSISTANT_CLOUDLINK_OBSERVATION_SPOOL_PATH` | 未设置 | 与拓扑队列不同的观测持久队列绝对路径 |
+| `AETHER_HOME_ASSISTANT_CLOUDLINK_SPOOL_CAPACITY` | `4096` | 每条流可保留的记录上限，允许范围为 1 至 65536 |
+| `AETHER_HOME_ASSISTANT_CLOUDLINK_MQTT_BROKER_HOST` | 未设置 | 不带网址格式的 TLS MQTT 主机名或地址 |
+| `AETHER_HOME_ASSISTANT_CLOUDLINK_MQTT_BROKER_PORT` | 未设置 | 必填的非零 MQTT TLS 端口 |
+| `AETHER_HOME_ASSISTANT_CLOUDLINK_MQTT_CLIENT_ID` | 未设置 | 长度受限且稳定的消息代理客户端标识 |
+| `AETHER_HOME_ASSISTANT_CLOUDLINK_MQTT_TOPIC_PREFIX` | 未设置 | 安全的主题前缀；系统拒绝通配符 |
+| `AETHER_HOME_ASSISTANT_CLOUDLINK_MQTT_USERNAME` | 未设置 | 必填的消息代理认证主体 |
+| `AETHER_HOME_ASSISTANT_CLOUDLINK_MQTT_PASSWORD_REF` | 未设置 | 必填的 `env:变量名` 消息代理密码引用 |
+| `AETHER_HOME_ASSISTANT_CLOUDLINK_CREDENTIAL_ID` | 未设置 | 非敏感的 CloudLink 连接凭据标识 |
+| `AETHER_HOME_ASSISTANT_CLOUDLINK_CREDENTIAL_GENERATION` | 未设置 | 必填的正数凭据代次 |
+| `AETHER_HOME_ASSISTANT_CLOUDLINK_SESSION_EPOCH_PATH` | 未设置 | 单调递增会话代次检查点的绝对文件路径 |
+
+系统禁止使用 `AETHER_HOME_ASSISTANT_CLOUDLINK_MQTT_PASSWORD`。MQTT 发布确认不会删除拓扑
+或观测记录，只有严格的 CloudLink 应用确认可以删除。
+
+以下变量启用实验性的受治理开关控制。二进制文件必须包含
+`home-assistant-integration-control` 构建特性；Home Assistant、CloudLink 和控制三个
+启用开关必须分别显式设为真；运行时清单还必须同时声明只读集成协议和集成控制协议。
+
+| 环境变量 | 默认值 | 用途 |
+|---|---|---|
+| `AETHER_HOME_ASSISTANT_CONTROL_ENABLED` | `false` | 显式启用受治理控制；不会顺带启用 Home Assistant 或 CloudLink |
+| `AETHER_HOME_ASSISTANT_CONTROL_CLOUD_EXTENSION` | 未设置 | 必须等于 `aether.cloudlink.integration-control.v1alpha1` |
+| `AETHER_HOME_ASSISTANT_CONTROL_LEDGER_PATH` | 未设置 | 由进程独占的持久作业与回执账本绝对路径 |
+| `AETHER_HOME_ASSISTANT_CONTROL_POLICY_PATH` | 未设置 | 默认拒绝且结构封闭的本地授权策略绝对路径 |
+| `AETHER_HOME_ASSISTANT_CONTROL_AUDIT_PATH` | 未设置 | 与前两项不同的追加式本地审计文件绝对路径 |
+| `AETHER_HOME_ASSISTANT_CONTROL_CLOUD_KEY_ID` | 未设置 | 受信任云端 Ed25519 验签公钥的精确标识 |
+| `AETHER_HOME_ASSISTANT_CONTROL_CLOUD_PUBLIC_KEY_REF` | 未设置 | 指向规范无填充 Base64url 编码的 32 字节 Ed25519 公钥的 `env:变量名` 引用 |
+| `AETHER_HOME_ASSISTANT_CONTROL_EDGE_KEY_ID` | 未设置 | 边缘 Ed25519 回执签名密钥标识 |
+| `AETHER_HOME_ASSISTANT_CONTROL_EDGE_SIGNING_KEY_REF` | 未设置 | 指向规范无填充 Base64url 编码的 32 字节私钥种子的 `env:变量名` 引用 |
+| `AETHER_HOME_ASSISTANT_CONTROL_PROVIDER_TIMEOUT_MS` | `5000` | 提供方调用期限，允许范围为 1 至 30000 毫秒 |
+
+账本、策略和审计路径必须彼此不同。在 Unix 系统上，账本、审计和锁文件不能向组用户或
+其他用户开放权限；新建敏感文件使用 0600。系统拒绝符号链接文件和作为直接父目录的符号
+链接。MQTT 发布确认绝不会删除控制回执。策略格式和执行边界见
+[接入 Home Assistant](/guides/home-assistant#实验性受治理开关控制)。
 
 ### 实验性 CloudLink MQTT 设置
 
-当前的 `aether-uplink` 生产组合仍处于已弃用的 `legacy` 模式。实验性的 `aether-cloudlink-mqtt` 嵌入 API 公开了显式的 `legacy`、`cloudlink-v1` 和 `dual` 迁移值；它不会在现有安装中静默启用 CloudLink。第一个真正的经纪商垂直切片是下面的选择加入测试工具。这些变量仅在 `AETHER_CLOUDLINK_RUN_INTEGRATION=1` 时读取：
+当前的 `aether-uplink` 生产组合仍处于已弃用的 `legacy` 模式。实验性的 `aether-cloudlink-mqtt` 嵌入 API 公开了显式的 `legacy`、`cloudlink-v1` 和 `dual` 迁移值；它不会在现有安装中静默启用 CloudLink。第一个真实消息代理垂直切片是下面的可选测试工具。这些变量仅在 `AETHER_CLOUDLINK_RUN_INTEGRATION=1` 时读取：
 
 | 变量 | 默认 | 用途 |
 |---|---|---|
-| `AETHER_CLOUDLINK_RUN_INTEGRATION` | unset | 准确设置`1`以运行外部代理harness |
+| `AETHER_CLOUDLINK_RUN_INTEGRATION` | 未设置 | 精确设置为 `1` 时运行外部消息代理测试工具 |
 | `AETHER_CLOUDLINK_BROKER_HOST` | `127.0.0.1` | 用户选择的 MQTT 代理主机名/IP |
 | `AETHER_CLOUDLINK_BROKER_PORT` | `1883` | 用户选择的代理端口 |
 | `AETHER_CLOUDLINK_BROKER_USERNAME` | 取消设置 | 可选代理用户名 |
 | `AETHER_CLOUDLINK_BROKER_PASSWORD` | 取消设置 | 可选的只写代理密码；从未打印或序列化 |
-| `AETHER_CLOUDLINK_BROKER_TLS` | unset | 将 `1` 设置为使用平台 TLS 根 |
-| `AETHER_CLOUDLINK_BROKER_CA` | unset | 自定义 PEM CA 路径；选择存在的自定义 TLS |
+| `AETHER_CLOUDLINK_BROKER_TLS` | 未设置 | 设置为 `1` 时使用平台 TLS 根证书 |
+| `AETHER_CLOUDLINK_BROKER_CA` | 未设置 | 自定义 PEM CA 路径；设置后启用自定义 TLS 信任 |
 | `AETHER_CLOUDLINK_BROKER_CLIENT_CERT` | 取消设置 | 可选 mTLS 客户端证书，使用密钥配置 |
-| `AETHER_CLOUDLINK_BROKER_CLIENT_KEY` | unset | 可选 mTLS PKCS#8 私钥，使用证书配置 |
-| `AETHERCLOUD_ROOT` | unset | 此仅边缘线束之外的联合编排使用的可选只读路径；测试不会修改或启动它 |
+| `AETHER_CLOUDLINK_BROKER_CLIENT_KEY` | 未设置 | 可选的 mTLS PKCS#8 私钥，与客户端证书配套使用 |
+| `AETHERCLOUD_ROOT` | 未设置 | 供边缘测试工具之外的联合编排使用的可选只读路径；测试不会修改或启动它 |
 
 纯文本只允许在显式开发工具中使用，生产环境必须启用 TLS。实验性 CloudLink 配置固定使用 MQTT v3.1.1、QoS 1、非保留消息和精确的单网关主题；MQTT 5 仍然是可选项，不能成为正确运行的前提。
 

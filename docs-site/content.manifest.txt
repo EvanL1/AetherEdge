@@ -6,6 +6,7 @@
 docs/concepts/*
 docs/guides/*
 docs/reference/*
+docs/recovery/*
 docs/overview/*
 docs/aetheredge/*
 docs/aethercloud/*

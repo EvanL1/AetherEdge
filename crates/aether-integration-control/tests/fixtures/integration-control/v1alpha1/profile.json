@@ -1,0 +1,108 @@
+{
+  "schema": "aether.cloudlink.integration-control.v1alpha1",
+  "status": "experimental-default-off",
+  "base_protocol": "aether.cloudlink",
+  "base_protocol_version": "1.0",
+  "entry_schemas": {
+    "integration-action-offer": "integration-action-offer.schema.json",
+    "integration-action-receipt": "integration-action-receipt.schema.json"
+  },
+  "activation": {
+    "default_enabled": false,
+    "required_runtime_protocol": "aether.cloudlink.integration-control.v1alpha1",
+    "base_protocol_negotiation_alone_is_sufficient": false,
+    "edge_first_rollout": true,
+    "edge_consumer_enablement": "explicit-after-local-commissioning-and-policy",
+    "cloud_producer_enablement": "explicit-after-runtime-protocol-observation",
+    "unsupported_consumer_behavior": "do-not-publish"
+  },
+  "capabilities": [
+    {
+      "capability_id": "device.power.set.v1",
+      "permission": "integration.device.control",
+      "risk": "high",
+      "confirmation": "required",
+      "idempotency": "required",
+      "expiry": "required",
+      "audit": "required",
+      "edge_final_decision": true
+    }
+  ],
+  "offer": {
+    "direction": "cloud-to-edge",
+    "job_identity": ["gateway_id", "job_id"],
+    "stable_replay_binding": "intent_digest",
+    "same_job_same_digest": "replay-stored-receipt-without-provider-execution",
+    "same_job_different_digest": "DIGEST_CONFLICT",
+    "target_binding": [
+      "intent.target.integration_id",
+      "intent.target.snapshot_generation",
+      "intent.target.entity_id",
+      "intent.target.point_key"
+    ],
+    "deadline_check": "evaluation_time_ms < expires_at_ms",
+    "edge_policy": "deny-by-default-final-authority"
+  },
+  "offer_authentication": {
+    "requirement": "every-offer",
+    "field": "cloud_authentication",
+    "algorithm": "Ed25519",
+    "signed_object_schema": "aether.cloudlink.integration-action-offer-signing.v1alpha1",
+    "signed_object_fields": [
+      "schema",
+      "protocol",
+      "protocol_version",
+      "extension",
+      "message_kind",
+      "gateway_id",
+      "session_id",
+      "session_epoch",
+      "credential_generation",
+      "job_id",
+      "issued_at_ms",
+      "expires_at_ms",
+      "intent_digest",
+      "intent"
+    ],
+    "canonicalization": "RFC 8785 JCS UTF-8 bytes",
+    "production_key_lifecycle": "planned"
+  },
+  "intent_digest": {
+    "algorithm": "SHA-256",
+    "encoding": "sha256:<64 lowercase hexadecimal characters>",
+    "canonicalization": "RFC 8785 JCS",
+    "projection": "complete intent object"
+  },
+  "receipt": {
+    "direction": "edge-to-cloud",
+    "cloudlink_delivery": "existing authenticated uplink envelope, replay identity, business digest, and durable ACK",
+    "provider_acceptance_is_physical_completion": false,
+    "provider_acceptance_is_job_success": false,
+    "physical_outcome": "unknown",
+    "permitted_stages": [
+      "edge-accepted",
+      "edge-rejected",
+      "provider-accepted",
+      "provider-rejected",
+      "unknown"
+    ]
+  },
+  "transport": {
+    "profile": "profiles/mqtt/v1alpha1/profile.json",
+    "offer_topic": "{prefix}/v1/gateways/{gatewayId}/down/integration-control",
+    "receipt_topic": "{prefix}/v1/gateways/{gatewayId}/up/integration-control/receipts",
+    "maximum_message_bytes": 262144
+  },
+  "public_message_boundary": {
+    "arbitrary_json": "forbidden",
+    "forbidden_fields": [
+      "domain",
+      "service",
+      "service_data",
+      "url",
+      "token"
+    ],
+    "provider_credentials": "edge-local-only",
+    "provider_source_address": "resolved-at-edge-from-stable-entity-id"
+  }
+}

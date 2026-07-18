@@ -1,0 +1,50 @@
+{
+  "schema": "aether.integration-control.profile.v1alpha1",
+  "profile_id": "home-assistant",
+  "contract_version": "0.1.0-alpha.4",
+  "status": "experimental-default-off",
+  "actions": ["device.power.set.v1"],
+  "authority": {
+    "cloud": "governed-job-offer-only",
+    "edge": "authorization-safety-and-execution-final-decision",
+    "provider": "provider-native-request-acceptance",
+    "physical_device": "not-proven-by-provider-acceptance"
+  },
+  "power_set": {
+    "capability_id": "device.power.set.v1",
+    "supported_entity_kinds": ["fan", "light", "switch"],
+    "point_key": "is_on",
+    "point_value_type": "boolean",
+    "argument": {
+      "name": "value",
+      "type": "boolean"
+    },
+    "provider_mapping": {
+      "true": "fixed-power-on-operation",
+      "false": "fixed-power-off-operation",
+      "resolved_source": "current-source-address-for-stable-entity-id",
+      "caller_supplied-provider-operation": "forbidden"
+    }
+  },
+  "governance": {
+    "default_authorization": "deny",
+    "permission": "integration.device.control",
+    "risk": "high",
+    "confirmation": "required",
+    "idempotency": "job-id-and-intent-digest-ledger",
+    "expiry": "required",
+    "audit": "required",
+    "edge_final_decision": true
+  },
+  "provider_result": {
+    "success_stage": "provider-accepted",
+    "physical_completion": "unknown",
+    "job_success": false,
+    "later_state_observation_is_independent_evidence": true
+  },
+  "secret_boundary": {
+    "home_assistant_url": "edge-local-configuration-only",
+    "access_and_refresh_tokens": "edge-local-secret-store-only",
+    "public_control_message": "closed-semantic-fields-only"
+  }
+}

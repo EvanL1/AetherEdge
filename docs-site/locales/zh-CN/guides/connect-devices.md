@@ -76,7 +76,7 @@ io 支持 14 种协议，但大多数都支持编译时 Cargo 功能 (`services/
 
 通道点是协议风格的（通道2上的寄存器62001）；规则和仪表板需要模型风格的值（电池组充电状态）。桥接器是一个实例加路由：
 
-1. **定义实例。**实例将设备绑定到 `config/automation/instances.yaml` 中的产品模板。默认分布有意从空开始；可选示例位于 `packs/energy/examples/config/automation/instances.yaml` 下：
+1. **定义实例**。实例将设备绑定到 `config/automation/instances.yaml` 中的产品模板。默认分布有意从空开始；可选示例位于 `packs/energy/examples/config/automation/instances.yaml` 下：
 
 ```yaml
    instances:
@@ -99,7 +99,7 @@ io 支持 14 种协议，但大多数都支持编译时 Cargo 功能 (`services/
 
 它会自动调用 `POST /api/instances/{id}/routing`，或使用 `aether routing batch` 批量调用。
 
-3. **如果实例或路由是在 YAML 中编写的，则运行 `aether sync`**。 Sync 验证配置并将其写入 SQLite，服务在其中加载它； `--dry-run` 无需写入即可验证。
+3. **如果实例或路由是在 YAML 中编写的，则运行 `aether sync`**。同步操作会验证配置并将其写入 SQLite，服务随后从中加载配置；`--dry-run` 可以在不写入的情况下完成验证。
 
 4. **验证。** 两次检查，桥的每一侧一次：
 

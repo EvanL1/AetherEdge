@@ -5,7 +5,7 @@ updated: 2026-07-14
 status: implemented
 ---
 
-# 添加提供程序适配器
+# 添加提供商适配器
 
 > 权威来源：[AetherCloud](https://github.com/EvanL1/AetherCloud/blob/main/docs/guides/add-provider-adapter.md)。此页面镜像到统一的 AetherIoT 文档中。
 

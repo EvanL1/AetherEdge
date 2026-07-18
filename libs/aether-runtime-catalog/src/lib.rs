@@ -44,12 +44,15 @@ pub const DEFAULT_IO_PROTOCOL_FEATURES: [&str; 5] =
 /// Compatibility alias for release tooling.
 pub const SHIPPED_IO_PROTOCOL_FEATURES: [&str; 5] = DEFAULT_IO_PROTOCOL_FEATURES;
 
-const KNOWN_IO_PROTOCOL_FEATURES: [&str; 14] = [
+const KNOWN_IO_PROTOCOL_FEATURES: [&str; 17] = [
     "aether_485",
     "ble",
     "can",
     "dl645",
     "gpio",
+    "home-assistant",
+    "home-assistant-cloudlink",
+    "home-assistant-integration-control",
     "http",
     "iec104",
     "iec61850",
@@ -827,6 +830,12 @@ fn canonical_io_features(features: Vec<String>) -> Result<Vec<String>, RuntimeMa
     if resolved.contains("j1939") {
         resolved.insert("can".to_string());
     }
+    if resolved.contains("home-assistant-integration-control") {
+        resolved.insert("home-assistant-cloudlink".to_string());
+    }
+    if resolved.contains("home-assistant-cloudlink") {
+        resolved.insert("home-assistant".to_string());
+    }
     Ok(resolved.into_iter().collect())
 }
 
@@ -878,6 +887,15 @@ fn derive_protocols(features: &[String], target_os: &str) -> Vec<String> {
             "zigbee" => insert(&mut protocols, "zigbee"),
             "matter" => insert(&mut protocols, "matter"),
             "iec61850" => insert(&mut protocols, "iec61850"),
+            "home-assistant-cloudlink" => {
+                insert(&mut protocols, "aether.cloudlink.integration.v1alpha1");
+            },
+            "home-assistant-integration-control" => {
+                insert(
+                    &mut protocols,
+                    "aether.cloudlink.integration-control.v1alpha1",
+                );
+            },
             _ => {},
         }
     }

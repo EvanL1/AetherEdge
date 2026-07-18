@@ -8,7 +8,7 @@ updated: 2026-07-11
 
 此页面介绍了 **Aether 数据处理** 的实施集成模式。此仓库中提供了核心类型、应用程序编排、v1 编解码器、本地测试适配器、有界 HTTP 适配器、架构和 energy-pack 示例。选择加入的 `aether-api` 组合会读取严格的运行时配置；完整的合成模板是 [`packs/energy/data-processing/runtime.example.yaml`](https://github.com/EvanL1/AetherEdge/blob/main/packs/energy/data-processing/runtime.example.yaml)。
 
-数据处理器接收完整的受控输入帧并返回派生数据。它不会回到Aether来发现自己的输入。这使得同一处理器可用作进程内适配器、本地 sidecar 或经批准的远程服务，而无需更改数据所有权。
+数据处理器接收完整的受控输入帧并返回派生数据。它不会回到 Aether 发现自己的输入。因此，同一处理器可以作为进程内适配器、本地伴生服务或经批准的远程服务运行，而无需更改数据所有权。
 ```text
 caller
   │
@@ -271,7 +271,7 @@ processor:
 - `GET /api/v1/data-processing/processors/health`;和
 - `POST /api/v1/data-processing/process`。
 
-查看者、工程师和管理员角色可以使用发现；处理需要工程师或管理员。进程主体是严格的应用程序请求，而不是完整的框架或处理器端点。 `x-request-id` 是可选的，`x-aether-confirmed: true` 在路由策略需要时提供显式确认。 v1 中未实现这些功能的 CLI 和 MCP 绑定；未来的传输必须调用相同的应用程序 API 而不是 sidecar。
+查看者、工程师和管理员角色可以使用发现功能；执行处理需要工程师或管理员权限。请求正文是严格的应用程序请求，而不是完整的帧或处理器端点。`x-request-id` 是可选的；路由策略需要时，`x-aether-confirmed: true` 提供显式确认。版本 1 尚未实现这些功能的 CLI 和 MCP 绑定；未来的传输必须调用相同的应用程序 API，而不能直接调用伴生服务。
 
 ## 在开发期间直接请求处理器
 

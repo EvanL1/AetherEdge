@@ -47,6 +47,25 @@ domain <- ports <- application <- runtime/interfaces
 - AI is not part of hard real-time loops. Acquisition and safety behavior must
   remain deterministic when no AI client is connected.
 
+## AI-native Documentation
+
+- `ai/docs-manifest.json` is the generated, complete machine-readable catalog
+  for agent-readable Edge repository material.
+- Each catalog entry keeps a repository-local `path` for validation and an
+  absolute `canonical_url` for retrieval. Published pages use the unified
+  documentation site; internal Markdown uses GitHub; machine resources use
+  Raw GitHub.
+- `llms.txt` is generated from that catalog and must cover every catalog entry
+  exactly once. Core task routes come first; ADRs, crates, extensions, plans,
+  and other deep context remain discoverable under `Optional`.
+- Update both generated files with
+  `node scripts/build-agent-docs.mjs --write`; never edit them by hand.
+- `ai/safety-policy.yaml` remains the capability-risk authority. Document
+  metadata may reference its capability identifiers but must not redefine
+  permission, confirmation, idempotency, or audit policy.
+- Static documentation does not grant runtime authority. Runtime agents must
+  query the live application capability catalog before any write.
+
 ## Rust Conventions
 
 - Rust edition 2024; keep the pinned toolchain in `rust-toolchain.toml`.

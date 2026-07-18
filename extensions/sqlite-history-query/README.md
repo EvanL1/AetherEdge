@@ -69,7 +69,7 @@ Data Processing across a storage change, reconnect or restart
 series, then restart `aether-api` with the same path. The current authority
 check cannot by itself distinguish saved intent from an unreconnected writer.
 
-```rust,no_run
+```rust
 use aether_domain::{
     BindingIdentity, FeatureDefinition, FeatureRole, HistoryAggregation,
     HistoryDuplicatePolicy, TaskIdentity,

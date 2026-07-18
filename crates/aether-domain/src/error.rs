@@ -65,6 +65,40 @@ pub enum DomainError {
     InvalidAlarmRuleName,
     /// Alarm comparison threshold was NaN or infinite.
     NonFiniteAlarmThreshold,
+    /// An integration, gateway, resource, alias, or entity kind identifier was invalid.
+    InvalidIntegrationIdentifier,
+    /// An integration resource omitted a usable operator-visible name.
+    InvalidIntegrationDisplayName,
+    /// A complete topology generation used the reserved value zero.
+    ZeroTopologyGeneration,
+    /// A topology snapshot digest was not lowercase `sha256:` plus 64 hex digits.
+    InvalidSnapshotDigest,
+    /// One integration snapshot declared the same resource identity more than once.
+    DuplicateIntegrationResource,
+    /// One integration record referenced a resource absent from the same snapshot.
+    DanglingIntegrationReference,
+    /// A resource repeated an identical provider-native alias.
+    DuplicateExternalAlias,
+    /// A delegated integration reported NaN or infinity.
+    NonFiniteObservedValue,
+    /// A delegated integration decimal did not use canonical decimal text.
+    InvalidObservedDecimal,
+    /// A delegated integration string or symbolic value exceeded the local bound.
+    ObservedValueTooLarge,
+    /// A delegated integration reported an empty symbolic value.
+    InvalidObservedEnum,
+    /// A connection-local entity state sequence used the reserved value zero.
+    ZeroIntegrationStateSequence,
+    /// An upstream state correlation context was empty, unbounded, or contained controls.
+    InvalidIntegrationContext,
+    /// An integration entity declared no mapped observation points.
+    EmptyIntegrationPoints,
+    /// An integration entity declared the same semantic point key more than once.
+    DuplicateIntegrationPoint,
+    /// A mapped integration point declared an invalid unit.
+    InvalidIntegrationUnit,
+    /// A provider snapshot observation was out of scope, duplicated, or type-inconsistent.
+    InvalidIntegrationObservation,
 }
 
 impl fmt::Display for DomainError {
@@ -135,6 +169,55 @@ impl fmt::Display for DomainError {
             Self::InvalidAlarmTarget => formatter.write_str("alarm target is invalid"),
             Self::InvalidAlarmRuleName => formatter.write_str("alarm rule name must not be empty"),
             Self::NonFiniteAlarmThreshold => formatter.write_str("alarm threshold must be finite"),
+            Self::InvalidIntegrationIdentifier => {
+                formatter.write_str("integration identifier is invalid")
+            },
+            Self::InvalidIntegrationDisplayName => {
+                formatter.write_str("integration display name is invalid")
+            },
+            Self::ZeroTopologyGeneration => {
+                formatter.write_str("topology generation must be greater than zero")
+            },
+            Self::InvalidSnapshotDigest => {
+                formatter.write_str("topology snapshot digest is invalid")
+            },
+            Self::DuplicateIntegrationResource => {
+                formatter.write_str("integration snapshot contains a duplicate resource")
+            },
+            Self::DanglingIntegrationReference => {
+                formatter.write_str("integration snapshot contains a dangling reference")
+            },
+            Self::DuplicateExternalAlias => {
+                formatter.write_str("integration resource contains a duplicate external alias")
+            },
+            Self::NonFiniteObservedValue => {
+                formatter.write_str("integration floating-point value must be finite")
+            },
+            Self::InvalidObservedDecimal => {
+                formatter.write_str("integration decimal value is not canonical")
+            },
+            Self::ObservedValueTooLarge => {
+                formatter.write_str("integration value exceeds the local bound")
+            },
+            Self::InvalidObservedEnum => {
+                formatter.write_str("integration symbolic value is invalid")
+            },
+            Self::ZeroIntegrationStateSequence => {
+                formatter.write_str("integration state sequence must be greater than zero")
+            },
+            Self::InvalidIntegrationContext => {
+                formatter.write_str("integration source context is invalid")
+            },
+            Self::EmptyIntegrationPoints => {
+                formatter.write_str("integration entity must declare at least one point")
+            },
+            Self::DuplicateIntegrationPoint => {
+                formatter.write_str("integration entity contains a duplicate point key")
+            },
+            Self::InvalidIntegrationUnit => formatter.write_str("integration unit is invalid"),
+            Self::InvalidIntegrationObservation => {
+                formatter.write_str("integration observation is inconsistent with its topology")
+            },
         }
     }
 }

@@ -15,7 +15,7 @@ npx skills add EvanL1/AetherEdge -s aether-iot
 
 如果代码助手没有自动重新加载项目技能，请重新启动对应会话。
 
-**成功标准：**代码助手把 aether-iot 列为可用技能。
+**成功标准**：代码助手把 `aether-iot` 列为可用技能。
 
 ## 2. 安装 aether 命令行工具
 
@@ -28,7 +28,7 @@ sudo cp target/release/aether /usr/local/bin/aether
 
 如果构建失败，请先检查[入门指南](/guides/getting-started/)中的环境要求。
 
-有正式发布版本时，也可以从 GitHub Releases 下载与系统匹配的压缩包，并在解压前验证校验值：
+有正式发布版本时，也可以从 GitHub 发布页下载与系统匹配的压缩包，并在解压前验证校验值：
 
 | 系统 | 文件 |
 | --- | --- |
@@ -53,7 +53,7 @@ chmod +x aether
 sudo mv aether /usr/local/bin/aether
 ~~~
 
-**成功标准：**运行 aether --version 后能够看到版本号，进程退出码为 0。
+**成功标准**：运行 `aether --version` 后能够看到版本号，进程退出码为 0。
 
 ## 3. 生成并应用首次启动方案
 
@@ -63,13 +63,13 @@ sudo mv aether /usr/local/bin/aether
 aether --json setup
 ~~~
 
-从返回数据中读取 data.plan_id，然后原样应用这份方案：
+从返回数据中读取 `data.plan_id`，然后原样应用这份方案：
 
 ~~~bash
 aether setup apply --plan-id <PLAN_ID>
 ~~~
 
-**成功标准：**命令返回的 JSON 中 success 为 true，进程退出码为 0。这个步骤只创建默认安全的空配置和本地 SQLite 状态，不会启动服务或启用设备。
+**成功标准**：命令返回的 JSON 中 `success` 为 `true`，进程退出码为 0。这个步骤只创建默认安全的空配置和本地 SQLite 状态，不会启动服务或启用设备。
 
 ## 4. 启动服务
 
@@ -90,9 +90,9 @@ unset JWT_SECRET_KEY AETHER_BOOTSTRAP_ADMIN_PASSWORD
 aether services start
 ~~~
 
-**成功标准：**aether --json services status 显示所有请求启动的服务都在运行。
+**成功标准**：`aether --json services status` 显示所有请求启动的服务都在运行。
 
-如果本机还没有兼容的 aetherems:latest 运行时镜像，请先按照[部署指南](/guides/deployment/)构建或载入镜像。保留这个历史镜像名称，不表示 AetherEMS 属于当前仓库。
+如果本机还没有兼容的 `aetherems:latest` 运行时镜像，请先按照[部署指南](/guides/deployment/)构建或载入镜像。保留这个历史镜像名称，不表示 AetherEMS 属于当前仓库。
 
 ## 5. 检查运行状态
 
@@ -100,9 +100,9 @@ aether services start
 aether --json doctor
 ~~~
 
-**成功标准：**返回数据中的 success 为 true，进程退出码为 0。
+**成功标准**：返回数据中的 `success` 为 `true`，进程退出码为 0。
 
-doctor 会检查 Docker 引擎、六个核心服务的健康接口、SQLite 数据库、四个必要配置文件和共享内存段。任何 false 或非零退出码都表示至少一项失败，应读取 error 字段定位原因。
+`doctor` 会检查 Docker 引擎、六个核心服务的健康接口、SQLite 数据库、四个必要配置文件和共享内存段。任何 `false` 或非零退出码都表示至少一项失败，应读取 `error` 字段定位原因。
 
 ## 6. 连接智能体客户端
 
@@ -120,9 +120,9 @@ claude mcp add aether -- aether mcp --allow-write
 
 在连接真实硬件前，请先阅读[应用与智能体安全操作](/guides/safe-operations/)。
 
-**成功标准：**客户端返回的工具列表中包含 channels_list。默认服务只提供读取工具。
+**成功标准**：客户端返回的工具列表中包含 `channels_list`。默认服务只提供读取工具。
 
-allow-write 只会注册当前允许的受治理写入命令，并不等于用户已经确认操作。每次写入仍需明确传入 confirmed: true。不要自动重试结果不完整的写入；通道变更应保存 request_id、resulting_revision 和 reconciliation_required。更多连接方式请查看[连接智能助手](/guides/ai-assistants/)。
+`allow-write` 只会注册当前允许的受治理写入命令，并不等于用户已经确认操作。每次写入仍需明确传入 `confirmed: true`。不要自动重试结果不完整的写入；通道变更应保存 `request_id`、`resulting_revision` 和 `reconciliation_required`。更多连接方式请查看[连接智能助手](/guides/ai-assistants/)。
 
 最后，可以向智能体提出下面的要求：
 

@@ -22,6 +22,9 @@ Implemented by this slice:
 - Runtime Manifest and real `PointSample` business mappings;
 - memory and crash-recoverable file spools removed only by application ACK;
 - MQTT v3.1.1/QoS 1 binding for a user-selected broker;
+- a default-off `aether-io` Home Assistant composition that uses the real MQTT
+  transport, independent file spools, restart replay, and application-ACK
+  writeback after an explicit Runtime Manifest and cloud-consumer gate;
 - deterministic fake-transport tests, an Edge-only Broker harness, and an
   opt-in real Mosquitto AetherEdge/AetherCloud dual harness.
 
@@ -53,6 +56,33 @@ Deprecated but retained:
 - legacy MQTT device-control topics.
 
 CloudLink v1 exposes no physical control or arbitrary RPC.
+
+## Experimental Integration extension
+
+`aether.cloudlink.integration.v1alpha1` carries Integration topology snapshots
+and observation batches over CloudLink. It is experimental and disabled by
+default. Activation is Cloud-first: AetherCloud must explicitly enable a
+compatible consumer before AetherEdge enables publication, and the current
+Runtime Manifest must explicitly declare the exact extension identifier. If
+either condition is absent, the Edge rejects activation. Enabling an Integration
+source by itself does not enable Cloud publication.
+
+The extension has two independent durable streams and MQTT routes:
+
+- topology snapshots use `up/integration/topology`;
+- observation batches use `up/integration/observations`.
+
+A topology snapshot is one atomic delivery record and is never fragmented. If
+its complete encoded MQTT payload exceeds 256 KiB, publication fails closed.
+An observation batch is retained unchanged when it fits; otherwise it is split
+only at observation boundaries, so an individual observation is never divided.
+Every resulting batch is independently valid, and every complete MQTT payload,
+including the CloudLink delivery envelope, must fit within 256 KiB.
+
+Both streams reuse the existing application-level durable ACK, replay, stable
+delivery identity, and digest rules. MQTT PUBACK remains transport evidence and
+cannot remove a record. The extension carries read-only Integration projection
+facts and provides no command, arbitrary RPC, or physical-control capability.
 
 ## Compatibility matrix
 

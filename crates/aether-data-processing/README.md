@@ -1,4 +1,4 @@
-# Aether Data Processing
+# aether-data-processing crate
 
 Strict, transport-neutral JSON codec for the Aether Data Processing v1
 processor boundary. It converts validated domain values to and from the

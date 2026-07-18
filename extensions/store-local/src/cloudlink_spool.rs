@@ -315,6 +315,7 @@ impl CloudLinkSpoolState {
             earliest,
             self.last_acknowledged_position,
             self.records.len(),
+            self.last_ack.clone(),
             self.data_loss.clone(),
         )
     }

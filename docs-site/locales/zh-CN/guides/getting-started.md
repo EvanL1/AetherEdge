@@ -22,7 +22,7 @@ cargo build --release -p aether
 
 将二进制文件安装到您的 PATH 中 — `cp target/release/aether /usr/local/bin/` 或 `cargo install --path tools/aether` — 因此本指南和其他所有指南都可以将其作为裸 `aether` 进行调用。
 
-仓库在 `config.template/` 中提供了一个故障安全空配置。在源签出中，CLI 和 `docker-compose.yml` 默认情况下均使用 `./data/config` 和 `./data`。 Planning 始终是只读的，不会创建任一目录：
+仓库在 `config.template/` 中提供了一个故障安全空配置。在源代码检出目录中，CLI 和 `docker-compose.yml` 默认均使用 `./data/config` 和 `./data`。规划操作始终只读，不会创建任何一个目录：
 ```bash
 aether --json setup
 ```
@@ -101,7 +101,7 @@ aether doctor
 | aether-uplink | 6006 |
 | aether-alarm | 6007 |
 
-AetherEdge故意不公开任何捆绑的 Web UI。 AetherEMS 等产品控制台是独立部署的，并通过 `aether-api` 进入。
+AetherEdge 有意不提供内置网页界面。AetherEMS 等产品控制台需要独立部署，并通过 `aether-api` 接入。
 
 ## 先看看
 

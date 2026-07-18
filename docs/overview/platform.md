@@ -58,4 +58,4 @@ instead of copying normative content into a second authority.
 Continue with the [AI-native platform](ai-native-platform.md),
 [deployment topologies](deployment-topologies.md),
 [user journeys](user-journeys.md), or the
-[Edge to Contracts to Cloud guide](../guides/edge-contracts-cloud.md).
+[Edge, Contracts, and Cloud integration task](../guides/edge-contracts-cloud.md).

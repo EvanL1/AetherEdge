@@ -5,7 +5,7 @@ updated: 2026-07-16
 status: normative
 ---
 
-# Edge、AetherCloud 和提供商权威
+# 边缘、AetherCloud 和提供商权限
 
 > 权威来源：[AetherCloud](https://github.com/EvanL1/AetherCloud/blob/main/docs/concepts/edge-cloud-boundary.md)。此页面镜像到统一的 AetherIoT 文档中。
 

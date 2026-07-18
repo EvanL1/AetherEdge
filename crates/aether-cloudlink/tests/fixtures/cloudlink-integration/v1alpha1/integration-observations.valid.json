@@ -1,0 +1,99 @@
+{
+  "schema": "aether.cloudlink.envelope.v1",
+  "protocol": "aether.cloudlink",
+  "protocol_version": "1.0",
+  "message_kind": "integration-observation-batch",
+  "gateway_id": "33333333-3333-4333-8333-333333333333",
+  "session_id": "44444444-4444-4444-8444-444444444444",
+  "session_epoch": "7",
+  "credential_generation": "3",
+  "sent_at_ms": "1784217600100",
+  "delivery": {
+    "stream_id": "integration-observations-home",
+    "stream_epoch": "1",
+    "position": "1",
+    "batch_id": "batch-0001",
+    "digest": "sha256:051b0291d257084052a86c90b163b191b72f10d6093789c132180a69226494b6"
+  },
+  "payload": {
+    "schema": "aether.integration.observation-batch.v1alpha1",
+    "integration_id": "home-assistant.home",
+    "snapshot_generation": "1",
+    "batch_id": "batch-0001",
+    "observed_at_ms": "1784217600100",
+    "observations": [
+      {
+        "entity_id": "entity-registry-climate-living",
+        "point_key": "current_temperature",
+        "observed_at_ms": "1784217600001",
+        "quality": "good",
+        "value": {
+          "type": "float64",
+          "value": 23.5
+        }
+      },
+      {
+        "entity_id": "entity-registry-climate-living",
+        "point_key": "target_temperature",
+        "observed_at_ms": "1784217600002",
+        "quality": "good",
+        "value": {
+          "type": "decimal",
+          "value": "24.5"
+        }
+      },
+      {
+        "entity_id": "entity-registry-climate-living",
+        "point_key": "hvac_mode",
+        "observed_at_ms": "1784217600003",
+        "quality": "good",
+        "value": {
+          "type": "string",
+          "value": "heat"
+        }
+      },
+      {
+        "entity_id": "entity-registry-light-bedroom",
+        "point_key": "is_on",
+        "observed_at_ms": "1784217600004",
+        "quality": "good",
+        "value": {
+          "type": "boolean",
+          "value": true
+        }
+      },
+      {
+        "entity_id": "entity-registry-light-bedroom",
+        "point_key": "brightness",
+        "observed_at_ms": "1784217600005",
+        "quality": "uncertain",
+        "value": {
+          "type": "uint64",
+          "value": "18446744073709551615"
+        },
+        "diagnostic": "Source value retained during reconnect"
+      },
+      {
+        "entity_id": "entity-registry-diagnostic",
+        "point_key": "signed_counter",
+        "observed_at_ms": "1784217600006",
+        "quality": "good",
+        "value": {
+          "type": "int64",
+          "value": "-9223372036854775808"
+        }
+      },
+      {
+        "entity_id": "entity-registry-diagnostic",
+        "point_key": "raw_payload",
+        "observed_at_ms": "1784217600007",
+        "quality": "good",
+        "value": {
+          "type": "bytes",
+          "encoding": "base64url",
+          "value": "AAECAwQF"
+        }
+      }
+    ]
+  }
+}

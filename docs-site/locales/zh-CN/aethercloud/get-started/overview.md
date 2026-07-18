@@ -5,7 +5,7 @@ updated: 2026-07-16
 status: mixed
 ---
 
-# AetherCloud 概述
+# AetherCloud概述
 
 > 权威来源：[AetherCloud](https://github.com/EvanL1/AetherCloud/blob/main/docs/get-started/overview.md)。此页面镜像到统一的 AetherIoT 文档中。
 

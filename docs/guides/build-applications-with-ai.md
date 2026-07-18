@@ -156,7 +156,7 @@ behavior, configuration authority, or domain truth.
 
 ## Related pages
 
-- [Agent Quickstart](https://docs.aetheriot.workers.dev/agent-quickstart/) — install and connect from zero
+- [Agent Quickstart](https://docs.aetheriot.workers.dev/en/agent-quickstart/) — install and connect from zero
 - [Connect AI Assistants](ai-assistants.md) — MCP setup and write gating
 - [HTTP API](../reference/http-api.md) — public exposure and operation contracts
 - [System Architecture](../concepts/architecture.md) — service and data boundaries

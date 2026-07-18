@@ -1,0 +1,46 @@
+{
+  "schema": "aether.cloudlink.envelope.v1",
+  "protocol": "aether.cloudlink",
+  "protocol_version": "1.0",
+  "message_kind": "integration-action-receipt",
+  "gateway_id": "33333333-3333-4333-8333-333333333333",
+  "session_id": "44444444-4444-4444-8444-444444444444",
+  "session_epoch": "7",
+  "credential_generation": "3",
+  "sent_at_ms": "1784217600500",
+  "delivery": {
+    "stream_id": "integration-control-receipts",
+    "stream_epoch": "1",
+    "position": "1",
+    "batch_id": "job-55555555-receipt-1",
+    "digest": "sha256:f42bb6dfcd28ca27a7c1079569ffcd0f6144f741461cd362c3c679f471af80a7"
+  },
+  "message_authentication": {
+    "key_id": "development-gateway-key-1",
+    "algorithm": "Ed25519",
+    "signature": "EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE"
+  },
+  "payload": {
+    "schema": "aether.integration-control.action-receipt.v1alpha1",
+    "job_id": "55555555-5555-4555-8555-555555555555",
+    "receipt_id": "77777777-7777-4777-8777-777777777777",
+    "receipt_sequence": "1",
+    "capability_id": "device.power.set.v1",
+    "target": {
+      "integration_id": "home-assistant.home",
+      "snapshot_generation": "1",
+      "entity_id": "entity-registry-light-bedroom",
+      "point_key": "is_on"
+    },
+    "intent_digest": "sha256:40108827ca617c95f9d9c48c357fdd94b2b5f019d8ccf8a23842642e934c7327",
+    "stage": "provider-accepted",
+    "decision": "accepted",
+    "physical_outcome": "unknown",
+    "observed_at_ms": "1784217600450",
+    "evidence_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "audit": {
+      "audit_record_id": "audit-provider-accepted-1",
+      "status": "complete"
+    }
+  }
+}

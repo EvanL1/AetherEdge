@@ -1,0 +1,184 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/EvanL1/AetherEdge/main/ai/docs-manifest.schema.json",
+  "title": "AetherEdge agent document catalog",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "$schema",
+    "schema_version",
+    "project",
+    "repository",
+    "scope",
+    "generated_by",
+    "documents"
+  ],
+  "properties": {
+    "$schema": {
+      "const": "https://raw.githubusercontent.com/EvanL1/AetherEdge/main/ai/docs-manifest.schema.json"
+    },
+    "schema_version": {
+      "const": 3
+    },
+    "project": {
+      "const": "AetherEdge"
+    },
+    "repository": {
+      "type": "string",
+      "format": "uri"
+    },
+    "scope": {
+      "type": "string",
+      "minLength": 1
+    },
+    "generated_by": {
+      "const": "scripts/build-agent-docs.mjs"
+    },
+    "documents": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/document"
+      }
+    }
+  },
+  "$defs": {
+    "document": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "path",
+        "canonical_url",
+        "title",
+        "description",
+        "locale",
+        "translation_of",
+        "document_role",
+        "agent_profiles",
+        "intents",
+        "implementation_status",
+        "production_readiness",
+        "context_sensitivity",
+        "updated",
+        "priority",
+        "media_type",
+        "capability_refs",
+        "preconditions",
+        "recovery_route",
+        "human_escalation",
+        "verification"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^edge-[a-z0-9-]+$"
+        },
+        "path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "canonical_url": {
+          "type": "string",
+          "format": "uri",
+          "pattern": "^https://(?:docs\\.aetheriot\\.workers\\.dev/en/.+\\.md|github\\.com/EvanL1/AetherEdge/blob/main/.+|raw\\.githubusercontent\\.com/EvanL1/AetherEdge/main/.+)$"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1
+        },
+        "locale": {
+          "const": "en"
+        },
+        "translation_of": {
+          "type": ["string", "null"]
+        },
+        "document_role": {
+          "enum": [
+            "agent-task",
+            "operations",
+            "safety",
+            "recovery",
+            "reference",
+            "decision",
+            "status"
+          ]
+        },
+        "agent_profiles": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "enum": ["coding-agent", "operator-agent", "runtime-agent"]
+          }
+        },
+        "intents": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "implementation_status": {
+          "enum": ["implemented", "partial", "planned", "deprecated"]
+        },
+        "production_readiness": {
+          "enum": [
+            "production-ready",
+            "experimental",
+            "not-production-ready",
+            "not-applicable"
+          ]
+        },
+        "context_sensitivity": {
+          "enum": ["public", "internal", "redacted-only", "sensitive-never-load"]
+        },
+        "updated": {
+          "type": "string",
+          "format": "date"
+        },
+        "priority": {
+          "enum": ["core", "optional"]
+        },
+        "media_type": {
+          "enum": ["text/markdown", "application/yaml"]
+        },
+        "capability_refs": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "preconditions": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "recovery_route": {
+          "type": ["string", "null"]
+        },
+        "human_escalation": {
+          "type": ["string", "null"]
+        },
+        "verification": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    }
+  }
+}
