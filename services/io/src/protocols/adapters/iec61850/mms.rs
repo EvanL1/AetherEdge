@@ -657,7 +657,7 @@ const DATA_BINARY_TIME: u8 = 0x8C;
 pub struct ParsedReport {
     /// RptID of the sending RCB.
     pub rpt_id: String,
-    /// Report timestamp as Unix milliseconds (from OptFlds[2] BinaryTime6),
+    /// Report timestamp as Unix milliseconds (from `OptFlds[2]` BinaryTime6),
     /// or `None` when the timestamp field is absent.
     pub timestamp_ms: Option<u64>,
     /// Total number of elements in the dataset (= inclusion-bitmap bit count).

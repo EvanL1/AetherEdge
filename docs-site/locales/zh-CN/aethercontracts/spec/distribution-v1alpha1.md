@@ -1,42 +1,48 @@
 ---
-title: "分发规范 v1 alpha 1 说明"
-description: "此配置文件允许 AetherCloud、AetherIot 和独立实现固定一个精确的 AetherContracts 版本，同时保留其默认验证..."
-updated: 2026-07-15
+title: "使用方分发规范 v1 alpha 1"
+description: "让 AetherCloud、AetherEdge 与独立实现锁定一个精确 AetherContracts 发布版本，并默认离线验证。"
+updated: 2026-07-17
 id: distribution-v1alpha1
 status: experimental
-version: 0.1.0-alpha.3
+version: 0.1.0-alpha.4
 normative: true
 ---
 
-# 分发规范 v1 alpha 1 说明
+# 使用方分发规范 v1 alpha 1
 
-> 本中文页面用于帮助理解。规范性定义、Schema、测试夹具和 TCK 以 AetherContracts 对应版本的英文发布内容为唯一权威。
+> 本页帮助中文用户理解协议。带标签版本中的英文规范、JSON Schema、测试夹具和 TCK 才是规范性依据。
 
-> 权威来源：[AetherContracts](https://github.com/EvanL1/AetherContracts/blob/main/spec/distribution-v1alpha1.md)。此页面已镜像到统一的 AetherIoT 文档中。
+这套配置档让 AetherCloud、AetherEdge（旧发布制品中名为 AetherIot）与独立实现锁定一个精确的 AetherContracts 发布版本，同时让默认验证路径保持离线。分发一致性只能证明发布身份和字节完整性，不能证明使用方编解码器、状态机、认证配置档或消息代理集成符合契约。
 
-此配置文件允许 AetherCloud、AetherIot 和独立实现固定一个确切的 AetherContracts 版本，同时保持其默认验证路径离线。分发一致性证明发布身份和字节完整性；它不能证明消费者编解码器、状态机、身份验证配置文件或代理集成是否一致。
+最新发布版本是 `v0.1.0-alpha.3`。当前 `0.1.0-alpha.4` 内容是尚未发布的开发目标，仍处于实验阶段，不是生产分发声明。
 
-## 权限和信任
+## 权威与信任
 
-消费者仓库中经过审查的 `aether-contracts.lock.json` 是本地信任决策。它固定发布版本、带注释的标签对象、剥离的提交、确切的发布 URL、包大小和 SHA-256 以及外部清单 SHA-256。标签对象和提交提供可审查的来源标识符。捆绑包和清单摘要提供了强制的字节身份。
+使用方仓库中经过评审的 `aether-contracts.lock.json` 是本地信任决定。它锁定发布版本、带注释标签对象、解析后的提交、精确发布地址、发布包大小与 SHA-256，以及外部清单 SHA-256。标签对象和提交提供可审查的来源标识，发布包和清单摘要则提供强制执行的字节身份。
 
-GitHub 标签、版本和共同托管的校验和文件是可变的分发证据，而不是第二个信任根。此 alpha 版本尚不需要 Sigstore 或 SLSA 证明以加密方式将捆绑包绑定到提交。缓存或 CDN 可能只提供锁摘要已接受的字节。消费者不得遵循`main`、`latest`、版本范围或未固定的操作修订。
+GitHub 标签、发布版本和同站托管的校验文件都只是可变分发证据，不是第二个信任根。本 alpha 版本尚不要求用 Sigstore 或 SLSA 证明把发布包和提交进行密码学绑定。缓存或内容分发网络只能提供已经通过锁定摘要接纳的字节。使用方不得跟随 `main`、`latest`、版本范围或未锁定的操作版本。
 
 ## 锁定行为
 
-锁定由`schemas/distribution/v1alpha1/consumer-lock.schema.json`关闭。此实验系的安全策略是固定的：
+`schemas/distribution/v1alpha1/consumer-lock.schema.json` 将使用方锁定义为封闭对象。实验版本的安全策略固定为：
 
-- `conformance_claim` 为 `distribution-only`；
-- `production_release` 为 `false`；
-- `legacy_default` 为 `true`；
-- `physical_control` 为`false`。
+- `conformance_claim` 必须是 `distribution-only`；
+- `production_release` 必须是 `false`；
+- `legacy_default` 必须是 `true`；
+- `physical_control` 必须是 `false`。
 
-`import` 绑定一个发布工件路径、一个使用方目标路径和一个 SHA-256。 `pending_import` 记录消费者尚未采用的发布工件和非空原因。导入的和待处理的源集是不相交的。锁的 `adoption` 部分声明范围、所需模块以及确切所需的发布源闭包。进口源和待处理源的合并必须等于关闭。 `partial-consumer` 至少有一个待处理源； `complete-consumer` 没有任何内容并导入整个闭包。完全的分发采用仍然没有说明行为一致性。
+一个 `import` 会绑定发布制品路径、使用方目标路径和一份 SHA-256。`pending_import` 记录尚未采用的发布制品及非空原因。已导入集合和待处理集合不能重叠。
 
-消费者在锁的 `manifest.local_path` 处提交确切的释放 `contract-manifest.json` 字节。离线验证检查其摘要、发布身份、安全声明、工件声明以及每个导入的消费者字节。它不执行下载、修复、回退或写入操作。
+锁中的 `adoption` 部分声明采用范围、必需模块和精确的发布源文件全集。已导入与待处理源文件的并集必须恰好等于该全集。`partial-consumer` 至少有一个待处理源文件；`complete-consumer` 没有待处理项，并导入完整集合。即使分发采用完整，也不能据此宣称行为一致。
+
+使用方必须在锁的 `manifest.local_path` 提交发布版本中 `contract-manifest.json` 的精确字节。离线验证会检查其摘要、发布身份、安全声明、制品声明和每一个已导入的使用方字节。离线验证不会下载、修复、回退或写入任何内容。
 
 ## 在线验证
 
-可选的在线验证程序仅下载由锁命名的 URL。它在检查之前强制执行准确的响应大小和 SHA-256。它在锁的最大压缩字节、扩展字节、条目计数、路径字节、每个文件字节和总常规文件字节下解析进程内的 gzip 和 tar。它拒绝绝对或转义路径、链接、设备、不支持的条目类型、重复的规范化路径、无效的校验和、格式错误的终止符以及除一个锁定版本根之外的任何存档布局。提取使用私有目录和文件，并且仅在验证后进行。然后，它会验证清单以及每个导入的和待处理的发布源字节。失败是终结；没有回退到同级结帐或消费者本地候选者。
+可选在线验证器只下载锁中指定的地址，并在检查内容前强制核对精确响应大小和 SHA-256。它会在锁定的压缩字节数、解压字节数、条目数量、路径长度、单文件字节数和普通文件总字节数限制内，在进程中解析 gzip 与 tar。
 
-消费者必须将 `.github/actions/verify-consumer` 固定到锁定版本的完整 40 个字符的剥离提交。复合操作将其实际操作提交传递给验证器，验证器拒绝使用 `ACTION_COMMIT_MISMATCH` 的不同修订。锁定路径是与消费者相关的，并且必须保留在消费者仓库内。此检查补充但绝不会取代消费者的本机编解码器和状态机一致性测试。
+验证器会拒绝绝对路径、越界路径、链接、设备、不支持的条目类型、重复的规范化路径、无效校验和、格式错误的结束标记，以及不符合单一锁定发布根目录的归档布局。只有验证通过后，内容才会提取到私有目录和文件。随后验证器会检查清单，以及所有已导入和待处理的发布源字节。失败即终止，不会回退到相邻源码目录或使用方本地候选文件。
+
+使用方必须把 `.github/actions/verify-consumer` 锁定到该发布版本解析后提交的完整 40 位字符。复合操作把自己的实际提交交给验证器；版本不同会返回 `ACTION_COMMIT_MISMATCH`。锁文件路径必须相对使用方仓库，并始终位于仓库内部。
+
+这些检查只能补充使用方自己的编解码器和状态机一致性测试，不能替代它们，也不能把实验版本变成生产版本。

@@ -14,17 +14,79 @@ use rumqttc::{
     AsyncClient, Event, Incoming, MqttOptions, NetworkOptions, Outgoing, TlsConfiguration,
     Transport,
 };
+#[cfg(feature = "integration-control")]
+use tokio::sync::oneshot;
 use tokio::sync::{Mutex, mpsc};
 
+#[cfg(feature = "integration-control")]
+use crate::IntegrationControlTopicNamespace;
 use crate::{
     CLOUDLINK_MQTT_QOS, CLOUDLINK_MQTT_RETAIN, CloudLinkMqttConfig, CloudLinkMqttError,
     CloudLinkTlsConfig, DeploymentSecurity, TopicNamespace,
 };
 
+enum ManagerCommand {
+    Baseline(CloudLinkTransportMessage),
+    #[cfg(feature = "integration-control")]
+    EnableIntegrationControl {
+        topics: IntegrationControlTopicNamespace,
+        result: oneshot::Sender<PortResult<()>>,
+    },
+    #[cfg(feature = "integration-control")]
+    IntegrationControlReceipt {
+        payload: Vec<u8>,
+        result: oneshot::Sender<PortResult<()>>,
+    },
+}
+
+#[cfg(feature = "integration-control")]
+#[derive(Default)]
+struct IntegrationControlRouteState {
+    topics: Option<IntegrationControlTopicNamespace>,
+}
+
+#[cfg(feature = "integration-control")]
+impl IntegrationControlRouteState {
+    fn is_active(&self) -> bool {
+        self.topics.is_some()
+    }
+
+    fn activate(&mut self, topics: IntegrationControlTopicNamespace) -> PortResult<()> {
+        if self.is_active() {
+            return Err(PortError::new(
+                PortErrorKind::Conflict,
+                "Integration-control MQTT subscription is already active",
+            ));
+        }
+        self.topics = Some(topics);
+        Ok(())
+    }
+
+    fn matches_offer(&self, topic: &str) -> bool {
+        self.topics
+            .as_ref()
+            .is_some_and(|topics| topic == topics.offer_topic())
+    }
+
+    fn receipt_topic(&self) -> PortResult<String> {
+        self.topics
+            .as_ref()
+            .map(IntegrationControlTopicNamespace::receipt_topic)
+            .ok_or_else(|| {
+                PortError::new(
+                    PortErrorKind::Rejected,
+                    "Integration-control MQTT route is not active",
+                )
+            })
+    }
+}
+
 /// Reconnecting MQTT v3.1.1 CloudLink transport.
 pub struct MqttCloudLinkTransport {
-    outbound: mpsc::Sender<CloudLinkTransportMessage>,
+    outbound: mpsc::Sender<ManagerCommand>,
     events: Mutex<mpsc::Receiver<PortResult<CloudLinkTransportEvent>>>,
+    #[cfg(feature = "integration-control")]
+    integration_control_offers: Mutex<mpsc::Receiver<PortResult<Vec<u8>>>>,
     maximum_packet_bytes: usize,
 }
 
@@ -38,31 +100,84 @@ impl MqttCloudLinkTransport {
         config.validate(security)?;
         let (outbound, outbound_rx) = mpsc::channel(config.request_capacity);
         let (event_tx, events) = mpsc::channel(config.request_capacity);
+        #[cfg(feature = "integration-control")]
+        let (integration_control_offer_tx, integration_control_offers) =
+            mpsc::channel(config.request_capacity);
         let maximum_packet_bytes = config.maximum_packet_bytes;
-        tokio::spawn(run_manager(config, topics, outbound_rx, event_tx));
+        tokio::spawn(run_manager(
+            config,
+            topics,
+            outbound_rx,
+            event_tx,
+            #[cfg(feature = "integration-control")]
+            integration_control_offer_tx,
+        ));
         Ok(Arc::new(Self {
             outbound,
             events: Mutex::new(events),
+            #[cfg(feature = "integration-control")]
+            integration_control_offers: Mutex::new(integration_control_offers),
             maximum_packet_bytes,
         }))
+    }
+
+    /// Activates the one exact governed-control offer subscription.
+    ///
+    /// The composition root must call this only after authenticating and
+    /// persisting the current CloudLink session. Reconnection clears the
+    /// subscription and requires a new authenticated call.
+    #[cfg(feature = "integration-control")]
+    pub async fn enable_integration_control(
+        &self,
+        topics: IntegrationControlTopicNamespace,
+    ) -> PortResult<()> {
+        let (result, response) = oneshot::channel();
+        self.outbound
+            .send(ManagerCommand::EnableIntegrationControl { topics, result })
+            .await
+            .map_err(|_| manager_unavailable())?;
+        response.await.map_err(|_| manager_unavailable())?
+    }
+
+    /// Receives only exact, post-activation governed-control offer payloads.
+    #[cfg(feature = "integration-control")]
+    pub async fn receive_integration_control_offer(&self) -> PortResult<Vec<u8>> {
+        self.integration_control_offers
+            .lock()
+            .await
+            .recv()
+            .await
+            .unwrap_or_else(|| Err(manager_unavailable()))
+    }
+
+    /// Publishes one authenticated durable business receipt.
+    ///
+    /// MQTT PUBACK is deliberately not surfaced as an application durable
+    /// acknowledgement and never removes the local receipt.
+    #[cfg(feature = "integration-control")]
+    pub async fn send_integration_control_receipt(&self, payload: Vec<u8>) -> PortResult<()> {
+        validate_payload(&payload, self.maximum_packet_bytes)?;
+        let (result, response) = oneshot::channel();
+        self.outbound
+            .send(ManagerCommand::IntegrationControlReceipt { payload, result })
+            .await
+            .map_err(|_| manager_unavailable())?;
+        response.await.map_err(|_| manager_unavailable())?
     }
 }
 
 #[async_trait]
 impl CloudLinkTransport for MqttCloudLinkTransport {
     async fn send(&self, message: CloudLinkTransportMessage) -> PortResult<()> {
-        if message.payload().is_empty() || message.payload().len() > self.maximum_packet_bytes {
-            return Err(PortError::new(
-                PortErrorKind::InvalidData,
-                "CloudLink MQTT payload is empty or exceeds its configured bound",
-            ));
-        }
+        validate_payload(message.payload(), self.maximum_packet_bytes)?;
         let allowed = matches!(
             message.route(),
             CloudLinkTransportRoute::SessionUp
                 | CloudLinkTransportRoute::HeartbeatUp
                 | CloudLinkTransportRoute::ManifestUp
                 | CloudLinkTransportRoute::TelemetryUp
+                | CloudLinkTransportRoute::IntegrationTopologyUp
+                | CloudLinkTransportRoute::IntegrationObservationsUp
                 | CloudLinkTransportRoute::DataLossUp
         );
         if !allowed {
@@ -75,6 +190,8 @@ impl CloudLinkTransport for MqttCloudLinkTransport {
             message.route(),
             CloudLinkTransportRoute::ManifestUp
                 | CloudLinkTransportRoute::TelemetryUp
+                | CloudLinkTransportRoute::IntegrationTopologyUp
+                | CloudLinkTransportRoute::IntegrationObservationsUp
                 | CloudLinkTransportRoute::DataLossUp
         );
         if durable_route != message.delivery().is_some() {
@@ -83,12 +200,10 @@ impl CloudLinkTransport for MqttCloudLinkTransport {
                 "CloudLink durable routes require identity and session routes forbid it",
             ));
         }
-        self.outbound.send(message).await.map_err(|_| {
-            PortError::new(
-                PortErrorKind::Unavailable,
-                "CloudLink MQTT transport manager is unavailable",
-            )
-        })
+        self.outbound
+            .send(ManagerCommand::Baseline(message))
+            .await
+            .map_err(|_| manager_unavailable())
     }
 
     async fn receive(&self) -> PortResult<CloudLinkTransportEvent> {
@@ -104,8 +219,11 @@ impl CloudLinkTransport for MqttCloudLinkTransport {
 async fn run_manager(
     config: CloudLinkMqttConfig,
     topics: TopicNamespace,
-    mut outbound: mpsc::Receiver<CloudLinkTransportMessage>,
+    mut outbound: mpsc::Receiver<ManagerCommand>,
     events: mpsc::Sender<PortResult<CloudLinkTransportEvent>>,
+    #[cfg(feature = "integration-control")] integration_control_offers: mpsc::Sender<
+        PortResult<Vec<u8>>,
+    >,
 ) {
     loop {
         let (client, mut event_loop) = match mqtt_client(&config) {
@@ -123,27 +241,78 @@ async fn run_manager(
         let mut waiting_packet_id = VecDeque::<Option<CloudLinkRecordIdentity>>::new();
         let mut inflight = BTreeMap::<u16, CloudLinkRecordIdentity>::new();
         let mut outbound_closed = false;
+        #[cfg(feature = "integration-control")]
+        let mut integration_control_routes = IntegrationControlRouteState::default();
 
         loop {
             tokio::select! {
                 outgoing = outbound.recv() => {
-                    let Some(message) = outgoing else {
+                    let Some(command) = outgoing else {
                         outbound_closed = true;
                         break;
                     };
-                    waiting_packet_id.push_back(message.delivery().cloned());
-                    if client
-                        .publish(
-                            topics.topic(message.route()),
-                            CLOUDLINK_MQTT_QOS,
-                            CLOUDLINK_MQTT_RETAIN,
-                            message.payload(),
-                        )
-                        .await
-                        .is_err()
-                    {
-                        waiting_packet_id.pop_back();
-                        break;
+                    match command {
+                        ManagerCommand::Baseline(message) => {
+                            waiting_packet_id.push_back(message.delivery().cloned());
+                            if client
+                                .publish(
+                                    topics.topic(message.route()),
+                                    CLOUDLINK_MQTT_QOS,
+                                    CLOUDLINK_MQTT_RETAIN,
+                                    message.payload(),
+                                )
+                                .await
+                                .is_err()
+                            {
+                                waiting_packet_id.pop_back();
+                                break;
+                            }
+                        },
+                        #[cfg(feature = "integration-control")]
+                        ManagerCommand::EnableIntegrationControl {
+                            topics: requested,
+                            result,
+                        } => {
+                            if integration_control_routes.is_active() {
+                                let _ = result.send(integration_control_routes.activate(requested));
+                                continue;
+                            }
+                            if client
+                                .subscribe(requested.offer_topic(), CLOUDLINK_MQTT_QOS)
+                                .await
+                                .is_err()
+                            {
+                                let _ = result.send(Err(manager_unavailable()));
+                                break;
+                            }
+                            let _ = result.send(integration_control_routes.activate(requested));
+                        },
+                        #[cfg(feature = "integration-control")]
+                        ManagerCommand::IntegrationControlReceipt { payload, result } => {
+                            let receipt_topic = match integration_control_routes.receipt_topic() {
+                                Ok(topic) => topic,
+                                Err(error) => {
+                                    let _ = result.send(Err(error));
+                                    continue;
+                                },
+                            };
+                            waiting_packet_id.push_back(None);
+                            if client
+                                .publish(
+                                    receipt_topic,
+                                    CLOUDLINK_MQTT_QOS,
+                                    CLOUDLINK_MQTT_RETAIN,
+                                    payload,
+                                )
+                                .await
+                                .is_err()
+                            {
+                                waiting_packet_id.pop_back();
+                                let _ = result.send(Err(manager_unavailable()));
+                                break;
+                            }
+                            let _ = result.send(Ok(()));
+                        },
                     }
                 },
                 event = event_loop.poll() => {
@@ -178,21 +347,25 @@ async fn run_manager(
                             let valid_transport = publication.qos == CLOUDLINK_MQTT_QOS
                                 && !publication.retain
                                 && publication.payload.len() <= config.maximum_packet_bytes;
+                            #[cfg(feature = "integration-control")]
+                            if integration_control_routes.matches_offer(&publication.topic) {
+                                let event = if valid_transport {
+                                    Ok(publication.payload.to_vec())
+                                } else {
+                                    Err(invalid_inbound_publication())
+                                };
+                                let _ = integration_control_offers.send(event).await;
+                                continue;
+                            }
                             let Some(route) = topics.inbound_route(&publication.topic) else {
                                 let _ = events
-                                    .send(Err(PortError::new(
-                                        PortErrorKind::InvalidData,
-                                        "CloudLink MQTT inbound publication violated route, QoS, retain, or size policy",
-                                    )))
+                                    .send(Err(invalid_inbound_publication()))
                                     .await;
                                 continue;
                             };
                             if !valid_transport {
                                 let _ = events
-                                    .send(Err(PortError::new(
-                                        PortErrorKind::InvalidData,
-                                        "CloudLink MQTT inbound publication violated route, QoS, retain, or size policy",
-                                    )))
+                                    .send(Err(invalid_inbound_publication()))
                                     .await;
                                 continue;
                             }
@@ -217,6 +390,74 @@ async fn run_manager(
             return;
         }
         tokio::time::sleep(Duration::from_secs(config.reconnect_delay_secs)).await;
+    }
+}
+
+fn validate_payload(payload: &[u8], maximum_packet_bytes: usize) -> PortResult<()> {
+    if payload.is_empty() || payload.len() > maximum_packet_bytes {
+        return Err(PortError::new(
+            PortErrorKind::InvalidData,
+            "CloudLink MQTT payload is empty or exceeds its configured bound",
+        ));
+    }
+    Ok(())
+}
+
+fn manager_unavailable() -> PortError {
+    PortError::new(
+        PortErrorKind::Unavailable,
+        "CloudLink MQTT transport manager is unavailable",
+    )
+}
+
+fn invalid_inbound_publication() -> PortError {
+    PortError::new(
+        PortErrorKind::InvalidData,
+        "CloudLink MQTT inbound publication violated route, QoS, retain, or size policy",
+    )
+}
+
+#[cfg(all(test, feature = "integration-control"))]
+mod integration_control_tests {
+    use super::*;
+
+    #[test]
+    fn control_routes_are_connection_local_and_default_off() {
+        let topics = IntegrationControlTopicNamespace::new(
+            "aether-test",
+            "33333333-3333-4333-8333-333333333333",
+        )
+        .expect("topics");
+        let mut connection = IntegrationControlRouteState::default();
+        assert!(!connection.matches_offer(&topics.offer_topic()));
+        assert!(connection.receipt_topic().is_err());
+
+        connection
+            .activate(topics.clone())
+            .expect("explicit activation");
+        assert!(connection.matches_offer(&topics.offer_topic()));
+        assert_eq!(
+            connection.receipt_topic().expect("receipt route"),
+            topics.receipt_topic()
+        );
+        assert!(connection.activate(topics.clone()).is_err());
+
+        let mut reconnected = IntegrationControlRouteState::default();
+        assert!(
+            !reconnected.matches_offer(&topics.offer_topic()),
+            "a reconnect requires a newly authenticated activation"
+        );
+        assert!(reconnected.receipt_topic().is_err());
+        reconnected
+            .activate(topics.clone())
+            .expect("new session explicitly reactivates the routes");
+        assert!(reconnected.matches_offer(&topics.offer_topic()));
+        assert_eq!(
+            reconnected
+                .receipt_topic()
+                .expect("reactivated receipt route"),
+            topics.receipt_topic()
+        );
     }
 }
 

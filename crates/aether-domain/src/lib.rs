@@ -9,6 +9,7 @@ mod command;
 mod data_processing;
 mod error;
 mod identity;
+mod integration;
 mod point;
 
 pub use alarm::{AlarmComparator, AlarmRuleDefinition, AlarmRuleTarget, AlarmSeverity};
@@ -29,6 +30,13 @@ pub use data_processing::{
 pub use error::DomainError;
 pub use identity::{
     AlarmRuleId, AlertId, ChannelId, CommandId, InstanceId, PointId, RuleId, TimestampMs,
+};
+pub use integration::{
+    AreaId, AreaRecord, DeviceId, DeviceRecord, EntityId, EntityPointDescriptor, EntityRecord,
+    ExternalAlias, GatewayIdentity, IntegrationId, IntegrationObservation, IntegrationPointKey,
+    IntegrationPointKind, IntegrationSnapshot, IntegrationStateQuality,
+    IntegrationTopologySnapshot, ObservedValue, ObservedValueType, SnapshotDigest,
+    TopologyGeneration,
 };
 pub use point::{
     AcquiredPointSample, ChannelCommandAddress, ChannelPointAddress, PointAddress, PointKind,

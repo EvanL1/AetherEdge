@@ -12,9 +12,11 @@ mod control;
 mod data_processing;
 mod error;
 mod history;
+mod integration;
 mod live_state;
 mod mirror;
 mod outbox;
+mod secret;
 mod uplink;
 
 pub use acquisition::AcquisitionStateWriter;
@@ -56,7 +58,12 @@ pub use data_processing::{
 };
 pub use error::{PortError, PortErrorKind, PortResult};
 pub use history::HistorySink;
+pub use integration::{
+    DelegatedDeviceProvider, IntegrationProjectionChange, IntegrationProjectionQuery,
+    IntegrationProjectionReceipt, IntegrationProjectionSink, IntegrationTopologyGenerationStore,
+};
 pub use live_state::{LiveState, LiveStateWriter};
 pub use mirror::StateMirror;
 pub use outbox::{DurableOutbox, OutboxEntry, OutboxId, OutboxMessage};
+pub use secret::{SecretMaterial, SecretRef, SecretResolver};
 pub use uplink::UplinkPublisher;

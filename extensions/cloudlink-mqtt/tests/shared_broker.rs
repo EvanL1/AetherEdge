@@ -11,8 +11,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use aether_cloudlink::{
-    CandidateMessage, CloudLinkCodec, MessageAuthentication, SessionBinding, SessionHello,
-    TopologyBinding,
+    CandidateMessage, CloudLinkCodec, GatewaySessionAuthenticator, MessageAuthentication,
+    SessionBinding, SessionHello, TopologyBinding, UplinkAuthentication,
 };
 use aether_cloudlink_mqtt::{
     CLOUDLINK_MQTT_QOS, CLOUDLINK_MQTT_RETAIN, CloudLinkMqttConfig, CloudLinkTlsConfig,
@@ -26,6 +26,7 @@ use aether_ports::{
     CloudLinkTransportMessage, CloudLinkTransportRoute,
 };
 use aether_store_local::{FileCloudLinkSpool, MemoryCloudLinkSpool};
+use ed25519_dalek::SigningKey;
 use rumqttc::tokio_native_tls::native_tls::{Certificate, Identity, TlsConnector};
 use rumqttc::{AsyncClient, Event, Incoming, MqttOptions, Transport};
 use serde_json::{Value, json};
@@ -34,6 +35,19 @@ use tokio::time::{Instant, timeout};
 
 const WAIT: Duration = Duration::from_secs(15);
 const TEST_CREDENTIAL_GENERATION: u64 = 1;
+
+fn test_uplink_authentication() -> UplinkAuthentication {
+    GatewaySessionAuthenticator::new(
+        "development-cloud-key",
+        SigningKey::from_bytes(&[7_u8; 32])
+            .verifying_key()
+            .to_bytes(),
+        "development-integration-key",
+        [9_u8; 32],
+    )
+    .expect("test session authenticator")
+    .uplink_authentication()
+}
 
 #[derive(Debug)]
 enum FakeCloudObservation {
@@ -91,9 +105,9 @@ async fn shared_broker_session_manifest_telemetry_ack_and_replay() {
     let heartbeat = CloudLinkCodec::encode(
         &aether_cloudlink::HeartbeatMessage::new(
             &first_session,
-            false,
             TimestampMs::new(1_721_000_000_123),
             Vec::new(),
+            &test_uplink_authentication(),
         )
         .expect("heartbeat"),
     )
@@ -247,9 +261,9 @@ async fn external_cloud_dual_harness() {
     let heartbeat = CloudLinkCodec::encode(
         &aether_cloudlink::HeartbeatMessage::new(
             &first_session,
-            false,
             TimestampMs::new(1_721_000_000_123),
             Vec::new(),
+            &test_uplink_authentication(),
         )
         .expect("heartbeat"),
     )
@@ -644,9 +658,9 @@ async fn external_cloud_dual_phase1_before_edge_restart() {
     let heartbeat = CloudLinkCodec::encode(
         &aether_cloudlink::HeartbeatMessage::new(
             &session,
-            false,
             TimestampMs::new(1_721_000_000_123),
             Vec::new(),
+            &test_uplink_authentication(),
         )
         .expect("heartbeat"),
     )
@@ -1131,13 +1145,9 @@ async fn send_record_without_spool_transition(
     record: &aether_ports::CloudLinkRecord,
     route: CloudLinkTransportRoute,
 ) {
-    let envelope = CloudLinkCodec::delivery_envelope(
-        session,
-        record,
-        TimestampMs::new(1_721_000_000_200),
-        None,
-    )
-    .expect("direct delivery envelope");
+    let envelope =
+        CloudLinkCodec::delivery_envelope(session, record, None, &test_uplink_authentication())
+            .expect("direct delivery envelope");
     transport
         .send(CloudLinkTransportMessage::new(
             route,
@@ -1553,7 +1563,7 @@ async fn send_hello_with_nonce(
         TEST_CREDENTIAL_GENERATION,
         "22222222-2222-4222-8222-222222222222",
         "development-integration-key",
-        MessageAuthentication::new("development-integration-key", "B".repeat(86))
+        MessageAuthentication::new("development-integration-key", "E".repeat(86))
             .expect("signature shape"),
         vec!["1.0".to_string()],
         format!("{nonce_marker:0>43}"),
@@ -1644,13 +1654,9 @@ async fn offer(
         .mark_offered(record.identity(), &spool_session)
         .await
         .expect("mark offered");
-    let envelope = CloudLinkCodec::delivery_envelope(
-        session,
-        record,
-        TimestampMs::new(1_721_000_000_200),
-        None,
-    )
-    .expect("delivery envelope");
+    let envelope =
+        CloudLinkCodec::delivery_envelope(session, record, None, &test_uplink_authentication())
+            .expect("delivery envelope");
     transport
         .send(CloudLinkTransportMessage::new(
             route,

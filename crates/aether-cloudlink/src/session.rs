@@ -11,6 +11,7 @@ use crate::{CLOUDLINK_PROTOCOL, CLOUDLINK_PROTOCOL_VERSION, CloudLinkCodecError}
 const HELLO_SCHEMA: &str = "aether.cloudlink.session-hello.v1";
 const ACCEPTED_SCHEMA: &str = "aether.cloudlink.session-accepted.v1";
 const CHALLENGE_SCHEMA: &str = "aether.cloudlink.session-challenge.v1";
+const CHALLENGE_REQUEST_SCHEMA: &str = "aether.cloudlink.session-challenge-request.v1";
 
 /// One client/server cursor claim used during resume negotiation.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -100,7 +101,7 @@ impl MessageAuthentication {
         Ok(value)
     }
 
-    fn validate(&self) -> Result<(), CloudLinkCodecError> {
+    pub(crate) fn validate(&self) -> Result<(), CloudLinkCodecError> {
         identifier(&self.key_id, "message_authentication.key_id", 128)?;
         if self.algorithm != "Ed25519"
             || self.signature.len() != 86
@@ -117,8 +118,16 @@ impl MessageAuthentication {
         Ok(())
     }
 
-    fn key_id(&self) -> &str {
+    /// Returns the public key identity without exposing key material.
+    #[must_use]
+    pub fn key_id(&self) -> &str {
         &self.key_id
+    }
+
+    /// Returns the canonical signature encoding.
+    #[must_use]
+    pub fn signature(&self) -> &str {
+        &self.signature
     }
 }
 
@@ -184,6 +193,165 @@ impl SessionChallenge {
             });
         }
         self.cloud_signature.validate()
+    }
+
+    /// Returns the gateway routing claim carried by the trusted broker channel.
+    #[must_use]
+    pub fn gateway_id(&self) -> &str {
+        &self.gateway_id
+    }
+
+    /// Returns the one-time challenge identity.
+    #[must_use]
+    pub fn challenge_id(&self) -> &str {
+        &self.challenge_id
+    }
+
+    /// Returns the challenge issue time.
+    #[must_use]
+    pub fn issued_at_ms(&self) -> u64 {
+        self.issued_at_ms.parse().unwrap_or_default()
+    }
+
+    /// Returns the challenge expiry time.
+    #[must_use]
+    pub fn expires_at_ms(&self) -> u64 {
+        self.expires_at_ms.parse().unwrap_or_default()
+    }
+
+    pub(crate) fn cloud_nonce(&self) -> &str {
+        &self.cloud_nonce
+    }
+
+    pub(crate) fn issued_at_ms_wire(&self) -> &str {
+        &self.issued_at_ms
+    }
+
+    pub(crate) fn expires_at_ms_wire(&self) -> &str {
+        &self.expires_at_ms
+    }
+
+    pub(crate) const fn cloud_signature(&self) -> &MessageAuthentication {
+        &self.cloud_signature
+    }
+}
+
+/// Credential reference used before a Cloud challenge has been issued.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ChallengeCredentialBinding {
+    credential_id: String,
+    generation: String,
+}
+
+/// Gateway-to-Cloud request for one signed session challenge.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SessionChallengeRequest {
+    schema: String,
+    protocol: String,
+    message_kind: String,
+    gateway_id: String,
+    credential_binding: ChallengeCredentialBinding,
+    offered_protocol_versions: Vec<String>,
+    client_nonce: String,
+    resume: Vec<ResumeCursor>,
+}
+
+impl core::fmt::Debug for SessionChallengeRequest {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter
+            .debug_struct("SessionChallengeRequest")
+            .field("authentication_transcript", &"[REDACTED]")
+            .field(
+                "offered_version_count",
+                &self.offered_protocol_versions.len(),
+            )
+            .field("resume_cursor_count", &self.resume.len())
+            .finish()
+    }
+}
+
+impl SessionChallengeRequest {
+    /// Creates the exact closed request that precedes a Gateway-signed hello.
+    pub fn new(
+        gateway_id: impl Into<String>,
+        credential_id: impl Into<String>,
+        credential_generation: u64,
+        offered_protocol_versions: Vec<String>,
+        client_nonce: impl Into<String>,
+        resume: Vec<ResumeCursor>,
+    ) -> Result<Self, CloudLinkCodecError> {
+        let value = Self {
+            schema: CHALLENGE_REQUEST_SCHEMA.to_owned(),
+            protocol: CLOUDLINK_PROTOCOL.to_owned(),
+            message_kind: "session-challenge-request".to_owned(),
+            gateway_id: gateway_id.into(),
+            credential_binding: ChallengeCredentialBinding {
+                credential_id: credential_id.into(),
+                generation: credential_generation.to_string(),
+            },
+            offered_protocol_versions,
+            client_nonce: client_nonce.into(),
+            resume,
+        };
+        value.validate()?;
+        Ok(value)
+    }
+
+    pub(crate) fn validate(&self) -> Result<(), CloudLinkCodecError> {
+        schema(&self.schema, CHALLENGE_REQUEST_SCHEMA)?;
+        if self.protocol != CLOUDLINK_PROTOCOL || self.message_kind != "session-challenge-request" {
+            return Err(CloudLinkCodecError::UnsupportedMessage {
+                found: self.message_kind.clone(),
+            });
+        }
+        uuid(&self.gateway_id, "gateway_id")?;
+        identifier(
+            &self.credential_binding.credential_id,
+            "credential_binding.credential_id",
+            256,
+        )?;
+        positive_u64(
+            &self.credential_binding.generation,
+            "credential_binding.generation",
+        )?;
+        validate_offered_versions(&self.offered_protocol_versions)?;
+        validate_nonce(&self.client_nonce, "client_nonce")?;
+        validate_cursors(&self.resume)
+    }
+
+    /// Returns the Gateway identity bound to the request.
+    #[must_use]
+    pub fn gateway_id(&self) -> &str {
+        &self.gateway_id
+    }
+
+    pub(crate) fn credential_id(&self) -> &str {
+        &self.credential_binding.credential_id
+    }
+
+    pub(crate) fn credential_generation(&self) -> u64 {
+        self.credential_binding
+            .generation
+            .parse()
+            .unwrap_or_default()
+    }
+
+    pub(crate) fn credential_generation_wire(&self) -> &str {
+        &self.credential_binding.generation
+    }
+
+    pub(crate) fn offered_protocol_versions(&self) -> &[String] {
+        &self.offered_protocol_versions
+    }
+
+    pub(crate) fn client_nonce(&self) -> &str {
+        &self.client_nonce
+    }
+
+    pub(crate) fn resume(&self) -> &[ResumeCursor] {
+        &self.resume
     }
 }
 
@@ -260,6 +428,41 @@ impl SessionHello {
         Ok(value)
     }
 
+    /// Creates a hello whose identity evidence is bound to the trusted MQTT connector.
+    ///
+    /// The caller must use an authenticated TLS broker connection and exact
+    /// per-gateway ACLs. No signature placeholder is accepted in the payload.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_trusted_connector_broker_attested(
+        gateway_id: impl Into<String>,
+        credential_id: impl Into<String>,
+        credential_generation: u64,
+        challenge_id: impl Into<String>,
+        offered_protocol_versions: Vec<String>,
+        client_nonce: impl Into<String>,
+        resume: Vec<ResumeCursor>,
+    ) -> Result<Self, CloudLinkCodecError> {
+        let value = Self {
+            schema: HELLO_SCHEMA.to_string(),
+            protocol: CLOUDLINK_PROTOCOL.to_string(),
+            message_kind: "session-hello".to_string(),
+            gateway_id: gateway_id.into(),
+            credential_binding: CredentialBinding {
+                credential_id: credential_id.into(),
+                generation: credential_generation.to_string(),
+                origin_model: CredentialOriginModel::TrustedConnectorBrokerAttestation,
+            },
+            challenge_id: challenge_id.into(),
+            gateway_key_id: None,
+            gateway_signature: None,
+            offered_protocol_versions,
+            client_nonce: client_nonce.into(),
+            resume,
+        };
+        value.validate()?;
+        Ok(value)
+    }
+
     pub(crate) fn validate(&self) -> Result<(), CloudLinkCodecError> {
         schema(&self.schema, HELLO_SCHEMA)?;
         if self.protocol != CLOUDLINK_PROTOCOL || self.message_kind != "session-hello" {
@@ -312,26 +515,8 @@ impl SessionHello {
                 }
             },
         }
-        if self.offered_protocol_versions.is_empty() || self.offered_protocol_versions.len() > 8 {
-            return Err(CloudLinkCodecError::InvalidField {
-                field: "offered_protocol_versions",
-                message: "must contain between one and eight versions",
-            });
-        }
-        for version in &self.offered_protocol_versions {
-            protocol_version(version)?;
-        }
-        if self.client_nonce.len() != 43
-            || !self
-                .client_nonce
-                .bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
-        {
-            return Err(CloudLinkCodecError::InvalidField {
-                field: "client_nonce",
-                message: "must be 32 bytes encoded as unpadded base64url",
-            });
-        }
+        validate_offered_versions(&self.offered_protocol_versions)?;
+        validate_nonce(&self.client_nonce, "client_nonce")?;
         validate_cursors(&self.resume)?;
         Ok(())
     }
@@ -512,4 +697,39 @@ fn validate_cursors(cursors: &[ResumeCursor]) -> Result<(), CloudLinkCodecError>
         }
     }
     Ok(())
+}
+
+fn validate_offered_versions(versions: &[String]) -> Result<(), CloudLinkCodecError> {
+    if versions.is_empty() || versions.len() > 8 {
+        return Err(CloudLinkCodecError::InvalidField {
+            field: "offered_protocol_versions",
+            message: "must contain between one and eight versions",
+        });
+    }
+    let mut unique = HashSet::new();
+    for version in versions {
+        protocol_version(version)?;
+        if !unique.insert(version) {
+            return Err(CloudLinkCodecError::InvalidField {
+                field: "offered_protocol_versions",
+                message: "must contain unique versions",
+            });
+        }
+    }
+    Ok(())
+}
+
+fn validate_nonce(value: &str, field: &'static str) -> Result<(), CloudLinkCodecError> {
+    if value.len() == 43
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+    {
+        Ok(())
+    } else {
+        Err(CloudLinkCodecError::InvalidField {
+            field,
+            message: "must be 32 bytes encoded as unpadded base64url",
+        })
+    }
 }

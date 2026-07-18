@@ -7,7 +7,11 @@
 
 mod codec;
 mod error;
+mod integration;
+mod integration_projection_outbox;
+mod integration_publisher;
 mod session;
+mod session_authentication;
 mod telemetry;
 mod validation;
 
@@ -16,9 +20,16 @@ pub use codec::{
     DurableAckMessage, HeartbeatMessage, ReplayRequest, RuntimeManifestReport,
 };
 pub use error::CloudLinkCodecError;
+pub use integration::CloudLinkIntegrationExtension;
+pub use integration_projection_outbox::CloudLinkIntegrationProjectionOutbox;
+pub use integration_publisher::{CloudLinkIntegrationPublishEvent, CloudLinkIntegrationPublisher};
 pub use session::{
     CredentialOriginModel, MessageAuthentication, ResumeCursor, SessionAccepted, SessionBinding,
-    SessionChallenge, SessionHello,
+    SessionChallenge, SessionChallengeRequest, SessionHello,
+};
+pub use session_authentication::{
+    GatewaySessionAuthenticator, UplinkAuthentication, UplinkSigningProjection,
+    VerifiedSessionChallenge,
 };
 pub use telemetry::{PointFact, PointModelBinding, TelemetryBatch, TopologyBinding};
 
@@ -33,3 +44,6 @@ pub const CLOUDLINK_PROTOCOL_VERSION: &str = "1.0";
 
 /// Stable protocol family marker.
 pub const CLOUDLINK_PROTOCOL: &str = "aether.cloudlink";
+
+/// Exact Runtime Manifest and Cloud-consumer activation token for Integration.
+pub const CLOUDLINK_INTEGRATION_EXTENSION: &str = "aether.cloudlink.integration.v1alpha1";

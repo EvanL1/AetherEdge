@@ -20,7 +20,7 @@ updated: 2026-07-16
 
 ## 命名兼容性
 
-| Surface | 迁移行为 |
+| 影响范围 | 迁移行为 |
 | --- | --- |
 | GitHub 仓库 | `EvanL1/AetherIot` 变为 `EvanL1/AetherEdge`；即使 GitHub 重定向旧 URL，消费者也应更新遥控器 |
 | Rust SDK 软件包 | `aether-edge-sdk` 保持不变 |

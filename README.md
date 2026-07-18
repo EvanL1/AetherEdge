@@ -6,9 +6,9 @@
 [![Version](https://img.shields.io/badge/version-0.5.0-yellow.svg)](CHANGELOG.md)
 [![Status](https://img.shields.io/badge/status-beta-orange.svg)](CHANGELOG.md)
 
-**Documentation website:** [docs.aetheriot.workers.dev](https://docs.aetheriot.workers.dev/)
+**Documentation website:** [docs.aetheriot.workers.dev/en](https://docs.aetheriot.workers.dev/en/)
 
-[AI-native platform](docs/overview/ai-native-platform.md) · [Get started](docs/guides/getting-started.md) · [Documentation](https://docs.aetheriot.workers.dev/) · [Agent Skill](skills/aether-iot/SKILL.md) · [MCP](docs/guides/ai-assistants.md) · [中文](README-CN.md)
+[AI-native platform](docs/overview/ai-native-platform.md) · [Get started](docs/guides/getting-started.md) · [Documentation](https://docs.aetheriot.workers.dev/en/) · [Agent Skill](skills/aether-iot/SKILL.md) · [MCP](docs/guides/ai-assistants.md) · [中文](README-CN.md)
 
 **The deterministic edge runtime for an agent-configured physical world.**
 
@@ -103,7 +103,7 @@ starts an explicitly write-enabled session, and every write still crosses the se
 permission, confirmation, validation, and audit boundary.
 
 See [Build Applications with AI](docs/guides/build-applications-with-ai.md) for the client contract
-and [Agent Quickstart](https://docs.aetheriot.workers.dev/agent-quickstart/) for a complete safe-empty
+and [Agent Quickstart](https://docs.aetheriot.workers.dev/en/agent-quickstart/) for a complete safe-empty
 runtime setup.
 
 ## What AetherEdge provides
@@ -218,16 +218,42 @@ The dual-process Broker harness is development evidence only. See
 [CloudLink reference](docs/reference/cloudlink-mqtt-v1.md). Public release
 authority is defined by [ADR-0018](docs/adr/0018-pinned-aethercontracts-consumption.md).
 
+The separate `aether.cloudlink.integration.v1alpha1` extension is experimental
+and disabled by default. It requires Cloud-first enablement plus an explicit
+Runtime Manifest declaration, keeps topology and observations in independent
+durable streams, enforces a 256 KiB complete MQTT payload limit, and adds no
+physical-control capability.
+
+An experimental Home Assistant edge bridge is also implemented in the source
+tree. Its default opt-in composition is read-only: `aether-io` authenticates
+locally over WebSocket, projects area/device/entity topology and typed state,
+and obtains a complete snapshot after an event-stream gap. A separate
+default-off source-build feature publishes that committed projection through
+two crash-recoverable CloudLink streams.
+
+A third, independently enabled source-build feature adds one governed
+`device.power.set.v1` path. Only after the current CloudLink session is
+accepted and durably recorded does the edge subscribe for signed offers. It
+then applies exact topology and deny-by-default local policy, persists audit
+and deduplication state before dispatch, and maps only Boolean power intent to
+fixed Home Assistant `turn_on` or `turn_off` calls. Callers cannot choose a
+Home Assistant service or service data, and provider acceptance leaves the
+physical outcome unknown. Prebuilt releases do not enable these features;
+public integration queries, production OAuth, and production key lifecycle
+remain gated. See
+[Connect Home Assistant](docs/guides/home-assistant.md).
+
 ## Documentation
 
-- [Agent Quickstart](https://docs.aetheriot.workers.dev/agent-quickstart/)
+- [Agent Quickstart](https://docs.aetheriot.workers.dev/en/agent-quickstart/)
 - [AI-native Platform](docs/overview/ai-native-platform.md)
 - [Build Applications with AI](docs/guides/build-applications-with-ai.md)
 - [Connect AI Assistants](docs/guides/ai-assistants.md)
 - [Connect Devices](docs/guides/connect-devices.md)
+- [Connect Home Assistant](docs/guides/home-assistant.md)
 - [HTTP API and Swagger](docs/reference/http-api.md)
 - [Deployment](docs/guides/deployment.md)
-- [llms.txt](https://docs.aetheriot.workers.dev/llms.txt)
+- [llms.txt](https://docs.aetheriot.workers.dev/en/llms.txt)
 
 ## Development
 

@@ -21,7 +21,7 @@ updated: 2026-07-16
 - Rust 箱和导入名称，包括`aether-edge-sdk` 和 `aether_sdk`。
 - 配置密钥、环境变量、服务标识和磁盘路径，除非单独的兼容性决策更改了它们。
 - 安装程序名称 `AetherEdge-<arch>-<version>.run`。
-- CloudLink、Thing Model、Schema、TCK 和失败代码标识符。
+- CloudLink、Thing Model、结构定义、TCK 和失败代码标识符。
 - 已发布标签、发布资产、证明和摘要固定的 AetherContracts alpha.3 工件。
 
 ## 更新现有克隆

@@ -44,7 +44,7 @@ behavior with expiry, and continuous outcome evaluation. See the
 1. Select a tested combination in the
    [compatibility matrix](../compatibility/version-matrix.md).
 2. Verify the digest-pinned AetherContracts consumer lock in both products.
-3. Follow the [Edge to Contracts to Cloud guide](../guides/edge-contracts-cloud.md).
+3. Run the [Edge, Contracts, and Cloud integration task](../guides/edge-contracts-cloud.md).
 4. Keep CloudLink experimental and the legacy path available until every
    published release gate passes.
 

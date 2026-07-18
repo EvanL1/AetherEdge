@@ -1,7 +1,7 @@
 ---
 title: Configuration Reference
 description: YAML configuration schema, the sync pipeline, and environment variables
-updated: 2026-07-11
+updated: 2026-07-17
 ---
 
 # Configuration Reference
@@ -195,6 +195,118 @@ gates):
 | `AETHER_LOAD_FORECASTING_IMAGE` | mutable local development image | Production must use an immutable `@sha256` image reference through the explicit Compose override and preflight validator |
 | `AETHER_LOAD_FORECASTING_PORT` | `8989` | Host-loopback published processor port for the Compose sidecar |
 | `RUST_LOG` | `info` | Log level for the Rust services; supports filter syntax such as `info,io=debug,automation=trace` |
+
+### Experimental Home Assistant bridge settings
+
+These settings are consumed only by a source-built `aether-io` binary compiled
+with the `home-assistant` feature. They do not enable an installer-supported
+production integration.
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `AETHER_HOME_ASSISTANT_ENABLED` | `false` | Explicitly enables the experimental read-only bridge |
+| `AETHER_HOME_ASSISTANT_ORIGIN` | unset | Required HTTP(S) site origin without credentials, path, query, or fragment |
+| `AETHER_HOME_ASSISTANT_ACCESS_TOKEN_REF` | unset | Required `env:VARIABLE_NAME` reference to token material held outside normal configuration |
+| `AETHER_GATEWAY_ID` | unset | Required owning edge-gateway identity |
+| `AETHER_HOME_ASSISTANT_INTEGRATION_ID` | `home-assistant` | Stable identity for this Home Assistant connection |
+| `AETHER_HOME_ASSISTANT_GENERATION_STORE_PATH` | unset | Required absolute path of the exclusively locked, restart-stable topology generation ledger |
+
+`AETHER_HOME_ASSISTANT_ACCESS_TOKEN` is forbidden because it would place
+credential material in ordinary configuration. See
+[Connect Home Assistant](../guides/home-assistant.md) for the complete
+source-build and storage contract.
+
+The following settings activate the separate, default-off read-only CloudLink
+publication path. They are accepted only by a binary built with
+`home-assistant-cloudlink`.
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `AETHER_HOME_ASSISTANT_CLOUDLINK_ENABLED` | `false` | Explicitly enables publication; Home Assistant enablement alone never does |
+| `AETHER_HOME_ASSISTANT_CLOUDLINK_ORIGIN_MODEL` | unset | Required experimental session origin. Production-mode composition permits only `gateway-signed`; `trusted-connector-broker-attestation` is restricted to explicit development harnesses |
+| `AETHER_HOME_ASSISTANT_CLOUDLINK_CLOUD_KEY_ID` | unset | Exact trusted Cloud challenge-verification key identity |
+| `AETHER_HOME_ASSISTANT_CLOUDLINK_CLOUD_PUBLIC_KEY_REF` | unset | Required `env:VARIABLE_NAME` reference to a canonical unpadded-Base64url 32-byte Ed25519 public key |
+| `AETHER_HOME_ASSISTANT_CLOUDLINK_GATEWAY_KEY_ID` | unset | Exact Gateway session-signing key identity |
+| `AETHER_HOME_ASSISTANT_CLOUDLINK_GATEWAY_SIGNING_KEY_REF` | unset | Required `env:VARIABLE_NAME` reference to a canonical unpadded-Base64url 32-byte Ed25519 private seed |
+| `AETHER_HOME_ASSISTANT_CLOUDLINK_CHALLENGE_LEDGER_PATH` | unset | Absolute, distinct path for the bounded process-exclusive challenge replay ledger |
+| `AETHER_HOME_ASSISTANT_CLOUDLINK_RUNTIME_CONFIG_DIR` | unset | Absolute directory containing the verified `runtime-manifest.json` |
+| `AETHER_HOME_ASSISTANT_CLOUDLINK_CLOUD_EXTENSION` | unset | Must equal `aether.cloudlink.integration.v1alpha1`, proving cloud-first rollout confirmation |
+| `AETHER_HOME_ASSISTANT_CLOUDLINK_TOPOLOGY_SPOOL_PATH` | unset | Absolute crash-recoverable topology journal path |
+| `AETHER_HOME_ASSISTANT_CLOUDLINK_OBSERVATION_SPOOL_PATH` | unset | Distinct absolute crash-recoverable observation journal path |
+| `AETHER_HOME_ASSISTANT_CLOUDLINK_SPOOL_CAPACITY` | `4096` | Per-stream retained-record bound, from 1 through 65536 |
+| `AETHER_HOME_ASSISTANT_CLOUDLINK_MQTT_BROKER_HOST` | unset | TLS MQTT hostname or IP without URI syntax |
+| `AETHER_HOME_ASSISTANT_CLOUDLINK_MQTT_BROKER_PORT` | unset | Required non-zero MQTT TLS port |
+| `AETHER_HOME_ASSISTANT_CLOUDLINK_MQTT_CLIENT_ID` | unset | Stable bounded broker client identity |
+| `AETHER_HOME_ASSISTANT_CLOUDLINK_MQTT_TOPIC_PREFIX` | unset | Safe topic prefix; wildcard characters are rejected |
+| `AETHER_HOME_ASSISTANT_CLOUDLINK_MQTT_USERNAME` | unset | Required authenticated broker principal |
+| `AETHER_HOME_ASSISTANT_CLOUDLINK_MQTT_PASSWORD_REF` | unset | Required `env:VARIABLE_NAME` broker-password reference |
+| `AETHER_HOME_ASSISTANT_CLOUDLINK_CREDENTIAL_ID` | unset | Non-secret CloudLink connector credential identity |
+| `AETHER_HOME_ASSISTANT_CLOUDLINK_CREDENTIAL_GENERATION` | unset | Required positive credential generation |
+| `AETHER_HOME_ASSISTANT_CLOUDLINK_SESSION_EPOCH_PATH` | unset | Absolute monotonic session-epoch checkpoint path |
+
+`AETHER_HOME_ASSISTANT_CLOUDLINK_MQTT_PASSWORD` is forbidden. MQTT PUBACK does
+not remove topology or observation records; only a strict CloudLink
+application ACK does. Gateway-signed session establishment persists the exact
+challenge request before publication, verifies the Cloud challenge over the
+profile's canonical signing projection, persists the exact signed hello before
+publication, and retries unchanged bytes within the fixed challenge deadline.
+Each Gateway-signed heartbeat and durable uplink uses that same Gateway key
+over the frozen 13-field RFC 8785 projection. Durable records preserve their
+original send and expiry times, kind, stream identity, batch ID, digest, and
+payload across restart. A new session changes only session-bound fields and
+the resulting signature. Trusted-connector mode is test-only, relies on
+external broker attestation, and omits payload authentication rather than
+creating a placeholder signature.
+
+The production-mode configuration gate is a deny-by-default safety policy, not
+a production-readiness claim: the current unsigned `session-accepted` message
+does not cryptographically bind the acceptance to the challenge and client
+nonce. Heartbeat and durable application acknowledgements are also unsigned;
+a heartbeat acknowledgement carrying `message_authentication` is rejected.
+These missing Cloud-to-Edge signing projections keep the handshake
+experimental.
+
+The file-backed challenge ledger is currently supported only on Unix. Its
+direct parent cannot be group- or other-writable; a newly created parent uses
+mode 0700, ledger and lock files use mode 0600, and symbolic-link opens are
+rejected. Multiply linked ledger or lock files are also rejected. Completed
+records retain only replay identity, expiry, and a digest;
+raw request, challenge, and hello transcripts are removed atomically. This is
+replay state, not a production key store. The current environment references
+are injection points for supervisor-managed secrets; managed enrollment,
+hardware-backed private keys, and rotation remain separate lifecycle work.
+
+CloudLink preparation, authentication, or broker failure disables only the
+optional cloud extension. The commissioned local Home Assistant snapshot and
+state synchronization path remains active; invalid top-level Home Assistant
+configuration is reported without terminating the core `aether-io` service.
+
+The following settings activate the experimental governed power-control slice.
+The binary must include `home-assistant-integration-control`; all three Home
+Assistant, CloudLink, and control enable switches must be explicitly true, and
+the Runtime Manifest must declare both Integration protocol tokens.
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `AETHER_HOME_ASSISTANT_CONTROL_ENABLED` | `false` | Explicitly enables governed control; it never implicitly enables Home Assistant or CloudLink |
+| `AETHER_HOME_ASSISTANT_CONTROL_CLOUD_EXTENSION` | unset | Must equal `aether.cloudlink.integration-control.v1alpha1` |
+| `AETHER_HOME_ASSISTANT_CONTROL_LEDGER_PATH` | unset | Absolute process-exclusive persistent job and receipt ledger path |
+| `AETHER_HOME_ASSISTANT_CONTROL_POLICY_PATH` | unset | Absolute path to the closed deny-by-default local authorization policy |
+| `AETHER_HOME_ASSISTANT_CONTROL_AUDIT_PATH` | unset | Distinct absolute path to the append-only local audit journal |
+| `AETHER_HOME_ASSISTANT_CONTROL_CLOUD_KEY_ID` | unset | Exact trusted cloud Ed25519 verification-key identity |
+| `AETHER_HOME_ASSISTANT_CONTROL_CLOUD_PUBLIC_KEY_REF` | unset | Required `env:VARIABLE_NAME` reference to a canonical unpadded-Base64url 32-byte Ed25519 public key |
+| `AETHER_HOME_ASSISTANT_CONTROL_EDGE_KEY_ID` | unset | Deprecated alias. Omit in Gateway-signed mode, or set together with the next alias to the exact CloudLink Gateway key identity. An explicit trusted-connector test harness may use it for its independent legacy receipt signer |
+| `AETHER_HOME_ASSISTANT_CONTROL_EDGE_SIGNING_KEY_REF` | unset | Deprecated alias. Omit in Gateway-signed mode, or set together with the preceding alias to the exact CloudLink Gateway key reference. Test-only trusted-connector use still requires a canonical private seed |
+| `AETHER_HOME_ASSISTANT_CONTROL_PROVIDER_TIMEOUT_MS` | `5000` | Provider-call deadline from 1 through 30000 milliseconds |
+
+Ledger, policy, and audit paths must be distinct. On Unix, ledger, audit, and
+lock files must have no group/other permission bits; new sensitive files use
+mode 0600. Symbolic-link files and direct parent directories are rejected.
+MQTT PUBACK never removes a control receipt. See
+[Connect Home Assistant](../guides/home-assistant.md#experimental-governed-power-control)
+for the policy schema and execution boundary. Production receipt uplinks use
+the active CloudLink Gateway session signer; incomplete or mismatched
+deprecated aliases fail closed.
 
 ### Experimental CloudLink MQTT settings
 

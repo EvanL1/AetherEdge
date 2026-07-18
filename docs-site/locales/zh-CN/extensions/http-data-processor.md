@@ -42,7 +42,7 @@ let processor = HttpDataProcessor::new(config)?;
 - `POST /v1/process`
 - `GET /v1/health`
 
-请求和成功处理响应使用 `application/vnd.aether.data-processing+json;version=1`。 Health 接受包含 `status`、`processor`、`version` 和 `contract` 的小型 JSON 响应，并根据配置的描述符验证这些身份字段。
+请求和成功处理响应使用 `application/vnd.aether.data-processing+json;version=1`。健康检查端点接受包含 `status`、`processor`、`version` 和 `contract` 的小型 JSON 响应，并根据配置的描述符验证这些身份字段。
 
 ## 硬边界
 

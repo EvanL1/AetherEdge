@@ -833,6 +833,8 @@ assert_contains "$INSTALLER_BUILDER" '! csv_contains "$BUILD_IMAGES" "aetherems:
 assert_contains "$INSTALLER_BUILDER" 'csv_contains "$BUILD_IMAGES" "redis:8-alpine"'
 assert_contains "$INSTALLER_BUILDER" 'CARGO_FEATURES=""'
 assert_contains "$INSTALLER_BUILDER" 'generate "$TARGET" "$RUNTIME_MANIFEST_DIR"'
+assert_contains "$INSTALLER_BUILDER" 'normalize-io-features'
+assert_contains "$INSTALLER_BUILDER" 'IO_PROTOCOL_FEATURES="$NORMALIZED_IO_PROTOCOL_FEATURES"'
 assert_contains "$INSTALLER_BUILDER" '--bin aether-runtime-manifest -- print-default-features'
 assert_contains "$INSTALLER_BUILDER" 'CARGO_FEATURES=$(add_csv_item "$CARGO_FEATURES" "$feature")'
 assert_contains "$INSTALLER_BUILDER" 'cp "$RUNTIME_MANIFEST_PATH" "$BM_PKG_DIR/config.template/runtime-manifest.json"'
@@ -871,6 +873,70 @@ bare_health_line=$(grep -nF 'wait_for_bare_metal_services 30' "$BARE_METAL_INSTA
 bare_commit_line=$(grep -nF 'INSTALL_COMPLETED=true' "$BARE_METAL_INSTALLER" | tail -1 | cut -d: -f1)
 [[ "$bare_health_line" -lt "$bare_commit_line" ]] \
     || fail "bare-metal install commits before every expected service is healthy"
+
+echo "Testing Home Assistant Compose configuration is explicit, private, persistent, and default-off..."
+home_assistant_compose_section=$(awk '
+    /^  aether-io:/ { in_io = 1 }
+    in_io && /^  aether-automation:/ { exit }
+    in_io { print }
+' "$ROOT_DIR/docker-compose.yml")
+for disabled_switch in \
+    AETHER_HOME_ASSISTANT_ENABLED \
+    AETHER_HOME_ASSISTANT_CLOUDLINK_ENABLED \
+    AETHER_HOME_ASSISTANT_CONTROL_ENABLED; do
+    grep -Fq -- "- ${disabled_switch}=\${${disabled_switch}:-false}" \
+        <<< "$home_assistant_compose_section" \
+        || fail "$disabled_switch must be explicitly default-off in aether-io Compose"
+done
+for secret_binding in \
+    'AETHER_HOME_ASSISTANT_ACCESS_TOKEN_REF=env:AETHER_HOME_ASSISTANT_TOKEN' \
+    'AETHER_HOME_ASSISTANT_CLOUDLINK_CLOUD_PUBLIC_KEY_REF=env:AETHER_HOME_ASSISTANT_CLOUDLINK_CLOUD_PUBLIC_KEY' \
+    'AETHER_HOME_ASSISTANT_CLOUDLINK_GATEWAY_SIGNING_KEY_REF=env:AETHER_HOME_ASSISTANT_CLOUDLINK_GATEWAY_SIGNING_KEY' \
+    'AETHER_HOME_ASSISTANT_CLOUDLINK_MQTT_PASSWORD_REF=env:AETHER_HOME_ASSISTANT_CLOUDLINK_MQTT_PASSWORD_SECRET' \
+    'AETHER_HOME_ASSISTANT_CONTROL_CLOUD_PUBLIC_KEY_REF=env:AETHER_HOME_ASSISTANT_CONTROL_CLOUD_PUBLIC_KEY'; do
+    grep -Fq -- "- $secret_binding" <<< "$home_assistant_compose_section" \
+        || fail "aether-io Compose is missing fixed secret reference $secret_binding"
+done
+for secret_value in \
+    AETHER_HOME_ASSISTANT_TOKEN \
+    AETHER_HOME_ASSISTANT_CLOUDLINK_CLOUD_PUBLIC_KEY \
+    AETHER_HOME_ASSISTANT_CLOUDLINK_GATEWAY_SIGNING_KEY \
+    AETHER_HOME_ASSISTANT_CLOUDLINK_MQTT_PASSWORD_SECRET \
+    AETHER_HOME_ASSISTANT_CONTROL_CLOUD_PUBLIC_KEY; do
+    grep -Fq -- "- ${secret_value}=\${${secret_value}:-}" \
+        <<< "$home_assistant_compose_section" \
+        || fail "aether-io Compose does not explicitly pass secret value $secret_value"
+done
+if grep -Eq \
+    '^[[:space:]]*- AETHER_HOME_ASSISTANT_CONTROL_EDGE_(KEY_ID|SIGNING_KEY_REF|SIGNING_KEY)=' \
+    <<< "$home_assistant_compose_section"; then
+    fail "aether-io Compose injects a deprecated second Edge receipt key setting"
+fi
+if grep -Eq '^[[:space:]]*env_file:' <<< "$home_assistant_compose_section"; then
+    fail "aether-io Compose must not import an entire environment file"
+fi
+if grep -Eq '^[[:space:]]*- AETHER_HOME_ASSISTANT_ACCESS_TOKEN=' \
+    <<< "$home_assistant_compose_section"; then
+    fail "aether-io Compose passes the forbidden plaintext Home Assistant token setting"
+fi
+if grep -Eq '^[[:space:]]*- AETHER_HOME_ASSISTANT_CLOUDLINK_MQTT_PASSWORD=' \
+    <<< "$home_assistant_compose_section"; then
+    fail "aether-io Compose passes the forbidden plaintext MQTT password setting"
+fi
+grep -Fq -- \
+    '- AETHER_HOME_ASSISTANT_CLOUDLINK_RUNTIME_CONFIG_DIR=/app/config' \
+    <<< "$home_assistant_compose_section" \
+    || fail "CloudLink must verify the feature-exact manifest baked into /app/config"
+home_assistant_path_lines=$(grep -E \
+    'AETHER_HOME_ASSISTANT_.*PATH=' <<< "$home_assistant_compose_section")
+[[ -n "$home_assistant_path_lines" ]] \
+    || fail "aether-io Compose is missing persistent Home Assistant paths"
+if grep -Ev '=/app/data/' <<< "$home_assistant_path_lines" >/dev/null; then
+    fail "every Home Assistant Compose file/directory path must live under /app/data"
+fi
+assert_contains "$ROOT_DIR/scripts/systemd/aether-io.service" \
+    'EnvironmentFile=/etc/aether/aether.env'
+assert_contains "$BARE_METAL_INSTALLER" 'chmod 600 "$CONFIG_DIR/aether.env"'
 
 echo "Testing the API container receives its mounted configuration path..."
 api_compose_section=$(awk '

@@ -3,6 +3,10 @@
 docs/getting-started.md
 docs/compatibility.md
 docs/conformance.md
+docs/integration.md
+docs/migrations/*
 spec/*
 packages/*/README.md
 MIGRATION.md
+SECURITY.md
+GOVERNANCE.md

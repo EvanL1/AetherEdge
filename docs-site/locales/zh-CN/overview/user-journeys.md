@@ -38,13 +38,13 @@ updated: 2026-07-16
 
 1. 在[兼容性矩阵](/compatibility/version-matrix/)中选择经过验证的产品版本组合。
 2. 分别验证 Edge 和 Cloud 中通过摘要锁定的 AetherContracts 消费者锁。
-3. 按照[边缘、契约与云端联动指南](/guides/edge-contracts-cloud/)完成开发验证。
+3. 运行[边缘端、公共协议与云端联动任务](https://docs.aetheriot.workers.dev/guides/edge-contracts-cloud/)完成开发验证。
 4. 在所有公开发行门槛通过前，CloudLink 继续保持实验性，并保留旧版兼容路径。
 
 ## 实现独立客户端或运行时
 
 1. 阅读 [AetherContracts 产品概览](/aethercontracts/)。
-2. 按照规范语义和封闭 Schema 实现协议。
+2. 按照规范语义和封闭结构定义实现协议。
 3. 执行公开测试夹具和黑盒 TCK。
 4. 只报告已经取得的互操作证据，不能把它扩大解释为生产部署或生产认证。
 

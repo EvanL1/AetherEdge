@@ -1,0 +1,21 @@
+{
+  "status": "experimental-extension-only",
+  "release_candidate": "0.1.0-alpha.4",
+  "scope": "cloudlink-integration-v1alpha1",
+  "complete_alpha4_adoption": false,
+  "upstream_hashes": {
+    "contract_manifest_sha256": "a8209d02077b1abe8b34d8b89328452d4b0b561830453276a4f6485c28d7b827",
+    "integration_fixture_manifest_sha256": "8b8e13327fa1c07a0281f051d99fd0a996bfbd6cf5132f189b351603e9ccef06",
+    "cloudlink_integration_fixture_manifest_sha256": "8d474f65319988fa9211ebfec54a23c6ea617daf474b1609252c78091e2c3627",
+    "cloudlink_integration_profile_sha256": "93e3b9d0772066be98e344b39debbef3d8204511e91d17e8d8eaf45bdc1147ab"
+  },
+  "local_imports": {
+    "fixture_manifest": "fixture-manifest.json",
+    "profile": "profile.json"
+  },
+  "policy": {
+    "cloud_first": true,
+    "explicit_edge_enablement": true,
+    "physical_control": false
+  }
+}

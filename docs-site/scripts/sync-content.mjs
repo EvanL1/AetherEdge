@@ -11,6 +11,7 @@ const DOCS_SITE_ROOT = path.resolve(__dirname, '..');
 const CONTENT_DIR = path.join(DOCS_SITE_ROOT, 'src', 'content', 'docs');
 const SOURCE_CONFIG_PATH = path.join(DOCS_SITE_ROOT, 'content.sources.json');
 const DESCRIPTION_MAX_LEN = 155;
+const DEFAULT_PUBLIC_BASE_URL = 'https://docs.aetheriot.workers.dev';
 
 export function computeDestPath(sourcePath, options = {}) {
   const stripPrefix = options.stripPrefix ?? 'docs/';
@@ -100,7 +101,45 @@ export function synthesizeFrontmatter(content, gitDate) {
   return frontmatterLines.join('\n') + content;
 }
 
+function parseFrontmatterTitle(value) {
+  const title = value.trim();
+  if (title.startsWith('"')) {
+    try {
+      const parsed = JSON.parse(title);
+      return typeof parsed === 'string' ? parsed : null;
+    } catch {
+      return null;
+    }
+  }
+  if (title.startsWith("'")) {
+    if (!title.endsWith("'")) return null;
+    return title.slice(1, -1).replaceAll("''", "'");
+  }
+  return title.replace(/\s+#.*$/, '').trim();
+}
+
+function normalizeTitle(value) {
+  return value.normalize('NFC').replace(/\s+/gu, ' ').trim();
+}
+
+export function stripRedundantTitleHeading(content) {
+  const document = content.match(/^---\n([\s\S]*?)\n---\n?([\s\S]*)$/);
+  if (!document) return content;
+
+  const titleField = document[1].match(/^title\s*:\s*(.+)$/m);
+  const firstHeading = document[2].match(/^(?:[ \t]*\n)*[ \t]*#\s+([^\n]+?)[ \t]*(?:\n|$)/);
+  if (!titleField || !firstHeading) return content;
+
+  const pageTitle = parseFrontmatterTitle(titleField[1]);
+  const bodyTitle = firstHeading[1].replace(/[ \t]+#+[ \t]*$/, '');
+  if (pageTitle === null || normalizeTitle(pageTitle) !== normalizeTitle(bodyTitle)) return content;
+
+  const remainder = document[2].slice(firstHeading[0].length).replace(/^\n+/, '');
+  return `---\n${document[1]}\n---\n\n${remainder}`;
+}
+
 const MD_LINK_RE = /\[([^\]]*)\]\((?!https?:\/\/|mailto:|#|\/)([^)\s]+)\)/g;
+const SITE_ROOT_LINK_RE = /\[([^\]]*)\]\((\/(?!\/)[^)\s]*)\)/g;
 const GITHUB_BLOB_BASE = 'https://github.com/EvanL1/AetherEdge/blob/main';
 
 export function addSourceAttribution(content, sourceRelPath, source) {
@@ -120,10 +159,10 @@ export function addSourceAttribution(content, sourceRelPath, source) {
   return `${content.slice(0, insertAt)}\n\n${notice}${content.slice(insertAt)}`;
 }
 
-// Rewrites every relative Markdown link into a stable published form. Links
-// whose target is in the synced manifest become extensionless document
-// routes derived from computeDestPath + computeSlug. Links whose target is
-// NOT synced (e.g. excluded
+// Rewrites every relative Markdown link into a stable absolute published form.
+// Links whose target is in the synced manifest become complete document URLs
+// derived from computeDestPath + computeSlug. Existing site-root links receive
+// the canonical public origin. Links whose target is NOT synced (e.g. excluded
 // docs/domain/* pages) become absolute GitHub URLs instead, so they don't
 // become dead links once mirrored. Callers must run findBrokenExternalLinks
 // first — this function does not itself verify that the GitHub-blob branch
@@ -131,7 +170,8 @@ export function addSourceAttribution(content, sourceRelPath, source) {
 export function rewriteRelativeLinks(content, sourceRelPath, syncedSourceSet, options = {}) {
   const sourceDir = path.posix.dirname(sourceRelPath);
   const githubBlobBase = options.githubBlobBase ?? GITHUB_BLOB_BASE;
-  return content.replace(MD_LINK_RE, (full, text, target) => {
+  const publicBaseUrl = (options.publicBaseUrl ?? DEFAULT_PUBLIC_BASE_URL).replace(/\/+$/, '');
+  const rewritten = content.replace(MD_LINK_RE, (full, text, target) => {
     const [targetPath, anchor] = target.split('#');
     if (!targetPath) return full; // same-page anchor like [text](#section)
     const resolved = path.posix.normalize(path.posix.join(sourceDir, targetPath));
@@ -139,10 +179,14 @@ export function rewriteRelativeLinks(content, sourceRelPath, syncedSourceSet, op
     if (syncedSourceSet.has(resolved)) {
       const destRelPath = computeDestPath(resolved, options);
       const sitePath = slugToSitePath(computeSlug(destRelPath));
-      return `[${text}](${sitePath}${suffix})`;
+      return `[${text}](${publicBaseUrl}${sitePath}${suffix})`;
     }
     return `[${text}](${githubBlobBase}/${resolved}${suffix})`;
   });
+  return rewritten.replace(
+    SITE_ROOT_LINK_RE,
+    (_full, text, target) => `[${text}](${publicBaseUrl}${target})`
+  );
 }
 
 // Pure: finds every relative-link target in content that resolves OUTSIDE
@@ -223,6 +267,15 @@ export function findCollisions(sourceDestPairs) {
   return collisions;
 }
 
+export function findRouteCollisions(sourceDestPairs) {
+  return findCollisions(
+    sourceDestPairs.map(([source, destination]) => [
+      source,
+      slugToSitePath(computeSlug(destination)),
+    ])
+  );
+}
+
 /* v8 ignore start -- CLI filesystem orchestration is exercised by npm run build. */
 function gitLastModifiedDate(repoRoot, repoRelativePath) {
   try {
@@ -258,6 +311,7 @@ async function syncFile(source, sourceRelPath, raw, syncedSourceSet) {
   const options = {
     destinationPrefix: source.destinationPrefix,
     githubBlobBase: source.githubBlobBase,
+    publicBaseUrl: process.env.PUBLIC_BASE_URL || DEFAULT_PUBLIC_BASE_URL,
     stripPrefix: source.stripPrefix,
   };
   const destRelPath = computeDestPath(sourceRelPath, options);
@@ -271,9 +325,10 @@ async function syncFile(source, sourceRelPath, raw, syncedSourceSet) {
   );
   const gitDate = gitLastModifiedDate(source.repoRoot, sourceRelPath);
   const withFrontmatter = synthesizeFrontmatter(attributed, gitDate);
+  const published = stripRedundantTitleHeading(withFrontmatter);
 
   await fs.mkdir(path.dirname(destAbsPath), { recursive: true });
-  await fs.writeFile(destAbsPath, withFrontmatter, 'utf8');
+  await fs.writeFile(destAbsPath, published, 'utf8');
   return destRelPath;
 }
 
@@ -322,6 +377,13 @@ async function main() {
       .map(({ dest, sources: collidingSources }) => `  ${dest} <- ${collidingSources.join(', ')}`)
       .join('\n');
     throw new Error(`sync-content: destination path collision(s) detected:\n${details}`);
+  }
+  const routeCollisions = findRouteCollisions(sourceDestPairs);
+  if (routeCollisions.length > 0) {
+    const details = routeCollisions
+      .map(({ dest, sources: collidingSources }) => `  ${dest} <- ${collidingSources.join(', ')}`)
+      .join('\n');
+    throw new Error(`sync-content: public route collision(s) detected:\n${details}`);
   }
 
   const rawContents = await Promise.all(

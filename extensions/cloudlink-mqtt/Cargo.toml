@@ -19,11 +19,16 @@ thiserror = { workspace = true }
 [dev-dependencies]
 aether-domain = { version = "0.5.0", path = "../../crates/aether-domain" }
 aether-store-local = { version = "0.5.0", path = "../store-local" }
+ed25519-dalek = { version = "2.2", features = ["zeroize"] }
 serde_json = { workspace = true }
 tempfile = { workspace = true }
 
 [target.'cfg(not(any(target_os = "windows", target_vendor = "apple")))'.dependencies]
 native-tls = { version = "0.2.18", features = ["vendored"] }
+
+[features]
+default = []
+integration-control = []
 
 [lints]
 workspace = true

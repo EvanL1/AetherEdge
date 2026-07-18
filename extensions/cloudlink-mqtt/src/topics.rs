@@ -40,6 +40,8 @@ impl TopicNamespace {
             CloudLinkTransportRoute::HeartbeatUp => "up/heartbeat",
             CloudLinkTransportRoute::ManifestUp => "up/manifest",
             CloudLinkTransportRoute::TelemetryUp => "up/telemetry",
+            CloudLinkTransportRoute::IntegrationTopologyUp => "up/integration/topology",
+            CloudLinkTransportRoute::IntegrationObservationsUp => "up/integration/observations",
             CloudLinkTransportRoute::DataLossUp => "up/data-loss",
             CloudLinkTransportRoute::AckDown => "down/ack",
             CloudLinkTransportRoute::ReplayDown => "down/replay",
@@ -47,7 +49,7 @@ impl TopicNamespace {
         format!("{}/{suffix}", self.root)
     }
 
-    /// Returns the five allowed edge publish topics.
+    /// Returns the seven allowed edge publish topics.
     #[must_use]
     pub fn publish_topics(&self) -> Vec<String> {
         [
@@ -55,6 +57,8 @@ impl TopicNamespace {
             CloudLinkTransportRoute::HeartbeatUp,
             CloudLinkTransportRoute::ManifestUp,
             CloudLinkTransportRoute::TelemetryUp,
+            CloudLinkTransportRoute::IntegrationTopologyUp,
+            CloudLinkTransportRoute::IntegrationObservationsUp,
             CloudLinkTransportRoute::DataLossUp,
         ]
         .map(|route| self.topic(route))

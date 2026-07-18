@@ -12,7 +12,7 @@ AetherIoT 是面向物理空间的开源 AI 原生项目，让智能体把人的
 AetherIoT
 ├── AetherEdge       确定性边缘运行时、内核、CLI 与 SDK
 ├── AetherCloud      逐步演进的智能体、多云融合与受治理控制平面
-└── AetherContracts  类型化规范、Schema、测试夹具与 TCK
+└── AetherContracts  类型化规范、结构定义、测试夹具与 TCK
 
 AetherEMS            构建在平台上的能源管理解决方案
 ```
@@ -25,7 +25,7 @@ AetherEMS            构建在平台上的能源管理解决方案
 | --- | --- | --- |
 | AetherEdge | 实时点状态、数据采集、确定性规则、安全联锁、本地历史与最终物理执行 | 云资源放置、云提供方实际资源状态或公开协议权威 |
 | AetherCloud | 逐步演进的智能体上下文、期望状态、受治理作业、租户控制平面状态与多云协调 | 边缘实时状态权威或直接物理控制 |
-| AetherContracts | 语言中立的协议语义、封闭 Schema、测试夹具、稳定失败类别与可执行一致性证据 | 产品运行时、凭证、云端持久性或部署策略 |
+| AetherContracts | 语言中立的协议语义、封闭结构定义、测试夹具、稳定失败类别与可执行一致性证据 | 产品运行时、凭证、云端持久性或部署策略 |
 | AetherEMS | 能源领域模型、工作流和解决方案体验 | 行业中立的平台核心 |
 
 每个基础设施提供方仍对其资源是否真实存在以及提供方原生状态负责。云端故障不能停止已经投运的 AetherEdge 行为。
@@ -43,4 +43,4 @@ AetherEMS            构建在平台上的能源管理解决方案
 
 本站是共同入口。每个产品仓库仍是自身实现细节的权威来源，AetherContracts 仍是共享协议行为的唯一权威来源。统一文档只负责组织和链接这些来源，不复制出第二套规范权威。
 
-接下来可以阅读 [AI 原生平台](/overview/ai-native-platform/)、[部署拓扑](/overview/deployment-topologies/)、[典型用户旅程](/overview/user-journeys/)或[边缘、契约与云端联动指南](/guides/edge-contracts-cloud/)。
+接下来可以阅读 [AI 原生平台](https://docs.aetheriot.workers.dev/overview/ai-native-platform/)、[部署拓扑](https://docs.aetheriot.workers.dev/overview/deployment-topologies/)、[典型用户旅程](https://docs.aetheriot.workers.dev/overview/user-journeys/)或运行[边缘端、公共协议与云端联动任务](https://docs.aetheriot.workers.dev/guides/edge-contracts-cloud/)。

@@ -25,10 +25,18 @@ fn topic_namespace_is_versioned_exact_and_isolated_from_legacy_topics() {
         "customer/site-a/v1/gateways/33333333-3333-4333-8333-333333333333/up/telemetry"
     );
     assert_eq!(
+        topics.topic(CloudLinkTransportRoute::IntegrationTopologyUp),
+        "customer/site-a/v1/gateways/33333333-3333-4333-8333-333333333333/up/integration/topology"
+    );
+    assert_eq!(
+        topics.topic(CloudLinkTransportRoute::IntegrationObservationsUp),
+        "customer/site-a/v1/gateways/33333333-3333-4333-8333-333333333333/up/integration/observations"
+    );
+    assert_eq!(
         topics.topic(CloudLinkTransportRoute::AckDown),
         "customer/site-a/v1/gateways/33333333-3333-4333-8333-333333333333/down/ack"
     );
-    assert_eq!(topics.publish_topics().len(), 5);
+    assert_eq!(topics.publish_topics().len(), 7);
     assert_eq!(topics.subscribe_topics().len(), 3);
     for topic in topics
         .publish_topics()

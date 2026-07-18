@@ -12,6 +12,9 @@ Production URL: `https://docs.aetheriot.workers.dev`.
 - A `.md` suffix or `Accept: text/markdown` receives the matching Markdown.
 - `llms.txt` is the Chinese agent index.
 - `en/llms.txt` is the English agent index.
+- Each index covers every published page exactly once under the agent task,
+  deployment and operations, safety and governance, recovery, platform
+  reference, compatibility and status, or optional section.
 - Never generate or publish a concatenated full-corpus text file. Agents must
   discover pages through the compact index and fetch Markdown on demand.
 
@@ -22,7 +25,8 @@ content scope.
 
 `content.sources.json` declares the three product repositories plus site-owned
 English and Chinese content. Every source manifest is a publication allowlist.
-Public compatibility and operator migration guides are product documentation.
+Public compatibility, operator migration, and fail-closed recovery runbooks
+are product documentation.
 Do not publish internal agent instructions, plans, ADRs, competitive analysis,
 or historical working notes.
 
@@ -34,9 +38,18 @@ source. Everything in `src/content/docs/` is generated. Edit English product
 content in its authoritative repository, English site pages under
 `locales/en/`, and Chinese pages under `locales/zh-CN/`.
 
+Every published cross-document link must be a complete absolute URL. Public
+pages use `https://docs.aetheriot.workers.dev`, with `/en/` for English and the
+root path for Simplified Chinese. Excluded repository documents and source
+artifacts use an absolute GitHub URL. Same-page fragment links may remain
+relative.
+
 Chinese pages must preserve product names, protocol identifiers, code, paths,
 and command names. AetherContracts translations must state that the tagged
 English specification, Schema, fixtures, and TCK remain normative.
+For Chinese bold labels, keep punctuation outside the emphasis marker, for
+example `**成功标准**：运行命令`; `**成功标准：**运行命令` is ambiguous
+under CommonMark and renders as literal asterisks.
 
 Local development expects sibling `AetherCloud` and `AetherContracts`
 checkouts unless `AETHER_CLOUD_DOCS_ROOT` and `AETHER_CONTRACTS_DOCS_ROOT`

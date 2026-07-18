@@ -1,0 +1,13 @@
+{
+  "schema": "aether.edge.contract-candidate-lock.v1",
+  "source_repository": "AetherContracts",
+  "source_release": "0.1.0-alpha.4",
+  "protocol": "aether.cloudlink.integration-control.v1alpha1",
+  "fixture_manifest_sha256": "998d552b5377947cd66f0ac49ec2b627492a41bbfab2530f0d5d33bc4b854471",
+  "cloudlink_profile_sha256": "25ea6f8bc88eb6a28b094e7c3122c7c5b2ffe415aa0fd000a706721e55adc8c9",
+  "home_assistant_profile_sha256": "2c42ce67a154985f9f0be0fb239b710ba199eb739674c98fece469287d6724a0",
+  "offer_schema_sha256": "5a46666c1413a8cc6d96a6acfaf13309955e2ea14ebb043380bd6349026489b1",
+  "receipt_schema_sha256": "147515c9550974864137b85bdd9dd06c76d46c8f0c393e3ce174481dde3d5977",
+  "intent_schema_sha256": "9c05a9974226571031e517cb99bb2f2e21bf8f7f353a1567c7f5ee44232f12a8",
+  "receipt_payload_schema_sha256": "ae9a540768496e5f8331254415b90b73961637240e53e6a22e49520c2b7fc815"
+}

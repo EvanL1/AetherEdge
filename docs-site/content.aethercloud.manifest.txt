@@ -4,3 +4,4 @@ docs/get-started/*
 docs/concepts/!(current-state-audit).md
 docs/guides/*
 docs/reference/*
+docs/recovery/*

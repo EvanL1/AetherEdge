@@ -15,6 +15,9 @@ Local adapters for a gateway that must run without external services.
 | `FileOutbox` | crash-recoverable file | production offline store-and-forward |
 | `MemoryCloudLinkSpool` | process-local | deterministic application-ACK/replay conformance |
 | `FileCloudLinkSpool` | crash-recoverable file | experimental CloudLink positions, replay, and loss evidence |
+| `FileIntegrationTopologyGenerationStore` | atomically replaced private file | restart-stable per-integration topology generations |
+| `FileIntegrationControlLedger` (`integration-control`) | atomically replaced private file | experimental governed-job deduplication and terminal receipt replay |
+| `FileIntegrationControlAudit` (`integration-control`) | append-only private JSON lines | process-exclusive governed-control audit evidence |
 
 `MemoryHistoryQuery` and `MemoryCovariateSource` are keyed by the complete
 versioned `BindingIdentity`. They project only requested logical features in
@@ -150,6 +153,39 @@ compaction bounds obsolete acknowledged records in the journal.
 Disk durability does not define network delivery. The selected
 `UplinkPublisher` decides when an entry may be acknowledged.
 
+## Integration topology generations
+
+`FileIntegrationTopologyGenerationStore` reserves generation one for the first
+topology digest, returns the same generation for an identical digest, and
+durably increments before returning a changed digest. Gateway and integration
+form the complete counter scope. The adapter uses a process-exclusive lock,
+private replacement files, file synchronization, atomic rename, and parent
+directory synchronization. Corrupt state and `u64` exhaustion fail closed.
+
+The Home Assistant composition must explicitly inject this adapter before it
+may claim restart-stable public Integration generations.
+
+## Integration-control ledger
+
+`FileIntegrationControlLedger` atomically persists a job claim before provider
+dispatch. A completed job is permanently bound to its intent digest and
+terminal receipt. Replaying the same job and digest queues the stored receipt
+without another provider call; reusing the job with another digest fails
+closed. An in-progress claim found after restart is recovery evidence and must
+be completed as `unknown`, never retried automatically.
+
+Terminal receipts receive a monotonic delivery position and remain pending
+until an exact existing CloudLink durable ACK matches the stream, epoch,
+position, batch identity, and business digest. Exact ACK replay is idempotent.
+After an acknowledged receipt is explicitly requeued, it receives a new
+delivery position while the prior ACK evidence remains restart-stable. The
+ledger uses a private atomically replaced file and a process-exclusive lock.
+`FileIntegrationControlAudit` separately appends and synchronizes redacted
+control decisions under its own process lock. Both are available only with the
+`integration-control` crate feature. The experimental `aether-io`
+`home-assistant-integration-control` composition opens them before activating
+the session-bound offer subscription.
+
 ## CloudLink spools
 
 `MemoryCloudLinkSpool` and `FileCloudLinkSpool` implement the dedicated
@@ -166,3 +202,20 @@ last complete record. `FileCloudLinkSpool::compact()` atomically rewrites cursor
 metadata plus live records, and the adapter compacts before accepting more work
 after 256 mutations. Its file format is independent of legacy `FileOutbox` and
 cannot be opened through the generic outbox port.
+
+## CloudLink challenge replay ledger
+
+`FileCloudLinkChallengeLedger` persists one exact challenge request before its
+first publication and one exact signed Gateway hello before its first
+publication. A restart therefore retries the original client nonce, resume
+cursors, Cloud challenge, and signed response rather than creating a second
+authentication transcript. Completed records erase the raw transcript and
+retain only bounded replay evidence.
+
+This adapter is Unix-only. A newly created direct parent is mode 0700; an
+existing direct parent must not be group- or other-writable. Ledger, temporary,
+and lock files are mode 0600 and are opened without following symbolic links.
+Multiply linked ledger or lock files are rejected. Every mutation uses an
+atomically renamed, synchronized replacement while a process-exclusive lock is
+held. The adapter stores replay state only. It is not a key store and does not
+provide Gateway enrollment, hardware-backed key custody, or key rotation.

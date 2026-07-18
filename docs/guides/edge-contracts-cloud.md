@@ -1,6 +1,6 @@
 # Connect AetherEdge to AetherCloud through AetherContracts
 
-This guide proves the current cross-repository integration path without
+This agent task validates the current cross-repository integration path without
 claiming production CloudLink readiness. It starts with a safe local runtime,
 verifies the shared contract release, and then runs the available product
 evidence.
@@ -86,5 +86,5 @@ production crash-durable gate has not passed.
 - Do not remove the legacy path until joint authentication, durability,
   conformance, rollback, and support-window gates pass.
 
-The result of this guide is reproducible alpha integration evidence, not a
+The result of this task is reproducible alpha integration evidence, not a
 production commissioning receipt.

@@ -4,14 +4,15 @@ use std::collections::VecDeque;
 use std::sync::Mutex;
 
 use aether_domain::{
-    DataProcessingRequest, PointSample, ProcessingOptions, ProcessingOutput, ProcessingResult,
-    ProcessingStatus, SourceKind, TaskKind,
+    DataProcessingRequest, GatewayIdentity, IntegrationId, IntegrationSnapshot,
+    IntegrationStateQuality, PointSample, ProcessingOptions, ProcessingOutput, ProcessingResult,
+    ProcessingStatus, SnapshotDigest, SourceKind, TaskKind,
 };
 use aether_ports::{
     CloudLinkTransport, CloudLinkTransportEvent, CloudLinkTransportMessage, DataProcessor,
-    DataProcessorDescriptor, DurableOutbox, HistoryQuery, HistoryWindow, LiveState,
-    LiveStateWriter, OutboxMessage, PortError, PortErrorKind, PortResult, ProcessorHealth,
-    SourcedSegment,
+    DataProcessorDescriptor, DelegatedDeviceProvider, DurableOutbox, HistoryQuery, HistoryWindow,
+    IntegrationTopologyGenerationStore, LiveState, LiveStateWriter, OutboxMessage, PortError,
+    PortErrorKind, PortResult, ProcessorHealth, SourcedSegment,
 };
 use async_trait::async_trait;
 use tokio::sync::{Mutex as AsyncMutex, mpsc};
@@ -91,6 +92,124 @@ impl CloudLinkTransport for MemoryCloudLinkTransport {
             ))
         })
     }
+}
+
+/// Verifies provider, topology, observation, entity, point, and value-type correlation.
+///
+/// Implementors should run it with deterministic synthetic data rather than a
+/// commissioned device or live household.
+pub async fn assert_delegated_device_provider_scope(
+    provider: &dyn DelegatedDeviceProvider,
+    expected_gateway: &GatewayIdentity,
+    expected_integration: &IntegrationId,
+) -> PortResult<IntegrationSnapshot> {
+    if provider.gateway_id() != expected_gateway
+        || provider.integration_id() != expected_integration
+    {
+        return Err(contract_error(
+            "delegated provider exposed the wrong configured identity",
+        ));
+    }
+
+    let snapshot = provider.snapshot().await?;
+    let topology = snapshot.topology();
+    if topology.gateway_id() != expected_gateway
+        || topology.integration_id() != expected_integration
+        || !topology.is_complete()
+    {
+        return Err(contract_error(
+            "delegated provider changed topology scope or completeness",
+        ));
+    }
+
+    for observation in snapshot.observations() {
+        if observation.gateway_id() != expected_gateway
+            || observation.integration_id() != expected_integration
+        {
+            return Err(contract_error(
+                "delegated provider emitted an observation outside its scope",
+            ));
+        }
+
+        let entity = topology
+            .entities()
+            .iter()
+            .find(|entity| entity.id() == observation.entity_id())
+            .ok_or_else(|| {
+                contract_error("delegated provider emitted an observation for an unknown entity")
+            })?;
+        let point = entity
+            .points()
+            .iter()
+            .find(|point| point.key() == observation.point_key())
+            .ok_or_else(|| {
+                contract_error("delegated provider emitted an observation for an unknown point")
+            })?;
+
+        match (observation.quality(), observation.value()) {
+            (IntegrationStateQuality::Good, Some(value))
+                if value.value_type() == point.value_type() => {},
+            (IntegrationStateQuality::Unknown | IntegrationStateQuality::Unavailable, None) => {},
+            _ => {
+                return Err(contract_error(
+                    "delegated provider changed the declared point value type or quality semantics",
+                ));
+            },
+        }
+    }
+
+    Ok(snapshot)
+}
+
+/// Verifies restart-stable generation semantics on an isolated empty store.
+///
+/// The check requires idempotence for one digest, an exact increment for a
+/// changed digest, and independent counters for gateway/integration scopes.
+pub async fn assert_integration_topology_generation_store(
+    store: &dyn IntegrationTopologyGenerationStore,
+) -> PortResult<()> {
+    let gateway = GatewayIdentity::new("conformance-gateway").map_err(domain_contract_error)?;
+    let other_gateway =
+        GatewayIdentity::new("conformance-gateway-other").map_err(domain_contract_error)?;
+    let integration =
+        IntegrationId::new("conformance-integration").map_err(domain_contract_error)?;
+    let other_integration =
+        IntegrationId::new("conformance-integration-other").map_err(domain_contract_error)?;
+    let first_digest = SnapshotDigest::new(
+        "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    )
+    .map_err(domain_contract_error)?;
+    let second_digest = SnapshotDigest::new(
+        "sha256:1123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    )
+    .map_err(domain_contract_error)?;
+
+    let first = store
+        .reserve_generation(&gateway, &integration, &first_digest)
+        .await?;
+    let replay = store
+        .reserve_generation(&gateway, &integration, &first_digest)
+        .await?;
+    let changed = store
+        .reserve_generation(&gateway, &integration, &second_digest)
+        .await?;
+    let other_integration_first = store
+        .reserve_generation(&gateway, &other_integration, &second_digest)
+        .await?;
+    let other_gateway_first = store
+        .reserve_generation(&other_gateway, &integration, &second_digest)
+        .await?;
+    if first.get() != 1
+        || replay != first
+        || changed.get() != 2
+        || other_integration_first.get() != 1
+        || other_gateway_first.get() != 1
+    {
+        return Err(contract_error(
+            "integration generation store violated idempotence, increment, or scope isolation",
+        ));
+    }
+    Ok(())
 }
 
 /// Verifies exact projection, feature ordering, half-open bounds, and hard limits.
@@ -449,4 +568,8 @@ pub async fn assert_outbox_fifo(
 
 fn contract_error(message: &str) -> PortError {
     PortError::new(PortErrorKind::InvalidData, message)
+}
+
+fn domain_contract_error(error: aether_domain::DomainError) -> PortError {
+    PortError::new(PortErrorKind::InvalidData, error.to_string())
 }

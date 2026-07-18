@@ -1,0 +1,3827 @@
+{
+  "$schema": "https://raw.githubusercontent.com/EvanL1/AetherEdge/main/ai/docs-manifest.schema.json",
+  "schema_version": 3,
+  "project": "AetherEdge",
+  "repository": "https://github.com/EvanL1/AetherEdge",
+  "scope": "Complete agent-readable AetherEdge repository catalog. The public documentation site applies a separate publication allowlist.",
+  "generated_by": "scripts/build-agent-docs.mjs",
+  "documents": [
+    {
+      "id": "edge-agents",
+      "path": "AGENTS.md",
+      "canonical_url": "https://github.com/EvanL1/AetherEdge/blob/main/AGENTS.md",
+      "title": "AetherEdge Agent Instructions",
+      "description": "This file is the canonical instruction source for coding agents working in this repository. Tool-specific files may add usage notes, but must not contradict it.",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "safety",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent",
+        "runtime-agent"
+      ],
+      "intents": [
+        "govern-edge-command"
+      ],
+      "implementation_status": "implemented",
+      "production_readiness": "not-applicable",
+      "context_sensitivity": "internal",
+      "updated": "2026-07-18",
+      "priority": "core",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-architecture",
+      "path": "ARCHITECTURE.md",
+      "canonical_url": "https://github.com/EvanL1/AetherEdge/blob/main/ARCHITECTURE.md",
+      "title": "Aether Architecture",
+      "description": "Aether is migrating from a Redis-centred multi-service EMS product to an AI-native, industry-neutral edge kernel. The target architecture and migration rules are defined in:",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "reference",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "understand-edge-platform"
+      ],
+      "implementation_status": "implemented",
+      "production_readiness": "not-applicable",
+      "context_sensitivity": "public",
+      "updated": "2026-07-16",
+      "priority": "core",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-readme",
+      "path": "README.md",
+      "canonical_url": "https://github.com/EvanL1/AetherEdge/blob/main/README.md",
+      "title": "AetherEdge",
+      "description": "Repository overview, current product status, installation paths, architecture boundaries, and development entry points.",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "reference",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "understand-edge-platform"
+      ],
+      "implementation_status": "implemented",
+      "production_readiness": "not-applicable",
+      "context_sensitivity": "public",
+      "updated": "2026-07-18",
+      "priority": "core",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-ai-readme",
+      "path": "ai/README.md",
+      "canonical_url": "https://github.com/EvanL1/AetherEdge/blob/main/ai/README.md",
+      "title": "AI-native assets",
+      "description": "This directory contains vendor-neutral assets used by coding agents and by AI operators of an Aether gateway.",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "reference",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "understand-edge-platform"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "not-applicable",
+      "context_sensitivity": "internal",
+      "updated": "2026-07-12",
+      "priority": "core",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-ai-catalog",
+      "path": "ai/catalog.yaml",
+      "canonical_url": "https://raw.githubusercontent.com/EvanL1/AetherEdge/main/ai/catalog.yaml",
+      "title": "catalog.yaml",
+      "description": "Machine-readable AetherEdge catalog.yaml resource.",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "reference",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "understand-edge-platform"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "not-applicable",
+      "context_sensitivity": "internal",
+      "updated": "2026-07-18",
+      "priority": "core",
+      "media_type": "application/yaml",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-ai-evals-readme",
+      "path": "ai/evals/README.md",
+      "canonical_url": "https://github.com/EvanL1/AetherEdge/blob/main/ai/evals/README.md",
+      "title": "AI evaluations",
+      "description": "AI evaluations are scenario fixtures that verify capability discovery, authorization, confirmation, audit, and failure behavior. They complement Rust unit tests; they do not replace deterministic runtime tests.",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "reference",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "understand-edge-platform"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "not-applicable",
+      "context_sensitivity": "internal",
+      "updated": "2026-07-12",
+      "priority": "core",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-ai-evals-data-processing",
+      "path": "ai/evals/data-processing.yaml",
+      "canonical_url": "https://raw.githubusercontent.com/EvanL1/AetherEdge/main/ai/evals/data-processing.yaml",
+      "title": "data-processing.yaml",
+      "description": "Machine-readable AetherEdge data-processing.yaml resource.",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "reference",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "understand-edge-platform"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "not-applicable",
+      "context_sensitivity": "internal",
+      "updated": "2026-07-12",
+      "priority": "core",
+      "media_type": "application/yaml",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-ai-invariants",
+      "path": "ai/invariants.md",
+      "canonical_url": "https://github.com/EvanL1/AetherEdge/blob/main/ai/invariants.md",
+      "title": "Aether invariants",
+      "description": "These rules are more important than the current directory layout.",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "safety",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent",
+        "runtime-agent"
+      ],
+      "intents": [
+        "govern-edge-command"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "not-applicable",
+      "context_sensitivity": "internal",
+      "updated": "2026-07-16",
+      "priority": "core",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-ai-runbooks-add-data-processor",
+      "path": "ai/runbooks/add-data-processor.md",
+      "canonical_url": "https://github.com/EvanL1/AetherEdge/blob/main/ai/runbooks/add-data-processor.md",
+      "title": "Add a data processor",
+      "description": "Read the authoritative AetherEdge resource at ai/runbooks/add-data-processor.md.",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "agent-task",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "complete-edge-task"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "experimental",
+      "context_sensitivity": "internal",
+      "updated": "2026-07-12",
+      "priority": "core",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-ai-runbooks-add-extension",
+      "path": "ai/runbooks/add-extension.md",
+      "canonical_url": "https://github.com/EvanL1/AetherEdge/blob/main/ai/runbooks/add-extension.md",
+      "title": "Add an extension",
+      "description": "Read the authoritative AetherEdge resource at ai/runbooks/add-extension.md.",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "agent-task",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "complete-edge-task"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "experimental",
+      "context_sensitivity": "internal",
+      "updated": "2026-07-11",
+      "priority": "core",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-ai-runbooks-change-capability",
+      "path": "ai/runbooks/change-capability.md",
+      "canonical_url": "https://github.com/EvanL1/AetherEdge/blob/main/ai/runbooks/change-capability.md",
+      "title": "Change an AI-facing capability",
+      "description": "Read the authoritative AetherEdge resource at ai/runbooks/change-capability.md.",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "agent-task",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "complete-edge-task"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "experimental",
+      "context_sensitivity": "internal",
+      "updated": "2026-07-11",
+      "priority": "core",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-ai-safety-policy",
+      "path": "ai/safety-policy.yaml",
+      "canonical_url": "https://raw.githubusercontent.com/EvanL1/AetherEdge/main/ai/safety-policy.yaml",
+      "title": "safety-policy.yaml",
+      "description": "Machine-readable AetherEdge safety-policy.yaml resource.",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "safety",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent",
+        "runtime-agent"
+      ],
+      "intents": [
+        "govern-edge-command"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "not-applicable",
+      "context_sensitivity": "internal",
+      "updated": "2026-07-14",
+      "priority": "core",
+      "media_type": "application/yaml",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-contracts-readme",
+      "path": "contracts/README.md",
+      "canonical_url": "https://github.com/EvanL1/AetherEdge/blob/main/contracts/README.md",
+      "title": "Machine-readable contracts",
+      "description": "This directory is reserved for stable configuration, command, event, and MCP schemas. Generated files must carry a generated header and are updated through the repository generation task rather than edited manually.",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "reference",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "inspect-edge-implementation"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "not-applicable",
+      "context_sensitivity": "public",
+      "updated": "2026-07-16",
+      "priority": "optional",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-contracts-aether-contracts-v0-1-0-alpha-3-spec-cloudlink-v1alpha1",
+      "path": "contracts/aether-contracts/v0.1.0-alpha.3/spec/cloudlink-v1alpha1.md",
+      "canonical_url": "https://github.com/EvanL1/AetherEdge/blob/main/contracts/aether-contracts/v0.1.0-alpha.3/spec/cloudlink-v1alpha1.md",
+      "title": "CloudLink v1 alpha 1",
+      "description": "AetherContracts is the sole interoperability authority for this protocol slice. Product-repository wire profiles, manifests, gates, and evidence files are non-authoritative implementation overlays and may not add or redefine wire fields.…",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "reference",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "inspect-edge-implementation"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "not-applicable",
+      "context_sensitivity": "public",
+      "updated": "2026-07-16",
+      "priority": "optional",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-contracts-aether-contracts-v0-1-0-alpha-3-spec-distribution-v1alpha1",
+      "path": "contracts/aether-contracts/v0.1.0-alpha.3/spec/distribution-v1alpha1.md",
+      "canonical_url": "https://github.com/EvanL1/AetherEdge/blob/main/contracts/aether-contracts/v0.1.0-alpha.3/spec/distribution-v1alpha1.md",
+      "title": "Consumer distribution v1 alpha 1",
+      "description": "This profile lets AetherCloud, AetherIot, and independent implementations pin one exact AetherContracts release while keeping their default verification path offline. Distribution conformance proves release identity and byte integrity; it…",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "reference",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "inspect-edge-implementation"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "not-applicable",
+      "context_sensitivity": "public",
+      "updated": "2026-07-16",
+      "priority": "optional",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-contracts-aether-contracts-v0-1-0-alpha-3-spec-tck-v1alpha1",
+      "path": "contracts/aether-contracts/v0.1.0-alpha.3/spec/tck-v1alpha1.md",
+      "canonical_url": "https://github.com/EvanL1/AetherEdge/blob/main/contracts/aether-contracts/v0.1.0-alpha.3/spec/tck-v1alpha1.md",
+      "title": "Language-neutral TCK v1 alpha 1",
+      "description": "Repository tests compile every normative JSON Schema, validate valid and wire-invalid fixtures, preserve context-invalid distinctions, and verify every declared SHA-256.",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "reference",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "inspect-edge-implementation"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "not-applicable",
+      "context_sensitivity": "public",
+      "updated": "2026-07-16",
+      "priority": "optional",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-contracts-cloudlink-readme",
+      "path": "contracts/cloudlink/README.md",
+      "canonical_url": "https://github.com/EvanL1/AetherEdge/blob/main/contracts/cloudlink/README.md",
+      "title": "Experimental CloudLink contracts",
+      "description": "v1/ is AetherEdge's integration surface for the public AetherContracts release. AetherContracts v0.1.0-alpha.3, pinned by the root consumer lock, is shared authority. The local files are adopted byte copies, migration history, or product…",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "reference",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "inspect-edge-implementation"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "not-applicable",
+      "context_sensitivity": "public",
+      "updated": "2026-07-16",
+      "priority": "optional",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-contracts-cloudlink-v1-migration",
+      "path": "contracts/cloudlink/v1/MIGRATION.md",
+      "canonical_url": "https://github.com/EvanL1/AetherEdge/blob/main/contracts/cloudlink/v1/MIGRATION.md",
+      "title": "Candidate reconciliation and remaining work",
+      "description": "Public AetherContracts alpha.3 replaces the incompatible repository-local experimental vocabularies previously called the AetherEdge candidate and 1.0-cloud.1. The public contract selects the AetherEdge durable delivery, digest, cursor,…",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "reference",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "inspect-edge-implementation"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "not-applicable",
+      "context_sensitivity": "public",
+      "updated": "2026-07-16",
+      "priority": "optional",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-contracts-cloudlink-v1-readme",
+      "path": "contracts/cloudlink/v1/README.md",
+      "canonical_url": "https://github.com/EvanL1/AetherEdge/blob/main/contracts/cloudlink/v1/README.md",
+      "title": "CloudLink MQTT v1 AetherEdge implementation overlay",
+      "description": "This directory consumes AetherContracts v0.1.0-alpha.3, the sole CloudLink wire authority. Imported files are exact release bytes. Local manifests, profiles, gates, scenarios, and migration notes are non-authoritative AetherEdge…",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "reference",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "inspect-edge-implementation"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "not-applicable",
+      "context_sensitivity": "public",
+      "updated": "2026-07-16",
+      "priority": "optional",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-contracts-data-processing-readme",
+      "path": "contracts/data-processing/README.md",
+      "canonical_url": "https://github.com/EvanL1/AetherEdge/blob/main/contracts/data-processing/README.md",
+      "title": "Aether Data Processing JSON Schemas",
+      "description": "This directory publishes the Draft 2020-12 transport schemas for version 1 of the Aether Data Processing contract family.",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "reference",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "inspect-edge-implementation"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "not-applicable",
+      "context_sensitivity": "public",
+      "updated": "2026-07-12",
+      "priority": "optional",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-crates-agents",
+      "path": "crates/AGENTS.md",
+      "canonical_url": "https://github.com/EvanL1/AetherEdge/blob/main/crates/AGENTS.md",
+      "title": "Core Crate Instructions",
+      "description": "These instructions apply to all crates in this directory.",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "reference",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "inspect-edge-implementation"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "not-applicable",
+      "context_sensitivity": "public",
+      "updated": "2026-07-11",
+      "priority": "optional",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-crates-aether-application-readme",
+      "path": "crates/aether-application/README.md",
+      "canonical_url": "https://docs.aetheriot.workers.dev/en/crates/aether-application.md",
+      "title": "aether-application",
+      "description": "Transport-neutral command and query use cases for the Aether edge kernel.",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "reference",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "inspect-edge-implementation"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "not-applicable",
+      "context_sensitivity": "public",
+      "updated": "2026-07-12",
+      "priority": "optional",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-crates-aether-cloudlink-readme",
+      "path": "crates/aether-cloudlink/README.md",
+      "canonical_url": "https://docs.aetheriot.workers.dev/en/crates/aether-cloudlink.md",
+      "title": "aether-cloudlink",
+      "description": "Transport-neutral implementation of the experimental, digest-pinned public AetherContracts CloudLink subset. It provides strict closed JSON decoding, RFC 8785 business digests, session/version/epoch validation, stable delivery envelopes,…",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "reference",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "inspect-edge-implementation"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "not-applicable",
+      "context_sensitivity": "public",
+      "updated": "2026-07-18",
+      "priority": "optional",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-crates-aether-data-processing-readme",
+      "path": "crates/aether-data-processing/README.md",
+      "canonical_url": "https://docs.aetheriot.workers.dev/en/crates/aether-data-processing.md",
+      "title": "aether-data-processing crate",
+      "description": "Strict, transport-neutral JSON codec for the Aether Data Processing v1 processor boundary. It converts validated domain values to and from the versioned RFC 3339/JSON DTOs, encodes Aether-accepted DerivedData, and computes RFC 8785 input…",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "reference",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "inspect-edge-implementation"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "not-applicable",
+      "context_sensitivity": "public",
+      "updated": "2026-07-18",
+      "priority": "optional",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-crates-aether-dataplane-readme",
+      "path": "crates/aether-dataplane/README.md",
+      "canonical_url": "https://docs.aetheriot.workers.dev/en/crates/aether-dataplane.md",
+      "title": "aether-dataplane",
+      "description": "aether-dataplane is Aether's business-neutral shared-memory core. It can be used by an embedded gateway without Redis, PostgreSQL, SQLx, routing models, or any HTTP stack.",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "reference",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "inspect-edge-implementation"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "not-applicable",
+      "context_sensitivity": "public",
+      "updated": "2026-07-14",
+      "priority": "optional",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-crates-aether-domain-readme",
+      "path": "crates/aether-domain/README.md",
+      "canonical_url": "https://docs.aetheriot.workers.dev/en/crates/aether-domain.md",
+      "title": "aether-domain",
+      "description": "Industry-neutral, nostd domain types for the Aether edge kernel.",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "reference",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "inspect-edge-implementation"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "not-applicable",
+      "context_sensitivity": "public",
+      "updated": "2026-07-12",
+      "priority": "optional",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-crates-aether-integration-contract-readme",
+      "path": "crates/aether-integration-contract/README.md",
+      "canonical_url": "https://docs.aetheriot.workers.dev/en/crates/aether-integration-contract.md",
+      "title": "aether-integration-contract",
+      "description": "Strict product-side Rust binding for the experimental AetherContracts aether.integration v1alpha1 contract in the 0.1.0-alpha.4 candidate.",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "reference",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "inspect-edge-implementation"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "not-applicable",
+      "context_sensitivity": "public",
+      "updated": "2026-07-18",
+      "priority": "optional",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-crates-aether-integration-control-readme",
+      "path": "crates/aether-integration-control/README.md",
+      "canonical_url": "https://docs.aetheriot.workers.dev/en/crates/aether-integration-control.md",
+      "title": "aether-integration-control",
+      "description": "Experimental, default-off AetherEdge binding for the frozen AetherContracts integration-control v1alpha1 candidate in release 0.1.0-alpha.4.",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "reference",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "inspect-edge-implementation"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "not-applicable",
+      "context_sensitivity": "public",
+      "updated": "2026-07-18",
+      "priority": "optional",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-crates-aether-pack-readme",
+      "path": "crates/aether-pack/README.md",
+      "canonical_url": "https://docs.aetheriot.workers.dev/en/crates/aether-pack.md",
+      "title": "aether-pack",
+      "description": "Versioned, industry-neutral domain-pack manifest loading for the Aether edge kernel. The crate validates a pack's own release identity, distribution identity, compatible Aether range, required capability and protocol IDs, explicitly…",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "reference",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "inspect-edge-implementation"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "not-applicable",
+      "context_sensitivity": "public",
+      "updated": "2026-07-16",
+      "priority": "optional",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-crates-aether-ports-readme",
+      "path": "crates/aether-ports/README.md",
+      "canonical_url": "https://docs.aetheriot.workers.dev/en/crates/aether-ports.md",
+      "title": "aether-ports",
+      "description": "Small, object-safe capability interfaces for Aether edge extensions.",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "reference",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "inspect-edge-implementation"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "not-applicable",
+      "context_sensitivity": "public",
+      "updated": "2026-07-16",
+      "priority": "optional",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-crates-aether-sdk-readme",
+      "path": "crates/aether-sdk/README.md",
+      "canonical_url": "https://docs.aetheriot.workers.dev/en/crates/aether-sdk.md",
+      "title": "aether-edge-sdk",
+      "description": "Versioned beta facade for embedding the Aether AI-native IoT edge kernel.",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "reference",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "inspect-edge-implementation"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "not-applicable",
+      "context_sensitivity": "public",
+      "updated": "2026-07-16",
+      "priority": "optional",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-crates-aether-testkit-readme",
+      "path": "crates/aether-testkit/README.md",
+      "canonical_url": "https://docs.aetheriot.workers.dev/en/crates/aether-testkit.md",
+      "title": "aether-testkit",
+      "description": "Reusable conformance checks and deterministic test doubles for Aether extension authors.",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "reference",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "inspect-edge-implementation"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "not-applicable",
+      "context_sensitivity": "public",
+      "updated": "2026-07-16",
+      "priority": "optional",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-docs-aether-cli-guide",
+      "path": "docs/AETHER_CLI_GUIDE.md",
+      "canonical_url": "https://github.com/EvanL1/AetherEdge/blob/main/docs/AETHER_CLI_GUIDE.md",
+      "title": "Legacy CLI guide",
+      "description": "Migration-period CLI guide retained for historical lookup; the current CLI reference remains authoritative.",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "reference",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "understand-edge-platform"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "not-applicable",
+      "context_sensitivity": "public",
+      "updated": "2026-07-14",
+      "priority": "core",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-docs-api-reference",
+      "path": "docs/API_REFERENCE.md",
+      "canonical_url": "https://github.com/EvanL1/AetherEdge/blob/main/docs/API_REFERENCE.md",
+      "title": "Legacy API reference entry",
+      "description": "Compatibility entry that routes readers to service-owned OpenAPI instead of duplicating endpoint definitions.",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "reference",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "understand-edge-platform"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "not-applicable",
+      "context_sensitivity": "public",
+      "updated": "2026-07-12",
+      "priority": "core",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-docs-config-format-guide",
+      "path": "docs/CONFIG_FORMAT_GUIDE.md",
+      "canonical_url": "https://github.com/EvanL1/AetherEdge/blob/main/docs/CONFIG_FORMAT_GUIDE.md",
+      "title": "Legacy AetherEMS configuration formats",
+      "description": "Historical AetherEMS configuration material retained for migration; it is not AetherEdge configuration authority.",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "reference",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "understand-edge-platform"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "not-applicable",
+      "context_sensitivity": "public",
+      "updated": "2026-07-11",
+      "priority": "core",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-docs-getting-started-development",
+      "path": "docs/GETTING_STARTED_DEVELOPMENT.md",
+      "canonical_url": "https://github.com/EvanL1/AetherEdge/blob/main/docs/GETTING_STARTED_DEVELOPMENT.md",
+      "title": "Legacy AetherEMS development quickstart",
+      "description": "Historical pre-split development instructions retained for migration and not current AetherEdge onboarding.",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "reference",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "understand-edge-platform"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "not-applicable",
+      "context_sensitivity": "public",
+      "updated": "2026-07-16",
+      "priority": "core",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-docs-readme",
+      "path": "docs/README.md",
+      "canonical_url": "https://github.com/EvanL1/AetherEdge/blob/main/docs/README.md",
+      "title": "Repository documentation map",
+      "description": "Navigation for repository documentation, current authority records, compatibility notes, and historical material.",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "reference",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "understand-edge-platform"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "not-applicable",
+      "context_sensitivity": "public",
+      "updated": "2026-07-18",
+      "priority": "core",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-docs-adr-0001-ai-native-edge-kernel",
+      "path": "docs/adr/0001-ai-native-edge-kernel.md",
+      "canonical_url": "https://github.com/EvanL1/AetherEdge/blob/main/docs/adr/0001-ai-native-edge-kernel.md",
+      "title": "ADR-0001: Adopt an AI-native edge-kernel architecture",
+      "description": "Accepted for incremental migration on 2026-07-10. Runtime-composition clauses were amended by ADR-0003 on the same date; ADR-0003 governs where the two records differ.",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "decision",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "inspect-edge-implementation"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "not-applicable",
+      "context_sensitivity": "internal",
+      "updated": "2026-07-11",
+      "priority": "optional",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-docs-adr-0002-dataplane-and-local-outbox",
+      "path": "docs/adr/0002-dataplane-and-local-outbox.md",
+      "canonical_url": "https://github.com/EvanL1/AetherEdge/blob/main/docs/adr/0002-dataplane-and-local-outbox.md",
+      "title": "ADR-0002: Extract the SHM data plane and add a local durable outbox",
+      "description": "Accepted and implemented on 2026-07-10. Compatibility aggregate removal completed on 2026-07-13 after ADR-0014 rolling conformance passed.",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "decision",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "inspect-edge-implementation"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "not-applicable",
+      "context_sensitivity": "internal",
+      "updated": "2026-07-14",
+      "priority": "optional",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-docs-adr-0003-multi-process-shm-event-plane",
+      "path": "docs/adr/0003-multi-process-shm-event-plane.md",
+      "canonical_url": "https://github.com/EvanL1/AetherEdge/blob/main/docs/adr/0003-multi-process-shm-event-plane.md",
+      "title": "ADR-0003: Keep production services isolated over SHM and per-consumer events",
+      "description": "Accepted and implemented for the peripheral read paths on 2026-07-10.",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "decision",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "inspect-edge-implementation"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "not-applicable",
+      "context_sensitivity": "internal",
+      "updated": "2026-07-11",
+      "priority": "optional",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-docs-adr-0004-canonical-service-names",
+      "path": "docs/adr/0004-canonical-service-names.md",
+      "canonical_url": "https://github.com/EvanL1/AetherEdge/blob/main/docs/adr/0004-canonical-service-names.md",
+      "title": "ADR-0004: Use capability-oriented canonical service names",
+      "description": "Accepted and implemented on 2026-07-10.",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "decision",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "inspect-edge-implementation"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "not-applicable",
+      "context_sensitivity": "internal",
+      "updated": "2026-07-11",
+      "priority": "optional",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-docs-adr-0005-shm-only-live-state",
+      "path": "docs/adr/0005-shm-only-live-state.md",
+      "canonical_url": "https://github.com/EvanL1/AetherEdge/blob/main/docs/adr/0005-shm-only-live-state.md",
+      "title": "ADR-0005: Make SHM the only core live-state plane",
+      "description": "Accepted and implemented on 2026-07-10.",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "decision",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "inspect-edge-implementation"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "not-applicable",
+      "context_sensitivity": "internal",
+      "updated": "2026-07-11",
+      "priority": "optional",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-docs-adr-0006-installation-and-commissioning",
+      "path": "docs/adr/0006-installation-and-commissioning.md",
+      "canonical_url": "https://github.com/EvanL1/AetherEdge/blob/main/docs/adr/0006-installation-and-commissioning.md",
+      "title": "ADR-0006: Separate installation from IoT commissioning",
+      "description": "Accepted on 2026-07-11. The installation-context, fail-safe default, read-only setup plan, explicit plan apply, fresh-install refusal, health-check, and release-integrity clauses are implemented. In-place runtime upgrade and legacy…",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "decision",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "inspect-edge-implementation"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "not-applicable",
+      "context_sensitivity": "internal",
+      "updated": "2026-07-12",
+      "priority": "optional",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-docs-adr-0007-aether-core-and-ems-distribution",
+      "path": "docs/adr/0007-aether-core-and-ems-distribution.md",
+      "canonical_url": "https://github.com/EvanL1/AetherEdge/blob/main/docs/adr/0007-aether-core-and-ems-distribution.md",
+      "title": "ADR-0007: Separate the Aether kernel from the AetherEMS distribution",
+      "description": "Accepted. Repository-local artifact and extraction gates were implemented on 2026-07-13. The physical AetherEMS repository split, downstream bootstrap CI, and EMS Console ownership are complete. AetherIot v0.5.0 supplied the signed…",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "decision",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "inspect-edge-implementation"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "not-applicable",
+      "context_sensitivity": "internal",
+      "updated": "2026-07-14",
+      "priority": "optional",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-docs-adr-0008-application-control-boundary",
+      "path": "docs/adr/0008-application-control-boundary.md",
+      "canonical_url": "https://github.com/EvanL1/AetherEdge/blob/main/docs/adr/0008-application-control-boundary.md",
+      "title": "ADR-0008: Route external device actions through the application boundary",
+      "description": "Accepted and implemented for external device actions on 2026-07-11. The nonexistent instance-measurement compatibility surface and the rule engine's direct action-dispatch path were removed on 2026-07-12. Physical action-route mutations…",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "decision",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "inspect-edge-implementation"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "not-applicable",
+      "context_sensitivity": "internal",
+      "updated": "2026-07-14",
+      "priority": "optional",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-docs-adr-0009-aether-data-processing",
+      "path": "docs/adr/0009-aether-data-processing.md",
+      "canonical_url": "https://github.com/EvanL1/AetherEdge/blob/main/docs/adr/0009-aether-data-processing.md",
+      "title": "ADR-0009: Introduce optional, industry-neutral data processing",
+      "description": "Accepted on 2026-07-11. Implementation notes reconciled on 2026-07-11.",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "decision",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "inspect-edge-implementation"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "not-applicable",
+      "context_sensitivity": "internal",
+      "updated": "2026-07-12",
+      "priority": "optional",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-docs-adr-0010-physical-acquisition-addresses",
+      "path": "docs/adr/0010-physical-acquisition-addresses.md",
+      "canonical_url": "https://github.com/EvanL1/AetherEdge/blob/main/docs/adr/0010-physical-acquisition-addresses.md",
+      "title": "ADR-0010: Separate physical acquisition addresses from logical application points",
+      "description": "Implemented for all production and test graphs on 2026-07-13. The legacy aggregate was removed after the ADR-0014 compatibility matrix and rolling conformance contracts passed.",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "decision",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "inspect-edge-implementation"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "not-applicable",
+      "context_sensitivity": "internal",
+      "updated": "2026-07-14",
+      "priority": "optional",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-docs-adr-0011-governed-channel-desired-state",
+      "path": "docs/adr/0011-governed-channel-desired-state.md",
+      "canonical_url": "https://github.com/EvanL1/AetherEdge/blob/main/docs/adr/0011-governed-channel-desired-state.md",
+      "title": "ADR-0011: Govern channel desired state and runtime projection",
+      "description": "Accepted on 2026-07-12. The application, default SQLite/runtime adapter, and HTTP/CLI/MCP CRUD, lifecycle, and runtime-reconciliation migrations are implemented as one staged change. Offline bulk configuration import remains an explicitly…",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "decision",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "inspect-edge-implementation"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "not-applicable",
+      "context_sensitivity": "internal",
+      "updated": "2026-07-14",
+      "priority": "optional",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-docs-adr-0012-agent-first-application-surface",
+      "path": "docs/adr/0012-agent-first-application-surface.md",
+      "canonical_url": "https://github.com/EvanL1/AetherEdge/blob/main/docs/adr/0012-agent-first-application-surface.md",
+      "title": "ADR-0012: Make contracts and Agent Skills the application surface",
+      "description": "Accepted on 2026-07-13.",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "decision",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "inspect-edge-implementation"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "not-applicable",
+      "context_sensitivity": "internal",
+      "updated": "2026-07-17",
+      "priority": "optional",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-docs-adr-0013-single-sdk-source-release",
+      "path": "docs/adr/0013-single-sdk-source-release.md",
+      "canonical_url": "https://github.com/EvanL1/AetherEdge/blob/main/docs/adr/0013-single-sdk-source-release.md",
+      "title": "ADR-0013: Release one SDK facade instead of workspace crates",
+      "description": "Accepted on 2026-07-14.",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "decision",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "inspect-edge-implementation"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "not-applicable",
+      "context_sensitivity": "internal",
+      "updated": "2026-07-14",
+      "priority": "optional",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-docs-adr-0014-coordinated-shm-topology-publication",
+      "path": "docs/adr/0014-coordinated-shm-topology-publication.md",
+      "canonical_url": "https://github.com/EvanL1/AetherEdge/blob/main/docs/adr/0014-coordinated-shm-topology-publication.md",
+      "title": "ADR-0014: Coordinate point and health SHM topology publication",
+      "description": "Accepted and implemented on 2026-07-13. The ADR-0002 legacy SHM aggregate was removed after the compatibility matrix and rolling-version contracts passed.",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "decision",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "inspect-edge-implementation"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "not-applicable",
+      "context_sensitivity": "internal",
+      "updated": "2026-07-14",
+      "priority": "optional",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-docs-adr-0015-configuration-authority-and-reconciliation",
+      "path": "docs/adr/0015-configuration-authority-and-reconciliation.md",
+      "canonical_url": "https://github.com/EvanL1/AetherEdge/blob/main/docs/adr/0015-configuration-authority-and-reconciliation.md",
+      "title": "ADR-0015: Assign configuration authority and reconcile applied projections",
+      "description": "Accepted and implemented on 2026-07-13.",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "decision",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "inspect-edge-implementation"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "not-applicable",
+      "context_sensitivity": "internal",
+      "updated": "2026-07-14",
+      "priority": "optional",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-docs-adr-0016-telemetry-egress-and-observability-boundary",
+      "path": "docs/adr/0016-telemetry-egress-and-observability-boundary.md",
+      "canonical_url": "https://github.com/EvanL1/AetherEdge/blob/main/docs/adr/0016-telemetry-egress-and-observability-boundary.md",
+      "title": "ADR-0016: Telemetry egress and the observability boundary",
+      "description": "Accepted on 2026-07-14. The channel-connectivity egress, the bounded-cardinality telemetry contract, and W3C trace-context propagation are implemented, with telemetry off by default pending a broker policy that grants the topic.",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "decision",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "inspect-edge-implementation"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "not-applicable",
+      "context_sensitivity": "internal",
+      "updated": "2026-07-15",
+      "priority": "optional",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-docs-adr-0017-experimental-cloudlink-mqtt-edge-foundation",
+      "path": "docs/adr/0017-experimental-cloudlink-mqtt-edge-foundation.md",
+      "canonical_url": "https://github.com/EvanL1/AetherEdge/blob/main/docs/adr/0017-experimental-cloudlink-mqtt-edge-foundation.md",
+      "title": "ADR-0017: Experimental CloudLink MQTT edge foundation",
+      "description": "Accepted for an experimental edge implementation on 2026-07-15 and amended the same day for initial repository coordination. ADR-0018 supersedes the co-authority language with one pinned public AetherContracts authority.",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "decision",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "inspect-edge-implementation"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "not-applicable",
+      "context_sensitivity": "internal",
+      "updated": "2026-07-16",
+      "priority": "optional",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-docs-adr-0018-pinned-aethercontracts-consumption",
+      "path": "docs/adr/0018-pinned-aethercontracts-consumption.md",
+      "canonical_url": "https://github.com/EvanL1/AetherEdge/blob/main/docs/adr/0018-pinned-aethercontracts-consumption.md",
+      "title": "ADR-0018: Pinned AetherContracts consumption",
+      "description": "Accepted on 2026-07-15. AetherContracts v0.1.0-alpha.3 is the sole public contract authority. AetherIot and AetherCloud consume it through byte-identical aether-contracts.lock.json files. The current claim is distribution-only; both…",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "decision",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "inspect-edge-implementation"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "not-applicable",
+      "context_sensitivity": "internal",
+      "updated": "2026-07-16",
+      "priority": "optional",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-docs-adr-0019-aetheriot-product-family-and-aetheredge-rename",
+      "path": "docs/adr/0019-aetheriot-product-family-and-aetheredge-rename.md",
+      "canonical_url": "https://github.com/EvanL1/AetherEdge/blob/main/docs/adr/0019-aetheriot-product-family-and-aetheredge-rename.md",
+      "title": "ADR-0019: Establish AetherIoT as the product family and rename the edge product to AetherEdge",
+      "description": "Status: Accepted on 2026-07-16.",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "decision",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "inspect-edge-implementation"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "not-applicable",
+      "context_sensitivity": "internal",
+      "updated": "2026-07-16",
+      "priority": "optional",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-docs-adr-0020-home-assistant-edge-bridge",
+      "path": "docs/adr/0020-home-assistant-edge-bridge.md",
+      "canonical_url": "https://github.com/EvanL1/AetherEdge/blob/main/docs/adr/0020-home-assistant-edge-bridge.md",
+      "title": "ADR-0020: Integrate Home Assistant through an Edge bridge",
+      "description": "Accepted staged decision for delegated topology, observations, governed actions, resynchronization, backpressure, and authority.",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "decision",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "inspect-edge-implementation"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "not-applicable",
+      "context_sensitivity": "internal",
+      "updated": "2026-07-18",
+      "priority": "optional",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-docs-aethercloud-index",
+      "path": "docs/aethercloud/index.md",
+      "canonical_url": "https://docs.aetheriot.workers.dev/en/aethercloud.md",
+      "title": "AetherCloud",
+      "description": "AetherCloud is the AI-native, industry-neutral, multi-cloud IoT fusion and control plane for AetherEdge runtimes and cloud-side workloads. It is a separate product, not a hosted copy of the edge runtime.",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "reference",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "understand-edge-platform"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "not-applicable",
+      "context_sensitivity": "public",
+      "updated": "2026-07-16",
+      "priority": "core",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-docs-aethercontracts-index",
+      "path": "docs/aethercontracts/index.md",
+      "canonical_url": "https://docs.aetheriot.workers.dev/en/aethercontracts.md",
+      "title": "AetherContracts",
+      "description": "AetherContracts is the public, language-neutral interoperability authority for AetherEdge, AetherCloud, and independent implementations.",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "reference",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "understand-edge-platform"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "not-applicable",
+      "context_sensitivity": "public",
+      "updated": "2026-07-18",
+      "priority": "core",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-docs-aetheredge-index",
+      "path": "docs/aetheredge/index.md",
+      "canonical_url": "https://docs.aetheriot.workers.dev/en/aetheredge.md",
+      "title": "AetherEdge",
+      "description": "AetherEdge is the open-source, industry-neutral Linux edge runtime, Kernel, CLI, and Rust SDK formerly published from the AetherIot repository name.",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "reference",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "understand-edge-platform"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "not-applicable",
+      "context_sensitivity": "public",
+      "updated": "2026-07-18",
+      "priority": "core",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-docs-architecture-openclaw-comparison",
+      "path": "docs/architecture/openclaw-comparison.md",
+      "canonical_url": "https://github.com/EvanL1/AetherEdge/blob/main/docs/architecture/openclaw-comparison.md",
+      "title": "Historical AetherEMS and OpenClaw comparison",
+      "description": "Pre-split architecture comparison retained as historical product research, not current AetherEdge authority.",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "reference",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "understand-edge-platform"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "not-applicable",
+      "context_sensitivity": "public",
+      "updated": "2026-07-11",
+      "priority": "core",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-docs-architecture-target-layout",
+      "path": "docs/architecture/target-layout.md",
+      "canonical_url": "https://github.com/EvanL1/AetherEdge/blob/main/docs/architecture/target-layout.md",
+      "title": "Target repository layout",
+      "description": "The migration target separates stable libraries, optional executable extensions, user/AI interfaces, and declarative industry knowledge.",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "reference",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "understand-edge-platform"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "not-applicable",
+      "context_sensitivity": "public",
+      "updated": "2026-07-14",
+      "priority": "core",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-docs-benchmarking",
+      "path": "docs/benchmarking.md",
+      "canonical_url": "https://github.com/EvanL1/AetherEdge/blob/main/docs/benchmarking.md",
+      "title": "Historical AetherEMS competitive research",
+      "description": "Pre-split energy-product research retained for history; AetherEMS owns current solution strategy.",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "reference",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "understand-edge-platform"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "not-applicable",
+      "context_sensitivity": "public",
+      "updated": "2026-07-14",
+      "priority": "core",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-docs-compatibility-version-matrix",
+      "path": "docs/compatibility/version-matrix.md",
+      "canonical_url": "https://docs.aetheriot.workers.dev/en/compatibility/version-matrix.md",
+      "title": "Product version compatibility",
+      "description": "This matrix distinguishes released compatibility evidence from planned product combinations. A green local test never upgrades an experimental public contract to production status.",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "status",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "check-edge-compatibility-and-status"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "not-applicable",
+      "context_sensitivity": "public",
+      "updated": "2026-07-16",
+      "priority": "core",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-docs-concepts-architecture",
+      "path": "docs/concepts/architecture.md",
+      "canonical_url": "https://docs.aetheriot.workers.dev/en/concepts/architecture.md",
+      "title": "System Architecture",
+      "description": "Isolated edge services communicating over shared memory, per-consumer UDS events, SQLite, HTTP, and MQTT",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "reference",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "understand-edge-platform"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "not-applicable",
+      "context_sensitivity": "public",
+      "updated": "2026-07-16",
+      "priority": "core",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-docs-concepts-data-flow",
+      "path": "docs/concepts/data-flow.md",
+      "canonical_url": "https://docs.aetheriot.workers.dev/en/concepts/data-flow.md",
+      "title": "Data Flow",
+      "description": "SHM-native uplink and downlink paths end to end, with latency budgets",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "reference",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "understand-edge-platform"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "not-applicable",
+      "context_sensitivity": "public",
+      "updated": "2026-07-16",
+      "priority": "core",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-docs-concepts-data-model",
+      "path": "docs/concepts/data-model.md",
+      "canonical_url": "https://docs.aetheriot.workers.dev/en/concepts/data-model.md",
+      "title": "Data Model",
+      "description": "Products, instances, and T/S/C/A points - and why an instance is a pure thing-model with no status field",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "reference",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "understand-edge-platform"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "not-applicable",
+      "context_sensitivity": "public",
+      "updated": "2026-07-14",
+      "priority": "core",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-docs-concepts-data-processing-flow",
+      "path": "docs/concepts/data-processing-flow.md",
+      "canonical_url": "https://docs.aetheriot.workers.dev/en/concepts/data-processing-flow.md",
+      "title": "Data Processing Flow",
+      "description": "How Aether assembles governed IoT data, invokes a request-driven processor, validates derived data, and keeps control separate",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "reference",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "understand-edge-platform"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "not-applicable",
+      "context_sensitivity": "public",
+      "updated": "2026-07-14",
+      "priority": "core",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-docs-concepts-data-processing",
+      "path": "docs/concepts/data-processing.md",
+      "canonical_url": "https://docs.aetheriot.workers.dev/en/concepts/data-processing.md",
+      "title": "Aether Data Processing",
+      "description": "Industry-neutral, request-driven processing of governed IoT data into validated derived data",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "reference",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "understand-edge-platform"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "not-applicable",
+      "context_sensitivity": "public",
+      "updated": "2026-07-14",
+      "priority": "core",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-docs-concepts-rule-engine",
+      "path": "docs/concepts/rule-engine.md",
+      "canonical_url": "https://docs.aetheriot.workers.dev/en/concepts/rule-engine.md",
+      "title": "Rule Engine",
+      "description": "Dual-column rule storage, tick and event scheduling, execution, and hot reload",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "reference",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "understand-edge-platform"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "not-applicable",
+      "context_sensitivity": "public",
+      "updated": "2026-07-11",
+      "priority": "core",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-docs-concepts-shared-memory",
+      "path": "docs/concepts/shared-memory.md",
+      "canonical_url": "https://docs.aetheriot.workers.dev/en/concepts/shared-memory.md",
+      "title": "Shared Memory",
+      "description": "The SHM data plane - slot layout, writer ownership, seqlock reads, generations, and the PointWatch event plane",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "reference",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "understand-edge-platform"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "not-applicable",
+      "context_sensitivity": "public",
+      "updated": "2026-07-14",
+      "priority": "core",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-docs-domain-control-strategies",
+      "path": "docs/domain/control-strategies.md",
+      "canonical_url": "https://github.com/EvanL1/AetherEdge/blob/main/docs/domain/control-strategies.md",
+      "title": "Control Strategies as Rules (Moved)",
+      "description": "Compatibility pointer to the Energy Pack knowledge page",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "reference",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "inspect-edge-implementation"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "not-applicable",
+      "context_sensitivity": "public",
+      "updated": "2026-07-12",
+      "priority": "optional",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-docs-domain-ess-primer",
+      "path": "docs/domain/ess-primer.md",
+      "canonical_url": "https://github.com/EvanL1/AetherEdge/blob/main/docs/domain/ess-primer.md",
+      "title": "Energy Storage Primer (Moved)",
+      "description": "Compatibility pointer to the Energy Pack knowledge page",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "reference",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "inspect-edge-implementation"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "not-applicable",
+      "context_sensitivity": "public",
+      "updated": "2026-07-12",
+      "priority": "optional",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-docs-domain-power-forecasting",
+      "path": "docs/domain/power-forecasting.md",
+      "canonical_url": "https://github.com/EvanL1/AetherEdge/blob/main/docs/domain/power-forecasting.md",
+      "title": "Power Forecasting (Moved)",
+      "description": "Compatibility pointer to the Energy Pack knowledge page",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "reference",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "inspect-edge-implementation"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "not-applicable",
+      "context_sensitivity": "public",
+      "updated": "2026-07-12",
+      "priority": "optional",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-docs-domain-product-models",
+      "path": "docs/domain/product-models.md",
+      "canonical_url": "https://github.com/EvanL1/AetherEdge/blob/main/docs/domain/product-models.md",
+      "title": "Energy Pack Product Models (Moved)",
+      "description": "Compatibility pointer to the Energy Pack knowledge page",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "reference",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "inspect-edge-implementation"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "not-applicable",
+      "context_sensitivity": "public",
+      "updated": "2026-07-12",
+      "priority": "optional",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-docs-domain-safe-operations",
+      "path": "docs/domain/safe-operations.md",
+      "canonical_url": "https://github.com/EvanL1/AetherEdge/blob/main/docs/domain/safe-operations.md",
+      "title": "Safe Operations for AI Agents (Moved)",
+      "description": "Compatibility pointer to the Energy Pack knowledge page",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "reference",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "inspect-edge-implementation"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "not-applicable",
+      "context_sensitivity": "public",
+      "updated": "2026-07-12",
+      "priority": "optional",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-docs-guides-ai-assistants",
+      "path": "docs/guides/ai-assistants.md",
+      "canonical_url": "https://docs.aetheriot.workers.dev/en/guides/ai-assistants.md",
+      "title": "Connect AI Assistants",
+      "description": "Point Claude or any MCP client at aether mcp, and choose between read-only and write access",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "agent-task",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "complete-edge-task"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "experimental",
+      "context_sensitivity": "public",
+      "updated": "2026-07-14",
+      "priority": "core",
+      "media_type": "text/markdown",
+      "capability_refs": [
+        "device.write_point",
+        "automation.rule.execute",
+        "automation.rule.manage",
+        "automation.routing.manage",
+        "automation.instance.manage",
+        "io.channel.manage",
+        "io.channel.reconcile",
+        "alarm.rule.manage",
+        "alarm.alert.resolve"
+      ],
+      "preconditions": [
+        "authenticated-agent",
+        "live-capability-discovery",
+        "explicit-confirmation"
+      ],
+      "recovery_route": "docs/recovery/safe-stop-and-control-revocation.md",
+      "human_escalation": "required-for-unknown-or-unsafe-physical-outcome",
+      "verification": [
+        "verify-terminal-audit",
+        "verify-authoritative-state"
+      ]
+    },
+    {
+      "id": "edge-docs-guides-build-applications-with-ai",
+      "path": "docs/guides/build-applications-with-ai.md",
+      "canonical_url": "https://docs.aetheriot.workers.dev/en/guides/build-applications-with-ai.md",
+      "title": "Build Applications with AI",
+      "description": "Generate contract-first IoT applications without turning a Web UI or an AI agent into a second runtime authority",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "agent-task",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "complete-edge-task"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "experimental",
+      "context_sensitivity": "public",
+      "updated": "2026-07-18",
+      "priority": "core",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-docs-guides-connect-devices",
+      "path": "docs/guides/connect-devices.md",
+      "canonical_url": "https://docs.aetheriot.workers.dev/en/guides/connect-devices.md",
+      "title": "Connect Devices",
+      "description": "Configure channels, choose protocols, and map device points to instances",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "agent-task",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "complete-edge-task"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "experimental",
+      "context_sensitivity": "public",
+      "updated": "2026-07-11",
+      "priority": "core",
+      "media_type": "text/markdown",
+      "capability_refs": [
+        "io.channel.manage",
+        "io.channel.reconcile"
+      ],
+      "preconditions": [
+        "commissioned-site",
+        "current-configuration-revision",
+        "explicit-confirmation"
+      ],
+      "recovery_route": "docs/recovery/configuration-rollback.md",
+      "human_escalation": "required-for-unknown-or-unsafe-physical-outcome",
+      "verification": [
+        "verify-channel-status",
+        "verify-read-only-observations"
+      ]
+    },
+    {
+      "id": "edge-docs-guides-data-processors",
+      "path": "docs/guides/data-processors.md",
+      "canonical_url": "https://docs.aetheriot.workers.dev/en/guides/data-processors.md",
+      "title": "Connect Data Processors",
+      "description": "Declare data-processing tasks in domain packs and connect request-driven local or remote processors",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "agent-task",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "complete-edge-task"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "experimental",
+      "context_sensitivity": "public",
+      "updated": "2026-07-14",
+      "priority": "core",
+      "media_type": "text/markdown",
+      "capability_refs": [
+        "data_processing.tasks.list",
+        "data_processing.processors.health",
+        "data_processing.process"
+      ],
+      "preconditions": [
+        "validated-task-and-binding",
+        "bounded-processor-route"
+      ],
+      "recovery_route": null,
+      "human_escalation": "required-for-unknown-non-idempotent-processor-outcome",
+      "verification": [
+        "verify-derived-result-contract",
+        "verify-audit-record"
+      ]
+    },
+    {
+      "id": "edge-docs-guides-deployment",
+      "path": "docs/guides/deployment.md",
+      "canonical_url": "https://docs.aetheriot.workers.dev/en/guides/deployment.md",
+      "title": "Deployment",
+      "description": "Run with Docker Compose or build a self-contained installer for edge devices",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "operations",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "deploy-and-operate-edge"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "experimental",
+      "context_sensitivity": "public",
+      "updated": "2026-07-18",
+      "priority": "core",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [
+        "approved-runtime-manifest",
+        "operator-maintenance-window"
+      ],
+      "recovery_route": "docs/recovery/configuration-rollback.md",
+      "human_escalation": null,
+      "verification": [
+        "verify-runtime-health",
+        "verify-read-only-observations"
+      ]
+    },
+    {
+      "id": "edge-docs-guides-edge-contracts-cloud",
+      "path": "docs/guides/edge-contracts-cloud.md",
+      "canonical_url": "https://docs.aetheriot.workers.dev/en/guides/edge-contracts-cloud.md",
+      "title": "Connect AetherEdge to AetherCloud through AetherContracts",
+      "description": "This agent task validates the current cross-repository integration path without claiming production CloudLink readiness. It starts with a safe local runtime, verifies the shared contract release, and then runs the available product…",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "agent-task",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "complete-edge-task"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "experimental",
+      "context_sensitivity": "public",
+      "updated": "2026-07-18",
+      "priority": "core",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-docs-guides-getting-started",
+      "path": "docs/guides/getting-started.md",
+      "canonical_url": "https://docs.aetheriot.workers.dev/en/guides/getting-started.md",
+      "title": "Getting Started",
+      "description": "Build the workspace, initialize configuration, start services, and verify health",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "agent-task",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "complete-edge-task"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "experimental",
+      "context_sensitivity": "public",
+      "updated": "2026-07-16",
+      "priority": "core",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-docs-guides-home-assistant",
+      "path": "docs/guides/home-assistant.md",
+      "canonical_url": "https://docs.aetheriot.workers.dev/en/guides/home-assistant.md",
+      "title": "Connect Home Assistant",
+      "description": "Use Home Assistant as a delegated device source and explicitly opt in to tightly governed semantic power control",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "agent-task",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "complete-edge-task"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "experimental",
+      "context_sensitivity": "public",
+      "updated": "2026-07-18",
+      "priority": "core",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [
+        "explicit-feature-opt-in",
+        "edge-local-secret-reference",
+        "live-topology-generation"
+      ],
+      "recovery_route": "docs/recovery/safe-stop-and-control-revocation.md",
+      "human_escalation": "required-for-unknown-or-unsafe-physical-outcome",
+      "verification": [
+        "verify-read-only-projection",
+        "verify-control-remains-default-off"
+      ]
+    },
+    {
+      "id": "edge-docs-guides-safe-operations",
+      "path": "docs/guides/safe-operations.md",
+      "canonical_url": "https://docs.aetheriot.workers.dev/en/guides/safe-operations.md",
+      "title": "Safe Operations for Applications and Agents",
+      "description": "Preserve identity, confirmation, audit, topology fencing, and uncertain command outcomes when operating AetherEdge",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "safety",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent",
+        "runtime-agent"
+      ],
+      "intents": [
+        "govern-edge-command"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "not-applicable",
+      "context_sensitivity": "public",
+      "updated": "2026-07-16",
+      "priority": "core",
+      "media_type": "text/markdown",
+      "capability_refs": [
+        "device.write_point",
+        "automation.rule.execute",
+        "automation.rule.manage",
+        "automation.routing.manage",
+        "automation.instance.manage",
+        "io.channel.manage",
+        "io.channel.reconcile",
+        "alarm.rule.manage",
+        "alarm.alert.resolve"
+      ],
+      "preconditions": [
+        "authenticated-actor",
+        "live-capability-discovery",
+        "explicit-confirmation"
+      ],
+      "recovery_route": "docs/recovery/safe-stop-and-control-revocation.md",
+      "human_escalation": "required-for-unknown-or-unsafe-physical-outcome",
+      "verification": [
+        "verify-terminal-audit",
+        "verify-authoritative-state"
+      ]
+    },
+    {
+      "id": "edge-docs-guides-writing-rules",
+      "path": "docs/guides/writing-rules.md",
+      "canonical_url": "https://docs.aetheriot.workers.dev/en/guides/writing-rules.md",
+      "title": "Writing Rules",
+      "description": "Author rules through the HTTP API or a downstream product console",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "agent-task",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "complete-edge-task"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "experimental",
+      "context_sensitivity": "public",
+      "updated": "2026-07-16",
+      "priority": "core",
+      "media_type": "text/markdown",
+      "capability_refs": [
+        "automation.rule.execute",
+        "automation.rule.manage",
+        "automation.routing.manage"
+      ],
+      "preconditions": [
+        "current-rule-revision",
+        "explicit-confirmation"
+      ],
+      "recovery_route": "docs/recovery/safe-stop-and-control-revocation.md",
+      "human_escalation": "required-for-unknown-or-unsafe-physical-outcome",
+      "verification": [
+        "verify-rule-revision",
+        "verify-scheduler-reconciliation"
+      ]
+    },
+    {
+      "id": "edge-docs-migration-aetheriot-to-aetheredge",
+      "path": "docs/migration/aetheriot-to-aetheredge.md",
+      "canonical_url": "https://docs.aetheriot.workers.dev/en/migration/aetheriot-to-aetheredge.md",
+      "title": "Migrate from AetherIot to AetherEdge",
+      "description": "The edge product and repository are renamed from AetherIot to AetherEdge. AetherIoT becomes the umbrella project name for AetherEdge, AetherCloud, and AetherContracts. This is a product-identity change, not a protocol or package namespace…",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "operations",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "deploy-and-operate-edge"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "experimental",
+      "context_sensitivity": "public",
+      "updated": "2026-07-16",
+      "priority": "core",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-docs-operations-log",
+      "path": "docs/operations-log.md",
+      "canonical_url": "https://github.com/EvanL1/AetherEdge/blob/main/docs/operations-log.md",
+      "title": "Historical AetherEMS operations log",
+      "description": "Pre-split operational notes retained as optional history and not a current runbook or architecture authority.",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "reference",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "inspect-edge-implementation"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "not-applicable",
+      "context_sensitivity": "public",
+      "updated": "2026-07-11",
+      "priority": "optional",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-docs-overview-ai-native-platform",
+      "path": "docs/overview/ai-native-platform.md",
+      "canonical_url": "https://docs.aetheriot.workers.dev/en/overview/ai-native-platform.md",
+      "title": "AI-native platform",
+      "description": "AetherIoT is building an open runtime platform for agents to turn human intent into governed, verifiable behavior across physical spaces.",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "reference",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "understand-edge-platform"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "not-applicable",
+      "context_sensitivity": "public",
+      "updated": "2026-07-16",
+      "priority": "core",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-docs-overview-deployment-topologies",
+      "path": "docs/overview/deployment-topologies.md",
+      "canonical_url": "https://docs.aetheriot.workers.dev/en/overview/deployment-topologies.md",
+      "title": "Deployment topologies",
+      "description": "AetherIoT supports deployments that keep physical authority at the edge while adding cloud coordination only where it creates value.",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "operations",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "deploy-and-operate-edge"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "experimental",
+      "context_sensitivity": "public",
+      "updated": "2026-07-16",
+      "priority": "core",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-docs-overview-platform",
+      "path": "docs/overview/platform.md",
+      "canonical_url": "https://docs.aetheriot.workers.dev/en/overview/platform.md",
+      "title": "AetherIoT platform overview",
+      "description": "AetherIoT is the open-source, AI-native project identity for a family of interoperable products that turn human intent into governed, verifiable behavior across physical spaces. It is not a fourth runtime and does not own a separate wire…",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "reference",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "understand-edge-platform"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "not-applicable",
+      "context_sensitivity": "public",
+      "updated": "2026-07-18",
+      "priority": "core",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-docs-overview-user-journeys",
+      "path": "docs/overview/user-journeys.md",
+      "canonical_url": "https://docs.aetheriot.workers.dev/en/overview/user-journeys.md",
+      "title": "Typical user journeys",
+      "description": "Choose the shortest path that matches your role. All write paths remain governed and deny by default.",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "reference",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "understand-edge-platform"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "not-applicable",
+      "context_sensitivity": "public",
+      "updated": "2026-07-18",
+      "priority": "core",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-docs-plans-2026-03-06-simulator-overhaul",
+      "path": "docs/plans/2026-03-06-simulator-overhaul.md",
+      "canonical_url": "https://github.com/EvanL1/AetherEdge/blob/main/docs/plans/2026-03-06-simulator-overhaul.md",
+      "title": "Simulator Overhaul: State Machine + CAN/J1939 + HTTP Monitor",
+      "description": "For Claude: REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "reference",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "inspect-edge-implementation"
+      ],
+      "implementation_status": "planned",
+      "production_readiness": "not-applicable",
+      "context_sensitivity": "internal",
+      "updated": "2026-07-11",
+      "priority": "optional",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-docs-plans-2026-03-11-shm-hardening",
+      "path": "docs/plans/2026-03-11-shm-hardening.md",
+      "canonical_url": "https://github.com/EvanL1/AetherEdge/blob/main/docs/plans/2026-03-11-shm-hardening.md",
+      "title": "SHM Hardening Implementation Plan",
+      "description": "For Claude: REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "reference",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "inspect-edge-implementation"
+      ],
+      "implementation_status": "planned",
+      "production_readiness": "not-applicable",
+      "context_sensitivity": "internal",
+      "updated": "2026-07-11",
+      "priority": "optional",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-docs-plans-2026-03-12-seqlock-zero-cost",
+      "path": "docs/plans/2026-03-12-seqlock-zero-cost.md",
+      "canonical_url": "https://github.com/EvanL1/AetherEdge/blob/main/docs/plans/2026-03-12-seqlock-zero-cost.md",
+      "title": "Seqlock Zero-Cost Optimization Plan",
+      "description": "For Claude: REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "reference",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "inspect-edge-implementation"
+      ],
+      "implementation_status": "planned",
+      "production_readiness": "not-applicable",
+      "context_sensitivity": "internal",
+      "updated": "2026-07-11",
+      "priority": "optional",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-docs-plans-2026-05-15-inst-online-control-guard",
+      "path": "docs/plans/2026-05-15-inst-online-control-guard.md",
+      "canonical_url": "https://github.com/EvanL1/AetherEdge/blob/main/docs/plans/2026-05-15-inst-online-control-guard.md",
+      "title": "Inst Online Control Guard",
+      "description": "Keep the existing four-remote model and instance data layout unchanged:",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "reference",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "inspect-edge-implementation"
+      ],
+      "implementation_status": "planned",
+      "production_readiness": "not-applicable",
+      "context_sensitivity": "internal",
+      "updated": "2026-07-11",
+      "priority": "optional",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-docs-plans-2026-05-21-onchange-trigger",
+      "path": "docs/plans/2026-05-21-onchange-trigger.md",
+      "canonical_url": "https://github.com/EvanL1/AetherEdge/blob/main/docs/plans/2026-05-21-onchange-trigger.md",
+      "title": "On-change trigger design",
+      "description": "Historical design for event-driven rule scheduling retained as optional implementation context.",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "reference",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "inspect-edge-implementation"
+      ],
+      "implementation_status": "planned",
+      "production_readiness": "not-applicable",
+      "context_sensitivity": "internal",
+      "updated": "2026-07-11",
+      "priority": "optional",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-docs-plans-2026-05-24-redis-removal-strategy",
+      "path": "docs/plans/2026-05-24-redis-removal-strategy.md",
+      "canonical_url": "https://github.com/EvanL1/AetherEdge/blob/main/docs/plans/2026-05-24-redis-removal-strategy.md",
+      "title": "Redis removal strategy",
+      "description": "Historical migration plan for removing Redis from the industry-neutral Edge runtime.",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "reference",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "inspect-edge-implementation"
+      ],
+      "implementation_status": "planned",
+      "production_readiness": "not-applicable",
+      "context_sensitivity": "internal",
+      "updated": "2026-07-11",
+      "priority": "optional",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-docs-plans-2026-05-28-point-watch-design",
+      "path": "docs/plans/2026-05-28-point-watch-design.md",
+      "canonical_url": "https://github.com/EvanL1/AetherEdge/blob/main/docs/plans/2026-05-28-point-watch-design.md",
+      "title": "PointWatch design",
+      "description": "Historical PointWatch design record retained as optional implementation context.",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "reference",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "inspect-edge-implementation"
+      ],
+      "implementation_status": "planned",
+      "production_readiness": "not-applicable",
+      "context_sensitivity": "internal",
+      "updated": "2026-07-11",
+      "priority": "optional",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-docs-plans-2026-07-11-aether-data-processing",
+      "path": "docs/plans/2026-07-11-aether-data-processing.md",
+      "canonical_url": "https://github.com/EvanL1/AetherEdge/blob/main/docs/plans/2026-07-11-aether-data-processing.md",
+      "title": "Aether Data Processing Implementation Plan",
+      "description": "Status: Implemented v1 baseline; production site commissioning and shadow cutover remain blocked on the gates below Recorded: 2026-07-11 Reconciled: 2026-07-11",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "reference",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "inspect-edge-implementation"
+      ],
+      "implementation_status": "planned",
+      "production_readiness": "not-applicable",
+      "context_sensitivity": "internal",
+      "updated": "2026-07-12",
+      "priority": "optional",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-docs-plans-2026-07-11-oceanclaw-nex-env-iot-safety-lab",
+      "path": "docs/plans/2026-07-11-oceanclaw-nex-env-iot-safety-lab.md",
+      "canonical_url": "https://github.com/EvanL1/AetherEdge/blob/main/docs/plans/2026-07-11-oceanclaw-nex-env-iot-safety-lab.md",
+      "title": "OceanClaw + nex-env IoT Safety Lab",
+      "description": "Status: Proposal / Backlog — not scheduled Recorded: 2026-07-11",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "reference",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "inspect-edge-implementation"
+      ],
+      "implementation_status": "planned",
+      "production_readiness": "not-applicable",
+      "context_sensitivity": "internal",
+      "updated": "2026-07-11",
+      "priority": "optional",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-docs-recovery-cloudlink-spool-recovery",
+      "path": "docs/recovery/cloudlink-spool-recovery.md",
+      "canonical_url": "https://docs.aetheriot.workers.dev/en/recovery/cloudlink-spool-recovery.md",
+      "title": "CloudLink spool recovery",
+      "description": "Recover a file-backed CloudLink spool without discarding unacknowledged facts or fabricating delivery evidence.",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "recovery",
+      "agent_profiles": [
+        "operator-agent",
+        "runtime-agent"
+      ],
+      "intents": [
+        "recover-edge-runtime"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "experimental",
+      "context_sensitivity": "public",
+      "updated": "2026-07-18",
+      "priority": "core",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-docs-recovery-configuration-rollback",
+      "path": "docs/recovery/configuration-rollback.md",
+      "canonical_url": "https://docs.aetheriot.workers.dev/en/recovery/configuration-rollback.md",
+      "title": "Configuration rollback and reconciliation",
+      "description": "Recover a commissioned Edge configuration without creating a second authority or repeating an uncertain mutation.",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "recovery",
+      "agent_profiles": [
+        "operator-agent",
+        "runtime-agent"
+      ],
+      "intents": [
+        "recover-edge-runtime"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "experimental",
+      "context_sensitivity": "public",
+      "updated": "2026-07-18",
+      "priority": "core",
+      "media_type": "text/markdown",
+      "capability_refs": [
+        "io.channel.manage",
+        "io.channel.reconcile"
+      ],
+      "preconditions": [
+        "known-good-configuration-artifact",
+        "exclusive-offline-maintenance"
+      ],
+      "recovery_route": null,
+      "human_escalation": "required-when-authority-or-commit-state-is-unknown",
+      "verification": [
+        "verify-configuration-revisions",
+        "verify-shm-topology-generation"
+      ]
+    },
+    {
+      "id": "edge-docs-recovery-gateway-identity-recovery",
+      "path": "docs/recovery/gateway-identity-recovery.md",
+      "canonical_url": "https://docs.aetheriot.workers.dev/en/recovery/gateway-identity-recovery.md",
+      "title": "Gateway identity recovery",
+      "description": "Contain a lost or compromised Gateway credential and re-establish an experimental CloudLink session without weakening Edge authority.",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "recovery",
+      "agent_profiles": [
+        "operator-agent",
+        "runtime-agent"
+      ],
+      "intents": [
+        "recover-edge-runtime"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "experimental",
+      "context_sensitivity": "public",
+      "updated": "2026-07-18",
+      "priority": "core",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-docs-recovery-safe-stop-and-control-revocation",
+      "path": "docs/recovery/safe-stop-and-control-revocation.md",
+      "canonical_url": "https://docs.aetheriot.workers.dev/en/recovery/safe-stop-and-control-revocation.md",
+      "title": "Safe stop and control revocation",
+      "description": "Contain an unsafe or uncertain control path while preserving deterministic local safety and audit evidence.",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "recovery",
+      "agent_profiles": [
+        "operator-agent",
+        "runtime-agent"
+      ],
+      "intents": [
+        "recover-edge-runtime"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "experimental",
+      "context_sensitivity": "public",
+      "updated": "2026-07-18",
+      "priority": "core",
+      "media_type": "text/markdown",
+      "capability_refs": [
+        "automation.rule.manage",
+        "automation.routing.manage",
+        "io.channel.manage"
+      ],
+      "preconditions": [
+        "site-safety-procedure",
+        "current-authoritative-revision"
+      ],
+      "recovery_route": null,
+      "human_escalation": "always-available-independent-human-safety-path",
+      "verification": [
+        "verify-physical-feedback",
+        "verify-control-permission-revocation"
+      ]
+    },
+    {
+      "id": "edge-docs-reference-cli",
+      "path": "docs/reference/cli.md",
+      "canonical_url": "https://docs.aetheriot.workers.dev/en/reference/cli.md",
+      "title": "CLI Reference",
+      "description": "Every aether command - services, sync, doctor, channels, rules, and more",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "reference",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "understand-edge-platform"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "not-applicable",
+      "context_sensitivity": "public",
+      "updated": "2026-07-14",
+      "priority": "core",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-docs-reference-cloudlink-mqtt-v1",
+      "path": "docs/reference/cloudlink-mqtt-v1.md",
+      "canonical_url": "https://docs.aetheriot.workers.dev/en/reference/cloudlink-mqtt-v1.md",
+      "title": "Experimental CloudLink MQTT v1 edge contract",
+      "description": "This document describes the experimental CloudLink candidate. The public AetherContracts v0.1.0-alpha.3 release is the sole authority, and AetherEdge and AetherCloud commit the same digest-pinned consumer lock. The current claim is…",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "reference",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "understand-edge-platform"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "not-applicable",
+      "context_sensitivity": "public",
+      "updated": "2026-07-18",
+      "priority": "core",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-docs-reference-configuration",
+      "path": "docs/reference/configuration.md",
+      "canonical_url": "https://docs.aetheriot.workers.dev/en/reference/configuration.md",
+      "title": "Configuration Reference",
+      "description": "YAML configuration schema, the sync pipeline, and environment variables",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "operations",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "deploy-and-operate-edge"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "experimental",
+      "context_sensitivity": "public",
+      "updated": "2026-07-18",
+      "priority": "core",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-docs-reference-data-processing-contracts",
+      "path": "docs/reference/data-processing-contracts.md",
+      "canonical_url": "https://docs.aetheriot.workers.dev/en/reference/data-processing-contracts.md",
+      "title": "Data Processing Contracts",
+      "description": "Version 1 contracts for processing frames, requests, derived results, validation, and failure semantics",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "reference",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "understand-edge-platform"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "not-applicable",
+      "context_sensitivity": "public",
+      "updated": "2026-07-14",
+      "priority": "core",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-docs-reference-http-api",
+      "path": "docs/reference/http-api.md",
+      "canonical_url": "https://docs.aetheriot.workers.dev/en/reference/http-api.md",
+      "title": "HTTP API",
+      "description": "The single remote gateway, service-local OpenAPI, authentication, and compatibility conventions",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "reference",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "understand-edge-platform"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "not-applicable",
+      "context_sensitivity": "public",
+      "updated": "2026-07-16",
+      "priority": "core",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-docs-reference-mcp-tools",
+      "path": "docs/reference/mcp-tools.md",
+      "canonical_url": "https://docs.aetheriot.workers.dev/en/reference/mcp-tools.md",
+      "title": "MCP Tools Reference",
+      "description": "All MCP tools grouped by domain, with parameters and write-safety markers",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "reference",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "understand-edge-platform"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "not-applicable",
+      "context_sensitivity": "public",
+      "updated": "2026-07-14",
+      "priority": "core",
+      "media_type": "text/markdown",
+      "capability_refs": [
+        "device.read_point",
+        "device.write_point",
+        "data_processing.tasks.list",
+        "data_processing.processors.health",
+        "data_processing.process",
+        "automation.rule.execute",
+        "automation.rule.manage",
+        "automation.routing.manage",
+        "automation.instance.manage",
+        "io.channel.manage",
+        "io.channel.reconcile",
+        "alarm.rule.manage",
+        "alarm.alert.resolve"
+      ],
+      "preconditions": [
+        "authenticated-agent",
+        "live-capability-discovery"
+      ],
+      "recovery_route": "docs/recovery/safe-stop-and-control-revocation.md",
+      "human_escalation": "required-for-unknown-or-unsafe-physical-outcome",
+      "verification": [
+        "verify-tool-receipt",
+        "verify-terminal-audit"
+      ]
+    },
+    {
+      "id": "edge-docs-roadmap-status",
+      "path": "docs/roadmap/status.md",
+      "canonical_url": "https://docs.aetheriot.workers.dev/en/roadmap/status.md",
+      "title": "Platform status and roadmap",
+      "description": "Status is reported separately for implemented, experimental, and planned capabilities. Product names do not upgrade technical readiness.",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "status",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "check-edge-compatibility-and-status"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "not-applicable",
+      "context_sensitivity": "public",
+      "updated": "2026-07-18",
+      "priority": "core",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-docs-security-dependency-exceptions",
+      "path": "docs/security/dependency-exceptions.md",
+      "canonical_url": "https://docs.aetheriot.workers.dev/en/security/dependency-exceptions.md",
+      "title": "Dependency security exceptions",
+      "description": "Security advisories are denied by default. An exception is permitted only when the affected operation is unreachable, the boundary is enforced in code and a removal condition is recorded here.",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "safety",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent",
+        "runtime-agent"
+      ],
+      "intents": [
+        "govern-edge-command"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "not-applicable",
+      "context_sensitivity": "public",
+      "updated": "2026-07-12",
+      "priority": "core",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-docs-superpowers-plans-2026-07-09-cli-web-parity",
+      "path": "docs/superpowers/plans/2026-07-09-cli-web-parity.md",
+      "canonical_url": "https://github.com/EvanL1/AetherEdge/blob/main/docs/superpowers/plans/2026-07-09-cli-web-parity.md",
+      "title": "Historical CLI and Web parity plan",
+      "description": "Superseded pre-split console plan; do not use it as current application-boundary authority.",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "reference",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "inspect-edge-implementation"
+      ],
+      "implementation_status": "planned",
+      "production_readiness": "not-applicable",
+      "context_sensitivity": "internal",
+      "updated": "2026-07-14",
+      "priority": "optional",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-docs-superpowers-plans-2026-07-10-ai-native-docs",
+      "path": "docs/superpowers/plans/2026-07-10-ai-native-docs.md",
+      "canonical_url": "https://github.com/EvanL1/AetherEdge/blob/main/docs/superpowers/plans/2026-07-10-ai-native-docs.md",
+      "title": "AI-Native Docs Corpus Implementation Plan",
+      "description": "Historical migration plan — do not execute. Its EMS positioning, embedded energy knowledge, Redis paths, and bundled frontend assumptions have been superseded by the AetherIot/AetherEMS repository boundary and ADR-0012.",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "reference",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "inspect-edge-implementation"
+      ],
+      "implementation_status": "planned",
+      "production_readiness": "not-applicable",
+      "context_sensitivity": "internal",
+      "updated": "2026-07-14",
+      "priority": "optional",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-docs-superpowers-plans-2026-07-10-baremetal-install",
+      "path": "docs/superpowers/plans/2026-07-10-baremetal-install.md",
+      "canonical_url": "https://github.com/EvanL1/AetherEdge/blob/main/docs/superpowers/plans/2026-07-10-baremetal-install.md",
+      "title": "Bare-Metal Linux Install (No Docker) Implementation Plan",
+      "description": "Historical migration plan — do not execute. The bundled Redis/nginx/Vue distribution described here is not the AetherIot default. Use ADR-0006, ADR-0007, and the current deployment guide instead.",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "reference",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "inspect-edge-implementation"
+      ],
+      "implementation_status": "planned",
+      "production_readiness": "not-applicable",
+      "context_sensitivity": "internal",
+      "updated": "2026-07-14",
+      "priority": "optional",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-docs-superpowers-specs-2026-07-09-cli-web-parity-design",
+      "path": "docs/superpowers/specs/2026-07-09-cli-web-parity-design.md",
+      "canonical_url": "https://github.com/EvanL1/AetherEdge/blob/main/docs/superpowers/specs/2026-07-09-cli-web-parity-design.md",
+      "title": "Historical CLI and Web parity design",
+      "description": "Superseded pre-split console design retained for migration history.",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "reference",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "inspect-edge-implementation"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "not-applicable",
+      "context_sensitivity": "internal",
+      "updated": "2026-07-14",
+      "priority": "optional",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-docs-superpowers-specs-2026-07-10-ai-native-docs-design",
+      "path": "docs/superpowers/specs/2026-07-10-ai-native-docs-design.md",
+      "canonical_url": "https://github.com/EvanL1/AetherEdge/blob/main/docs/superpowers/specs/2026-07-10-ai-native-docs-design.md",
+      "title": "Historical AI-native documentation design",
+      "description": "Superseded pre-split documentation design retained for migration history.",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "reference",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "inspect-edge-implementation"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "not-applicable",
+      "context_sensitivity": "internal",
+      "updated": "2026-07-14",
+      "priority": "optional",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-docs-superpowers-specs-2026-07-10-baremetal-install-design",
+      "path": "docs/superpowers/specs/2026-07-10-baremetal-install-design.md",
+      "canonical_url": "https://github.com/EvanL1/AetherEdge/blob/main/docs/superpowers/specs/2026-07-10-baremetal-install-design.md",
+      "title": "Historical bare-metal installation design",
+      "description": "Superseded design that bundled Redis, nginx, and a Web UI; current deployment guidance is authoritative.",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "reference",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "inspect-edge-implementation"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "not-applicable",
+      "context_sensitivity": "internal",
+      "updated": "2026-07-14",
+      "priority": "optional",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-docs-superpowers-specs-2026-07-11-aether-docs-site-design",
+      "path": "docs/superpowers/specs/2026-07-11-aether-docs-site-design.md",
+      "canonical_url": "https://github.com/EvanL1/AetherEdge/blob/main/docs/superpowers/specs/2026-07-11-aether-docs-site-design.md",
+      "title": "Unified documentation site design",
+      "description": "Historical design record for Cloudflare-hosted HTML, Markdown representations, and agent indexes.",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "reference",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "inspect-edge-implementation"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "not-applicable",
+      "context_sensitivity": "internal",
+      "updated": "2026-07-11",
+      "priority": "optional",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-docs-websocket-rule-monitor-api",
+      "path": "docs/websocket-rule-monitor-api.md",
+      "canonical_url": "https://github.com/EvanL1/AetherEdge/blob/main/docs/websocket-rule-monitor-api.md",
+      "title": "Legacy rule-monitor WebSocket API",
+      "description": "Historical rule-monitoring interface retained for compatibility lookup.",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "reference",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "understand-edge-platform"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "not-applicable",
+      "context_sensitivity": "public",
+      "updated": "2026-07-11",
+      "priority": "core",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-extensions-agents",
+      "path": "extensions/AGENTS.md",
+      "canonical_url": "https://github.com/EvanL1/AetherEdge/blob/main/extensions/AGENTS.md",
+      "title": "Extension Instructions",
+      "description": "Extensions implement one or more ports from aether-ports.",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "reference",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "inspect-edge-implementation"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "not-applicable",
+      "context_sensitivity": "public",
+      "updated": "2026-07-11",
+      "priority": "optional",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-extensions-cloudlink-mqtt-readme",
+      "path": "extensions/cloudlink-mqtt/README.md",
+      "canonical_url": "https://docs.aetheriot.workers.dev/en/extensions/cloudlink-mqtt.md",
+      "title": "aether-cloudlink-mqtt",
+      "description": "Broker-neutral MQTT v3.1.1/QoS 1 binding for the experimental CloudLink edge foundation. It validates a user-selected endpoint, TLS/authentication settings, topic prefix and gateway namespace; publishes with retain = false; subscribes…",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "reference",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "inspect-edge-implementation"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "not-applicable",
+      "context_sensitivity": "public",
+      "updated": "2026-07-18",
+      "priority": "optional",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-extensions-home-assistant-bridge-readme",
+      "path": "extensions/home-assistant-bridge/README.md",
+      "canonical_url": "https://docs.aetheriot.workers.dev/en/extensions/home-assistant-bridge.md",
+      "title": "Home Assistant bridge",
+      "description": "Local Home Assistant projection with an experimental default-off governed power binding",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "reference",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "inspect-edge-implementation"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "not-applicable",
+      "context_sensitivity": "public",
+      "updated": "2026-07-18",
+      "priority": "optional",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-extensions-http-data-processor-readme",
+      "path": "extensions/http-data-processor/README.md",
+      "canonical_url": "https://docs.aetheriot.workers.dev/en/extensions/http-data-processor.md",
+      "title": "Aether HTTP Data Processor",
+      "description": "Optional, bounded HTTP implementation of the DataProcessor port. It sends a complete request frame to /v1/process; it exposes no callback into Aether, SHM, history, or configuration.",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "reference",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "inspect-edge-implementation"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "not-applicable",
+      "context_sensitivity": "public",
+      "updated": "2026-07-12",
+      "priority": "optional",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-extensions-http-history-query-readme",
+      "path": "extensions/http-history-query/README.md",
+      "canonical_url": "https://docs.aetheriot.workers.dev/en/extensions/http-history-query.md",
+      "title": "Aether HTTP History Query",
+      "description": "This optional extension maps semantic Data Processing history features to a loopback-only batch endpoint containing an already materialized cadence grid. It only accepts the task policy aggregation=last and duplicatepolicy=reject; it does…",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "reference",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "inspect-edge-implementation"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "not-applicable",
+      "context_sensitivity": "public",
+      "updated": "2026-07-12",
+      "priority": "optional",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-extensions-postgres-history-readme",
+      "path": "extensions/postgres-history/README.md",
+      "canonical_url": "https://docs.aetheriot.workers.dev/en/extensions/postgres-history.md",
+      "title": "aether-postgres-history",
+      "description": "Optional PostgreSQL implementation of Aether's append-only history capability.",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "reference",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "inspect-edge-implementation"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "not-applicable",
+      "context_sensitivity": "public",
+      "updated": "2026-07-11",
+      "priority": "optional",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-extensions-redis-bridge-readme",
+      "path": "extensions/redis-bridge/README.md",
+      "canonical_url": "https://docs.aetheriot.workers.dev/en/extensions/redis-bridge.md",
+      "title": "aether-redis-bridge",
+      "description": "Optional, non-authoritative Redis mirror for Aether point state.",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "reference",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "inspect-edge-implementation"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "not-applicable",
+      "context_sensitivity": "public",
+      "updated": "2026-07-11",
+      "priority": "optional",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-extensions-shm-bridge-readme",
+      "path": "extensions/shm-bridge/README.md",
+      "canonical_url": "https://docs.aetheriot.workers.dev/en/extensions/shm-bridge.md",
+      "title": "aether-shm-bridge",
+      "description": "Read-only capability bridge from Aether's authoritative shared-memory data plane to the public LiveState port.",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "reference",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "inspect-edge-implementation"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "not-applicable",
+      "context_sensitivity": "public",
+      "updated": "2026-07-11",
+      "priority": "optional",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-extensions-sqlite-history-query-readme",
+      "path": "extensions/sqlite-history-query/README.md",
+      "canonical_url": "https://docs.aetheriot.workers.dev/en/extensions/sqlite-history-query.md",
+      "title": "Aether SQLite History Query",
+      "description": "Production HistoryQuery adapter for the embedded SQLite file owned by aether-history. It reads the existing table:",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "reference",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "inspect-edge-implementation"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "not-applicable",
+      "context_sensitivity": "public",
+      "updated": "2026-07-18",
+      "priority": "optional",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-extensions-store-local-readme",
+      "path": "extensions/store-local/README.md",
+      "canonical_url": "https://docs.aetheriot.workers.dev/en/extensions/store-local.md",
+      "title": "aether-store-local",
+      "description": "Local adapters for a gateway that must run without external services.",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "reference",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "inspect-edge-implementation"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "not-applicable",
+      "context_sensitivity": "public",
+      "updated": "2026-07-18",
+      "priority": "optional",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-skills-aether-iot-skill",
+      "path": "skills/aether-iot/SKILL.md",
+      "canonical_url": "https://github.com/EvanL1/AetherEdge/blob/main/skills/aether-iot/SKILL.md",
+      "title": "AetherEdge",
+      "description": "Build, integrate, diagnose, or generate applications for the AetherEdge AI-native edge kernel. Use for AetherEdge onboarding, SDK compositions, device and topology clients, read-only operations UIs, MCP integration, Domain Packs, or governed IoT commands where live-state authority and physical-device safety must be preserved.",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "agent-task",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "complete-edge-task"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "experimental",
+      "context_sensitivity": "internal",
+      "updated": "2026-07-16",
+      "priority": "core",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    }
+  ]
+}

@@ -5,7 +5,7 @@ updated: 2026-07-15
 status: mixed
 ---
 
-# 审核、订阅、Webhook 传送和数据导出
+# 审核、订阅、Webhook 交付和数据导出
 
 > 权威来源：[AetherCloud](https://github.com/EvanL1/AetherCloud/blob/main/docs/concepts/audit-and-integrations.md)。此页面镜像到统一的 AetherIoT 文档中。
 

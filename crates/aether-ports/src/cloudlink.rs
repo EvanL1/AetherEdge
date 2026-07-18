@@ -22,6 +22,10 @@ pub enum CloudLinkMessageKind {
     RuntimeManifestReport,
     /// A bounded batch of acquisition-owned point facts.
     TelemetryBatch,
+    /// One complete provider-neutral delegated-integration topology replacement.
+    IntegrationTopologySnapshot,
+    /// One provider-neutral delegated-integration observation batch.
+    IntegrationObservationBatch,
     /// Explicit evidence that a requested retained range no longer exists.
     DataLoss,
 }
@@ -33,6 +37,8 @@ impl CloudLinkMessageKind {
         match self {
             Self::RuntimeManifestReport => "runtime-manifest-report",
             Self::TelemetryBatch => "telemetry-batch",
+            Self::IntegrationTopologySnapshot => "integration-topology-snapshot",
+            Self::IntegrationObservationBatch => "integration-observation-batch",
             Self::DataLoss => "data-loss",
         }
     }
@@ -506,6 +512,7 @@ pub struct CloudLinkSpoolStatus {
     earliest_retained_position: u64,
     last_acknowledged_position: u64,
     pending_records: usize,
+    last_ack: Option<CloudLinkDurableAck>,
     data_loss: Option<CloudLinkDataLossEvidence>,
 }
 
@@ -520,6 +527,7 @@ impl CloudLinkSpoolStatus {
         earliest_retained_position: u64,
         last_acknowledged_position: u64,
         pending_records: usize,
+        last_ack: Option<CloudLinkDurableAck>,
         data_loss: Option<CloudLinkDataLossEvidence>,
     ) -> Self {
         Self {
@@ -529,6 +537,7 @@ impl CloudLinkSpoolStatus {
             earliest_retained_position,
             last_acknowledged_position,
             pending_records,
+            last_ack,
             data_loss,
         }
     }
@@ -567,6 +576,12 @@ impl CloudLinkSpoolStatus {
     #[must_use]
     pub const fn pending_records(&self) -> usize {
         self.pending_records
+    }
+
+    /// Returns the last durable receipt retained for idempotent restart decisions.
+    #[must_use]
+    pub const fn last_ack(&self) -> Option<&CloudLinkDurableAck> {
+        self.last_ack.as_ref()
     }
 
     /// Returns pending explicit data-loss evidence.
@@ -688,6 +703,10 @@ pub enum CloudLinkTransportRoute {
     ManifestUp,
     /// Edge-to-cloud point telemetry.
     TelemetryUp,
+    /// Edge-to-cloud complete delegated-integration topology.
+    IntegrationTopologyUp,
+    /// Edge-to-cloud delegated-integration observations.
+    IntegrationObservationsUp,
     /// Edge-to-cloud data-loss evidence.
     DataLossUp,
     /// Cloud-to-edge durable or heartbeat ACK.

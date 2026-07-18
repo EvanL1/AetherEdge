@@ -4,7 +4,7 @@ use std::path::Path;
 
 use aether_cloudlink::{
     CandidateMessage, CloudLinkCodec, CloudLinkCodecError, MessageAuthentication, SessionBinding,
-    SessionHello, TopologyBinding,
+    SessionHello, TopologyBinding, UplinkAuthentication,
 };
 use aether_domain::{
     InstanceId, PointAddress, PointId, PointKind, PointQuality, PointSample, TimestampMs,
@@ -480,8 +480,8 @@ fn envelope_digest_excludes_session_and_trace_but_detects_business_changes() {
     let first = CloudLinkCodec::delivery_envelope(
         &session(),
         &record,
-        TimestampMs::new(12),
         Some("00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"),
+        &UplinkAuthentication::trusted_connector_broker_attestation(),
     )
     .expect("first envelope");
     let second_session = SessionBinding::new(
@@ -491,9 +491,13 @@ fn envelope_digest_excludes_session_and_trace_but_detects_business_changes() {
         3,
     )
     .expect("new session");
-    let replay =
-        CloudLinkCodec::delivery_envelope(&second_session, &record, TimestampMs::new(13), None)
-            .expect("replay envelope");
+    let replay = CloudLinkCodec::delivery_envelope(
+        &second_session,
+        &record,
+        None,
+        &UplinkAuthentication::trusted_connector_broker_attestation(),
+    )
+    .expect("replay envelope");
 
     assert_eq!(first.delivery().digest(), replay.delivery().digest());
     assert_eq!(first.delivery().batch_id(), replay.delivery().batch_id());
@@ -561,6 +565,10 @@ fn session_accepted_and_heartbeat_ack_validate_the_current_epoch() {
     assert_eq!(accepted.resume_cursors()[0].stream_epoch(), 4);
     assert_eq!(accepted.resume_cursors()[0].acknowledged_position(), 18);
     assert!(matches!(
+        accepted.bind("33333333-3333-4333-8333-333333333333", 3, &["1.0"], 7),
+        Err(CloudLinkCodecError::SessionMismatch)
+    ));
+    assert!(matches!(
         accepted.bind("33333333-3333-4333-8333-333333333333", 4, &["1.0"], 6),
         Err(CloudLinkCodecError::SessionMismatch)
     ));
@@ -583,5 +591,32 @@ fn session_accepted_and_heartbeat_ack_validate_the_current_epoch() {
     assert!(matches!(
         stale_ack.validate_session(&bound),
         Err(CloudLinkCodecError::SessionMismatch)
+    ));
+}
+
+#[test]
+fn trusted_connector_hello_uses_broker_attestation_without_payload_signatures() {
+    let hello = SessionHello::new_trusted_connector_broker_attested(
+        "33333333-3333-4333-8333-333333333333",
+        "home-edge-connector",
+        3,
+        "22222222-2222-4222-8222-222222222222",
+        vec!["1.0".to_owned()],
+        "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        vec![],
+    )
+    .expect("broker-attested hello");
+    let encoded = CloudLinkCodec::encode(&hello).expect("hello JSON");
+    let value: Value = serde_json::from_slice(&encoded).expect("hello object");
+
+    assert_eq!(
+        value["credential_binding"]["origin_model"],
+        "trusted-connector-broker-attestation"
+    );
+    assert!(value.get("gateway_key_id").is_none());
+    assert!(value.get("gateway_signature").is_none());
+    assert!(matches!(
+        CloudLinkCodec::decode(&encoded).expect("strict hello"),
+        CandidateMessage::SessionHello(_)
     ));
 }

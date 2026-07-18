@@ -5,7 +5,7 @@ updated: 2026-07-16
 status: mixed
 ---
 
-# 工件注册表和不可变发布
+# 工件注册和不可变发布
 
 > 权威来源：[AetherCloud](https://github.com/EvanL1/AetherCloud/blob/main/docs/concepts/artifact-registry.md)。此页面镜像到统一的 AetherIoT 文档中。
 

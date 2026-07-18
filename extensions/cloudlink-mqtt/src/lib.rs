@@ -4,6 +4,8 @@
 //! reconnect. It does not supply CloudLink application acknowledgement.
 
 mod config;
+#[cfg(feature = "integration-control")]
+mod integration_control_topics;
 mod topics;
 mod transport;
 
@@ -11,6 +13,8 @@ pub use config::{
     CloudLinkMigrationMode, CloudLinkMqttConfig, CloudLinkMqttError, CloudLinkTlsConfig,
     DeploymentSecurity, MqttClientIdentity, SecretString,
 };
+#[cfg(feature = "integration-control")]
+pub use integration_control_topics::IntegrationControlTopicNamespace;
 pub use topics::TopicNamespace;
 pub use transport::MqttCloudLinkTransport;
 

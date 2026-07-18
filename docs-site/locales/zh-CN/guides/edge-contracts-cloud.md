@@ -1,16 +1,16 @@
 ---
-title: "通过 AetherContracts 将 AetherEdge 连接到 AetherCloud"
-description: "按照可重复的验证步骤，确认 AetherEdge、AetherContracts 与 AetherCloud 之间当前可用的联动路径。"
+title: "边缘端、公共协议与云端联动任务"
+description: "验证 AetherEdge、AetherContracts 与 AetherCloud 的跨仓库联动，同时明确实验性能力和生产门槛。"
 updated: 2026-07-16
 ---
 
-# 通过 AetherContracts 将 AetherEdge 连接到 AetherCloud
+# 边缘端、公共协议与云端联动任务
 
-本指南用于验证当前可用的跨仓库联动路径，但不表示 CloudLink 已达到生产可用状态。你将先启动一个不接入硬件的本地运行时，再验证公共契约版本，最后运行边缘端与云端已有的联动检查。
+本任务验证当前可用的跨仓库联动路径，但不表示实验性 CloudLink 已经具备生产条件。你将先启动一个不接入硬件的本地运行时，再验证公共协议版本，最后运行边缘端与云端已有的联动检查。
 
-## 1. 选择兼容版本
+## 1. 选择兼容基线
 
-使用 AetherEdge `v0.5.0`、AetherContracts `v0.1.0-alpha.3`，并选择读取同一份完整契约锁定文件的 AetherCloud 版本。请先在[版本兼容矩阵](/compatibility/version-matrix)中确认准确组合。
+使用 AetherEdge `v0.5.0`、AetherContracts `v0.1.0-alpha.3`，并选择读取同一份完整契约锁定文件的 AetherCloud 版本。请先在[版本兼容矩阵](https://docs.aetheriot.workers.dev/compatibility/version-matrix/)中确认准确组合。
 
 不要使用 `main`、`latest`、版本范围或相邻目录中的源码来推断契约行为。
 
@@ -22,9 +22,9 @@ updated: 2026-07-16
 cargo run -p aether-example-minimal-gateway
 ```
 
-该示例不会配对或控制任何设备，也不需要消息代理或云服务。如需安装受监管的运行时，请参阅[入门指南](/guides/getting-started)。
+该示例不会配对或控制任何设备，也不需要消息代理或云服务。如需安装受治理的运行时，请参阅[入门任务](https://docs.aetheriot.workers.dev/guides/getting-started/)。
 
-## 3. 验证公共契约版本
+## 3. 验证公共协议版本
 
 切换到 AetherContracts `v0.1.0-alpha.3` 后运行：
 
@@ -71,4 +71,4 @@ MQTT 的 `PUBACK` 只能证明消息代理已经接收数据。AetherEdge 必须
 - 不要混淆期望状态、上报状态和实际应用状态。
 - 在联合身份认证、持久化、一致性、回滚和支持周期全部通过验证前，不要移除旧路径。
 
-完成本指南后，你将得到一套可重复的 alpha 联动验证结果，而不是生产环境的设备交付证明。
+本任务的结果是可重复的 alpha 集成证据，而不是生产投运回执。

@@ -4,7 +4,7 @@ description: "将 Claude 或任何 MCP 客户端指向 aether mcp，然后在只
 updated: 2026-07-12
 ---
 
-# 连接 AI 助手
+# 连接AI助手
 
 `aether` CLI 兼作 MCP（模型上下文协议）服务器：`aether mcp` 在 stdio 上运行，并将系统功能作为工具公开，因此 Claude — 或任何 MCP 客户端 — 可以检查通道、查询历史记录、读取警报以及（在明确允许的情况下）操作系统。本页介绍客户端设置、将服务器指向远程安装以及只读/写入访问模型。
 
@@ -93,7 +93,7 @@ MCP 服务器不必在边缘设备上运行。每个工具都与 Aether 服务 A
 
 默认情况下，`aether mcp` 是只读的。这不是建议性注释：如果没有 `--allow-write`，22 个写入工具永远不会注册，也根本不会出现在 `tools/list` 响应中。客户端无法调用（甚至无法查看）未注册的内容，因此无论客户端如何配置或模型如何行为，保证都有效。
 
-使用 `--allow-write` 启动服务器是有意为之的行为，但该标志只是一个注册门。它不是对任何命令的确认。 MCP 调用者仍必须在每次调用时传递 `confirmed: true`，并且应用程序会在分派之前拒绝未经授权或无法审核的请求。 MCP 网桥读取 `AETHER_ACCESS_TOKEN`，将其作为 `Authorization: Bearer` 凭证发送到服务，并为每个受管请求生成一个 `X-Request-ID`。它拒绝将该凭证附加到非环回明文HTTP；远程写入需要经过证书验证的 HTTPS 入口。保留返回的 `request_id` 和任何 `command_id`：超时和不完整的审核或发布响应不是安全的自动重试信号。成功的设备命令响应意味着本地命令平面接受了该命令；它并不能证明物理设备执行了它。路由响应意味着物理目标已被持久化并发布；它不执行设备命令。 **在启用写入之前，请阅读[应用程序和代理的安全操作](/guides/safe-operations)。**如果命令响应报告 `audit.status="incomplete"`，则该命令已被接受：保留其 `request_id`/`command_id` 并且不要重试。通道突变成功还可以报告降级的运行时投影。保留其`request_id`和`resulting_revision`，检查`reconciliation_required`，并且不自动重试非幂等调试命令。
+使用 `--allow-write` 启动服务器是有意为之的行为，但该标志只是一个注册门。它不是对任何命令的确认。 MCP 调用者仍必须在每次调用时传递 `confirmed: true`，并且应用程序会在分派之前拒绝未经授权或无法审核的请求。 MCP 网桥读取 `AETHER_ACCESS_TOKEN`，将其作为 `Authorization: Bearer` 凭证发送到服务，并为每个受管请求生成一个 `X-Request-ID`。它拒绝将该凭证附加到非环回明文HTTP；远程写入需要经过证书验证的 HTTPS 入口。保留返回的 `request_id` 和任何 `command_id`：超时和不完整的审核或发布响应不是安全的自动重试信号。成功的设备命令响应意味着本地命令平面接受了该命令；它并不能证明物理设备执行了它。路由响应意味着物理目标已被持久化并发布；它不执行设备命令。 **在启用写入之前，请阅读[应用程序和代理的安全操作](/guides/safe-operations)**。如果命令响应报告 `audit.status="incomplete"`，则该命令已被接受：保留其 `request_id`/`command_id` 并且不要重试。通道突变成功还可以报告降级的运行时投影。保留其`request_id`和`resulting_revision`，检查`reconciliation_required`，并且不自动重试非幂等调试命令。
 
 信道模拟/点批量和上行链路配置/证书操作保留在MCP之外。通道 CRUD/生命周期、规则 CRUD/生命周期、警报规则 CRUD/生命周期和警报解决方案之所以存在，只是因为它们的架构和应用程序功能明确映射在 22 工具写入允许列表中。现有的包装器不会仅仅因为 `--allow-write` 的存在而被提升为 AI 工具。
 
