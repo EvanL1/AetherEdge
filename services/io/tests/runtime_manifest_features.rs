@@ -19,6 +19,15 @@ fn compiled_io_protocol_features() -> Vec<&'static str> {
         (cfg!(feature = "zigbee"), "zigbee"),
         (cfg!(feature = "matter"), "matter"),
         (cfg!(feature = "iec61850"), "iec61850"),
+        (cfg!(feature = "home-assistant"), "home-assistant"),
+        (
+            cfg!(feature = "home-assistant-cloudlink"),
+            "home-assistant-cloudlink",
+        ),
+        (
+            cfg!(feature = "home-assistant-integration-control"),
+            "home-assistant-integration-control",
+        ),
     ] {
         if enabled {
             features.push(feature);
@@ -62,6 +71,14 @@ fn manifest_protocols_match_the_io_binary_feature_set() {
         cfg!(feature = "aether_485")
     );
     assert_eq!(protocols.contains("iec61850"), cfg!(feature = "iec61850"));
+    assert_eq!(
+        protocols.contains("aether.cloudlink.integration.v1alpha1"),
+        cfg!(feature = "home-assistant-cloudlink")
+    );
+    assert_eq!(
+        protocols.contains("aether.cloudlink.integration-control.v1alpha1"),
+        cfg!(feature = "home-assistant-integration-control")
+    );
     assert_eq!(
         protocols.contains("di_do"),
         cfg!(all(target_os = "linux", feature = "gpio"))

@@ -27,6 +27,7 @@ readonly REQUIRED_FILES=(
 
 readonly SDK_SOURCE_PACKAGES=(
     "aether-domain:crates/aether-domain"
+    "aether-integration-contract:crates/aether-integration-contract"
     "aether-dataplane:crates/aether-dataplane"
     "aether-ports:crates/aether-ports"
     "aether-application:crates/aether-application"

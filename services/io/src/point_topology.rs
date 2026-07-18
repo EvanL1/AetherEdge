@@ -301,7 +301,8 @@ pub struct PointTopologyApplication {
 /// Capability lease issued before a point-topology command performs external I/O.
 ///
 /// The fields are deliberately private: transports can only obtain a lease by
-/// passing the same authorization and revision checks used by [`Self::mutate`].
+/// passing the same authorization and revision checks used by
+/// [`PointTopologyApplication::mutate`].
 /// Consuming the lease later preserves the captured request context and CAS
 /// revision without authenticating a second time.
 pub struct PointTopologyAuthorization {

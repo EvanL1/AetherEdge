@@ -1,0 +1,16 @@
+{
+  "schema": "aether.integration.topology-snapshot.v1alpha1",
+  "integration_id": "home-assistant.home",
+  "integration_kind": "home-assistant",
+  "snapshot_generation": "2",
+  "observed_at_ms": "1784217600200",
+  "areas": [],
+  "devices": [
+    {
+      "device_id": "device-light-bedroom",
+      "name": "Bedroom light",
+      "area_id": "missing-area"
+    }
+  ],
+  "entities": []
+}

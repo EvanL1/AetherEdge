@@ -144,6 +144,14 @@ impl FileCloudLinkSpool {
         compact_locked(&self.path, &mut guard)
     }
 
+    /// Returns current stream metadata without requiring an async composition step.
+    ///
+    /// This is intended for fail-fast process composition before tasks are
+    /// spawned. Runtime code should continue to use the port method.
+    pub fn current_status(&self) -> Result<CloudLinkSpoolStatus, CloudLinkSpoolError> {
+        Ok(self.lock()?.state.status())
+    }
+
     fn lock(&self) -> Result<std::sync::MutexGuard<'_, FileState>, CloudLinkSpoolError> {
         self.inner.lock().map_err(|_| {
             error(

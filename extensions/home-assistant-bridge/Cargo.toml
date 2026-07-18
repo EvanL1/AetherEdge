@@ -1,0 +1,42 @@
+[package]
+name = "aether-home-assistant-bridge"
+version.workspace = true
+publish = false
+edition = "2024"
+rust-version = "1.90"
+description = "Home Assistant delegated-device provider for AetherEdge"
+license.workspace = true
+repository.workspace = true
+documentation = "https://docs.aetheriot.workers.dev/extensions/home-assistant-bridge"
+readme = "README.md"
+keywords = ["iot", "edge", "home-assistant", "smart-home"]
+categories = ["asynchronous", "network-programming"]
+
+[dependencies]
+aether-domain = { version = "0.5.0", path = "../../crates/aether-domain" }
+aether-integration-control = { version = "0.5.0", path = "../../crates/aether-integration-control", optional = true }
+aether-ports = { version = "0.5.0", path = "../../crates/aether-ports" }
+async-trait = { workspace = true }
+chrono = { workspace = true }
+futures = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+tokio = { workspace = true }
+tokio-tungstenite = { version = "0.29.0", default-features = false, features = [
+    "connect",
+    "handshake",
+    "rustls-tls-webpki-roots",
+] }
+url = "2.5.8"
+
+[features]
+default = []
+integration-control = ["dep:aether-integration-control"]
+
+[dev-dependencies]
+aether-integration-control = { version = "0.5.0", path = "../../crates/aether-integration-control" }
+aether-testkit = { version = "0.5.0", path = "../../crates/aether-testkit" }
+
+[lints]
+workspace = true

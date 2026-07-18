@@ -22,7 +22,7 @@ println!("{} {}", manifest.id(), manifest.version());
 # }
 ```
 
-## Active Pack 配置
+## 当前领域包配置
 
 自动化和 `aether mcp` 使用一个共享入口点：`<AETHER_CONFIG_PATH>/global.yaml`。安全默认激活无域包：
 ```yaml

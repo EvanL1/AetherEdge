@@ -15,6 +15,15 @@ export default defineConfig({
       description:
         'Unified documentation for AetherEdge, AetherCloud, and AetherContracts.',
       customCss: ['./src/styles/custom.css'],
+      components: {
+        ThemeProvider: './src/components/ThemeProvider.astro',
+      },
+      expressiveCode: {
+        getBlockLocale({ file }) {
+          const sourcePath = (file.url?.pathname ?? file.path ?? '').replaceAll('\\', '/');
+          return /(^|\/)en(?:\/|$)/.test(sourcePath) ? 'en' : 'zh-CN';
+        },
+      },
       locales: {
         root: { label: '简体中文', lang: 'zh-CN' },
         en: { label: 'English', lang: 'en' },
@@ -79,6 +88,11 @@ export default defineConfig({
               items: [{ autogenerate: { directory: 'guides' } }],
             },
             {
+              label: 'Recovery',
+              translations: { 'zh-CN': '故障恢复' },
+              items: [{ autogenerate: { directory: 'recovery' } }],
+            },
+            {
               label: 'Reference',
               translations: { 'zh-CN': '参考' },
               items: [{ autogenerate: { directory: 'reference' } }],
@@ -124,6 +138,11 @@ export default defineConfig({
               items: [{ autogenerate: { directory: 'aethercloud/guides' } }],
             },
             {
+              label: 'Recovery',
+              translations: { 'zh-CN': '故障恢复' },
+              items: [{ autogenerate: { directory: 'aethercloud/recovery' } }],
+            },
+            {
               label: 'Reference',
               translations: { 'zh-CN': '参考' },
               items: [{ autogenerate: { directory: 'aethercloud/reference' } }],
@@ -154,6 +173,33 @@ export default defineConfig({
               slug: 'aethercontracts/conformance',
             },
             {
+              label: 'Agent Tasks',
+              translations: { 'zh-CN': '智能体任务' },
+              items: [
+                {
+                  label: 'Provider Integration',
+                  translations: { 'zh-CN': '接入设备提供方' },
+                  slug: 'aethercontracts/integration',
+                },
+              ],
+            },
+            {
+              label: 'Safety and Governance',
+              translations: { 'zh-CN': '安全与治理' },
+              items: [
+                {
+                  label: 'Security',
+                  translations: { 'zh-CN': '安全策略' },
+                  slug: 'aethercontracts/security',
+                },
+                {
+                  label: 'Governance',
+                  translations: { 'zh-CN': '契约治理' },
+                  slug: 'aethercontracts/governance',
+                },
+              ],
+            },
+            {
               label: 'Specifications',
               translations: { 'zh-CN': '协议规格' },
               items: [{ autogenerate: { directory: 'aethercontracts/spec' } }],
@@ -166,7 +212,18 @@ export default defineConfig({
             {
               label: 'Migration',
               translations: { 'zh-CN': '迁移' },
-              slug: 'aethercontracts/migration',
+              items: [
+                {
+                  label: 'Product Naming',
+                  translations: { 'zh-CN': '产品命名' },
+                  slug: 'aethercontracts/migration',
+                },
+                {
+                  label: 'Contract Versions',
+                  translations: { 'zh-CN': '契约版本' },
+                  items: [{ autogenerate: { directory: 'aethercontracts/migrations' } }],
+                },
+              ],
             },
           ],
         },

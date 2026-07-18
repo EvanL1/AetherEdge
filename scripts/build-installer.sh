@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # Build multi-architecture installer package for AetherEMS
-# Usage: build-installer.sh [VERSION] [ARCH] [TARGET] [--services=...] [--enable-swagger]
+# Usage: build-installer.sh [VERSION] [ARCH] [TARGET] [--services=...] [--io-features=...] [--enable-swagger]
 #   VERSION: Version string (default: YYYYMMDD)
 #   ARCH: arm64 | amd64 (default: arm64)
 #   TARGET: Rust target triple (default based on ARCH)
 #   --services: Comma-separated list of services to include (optional, default: Rust core)
+#   --io-features: Exact comma-separated aether-io feature selection (optional)
 #   --enable-swagger: Enable Swagger UI for feature-gated Rust services
 #
 # Service names: aether-io, aether-automation, aether-history, aether-api,
@@ -17,6 +18,7 @@
 #   ./build-installer.sh v1.2.0 arm64                       # Build the Rust core (ARM64, v1.2.0)
 #   ./build-installer.sh v1.2.0 arm64 -s rust               # All Rust services
 #   ./build-installer.sh v1.2.0 arm64 -s rust --enable-swagger
+#   ./build-installer.sh v1.2.0 arm64 --io-features=home-assistant
 #   ./build-installer.sh v1.2.0 arm64 -s aether-uplink,aether-history
 
 set -euo pipefail
@@ -154,6 +156,17 @@ case "$ARCH" in
     exit 1
     ;;
 esac
+
+# Resolve the same closed, dependency-expanded feature set before generating
+# metadata or invoking Cargo. This makes the runtime manifest and the compiled
+# aether-io artifact share one exact composition source and fails closed on an
+# unknown feature before any installer staging begins.
+if [[ "$IO_PROTOCOL_FEATURES_SET" == 1 ]]; then
+    NORMALIZED_IO_PROTOCOL_FEATURES=$(cargo run --quiet \
+        -p aether-runtime-catalog --bin aether-runtime-manifest -- \
+        normalize-io-features --io-features "$IO_PROTOCOL_FEATURES")
+    IO_PROTOCOL_FEATURES="$NORMALIZED_IO_PROTOCOL_FEATURES"
+fi
 
 # Contract/CI mode produces exactly the metadata that a matching build would
 # ship, without requiring makeself, cross toolchains, Docker, or host mutation.

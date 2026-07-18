@@ -1,7 +1,7 @@
 ---
 title: "部署"
 description: "使用 Docker Compose 运行或为边缘设备构建独立的安装程序"
-updated: 2026-07-13
+updated: 2026-07-17
 ---
 
 # 部署
@@ -16,11 +16,11 @@ docker compose up -d
 docker compose ps
 ```
 
-默认 Compose 应用程序仅启动六个 Rust 服务，全部带有 `network_mode: host`。 Redis 和 TimescaleDB 仅在选择显式 `redis` 和 `postgres-storage` 配置文件时启动。基本文件仅通过可变的 `data-processing-dev` 配置文件公开预测 sidecar；生产环境需要显式覆盖，如下所示。
+默认 Compose 应用程序仅启动六个 Rust 服务，全部带有 `network_mode: host`。Redis 和 TimescaleDB 仅在显式选择 `redis` 和 `postgres-storage` 配置文件时启动。基本文件只通过可变的 `data-processing-dev` 配置文件公开预测伴生服务；生产环境需要显式覆盖，如下所示。
 
 AetherEdge 是无头内核发行版。它不构建或安装浏览器客户端。 EMS 操作员控制台属于独立的 [AetherEMS](https://github.com/EvanL1/AetherEMS) 发行版，并通过经过身份验证的应用程序 API 连接。
 
-| Container | Image | Role |
+| 容器 | 镜像 | 职责 |
 |-----------|-------|------|
 | aether-redis | redis:8-alpine | 可选非权威状态镜像基础设施（`redis` 配置文件） |
 | aether-timescaledb | timescale/timescaledb:2.25.2-pg17 | 可选 PostgreSQL 历史记录后端 (`postgres-storage`配置文件） |
@@ -57,7 +57,7 @@ docker compose \
 
 它绑定到环回并且不接收 Aether 数据目录、配置、设备、历史数据库或 SHM 安装。应用程序通过处理器端口发送完整的、有界的 `ProcessingFrame`。请参阅 [`../../integrations/load-forecasting/deploy/README.md`](https://github.com/EvanL1/AetherEdge/blob/main/integrations/load-forecasting/deploy/README.md) 了解独立 systemd 单元和调试要求。
 
-Compose sidecar 仅加入专用 `data-processing-local` 网络，该网络声明为 `internal: true`；与主机环回发布一起，这会机械地阻止容器外部出口并限制入站访问。本机/systemd 部署仍然需要主机防火墙或等效的出口策略。这些示例还保留了特定于部署的 CPU、内存和 PID 配额；根据实际工件基准设置测量的 cgroup/systemd 限制，以便处理器负载不会导致确定性服务匮乏。
+Compose 伴生服务仅加入专用的 `data-processing-local` 网络，该网络声明为 `internal: true`；配合主机环回端口发布，可以阻止容器访问外部网络并限制入站访问。本机或 systemd 部署仍然需要主机防火墙或等效的出口策略。这些示例还保留了部署专用的 CPU、内存和 PID 配额；应根据实际工件基准设置 cgroup/systemd 限制，避免处理器负载耗尽确定性服务所需的资源。
 
 六个 Rust 服务共享一个 `aetherems:latest` 兼容性映像，每个服务都以自己的命令启动。当下游发布消费者迁移时，镜像名称被保留；它并不意味着此仓库拥有 EMS 产品或控制台。
 
@@ -76,7 +76,7 @@ Compose sidecar 仅加入专用 `data-processing-local` 网络，该网络声明
 
 `scripts/build-installer.sh` 会生成一个自解压 `.run` 文件，其中包含离线边缘设备所需的所有内容 — Docker 映像存档、撰写文件、配置模板、`aether` CLI 二进制文件和安装脚本：
 ```text
-./scripts/build-installer.sh [VERSION] [ARCH] [TARGET] [--services=...] [--enable-swagger]
+./scripts/build-installer.sh [VERSION] [ARCH] [TARGET] [--services=...] [--io-features=...] [--enable-swagger]
 ```
 
 - `VERSION` — 版本字符串，默认为今天的日期 (`YYYYMMDD`)
@@ -84,12 +84,23 @@ Compose sidecar 仅加入专用 `data-processing-local` 网络，该网络声明
 - `TARGET` — Rust 目标三元组；对于arm64，默认为`aarch64-unknown-linux-musl`；对于amd64，默认为`x86_64-unknown-linux-musl`
 - `--services` / `-s` - 要包含的以逗号分隔的子集（服务名称：`aether-io`、`aether-automation`、`aether-history`、`aether-api`、`aether-uplink`、 `aether-alarm`、`redis`、`timescaledb` 组快捷方式 `rust` 扩展到所有六个 Rust 服务）。每个全新安装的包都必须包含 Rust 核心；选择扩展变体：`-s rust,redis`、`-s rust,timescaledb` 或 `-s rust,redis,timescaledb`。默认包仅包含 Rust 边缘运行时映像；必须显式选择外部存储图像。
 - `--enable-swagger` — 编译 Rust 服务并启用其功能门控 Swagger UI
+- `--io-features` — 用显式的逗号分隔列表替换 `aether-io` 默认特性。
+  构建器会拒绝未知特性，只展开一次依赖，并将同一份规范化结果同时用于
+  二进制文件和安装包中的 `runtime-manifest.json`。
 ```bash
 # Full installer for an ARM64 edge device
 ./scripts/build-installer.sh
 
 # All Rust services only, with Swagger UI
 ./scripts/build-installer.sh v1.2.0 arm64 -s rust --enable-swagger
+
+# 包含本地只读 Home Assistant 桥接的 Docker 安装包
+./scripts/build-installer.sh v1.2.0 arm64 \
+  --io-features=home-assistant
+
+# 包含 Home Assistant、CloudLink 和受治理电源控制的 Docker 安装包
+./scripts/build-installer.sh v1.2.0 arm64 \
+  --io-features=home-assistant-integration-control
 ```
 
 该脚本将六个服务和 `aether` CLI 与 `cargo zigbuild` 交叉编译为目标三元组，从这些二进制文件构建 `aetherems` Docker 映像，使用 `docker save` 保存映像（选择时还包括 Redis 和 TimescaleDB 映像），并将结果与 `makeself` 一起打包到 `release/AetherEdge-<arch>-<version>.run` 中（通过以下方式构建子集） `--services` 将服务列表后缀附加到文件名，`--enable-swagger` 附加 `-swagger`）。构建主机需要 Docker、`cargo-zigbuild`（如果缺少，则通过 `cargo install` 自动安装）和 `makeself`（在 macOS 上通过 Homebrew 自动安装）。
@@ -111,6 +122,76 @@ ssh root@192.168.30.21 'chmod +x /tmp/AetherEdge-arm64-<version>.run && /tmp/Aet
 安装程序生成 `AETHER_BOOTSTRAP_ADMIN_PASSWORD`，仅将其保留在模式 0600 `.env` 中，并且从不打印该值。完成消息提供本地检索命令。以 `admin` 身份登录，立即更改密码，然后删除引导变量。除非明确设置 `AETHER_ALLOW_PUBLIC_REGISTRATION=true`，否则匿名注册将保持禁用状态。
 
 API 容器作为 `HOST_UID:HOST_GID` 运行。它既没有安装 Docker 套接字，也没有安装安装根目录，并且 `/etc/systemd/network` 是只读的。因此，主机网络突变请求无法关闭。不支持远程运行时升级；安装另一个版本需要上面的显式全新部署工作流程，而不是扩展 API 进程的权限。
+
+### Docker 安装包中的 Home Assistant
+
+只有使用上述 `--io-features` 选项构建的安装包才包含 Home Assistant。
+当前官方发布工作流没有传入这个选项，因此官方预编译 `.run` 安装包尚未包含
+Home Assistant。不要在默认官方安装包上开启下列配置；运行时会因为缺少编译
+特性而拒绝启动该集成。
+
+安装包中的 Compose 文件只向 `aether-io` 显式传递文档列出的变量，不使用
+`env_file` 把宿主机完整环境导入容器。三个开关默认都是 `false`：
+
+```dotenv
+AETHER_HOME_ASSISTANT_ENABLED=false
+AETHER_HOME_ASSISTANT_CLOUDLINK_ENABLED=false
+AETHER_HOME_ASSISTANT_CONTROL_ENABLED=false
+```
+
+安装自定义构建后，编辑 `/opt/AetherEdge/.env`，并保持文件权限为 0600。
+只开启已经完成调试的层级。本地只读桥接至少需要站点地址、网关身份和令牌值：
+
+```dotenv
+AETHER_HOME_ASSISTANT_ENABLED=true
+AETHER_HOME_ASSISTANT_ORIGIN=https://homeassistant.example.lan:8123
+AETHER_GATEWAY_ID=33333333-3333-4333-8333-333333333333
+AETHER_HOME_ASSISTANT_INTEGRATION_ID=home-assistant-main
+AETHER_HOME_ASSISTANT_TOKEN=<访问令牌>
+```
+
+Compose 将每个 `*_REF` 固定到一个公开约定的值变量，并单独传递实际值：
+
+| `aether-io` 读取的用途或引用 | `.env` 中的值变量 |
+|---|---|
+| `env:AETHER_HOME_ASSISTANT_TOKEN` | `AETHER_HOME_ASSISTANT_TOKEN` |
+| `env:AETHER_HOME_ASSISTANT_CLOUDLINK_CLOUD_PUBLIC_KEY` | `AETHER_HOME_ASSISTANT_CLOUDLINK_CLOUD_PUBLIC_KEY` |
+| `env:AETHER_HOME_ASSISTANT_CLOUDLINK_GATEWAY_SIGNING_KEY` | `AETHER_HOME_ASSISTANT_CLOUDLINK_GATEWAY_SIGNING_KEY` |
+| `env:AETHER_HOME_ASSISTANT_CLOUDLINK_MQTT_PASSWORD_SECRET` | `AETHER_HOME_ASSISTANT_CLOUDLINK_MQTT_PASSWORD_SECRET` |
+| `env:AETHER_HOME_ASSISTANT_CONTROL_CLOUD_PUBLIC_KEY` | `AETHER_HOME_ASSISTANT_CONTROL_CLOUD_PUBLIC_KEY` |
+| 控制回执签名 | 使用当前 CloudLink 网关会话签名器，不注入第二个边缘身份、引用或私钥变量 |
+
+Compose 不注入已废弃的迁移别名
+`AETHER_HOME_ASSISTANT_CONTROL_EDGE_KEY_ID` 和
+`AETHER_HOME_ASSISTANT_CONTROL_EDGE_SIGNING_KEY_REF`。
+
+不要添加 `AETHER_HOME_ASSISTANT_ACCESS_TOKEN` 或
+`AETHER_HOME_ASSISTANT_CLOUDLINK_MQTT_PASSWORD`；运行时明确拒绝这两个明文配置名。
+CloudLink 与控制层还需要 `.env.example` 中对应的非机密身份、代理设置、扩展确认
+和显式开启开关。
+
+Compose 的可变状态路径全部固定在现有持久化挂载 `/app/data` 内。与镜像特性
+精确对应的运行时清单是唯一的只读例外：
+
+| 状态 | 容器内路径 |
+|---|---|
+| 拓扑代次账本 | `/app/data/home-assistant/topology-generations.json` |
+| 已验证运行时清单目录 | `/app/config`（只读，固化在对应镜像内） |
+| 挑战重放账本 | `/app/data/home-assistant/cloudlink/challenge-ledger.json` |
+| 拓扑与观测暂存日志 | `/app/data/home-assistant/cloudlink/topology.spool`、`/app/data/home-assistant/cloudlink/observations.spool` |
+| 会话代次 | `/app/data/home-assistant/cloudlink/session-epoch` |
+| 控制账本、策略与审计 | `/app/data/home-assistant/control/jobs-and-receipts.json`、`/app/data/home-assistant/control/policy.json`、`/app/data/home-assistant/control/audit.jsonl` |
+
+开启控制前，必须先创建并调试控制策略。随后只重启拥有该集成的组合根：
+
+```bash
+cd /opt/AetherEdge
+chmod 600 .env
+docker compose up -d --force-recreate aether-io
+```
+
+CloudLink 故障不会关闭本地 Home Assistant 投影；任何可选路径都不会取代已调试
+原生边缘采集与安全行为的权威地位。
 
 ## 仅包工件
 
@@ -144,6 +225,10 @@ aether packs install --artifact /tmp/<pack-id>.bundle
 
 # Core plus optional Redis mirror infrastructure
 ./scripts/build-installer.sh --bare-metal [VERSION] [ARCH] -s rust,redis
+
+# Home Assistant、CloudLink 与受治理电源控制
+./scripts/build-installer.sh --bare-metal v1.2.0 arm64 \
+  --io-features=home-assistant-integration-control
 ```
 
 这遵循与 Docker 构建相同的 `[VERSION] [ARCH] [TARGET]` 位置约定 - `--bare-metal` 是一个添加的标志，其他参数的顺序保持不变。它交叉编译相同的六种服务以及 `aether` CLI，并将它们与 `makeself` 一起打包到 `release/AetherEdge-baremetal-<arch>-<version>.run` 中。选择 Redis 将 `-redis` 添加到文件名中。裸机包必须包含 Rust 核心。 TimescaleDB 是一个外部裸机扩展，不由该构建器捆绑。
@@ -166,6 +251,36 @@ ssh root@192.168.30.21 'chmod +x /tmp/AetherEdge-baremetal-arm64-<version>.run &
 | `/var/lib/aether/` | 服务日志 (`logs/`) 和可选的 Redis 数据 (`redis/`) |
 
 它还将 `aether` 符号链接到 `/usr/local/bin` 并删除 `/etc/profile.d/aether.sh` PATH 条目，安装 systemd单元，针对 `/etc/aether/config` 运行 `aether init` 和 `aether sync`，并以 `systemctl enable --now aether.target` 结束。
+
+包含 Home Assistant 的裸机安装包在安装后仍保持关闭。安装器不会生成 Home
+Assistant、消息代理或签名密钥，也不会自动开启任何集成。先显式创建持久化状态
+目录和已经调试的控制策略：
+
+```bash
+install -d -o root -g root -m 0700 \
+  /var/lib/aether/home-assistant \
+  /var/lib/aether/home-assistant/cloudlink \
+  /var/lib/aether/home-assistant/control
+```
+
+把所选配置以及上表相同的固定引用和值变量写入
+`/etc/aether/aether.env`。将
+`AETHER_HOME_ASSISTANT_CLOUDLINK_RUNTIME_CONFIG_DIR` 设为
+`/etc/aether/config`；所有可变账本、暂存日志、会话代次、策略和审计文件都只能
+使用 `/var/lib/aether/home-assistant/...`。不要设置已经废弃的
+`AETHER_HOME_ASSISTANT_CONTROL_EDGE_KEY_ID` 或
+`AETHER_HOME_ASSISTANT_CONTROL_EDGE_SIGNING_KEY_REF`；回执统一使用当前
+CloudLink 网关会话签名器。环境文件必须归 `root` 所有，权限为 0600：
+
+```bash
+chown root:root /etc/aether/aether.env
+chmod 600 /etc/aether/aether.env
+systemctl restart aether-io
+```
+
+安装包中的 `aether-io.service` 已通过
+`EnvironmentFile=/etc/aether/aether.env` 读取该文件；目标设备不再需要源码仓库
+或 `cargo run`。
 
 日常操作是本机 systemd：
 ```bash

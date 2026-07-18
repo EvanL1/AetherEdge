@@ -1,23 +1,54 @@
 ---
-title: "TCK v1 alpha 1 说明"
-description: "仓库测试编译每个规范JSON Schema，验证有效和无效的测试夹具，保留上下文无效的区别，并验证每个......"
-updated: 2026-07-15
+title: "语言中立 TCK v1 alpha 1"
+description: "说明仓库测试、参考运行器和计划中的可移植黑盒 TCK 分别能够证明什么。"
+updated: 2026-07-17
 id: tck-v1alpha1
 status: experimental
-version: 0.1.0-alpha.3
+version: 0.1.0-alpha.4
 normative: true
 ---
 
-# TCK v1 alpha 1 说明
+# 语言中立 TCK v1 alpha 1
 
-> 本中文页面用于帮助理解。规范性定义、Schema、测试夹具和 TCK 以 AetherContracts 对应版本的英文发布内容为唯一权威。
+> 本页帮助中文用户理解协议。带标签版本中的英文规范、JSON Schema、测试夹具和 TCK 才是规范性依据。
 
-> 权威来源：[AetherContracts](https://github.com/EvanL1/AetherContracts/blob/main/spec/tck-v1alpha1.md)。此页面镜像到统一的 AetherIoT 文档中。
+仓库测试会编译所有规范性 JSON Schema，验证有效与线结构无效的测试夹具，保留“上下文无效”这一独立类别，并检查每一项声明的 SHA-256。
 
-仓库测试编译每个规范的 JSON Schema，验证有效和无效的测试夹具，保留上下文无效的区别，并验证每个声明的 SHA-256。
+## 参考运行器范围
 
-仓库引用运行程序执行已发布的核心方案，以实现整数优先级、严格的原始 JSON、业务和运行时清单摘要、最小化会话/重播/ACK 上下文、数据丢失和游标规则以及 Thing Model 键冲突。它不是生产 CloudLink 状态机。电线无效的测试夹具目前已被证明是结构性排斥；精确的Schema到故障代码和 JSON 路径映射仍在计划中。
+仓库参考运行器执行已发布的核心场景，包括整数失败优先级、严格原始 JSON、业务摘要与 Runtime Manifest 摘要、最小会话、重放和确认上下文、数据丢失与游标规则，以及 Thing Model 键冲突。
 
-便携式黑盒运行器协议计划为基于标准输入和输出的 NDJSON。操作为 `validate`、`canonicalize`、`digest`、`verify-signature` 和 `check-compatibility`。它将比较接受、稳定故障代码、JSON 路径、规范字节、摘要和状态结果；它不会比较特定于语言的错误散文。
+Integration 场景还会冻结：
 
-TypeScript、Rust、C 和 C++ 仍处于试验阶段，直到各自执行相同的清单和场景集。真正的Broker双线束和破坏性故障注入是单独的选择加入证据，并且永远不会进入默认的离线测试路径。
+- 拓扑身份和引用解析；
+- 精确拓扑代次绑定；
+- 点位值类型匹配；
+- 质量与值是否存在的关系；
+- 规范有符号整数、十进制和 Base64url 边界。
+
+参考运行器不是生产 CloudLink 状态机，也不是生产提供方状态机。线结构无效夹具目前只能证明结构会被拒绝；结构定义到精确失败代码和 JSON 路径的完整映射仍在规划中。
+
+## 累计持久确认
+
+持久确认场景冻结累计连续前缀行为：
+
+- 乱序持久位置不能越过尚未声明的空洞推进游标；
+- 同一流代次的有效数据丢失证据可以补齐中间空洞；
+- 其他流代次的证据不能补齐当前空洞；
+- 缺失位置后来完成持久化后，游标可以继续推进。
+
+参考运行器直接接收明确的已持久位置和丢失区间，不会自行推断存储状态。
+
+## Integration 与 Integration Control
+
+CloudLink Integration 测试还会冻结公共载荷原样封装、消息结构判别、由外层认证的网关身份、不可变流和批次绑定、拓扑代次顺序、精确持久确认绑定、秘密拒绝和完整消息大小上限。这些测试不能证明产品数据库事务、消息代理部署或重启恢复。
+
+Integration Control 测试会冻结独立且默认关闭的启用方式、唯一封闭动作 `device.power.set.v1`、精确拓扑目标、强制治理和确认凭据、云端签名投影、作业重放绑定与提供方回执证据。测试会从结构上拒绝任意提供方操作、地址、令牌与物理完成声明，但不能证明产品确实调用了 Home Assistant，也不能证明物理执行器产生了结果。
+
+## 可移植黑盒运行器
+
+可移植黑盒运行器协议计划通过标准输入和标准输出传输 NDJSON。操作包括 `validate`、`canonicalize`、`digest`、`verify-signature` 与 `check-compatibility`。它将比较是否接纳、稳定失败代码、JSON 路径、规范字节、摘要与状态结果，而不会比较各语言自己的错误说明文字。
+
+TypeScript、Rust、C 与 C++ 在各自执行相同清单和场景全集之前，都仍属于实验性绑定。真实消息代理双端测试和破坏性故障注入是独立、选择性启用的证据，绝不能进入默认离线测试路径。
+
+`0.1.0-alpha.4` 是尚未发布的开发目标，仍处于实验阶段，不是生产 TCK 或生产运行时证明。最新发布版本仍是 `v0.1.0-alpha.3`。

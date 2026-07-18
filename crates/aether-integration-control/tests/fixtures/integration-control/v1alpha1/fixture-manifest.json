@@ -1,0 +1,49 @@
+{
+  "schema": "aether.fixture-manifest.v1alpha1",
+  "contract": "aether.cloudlink.integration-control",
+  "status": "experimental-default-off",
+  "source": "Closed governed Integration power-set offer and receipt contract",
+  "hash_algorithm": "sha256",
+  "fixtures": [
+    {
+      "file": "action-offer.valid.json",
+      "schema_id": "integration-action-offer.schema.json",
+      "expectation": "valid",
+      "sha256": "b5c1aa0253e9175b51a3628734561fcfb69e26c87377f5cb69d78685d917a659"
+    },
+    {
+      "file": "action-receipt-provider-accepted.valid.json",
+      "schema_id": "integration-action-receipt.schema.json",
+      "expectation": "valid",
+      "sha256": "f69736c32102df136ccffbff8f6ce7716ea19c06b9477ec8f8682fe0f5ebab83"
+    },
+    {
+      "file": "invalid/action-offer-missing-confirmation.json",
+      "schema_id": "integration-action-offer.schema.json",
+      "expectation": "wire-invalid",
+      "failure_code": "CONFIRMATION_REQUIRED",
+      "sha256": "0d3f2336b18a06b81e5d6c83dfe2f502c7ab4a6e45d7bee3d68d453c1710e7bc"
+    },
+    {
+      "file": "invalid/action-offer-provider-material.json",
+      "schema_id": "integration-action-offer.schema.json",
+      "expectation": "wire-invalid",
+      "failure_code": "UNKNOWN_FIELD",
+      "sha256": "c6f34b081f56f8373215330a84a6d33b8e7118a313e6db6e054aba12290d58ad"
+    },
+    {
+      "file": "invalid/action-offer-unknown-capability.json",
+      "schema_id": "integration-action-offer.schema.json",
+      "expectation": "wire-invalid",
+      "failure_code": "CAPABILITY_DENIED",
+      "sha256": "61399656eb9a072ef738865976c1c80907a173b0a0ecc74b7604f28d252d84ef"
+    },
+    {
+      "file": "invalid/action-receipt-physical-completion.json",
+      "schema_id": "integration-action-receipt.schema.json",
+      "expectation": "wire-invalid",
+      "failure_code": "PHYSICAL_OUTCOME_UNPROVEN",
+      "sha256": "fb75bf0ef216d6959e814bdaa29084faf9549107660557a7dae5661fd026eb80"
+    }
+  ]
+}

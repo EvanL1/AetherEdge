@@ -1,0 +1,19 @@
+{
+  "schema": "aether.integration.observation-batch.v1alpha1",
+  "integration_id": "home-assistant.home",
+  "snapshot_generation": "1",
+  "batch_id": "batch-type-mismatch",
+  "observed_at_ms": "1784217600300",
+  "observations": [
+    {
+      "entity_id": "entity-registry-light-bedroom",
+      "point_key": "is_on",
+      "observed_at_ms": "1784217600300",
+      "quality": "good",
+      "value": {
+        "type": "string",
+        "value": "on"
+      }
+    }
+  ]
+}

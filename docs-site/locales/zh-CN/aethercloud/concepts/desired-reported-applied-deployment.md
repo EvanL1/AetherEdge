@@ -5,7 +5,7 @@ updated: 2026-07-16
 status: mixed
 ---
 
-# 期望、报告和应用的部署
+# 期望的、报告的和应用的部署
 
 > 权威来源：[AetherCloud](https://github.com/EvanL1/AetherCloud/blob/main/docs/concepts/desired-reported-applied-deployment.md)。此页面已镜像到统一的AetherIoT文档中。
 

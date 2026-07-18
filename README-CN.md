@@ -187,9 +187,25 @@ MQTT 3.1.1 Broker binding、session/heartbeat/manifest/真实 PointSample teleme
 AetherContracts `v0.1.0-alpha.3`：Cloud 与 Edge 使用完全一致的 complete-consumer 锁，`pending_imports` 为空。该证据只证明分发完整性与公开 fixture 执行，不证明生产密钥生命周期、签名 ACK 或 Cloud 崩溃持久性。
 这只证明分发完整性，不代表 Rust/TypeScript codec 或边云正式联调已经完成；认证、真实双进程
 Broker harness、Cloud batch-position 应用模型和 durable Cloud store 仍未完成。边界见
-[ADR-0017](docs/adr/0017-experimental-cloudlink-mqtt-edge-foundation.md)与
-[CloudLink 参考](docs/reference/cloudlink-mqtt-v1.md)，公共发行权威见
-[ADR-0018](docs/adr/0018-pinned-aethercontracts-consumption.md)。
+[CloudLink 参考](docs/reference/cloudlink-mqtt-v1.md)。
+
+独立的 `aether.cloudlink.integration.v1alpha1` 扩展仍处于实验阶段，默认关闭。它要求云端
+先启用兼容接收方，并在边缘运行时清单中明确声明；拓扑和观测分别使用独立持久流，每条完整
+MQTT 消息负载不得超过 256 KiB，且不提供任何物理设备控制能力。
+
+源码中还实现了实验性的 Home Assistant 边缘桥接。默认的可选装配仍然只读：`aether-io`
+在本地通过 WebSocket 完成认证，投影区域、设备、实体拓扑和类型化状态，并在事件流出现
+缺口后重新取得完整快照。另一个默认关闭的源码构建特性，可以在云端接收方先启用并完成
+明确确认后，通过两个可恢复的独立持久队列发布已经提交的只读拓扑与观测；MQTT 发布确认
+不会删除记录，只有云端应用确认才会删除。
+
+第三个需要单独启用的源码构建特性提供一条受治理的 `device.power.set.v1` 控制路径。
+只有当前 CloudLink 会话已经接纳并持久记录后，边缘端才会订阅经过签名的请求。随后还要
+依次通过精确拓扑、本地默认拒绝策略、持久审计和作业去重，最终只能把布尔开关意图映射为
+固定的 Home Assistant 开启或关闭调用。调用方不能指定 Home Assistant 服务或附加参数；
+提供方接纳后的物理结果仍为未知。预编译发行版尚未启用这些特性；公开集成查询、生产级
+OAuth 和生产密钥生命周期仍未完成。详情见
+[接入 Home Assistant](https://docs.aetheriot.workers.dev/guides/home-assistant/)。
 
 ## 文档
 
@@ -198,10 +214,10 @@ Broker harness、Cloud batch-position 应用模型和 durable Cloud store 仍未
 - [使用 AI 构建应用](docs/guides/build-applications-with-ai.md)
 - [连接 AI 助手](docs/guides/ai-assistants.md)
 - [连接设备](docs/guides/connect-devices.md)
+- [接入 Home Assistant](https://docs.aetheriot.workers.dev/guides/home-assistant/)
 - [HTTP API 与 Swagger](docs/reference/http-api.md)
 - [部署指南](docs/guides/deployment.md)
-- [llms.txt](https://docs.aetheriot.workers.dev/llms.txt) 与
-  [llms-full.txt](https://docs.aetheriot.workers.dev/llms-full.txt)
+- [llms.txt](https://docs.aetheriot.workers.dev/llms.txt)
 
 ## 开发验证
 

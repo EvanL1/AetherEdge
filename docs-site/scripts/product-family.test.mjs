@@ -54,12 +54,17 @@ describe('AetherIoT product-family documentation', () => {
     expect(cloudManifest).toContain('docs/concepts/!(current-state-audit).md');
     expect(cloudManifest).not.toContain('\ndocs/concepts/*\n');
     expect(cloudManifest).toContain('docs/guides/*');
+    expect(cloudManifest).toContain('docs/recovery/*');
     expect(cloudManifest).toContain('docs/reference/*');
 
     const contractsManifest = read('docs-site/content.aethercontracts.manifest.txt');
     expect(contractsManifest).toContain('docs/getting-started.md');
     expect(contractsManifest).toContain('docs/compatibility.md');
     expect(contractsManifest).toContain('docs/conformance.md');
+    expect(contractsManifest).toContain('docs/integration.md');
+    expect(contractsManifest).toContain('docs/migrations/*');
+    expect(contractsManifest).toContain('SECURITY.md');
+    expect(contractsManifest).toContain('GOVERNANCE.md');
     expect(contractsManifest).toContain('spec/*');
     expect(contractsManifest).toContain('packages/*/README.md');
   });
@@ -69,9 +74,24 @@ describe('AetherIoT product-family documentation', () => {
 
     expect(config).toContain("directory: 'aethercloud/concepts'");
     expect(config).toContain("directory: 'aethercloud/guides'");
+    expect(config).toContain("directory: 'aethercloud/recovery'");
     expect(config).toContain("directory: 'aethercloud/reference'");
     expect(config).toContain("directory: 'aethercontracts/spec'");
     expect(config).toContain("directory: 'aethercontracts/packages'");
+    expect(config).toContain("directory: 'aethercontracts/migrations'");
+    expect(config).toContain("directory: 'recovery'");
+  });
+
+  it('disambiguates concept pages from crate reference pages in agent indexes', () => {
+    expect(read('docs/concepts/data-processing.md')).toContain(
+      'title: Aether Data Processing'
+    );
+    expect(read('crates/aether-data-processing/README.md')).toMatch(
+      /^# aether-data-processing crate$/m
+    );
+    expect(read('docs-site/locales/zh-CN/crates/aether-data-processing.md')).toContain(
+      'title: "aether-data-processing 组件库"'
+    );
   });
 
   it('keeps the cross-product integration guide inside Guides without a Tutorials section', () => {
@@ -99,8 +119,8 @@ describe('AetherIoT product-family documentation', () => {
     const styles = read('docs-site/src/styles/custom.css');
 
     expect(config).toContain("customCss: ['./src/styles/custom.css']");
-    expect(styles).toMatch(/\.pagination-links a > span[\s\S]*font-size:\s*1rem/);
-    expect(styles).toMatch(/\.pagination-links \.link-title[\s\S]*font-size:\s*0\.9375rem/);
+    expect(styles).toMatch(/\.pagination-links a > span[\s\S]*font-size:\s*1\.125rem/);
+    expect(styles).toMatch(/\.pagination-links \.link-title[\s\S]*font-size:\s*0\.8125rem/);
     expect(styles).toContain('text-wrap: balance');
     expect(styles).not.toContain('var(--sl-text-2xl)');
   });

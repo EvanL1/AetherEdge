@@ -24,7 +24,7 @@ history(time_ms, series_key, point_id, value)
 该快照在调用时是读取一致的；它不是 `as_of` 的历史时间点快照。当前表既没有 `ingested_at`/system-time 列，也没有源或配置纪元。因此，旧的 `as_of` 之后回填的行可能会出现在以后的重播中，并且在同一 `(series_key, point_id)` 后面重新映射的设备可以连接旧的和新的物理源。任务和绑定修订无法针对当前路由关闭，但无法过滤从未与行一起存储的纪元。使用评估时捕获的冻结数据库/导出进行离线黄金测试或回溯测试。严格的时间点适配器需要双时态摄取元数据加上存储的源/绑定纪元并查询两个片段。
 
 适配器路径也是部署配置，而不是活动历史记录编写器的证明。 `history_config.storage_*` 记录保存的意图，而 `PUT /hisApi/storage` 不会重新连接运行历史记录后端。在存储更改期间禁用数据处理，重新连接或重新启动 `aether-history`，验证活动 SQLite 后端和委托的哨兵系列，然后使用相同路径重新启动 `aether-api`。当前权限检查本身无法区分已保存的意图和未重新连接的写入器。
-```rust,no_run
+```rust
 use aether_domain::{
     BindingIdentity, FeatureDefinition, FeatureRole, HistoryAggregation,
     HistoryDuplicatePolicy, TaskIdentity,

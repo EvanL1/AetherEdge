@@ -4,7 +4,9 @@ import {
   computeDestPath,
   findBrokenExternalLinks,
   findCollisions,
+  findRouteCollisions,
   rewriteRelativeLinks,
+  stripRedundantTitleHeading,
   synthesizeFrontmatter,
 } from './sync-content.mjs';
 import { computeSlug, slugToSitePath } from './slug.mjs';
@@ -138,6 +140,50 @@ describe('synthesizeFrontmatter', () => {
   });
 });
 
+describe('stripRedundantTitleHeading', () => {
+  it('removes the body heading when Starlight already renders the same page title', () => {
+    const content =
+      '---\n' +
+      'title: "AetherContracts 产品概览"\n' +
+      'description: "公共协议文档。"\n' +
+      '---\n\n' +
+      '# AetherContracts 产品概览\n\n' +
+      '> 本页是面向中文用户的说明。\n\n' +
+      '正文。\n';
+
+    expect(stripRedundantTitleHeading(content)).toBe(
+      '---\n' +
+        'title: "AetherContracts 产品概览"\n' +
+        'description: "公共协议文档。"\n' +
+        '---\n\n' +
+        '> 本页是面向中文用户的说明。\n\n' +
+        '正文。\n'
+    );
+  });
+
+  it('preserves a leading body heading whose meaning differs from the page title', () => {
+    const content = '---\ntitle: "产品概览"\n---\n\n# 安装\n\n正文。\n';
+
+    expect(stripRedundantTitleHeading(content)).toBe(content);
+  });
+
+  it('parses single-quoted titles before comparing them with a Chinese heading', () => {
+    const content = "---\ntitle: '智能体的''安全控制'''\n---\n\n# 智能体的'安全控制'\n\n正文。\n";
+
+    expect(stripRedundantTitleHeading(content)).toBe(
+      "---\ntitle: '智能体的''安全控制'''\n---\n\n正文。\n"
+    );
+  });
+
+  it('normalizes insignificant title whitespace but not title wording', () => {
+    const content = '---\ntitle: "AetherEdge 快速入门"\n---\n\n# AetherEdge   快速入门   \n\n正文。\n';
+
+    expect(stripRedundantTitleHeading(content)).toBe(
+      '---\ntitle: "AetherEdge 快速入门"\n---\n\n正文。\n'
+    );
+  });
+});
+
 describe('findCollisions', () => {
   it('returns no collisions when every destination is unique and non-reserved', () => {
     const pairs = [
@@ -175,6 +221,38 @@ describe('findCollisions', () => {
   it('allows the site-owned agent quickstart source', () => {
     const pairs = [['docs/agent-quickstart.md', 'agent-quickstart.md']];
     expect(findCollisions(pairs)).toEqual([]);
+  });
+});
+
+describe('findRouteCollisions', () => {
+  it('rejects different generated files that collapse to one public route', () => {
+    const pairs = [
+      ['contracts:MIGRATION.md', 'aethercontracts/MIGRATION.md'],
+      ['site-zh:migration.md', 'aethercontracts/migration.md'],
+    ];
+
+    expect(findRouteCollisions(pairs)).toEqual([
+      {
+        dest: '/aethercontracts/migration',
+        sources: ['contracts:MIGRATION.md', 'site-zh:migration.md'],
+      },
+    ]);
+  });
+
+  it('accepts the new Home Assistant, Cloud, and Contracts routes', () => {
+    const pairs = [
+      ['site-zh:guides/home-assistant.md', 'guides/home-assistant.md'],
+      [
+        'site-zh:aethercloud/concepts/home-assistant-integration.md',
+        'aethercloud/concepts/home-assistant-integration.md',
+      ],
+      [
+        'site-zh:aethercontracts/spec/integration-control-v1alpha1.md',
+        'aethercontracts/spec/integration-control-v1alpha1.md',
+      ],
+    ];
+
+    expect(findRouteCollisions(pairs)).toEqual([]);
   });
 });
 
@@ -228,14 +306,18 @@ describe('rewriteRelativeLinks', () => {
     const content = 'See [Rule Engine](../concepts/rule-engine.md) for details.';
     const syncedSourceSet = new Set(['docs/guides/writing-rules.md', 'docs/concepts/rule-engine.md']);
     const out = rewriteRelativeLinks(content, 'docs/guides/writing-rules.md', syncedSourceSet);
-    expect(out).toBe('See [Rule Engine](/concepts/rule-engine) for details.');
+    expect(out).toBe(
+      'See [Rule Engine](https://docs.aetheriot.workers.dev/concepts/rule-engine) for details.'
+    );
   });
 
   it('preserves an anchor fragment when rewriting a synced target to a site path', () => {
     const content = '[Rule Engine](../concepts/rule-engine.md#some-heading)';
     const syncedSourceSet = new Set(['docs/guides/writing-rules.md', 'docs/concepts/rule-engine.md']);
     const out = rewriteRelativeLinks(content, 'docs/guides/writing-rules.md', syncedSourceSet);
-    expect(out).toBe('[Rule Engine](/concepts/rule-engine#some-heading)');
+    expect(out).toBe(
+      '[Rule Engine](https://docs.aetheriot.workers.dev/concepts/rule-engine#some-heading)'
+    );
   });
 
   it('rewrites a link to a synced README.md-shaped target to its collapsed <dir>/ site path', () => {
@@ -245,7 +327,9 @@ describe('rewriteRelativeLinks', () => {
       'crates/aether-ports/README.md',
     ]);
     const out = rewriteRelativeLinks(content, 'crates/aether-testkit/README.md', syncedSourceSet);
-    expect(out).toBe('See [aether-ports](/crates/aether-ports) for details.');
+    expect(out).toBe(
+      'See [aether-ports](https://docs.aetheriot.workers.dev/crates/aether-ports) for details.'
+    );
   });
 
   it('rewrites Cloud links into the AetherCloud namespace', () => {
@@ -264,7 +348,26 @@ describe('rewriteRelativeLinks', () => {
       }
     );
 
-    expect(out).toBe('See [Telemetry](/aethercloud/concepts/iot-telemetry).');
+    expect(out).toBe(
+      'See [Telemetry](https://docs.aetheriot.workers.dev/aethercloud/concepts/iot-telemetry).'
+    );
+  });
+
+  it('converts an existing site-root document link into a complete public URL', () => {
+    const content = 'Read [Platform Overview](/en/overview/platform/).';
+    const out = rewriteRelativeLinks(
+      content,
+      'locales/en/index.md',
+      new Set(['locales/en/index.md']),
+      {
+        destinationPrefix: 'en',
+        stripPrefix: 'locales/en/',
+      }
+    );
+
+    expect(out).toBe(
+      'Read [Platform Overview](https://docs.aetheriot.workers.dev/en/overview/platform/).'
+    );
   });
 
   it('uses the owning repository for excluded cross-repository content', () => {

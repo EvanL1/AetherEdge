@@ -1,0 +1,39 @@
+{
+  "schema": "aether.fixture-manifest.v1alpha1",
+  "contract": "aether.cloudlink.integration",
+  "status": "experimental-alpha4-extension",
+  "hash_algorithm": "sha256",
+  "fixtures": [
+    {
+      "file": "integration-topology.valid.json",
+      "expectation": "valid",
+      "schema_id": "integration-topology-snapshot.schema.json",
+      "sha256": "fd19f49bb2e62f0860be21fa35bda31c8612b3c96fe309d1f7319dc33d5ce743"
+    },
+    {
+      "file": "integration-observations.valid.json",
+      "expectation": "valid",
+      "schema_id": "integration-observation-batch.schema.json",
+      "sha256": "6bafd4b69a81c313bfcc621e858f36914847cf04c684ff96824a27920fdc2411"
+    },
+    {
+      "file": "integration-topology-ack.valid.json",
+      "expectation": "valid",
+      "schema_id": "durable-ack.schema.json",
+      "sha256": "88703e45e94f975cb46ed03877c1425ee31cf54cef4fac50ffb4c9f7270a4ff6"
+    },
+    {
+      "file": "integration-observations-ack.valid.json",
+      "expectation": "valid",
+      "schema_id": "durable-ack.schema.json",
+      "sha256": "e628b6206ca64f6e747c10cb0802ea71f80a17ce4b09e676da80e3ec213e80c2"
+    },
+    {
+      "file": "integration-topology-secret.invalid.json",
+      "expectation": "wire-invalid",
+      "schema_id": "integration-topology-snapshot.schema.json",
+      "failure_code": "UNKNOWN_FIELD",
+      "sha256": "d3ce57d185235d00c883e1b7f1b32f4941c111ac8db030dcd1d824caae7f9443"
+    }
+  ]
+}

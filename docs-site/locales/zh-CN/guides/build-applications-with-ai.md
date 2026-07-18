@@ -10,9 +10,9 @@ AetherEdge 在设计上不提供固定通用控制台。它提供确定性的边
 
 这是 AetherIoT 更完整 AI 原生方向的一项现有基础：用户描述目标，智能体发现物理空间并生成受治理变更，契约让变更可以检查，AetherEdge 在没有模型时继续执行已经投运的行为。完整的最终用户对话、仿真和持续调整闭环尚未作为产品交付，边界见 [AI 原生平台](/overview/ai-native-platform/)。
 
-## 可选 Agent Skill
+## 可选智能体技能
 
-可以把仓库提供的 `aether-iot` Skill 添加到兼容的编码助手。下面的命令只使用第三方 `skills` CLI 安装开发指导，不会安装 AetherEdge 运行时或 Rust SDK：
+可以把仓库提供的 `aether-iot` 智能体技能添加到兼容的编码助手。下面的命令只使用第三方 `skills` CLI 安装开发指导，不会安装 AetherEdge 运行时或 Rust SDK：
 
 ```bash
 bunx skills add EvanL1/AetherEdge --skill aether-iot
@@ -35,7 +35,7 @@ bunx skills add EvanL1/AetherEdge --skill aether-iot
 | --- | --- |
 | 运行时清单 | 精确内核版本、目标平台、特性、协议和能力 |
 | 当前 Pack | 领域词汇、支持的资产和兼容要求 |
-| OpenAPI | 精确接口路径、Schema、状态码、认证和命令策略 |
+| OpenAPI | 精确接口路径、结构定义、状态码、认证和命令策略 |
 | MCP | 当前可供智能体使用的实时工具与结构化结果 |
 | 在线 Markdown | 架构、工作方式、安全规则和领域说明 |
 

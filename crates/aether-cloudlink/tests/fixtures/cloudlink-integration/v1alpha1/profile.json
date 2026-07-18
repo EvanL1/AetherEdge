@@ -1,0 +1,107 @@
+{
+  "schema": "aether.cloudlink.integration.v1alpha1",
+  "status": "experimental-alpha4-extension",
+  "base_protocol": "aether.cloudlink",
+  "base_protocol_version": "1.0",
+  "entry_schemas": {
+    "integration-topology-snapshot": "integration-topology-snapshot.schema.json",
+    "integration-observation-batch": "integration-observation-batch.schema.json"
+  },
+  "activation": {
+    "required_runtime_protocol": "aether.cloudlink.integration.v1alpha1",
+    "base_protocol_negotiation_alone_is_sufficient": false,
+    "cloud_first_rollout": true,
+    "producer_enablement": "explicit-after-cloud-consumer-support",
+    "legacy_alpha3_consumer_behavior": "reject-unknown-message-kind"
+  },
+  "streams": {
+    "required_per_integration": [
+      "integration-topology-snapshot",
+      "integration-observation-batch"
+    ],
+    "distinct_streams": true,
+    "immutable_epoch_binding": [
+      "gateway_id",
+      "delivery.stream_id",
+      "delivery.stream_epoch",
+      "message_kind",
+      "payload.integration_id"
+    ],
+    "binding_conflict": "STREAM_BINDING_CONFLICT",
+    "position_identity": [
+      "gateway_id",
+      "delivery.stream_id",
+      "delivery.stream_epoch",
+      "delivery.position"
+    ],
+    "position_replay_and_data_loss": "profiles/cloudlink/v1alpha1/core.json"
+  },
+  "topology": {
+    "payload_schema": "aether.integration.topology-snapshot.v1alpha1",
+    "payload_is_unmodified_public_contract": true,
+    "replacement": "complete-and-atomic",
+    "delivery_batch_id": "topology-<payload.snapshot_generation>",
+    "generation_binding": "one accepted generation is bound to one exact CloudLink position and digest",
+    "lower_generation": "TOPOLOGY_GENERATION_STALE",
+    "same_generation_new_position": "TOPOLOGY_GENERATION_CONFLICT",
+    "fragmentation": "forbidden"
+  },
+  "observations": {
+    "payload_schema": "aether.integration.observation-batch.v1alpha1",
+    "payload_is_unmodified_public_contract": true,
+    "delivery_batch_id": "must-equal-payload.batch_id",
+    "batch_identity": [
+      "gateway_id",
+      "payload.integration_id",
+      "payload.snapshot_generation",
+      "payload.batch_id"
+    ],
+    "batch_binding": [
+      "delivery.stream_id",
+      "delivery.stream_epoch",
+      "delivery.position",
+      "delivery.digest"
+    ],
+    "batch_reuse_at_new_position": "BATCH_ID_CONFLICT",
+    "required_topology": "the exact accepted integration_id and snapshot_generation",
+    "newer_than_accepted_topology": "REFERENCE_NOT_FOUND",
+    "older_than_accepted_topology": "TOPOLOGY_GENERATION_STALE"
+  },
+  "digest": {
+    "definition": "profiles/cloudlink/v1alpha1/core.json",
+    "projection": [
+      "protocol_version",
+      "message_kind",
+      "payload"
+    ],
+    "covers_complete_integration_payload": true
+  },
+  "acknowledgement": {
+    "schema": "durable-ack.schema.json",
+    "successful_ack_requires": "the normalized Integration fact and replay receipt are durably committed before ACK publication",
+    "idempotent_replay": "republish-the-stable-receipt-for-the-exact-position-and-digest",
+    "mqtt_puback_is_application_ack": false
+  },
+  "transport": {
+    "profile": "profiles/mqtt/v1alpha1/profile.json",
+    "maximum_message_bytes": 262144,
+    "size_scope": "complete-UTF-8-MQTT-payload",
+    "topology_fragmentation": "forbidden",
+    "oversized_topology": "reject-with-FIELD_BOUND-and-do-not-publish-partial-replacement",
+    "observation_partitioning": "split-at-observation-boundaries-into-distinct-batches-before-envelope-encoding"
+  },
+  "security": {
+    "gateway_identity": "authenticated-outer-CloudLink-session",
+    "payload_or_topic_identity_is_authentication": false,
+    "provider_credentials": "edge-local-only",
+    "forbidden_payload_material": [
+      "provider-url",
+      "access-token",
+      "refresh-token",
+      "cookie",
+      "credential-reference",
+      "raw-provider-payload"
+    ],
+    "physical_control": "forbidden"
+  }
+}

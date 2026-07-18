@@ -5,7 +5,7 @@ updated: 2026-07-16
 status: mixed
 ---
 
-# 受管能力作业
+# 受治理的能力作业
 
 > 权威来源：[AetherCloud](https://github.com/EvanL1/AetherCloud/blob/main/docs/concepts/governed-capability-jobs.md)。此页面已镜像到统一的 AetherIoT 文档中。
 

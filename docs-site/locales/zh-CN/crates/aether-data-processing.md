@@ -1,10 +1,10 @@
 ---
-title: "Aether 数据处理"
+title: "aether-data-processing 组件库"
 description: "适用于 Aether 数据处理 v1 处理器边界的严格、传输中立的 JSON 编解码器。它将经过验证的域值与版本化的域值相互转换..."
 updated: 2026-07-12
 ---
 
-# Aether 数据处理
+# aether-data-processing 组件库
 
 适用于 Aether 数据处理 v1 处理器边界的严格、传输中立的 JSON 编解码器。它将经过验证的域值与版本化 RFC 3339/JSON DTO 进行相互转换，对 Aether 接受的 `DerivedData` 进行编码，并计算 RFC 8785 输入摘要。
 

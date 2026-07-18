@@ -5,7 +5,7 @@ updated: 2026-07-14
 status: mixed
 ---
 
-# 操作可观测性
+# 操作可观察性
 
 > 权威来源：[AetherCloud](https://github.com/EvanL1/AetherCloud/blob/main/docs/concepts/operational-observability.md)。此页面镜像到统一的 AetherIoT 文档中。
 

@@ -14,18 +14,26 @@ categories = ["embedded", "asynchronous"]
 
 [dependencies]
 aether-domain = { version = "0.5.0", path = "../../crates/aether-domain" }
+aether-integration-control = { version = "0.5.0", path = "../../crates/aether-integration-control", optional = true }
 aether-ports = { version = "0.5.0", path = "../../crates/aether-ports" }
 aether-shm-bridge = { version = "0.5.0", path = "../shm-bridge", optional = true }
 async-trait = { workspace = true }
 fs2 = "0.4"
 serde = { workspace = true }
 serde_json = { workspace = true }
+sha2 = { workspace = true }
+thiserror = { workspace = true }
 rustc-hash = { workspace = true, optional = true }
 tokio = { version = "1.35", default-features = false, features = ["rt", "sync"] }
 sqlx = { workspace = true, optional = true }
+uuid = { workspace = true, optional = true }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
 
 [features]
 default = []
+integration-control = ["dep:aether-integration-control", "dep:uuid"]
 sqlite-audit = ["dep:sqlx"]
 sqlite-topology = ["dep:aether-shm-bridge", "dep:rustc-hash", "dep:sqlx"]
 

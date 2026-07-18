@@ -1,7 +1,7 @@
 ---
 title: "实验性 CloudLink MQTT v1 边缘合约"
 description: "本文档描述了实验性 CloudLink 候选者。公开AetherContracts`v0.1.0-alpha.3`发布是唯一的权威，并且AetherEdge..."
-updated: 2026-07-16
+updated: 2026-07-17
 ---
 
 # 实验性 CloudLink MQTT v1 边缘合约
@@ -46,11 +46,31 @@ updated: 2026-07-16
 
 CloudLink v1 不公开任何物理控制或任意 RPC。
 
+## 实验性集成扩展
+
+`aether.cloudlink.integration.v1alpha1` 用于通过 CloudLink 传送集成拓扑快照和观测批次。
+该扩展仍处于实验阶段，默认关闭，并采用“先云后边”的启用顺序：AetherCloud 必须先明确启用
+兼容的接收方，AetherEdge 当前运行时清单也必须明确声明完全一致的扩展标识。缺少任一条件时，
+边缘端都会拒绝启用。仅启用数据源并不会自动开启云端发布。
+
+该扩展使用两条相互独立的持久流和消息主题：
+
+- 拓扑快照使用 `up/integration/topology`；
+- 观测批次使用 `up/integration/observations`。
+
+每份拓扑快照都是一条不可拆分的原子记录；完整消息超过 256 KiB 时会拒绝发布。观测批次在
+大小允许时保持不变，超限时只能在两条完整观测之间拆分，绝不拆开单条观测。拆分后的每个批次
+都必须能够独立验证，并且包含 CloudLink 交付信封在内的每条完整 MQTT 消息负载都不得超过
+256 KiB。
+
+两条流共同复用既有的应用级持久确认、重放、稳定交付身份和摘要规则。消息代理的传输确认不能
+清除持久记录。该扩展只传送只读的集成投影事实，不提供命令、任意远程调用或物理设备控制能力。
+
 ## 兼容性矩阵
 
 | 此切片之前的关注 | AetherEdge | AetherCloud 参考 | 候选解析 |
 |---|---|---|---|
-| 线格式包 | 未版本化的旧版 JSON | 严格的 TypeScript 编解码器和入口 | 字节一致的 alpha.3 Schema、夹具以及匹配的 Rust／TypeScript 词汇 |
+| 线格式包 | 未版本化的旧版 JSON | 严格的 TypeScript 编解码器和入口 | 字节一致的 alpha.3 结构定义、夹具以及匹配的 Rust／TypeScript 词汇 |
 | 交付删除 | 本地 `AsyncClient::publish` 接受后 | 需要持久应用确认；当前仅有内存基础 | 专用持久队列仅在验证持久 ACK 后删除 |
 | 会话 | 无 CloudLink 会话/纪元 | 域/应用程序内存实现 | 候选 hello/accepted 和单调纪元绑定 |
 | 身份验证 | MQTT用户名/密码或 mTLS；产品/设备主题身份 | 会话验证程序消耗 alpha 结构证据 | Hello 携带确切的质询和网关签名对象，或者在有效负载之外需要可信适配器元数据；生产密钥生命周期仍然建议 |

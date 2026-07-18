@@ -1,7 +1,7 @@
 ---
 title: "aether-store-local"
 description: "必须在没有外部服务的情况下运行的网关的本地适配器。"
-updated: 2026-07-16
+updated: 2026-07-17
 ---
 
 # aether-store-local
@@ -21,6 +21,9 @@ updated: 2026-07-16
 | `FileOutbox` | 崩溃可恢复文件 | 离线生产存储并转发 |
 | `MemoryCloudLinkSpool` | 进程本地 | 确定性应用程序 ACK/重放一致性 |
 | `FileCloudLinkSpool` | 崩溃可恢复文件 | 实验CloudLink位置、重放和丢失证据 |
+| `FileIntegrationTopologyGenerationStore` | 原子替换的私有文件 | 可跨重启保持稳定的集成拓扑代次 |
+| `FileIntegrationControlLedger`（`integration-control`） | 原子替换的私有文件 | 实验性受治理作业去重与最终回执重放 |
+| `FileIntegrationControlAudit`（`integration-control`） | 只追加的私有逐行 JSON 文件 | 由单一进程持有的受治理控制审计证据 |
 
 `MemoryHistoryQuery` 和 `MemoryCovariateSource` 由完整版本的 `BindingIdentity` 键入。他们仅按请求顺序投影请求的逻辑特征，应用半开放时间窗口和硬样本限制，并为每个返回的特征保留一个精确的出处条目。未知的绑定是永久性的调试错误；空的选定窗口仍然是可用性结果。
 
@@ -113,6 +116,28 @@ outbox
 长时间运行的主机应定期调用压缩；兼容性 `uplink` 在启动时和每小时执行一次。容量限制实时条目，而压缩限制日志中过时的已确认记录。
 
 磁盘耐用性不定义网络传输。选定的 `UplinkPublisher` 决定何时可以确认条目。
+
+## 集成拓扑代次
+
+`FileIntegrationTopologyGenerationStore` 为首个拓扑摘要分配代次一；相同摘要保持原代次，
+变更摘要则在返回前持久递增。网关和集成共同构成完整计数范围。适配器使用进程独占锁、
+私有替换文件、文件同步、原子重命名和父目录同步。状态损坏或无符号 64 位整数耗尽时会
+拒绝继续。Home Assistant 装配必须显式注入这个适配器，才能声明可跨重启保持稳定的公开
+集成拓扑代次。
+
+## 集成控制账本与审计
+
+`FileIntegrationControlLedger` 会在调用接入方前原子持久认领作业。完成后的作业永久绑定
+其意图摘要和最终回执；再次收到相同作业与摘要时只重新排队已有回执，不会再次调用接入方；
+同一作业使用不同摘要会被拒绝。重启后发现的处理中认领会变成结果未知的恢复证据，绝不会
+自动重试接入方。
+
+最终回执拥有单调递增的投递位置。只有严格匹配流、代次、位置、批次标识和业务摘要的现有
+CloudLink 持久确认才能删除回执；精确重复确认保持幂等。已确认回执再次排队时会获得新的
+投递位置，同时保留原确认记录。账本使用私有原子替换文件和进程独占锁。
+`FileIntegrationControlAudit` 在独立进程锁下追加并同步已经去除敏感信息的控制决策。
+实验性的 `aether-io` `home-assistant-integration-control` 装配会在激活会话绑定的
+控制请求订阅前打开这两个适配器。
 
 ## CloudLink 持久队列
 

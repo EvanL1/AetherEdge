@@ -37,7 +37,7 @@ Start with the product that owns your task:
 
 - Start with the [AI-native platform](/en/overview/ai-native-platform/) and
   continue to [Platform Overview](/en/overview/platform/).
-- Follow the complete [Edge to Contracts to Cloud guide](/en/guides/edge-contracts-cloud/).
+- Run the complete [Edge, Contracts, and Cloud integration task](/en/guides/edge-contracts-cloud/).
 - Select tested versions in [Compatibility](/en/compatibility/version-matrix/).
 - Distinguish shipped and planned work at [Status and Roadmap](/en/roadmap/status/).
 - Install the edge runtime at [Agent Quickstart](/en/agent-quickstart/).

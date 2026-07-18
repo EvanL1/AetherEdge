@@ -5,7 +5,7 @@ updated: 2026-07-16
 status: mixed
 ---
 
-# IoT 业务遥测
+# 物联网业务遥测
 
 > 权威来源：[AetherCloud](https://github.com/EvanL1/AetherCloud/blob/main/docs/concepts/iot-telemetry.md)。此页面镜像到统一的 AetherIoT 文档中。
 

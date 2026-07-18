@@ -75,6 +75,22 @@ components:
     responsibility: Experimental transport-neutral CloudLink v1 strict codec, session binding, canonical business digests, and truthful Runtime Manifest/PointSample mapping
     verify:
       - cargo test -p aether-cloudlink
+  integration_candidate_binding:
+    path: crates/aether-integration-contract
+    responsibility: Strict AetherContracts 0.1.0-alpha.4 candidate Integration v1alpha1 DTO, fixture, context, precision, and Home Assistant semantic projection boundary
+    verify:
+      - cargo test -p aether-integration-contract
+  integration_control:
+    path: crates/aether-integration-control
+    responsibility: Experimental default-off AetherContracts alpha.4 governed Integration control processor, exact target resolver, persistent job deduplication, and durable terminal receipt contract
+    verify:
+      - cargo test -p aether-integration-control
+  cloudlink_integration_extension:
+    path: crates/aether-cloudlink/src/integration.rs
+    responsibility: Experimental disabled-by-default Cloud-first Integration topology/observation binding with separate durable streams, atomic topology, observation-boundary partitioning, a 256 KiB complete-payload limit, and no control capability
+    verify:
+      - cargo test -p aether-cloudlink --test integration_extension
+      - cargo test -p aether-cloudlink --test integration_extension_contract
   cloudlink_candidate_contracts:
     path: contracts/cloudlink/v1
     responsibility: Product integration copies and migration proposals for the digest-pinned public AetherContracts CloudLink subset
@@ -88,9 +104,20 @@ components:
       - cargo test -p aether-cloudlink --test codec_contract aether_contracts_distribution_lock_pins_imported_bytes -- --exact
   cloudlink_mqtt_binding:
     path: extensions/cloudlink-mqtt
-    responsibility: User-broker-neutral MQTT 3.1.1/QoS 1/TLS binding with exact per-gateway topics, PUBACK evidence, reconnect, and opt-in shared-broker harness
+    responsibility: User-broker-neutral MQTT 3.1.1/QoS 1/TLS binding with exact per-gateway Integration data topics, session-activated default-off control offer and receipt routes, PUBACK evidence without receipt deletion, reconnect, and an opt-in shared-broker harness
     verify:
-      - cargo test -p aether-cloudlink-mqtt
+      - cargo test -p aether-cloudlink-mqtt --features integration-control
+  home_assistant_bridge:
+    path: extensions/home-assistant-bridge
+    responsibility: Experimental default-read-only Home Assistant WebSocket projection plus a separately compiled, default-off fixed semantic power executor that accepts no arbitrary provider command
+    verify:
+      - cargo test -p aether-home-assistant-bridge --features integration-control
+  home_assistant_runtime:
+    path: services/io/src/home_assistant.rs
+    responsibility: Opt-in aether-io source composition with fail-closed settings, process-local projection, retry, complete resynchronization, and separately gated session-bound governed control with persistent audit, deduplication, and receipts
+    verify:
+      - cargo test -p aether-io --features home-assistant --test home_assistant_composition
+      - cargo test -p aether-io --features home-assistant-integration-control home_assistant_control_tests
   data_processing_ai_evals:
     path: ai/evals/data-processing.yaml
     responsibility: AI-facing permission, confirmation, audit, non-idempotency, failure-isolation, and no-control scenarios backed by Rust tests
@@ -106,9 +133,9 @@ components:
       - cargo test -p aether-testkit
   local_store:
     path: extensions/store-local
-    responsibility: Zero-external-service state, history, audit, legacy outbox, and application-ACK-driven CloudLink spool adapters
+    responsibility: Zero-external-service state, history, audit, restart-stable integration generations, legacy outbox, application-ACK-driven CloudLink spools, and optional governed-control ledger and audit adapters
     verify:
-      - cargo test -p aether-store-local
+      - cargo test -p aether-store-local --features integration-control
   jwt_auth_adapter:
     path: extensions/auth-jwt
     responsibility: Shared fail-closed access-JWT verification and server-owned application permissions for HTTP and CLI command boundaries

@@ -27,11 +27,29 @@ operation, governed commands, `aether` CLI, `aether-edge-sdk`, Pack v1, MCP and
 OpenAPI foundations, and signed `v0.5.0` source/runtime/CLI artifacts.
 
 **Experimental:** CloudLink MQTT v1 edge foundation, application-ACK-driven
-spool, AetherContracts alpha.3 consumption, and real-Broker development
-evidence.
+spool, AetherContracts alpha.3 consumption, real-Broker development evidence,
+and the read-only Home Assistant edge bridge foundation with bounded
+registry/state synchronization, opt-in `aether-io` source composition, and
+explicit full resynchronization. The default-off Home Assistant Integration
+Control slice adds one session-bound, signed, locally authorized
+`device.power.set.v1` capability with durable idempotency, audit, and receipts;
+provider acceptance deliberately leaves physical outcome unknown.
 
 **Planned or gated:** production CloudLink key lifecycle, signed ACK, complete
-joint conformance, legacy cutover, and remaining application-boundary migration.
+joint conformance, legacy cutover, packaged Home Assistant composition, public
+integration queries, production projection/query composition, production OAuth
+and secret lifecycle, broader governed device capabilities/commands, production
+key rotation/revocation, and remaining application-boundary migration.
+
+**CloudLink alpha.4 production blocker:** the current `session-accepted`
+message is unsigned and carries neither `challenge_id` nor `client_nonce`.
+AetherEdge consumes it only after a challenge on the current connected
+transport, aborts acceptance on disconnect, and requires the persisted session
+epoch to increase strictly. Those local checks cannot cryptographically exclude
+a delayed acceptance from another handshake on the same connection. The public
+wire contract must bind an authenticated acceptance to the complete current
+handshake transcript before this path can be described as production
+authentication.
 
 ## AetherCloud
 
@@ -58,7 +76,7 @@ ACK, complete production codecs, and a production CloudLink cutover release.
 ## Platform documentation
 
 **Implemented in this migration:** shared product overview, unified navigation,
-deployment topologies, user journeys, end-to-end integration guide, compatibility
+deployment topologies, user journeys, end-to-end alpha integration task, compatibility
 matrix, status page, and AetherIot to AetherEdge migration guide.
 
 **Planned:** automated

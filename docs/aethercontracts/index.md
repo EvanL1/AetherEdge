@@ -21,4 +21,4 @@ changing protocol identifiers.
 
 Read the [AetherContracts repository](https://github.com/EvanL1/AetherContracts),
 the [compatibility matrix](../compatibility/version-matrix.md), and the
-[Edge to Contracts to Cloud guide](../guides/edge-contracts-cloud.md).
+[Edge, Contracts, and Cloud integration task](../guides/edge-contracts-cloud.md).

@@ -43,10 +43,12 @@ pub(crate) fn identifier(
     field: &'static str,
     maximum: usize,
 ) -> Result<(), CloudLinkCodecError> {
-    let valid = !value.is_empty()
-        && value.len() <= maximum
-        && value
-            .bytes()
+    let mut bytes = value.bytes();
+    let valid = value.len() <= maximum
+        && bytes
+            .next()
+            .is_some_and(|byte| byte.is_ascii_alphanumeric())
+        && bytes
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b':' | b'-'));
     if valid {
         Ok(())

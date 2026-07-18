@@ -35,8 +35,8 @@ Caller: authenticated HTTP / in-process application work
                  │
                  ▼ complete, bounded request
             DataProcessor
-        local algorithm / model sidecar /
-               remote service
+        本地算法 / 模型伴生服务 /
+               远程服务
                  │
                  ▼
       ProcessingResult validation
@@ -192,7 +192,7 @@ Aether 端应用程序拥有与站点数据语义相关的工作：
 `DataProcessingApplication` 通过 `DataProcessor` 端口发送完整的帧、输入摘要、请求 ID、截止日期、类型化输出协定和处理器选择策略。适配器可以调用：
 
 - 进程内确定性算法；
-- 同一边缘主机上 sidecar 中的模型端点；
+- 同一边缘主机上伴生服务中的模型端点；
 - 单独监督的本地处理服务；
 - 显式配置的远程处理API。
 

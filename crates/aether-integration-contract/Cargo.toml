@@ -1,0 +1,25 @@
+[package]
+name = "aether-integration-contract"
+version.workspace = true
+publish = false
+edition = "2024"
+rust-version = "1.90"
+description = "Strict AetherContracts integration v1alpha1 wire binding for AetherEdge"
+license.workspace = true
+repository.workspace = true
+documentation = "https://docs.aetheriot.workers.dev/crates/aether-integration-contract"
+readme = "README.md"
+keywords = ["iot", "edge", "integration", "contracts"]
+categories = ["encoding", "data-structures"]
+
+[dependencies]
+aether-domain = { version = "0.5.0", path = "../aether-domain" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_json_canonicalizer = { workspace = true }
+
+[dev-dependencies]
+sha2 = { workspace = true }
+
+[lints]
+workspace = true
