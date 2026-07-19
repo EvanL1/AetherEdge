@@ -1,3 +1,0 @@
-# Hand-authored English pages owned by the unified documentation site.
-locales/en/index.md
-locales/en/agent-quickstart.md

@@ -1,7 +1,0 @@
-# Public AetherCloud product documentation. ADRs and internal agent material
-# remain in the source repository and are not mirrored into the public site.
-docs/get-started/*
-docs/concepts/!(current-state-audit).md
-docs/guides/*
-docs/reference/*
-docs/recovery/*

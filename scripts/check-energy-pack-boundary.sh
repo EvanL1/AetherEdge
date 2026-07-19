@@ -69,7 +69,7 @@ fi
 if ! rg -q 'from_active_pack_config' tools/aether/src/main.rs; then
     fail "aether MCP does not consume the shared active Pack configuration"
 fi
-if rg -n 'aether://docs/domain/' README.md docs docs-site tools services libs examples packs \
+if rg -n 'aether://docs/domain/' README.md docs tools services libs examples packs \
     --glob '!node_modules/**' \
     --glob '!dist/**' \
     --glob '!docs/plans/**' \

@@ -26,9 +26,11 @@ services/     io, automation, history, api, uplink and alarm processes
 tools/        aether CLI/MCP and simulator
 examples/     minimal generic and compatibility composition proofs
 docs/         current concepts, guides, references and ADRs
-docs-site/    generated online documentation site
 firmware/     separately targeted embedded workspace
 ```
+
+The unified documentation site source and deployment live in
+`EvanL1/AetherDocs`.
 
 Historical migration plans under `docs/plans/` and `docs/superpowers/` are
 evidence of earlier decisions, not current architecture instructions. Current
