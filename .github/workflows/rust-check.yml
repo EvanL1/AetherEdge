@@ -35,6 +35,11 @@ jobs:
       - name: Check release integrity policy
         run: ./scripts/test-release-integrity.sh
 
+      - name: Check agent documentation metadata
+        run: |
+          node --test scripts/build-agent-docs.test.mjs
+          node scripts/build-agent-docs.mjs --check
+
   # Job 0: Ensure submodules track the latest remote commit
   submodule-check:
     name: Submodule Freshness

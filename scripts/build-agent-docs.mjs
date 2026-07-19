@@ -320,7 +320,10 @@ function globPatternToRegExp(pattern) {
 async function discoverPublishedPaths(root, candidatePaths) {
   let manifest;
   try {
-    manifest = await fs.readFile(path.join(root, 'docs-site', 'content.manifest.txt'), 'utf8');
+    manifest = await fs.readFile(
+      path.join(root, 'ai', 'public-docs.manifest.txt'),
+      'utf8'
+    );
   } catch (error) {
     if (error.code === 'ENOENT') return new Set();
     throw error;

@@ -1,0 +1,17 @@
+# Public AetherIoT platform and AetherEdge documentation.
+# One glob per line, relative to the AetherEdge repository root.
+# This is the source of truth used by AetherEdge agent indexes and AetherDocs.
+docs/concepts/*
+docs/guides/*
+docs/reference/*
+docs/recovery/*
+docs/overview/*
+docs/aetheredge/*
+docs/aethercloud/*
+docs/aethercontracts/*
+docs/compatibility/*
+docs/roadmap/*
+docs/migration/*
+docs/security/dependency-exceptions.md
+crates/*/README.md
+extensions/*/README.md
