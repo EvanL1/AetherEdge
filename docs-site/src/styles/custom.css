@@ -365,17 +365,42 @@ main {
   color: var(--sl-color-gray-2);
 }
 
-.sl-markdown-content table {
+.sl-markdown-content table:not(:where(.not-content *)) {
+  display: block;
+  inline-size: 100%;
+  max-inline-size: 100%;
+  overflow-x: auto;
+  overscroll-behavior-inline: contain;
   border: 1px solid var(--aether-line);
   font-size: 0.9rem;
 }
 
-.sl-markdown-content th {
+.sl-markdown-content table :is(th, td):not(:where(.not-content *)) {
+  min-inline-size: 9rem;
+  padding: 0.875rem 1rem;
+  text-align: start;
+  vertical-align: top;
+  word-break: normal;
+}
+
+.sl-markdown-content
+  table
+  :is(
+    th:first-child,
+    td:first-child,
+    th:last-child,
+    td:last-child
+  ):not(:where(.not-content *)) {
+  padding-inline: 1rem;
+}
+
+.sl-markdown-content table th:not(:where(.not-content *)) {
   background: rgba(184, 255, 98, 0.05);
   color: var(--sl-color-white);
   font-family: var(--__sl-font-mono);
   font-size: 0.75rem;
   letter-spacing: 0.04em;
+  white-space: nowrap;
 }
 
 .sl-markdown-content th,

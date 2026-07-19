@@ -178,6 +178,23 @@ describe("AetherIoT documentation brand system", () => {
     );
   });
 
+  it("keeps wide Markdown tables readable inside the content column", () => {
+    const styles = read("src/styles/custom.css");
+
+    expect(styles).toMatch(
+      /\.sl-markdown-content table:not\(:where\(\.not-content \*\)\)\s*{[^}]*display:\s*block;[^}]*inline-size:\s*100%;[^}]*max-inline-size:\s*100%;[^}]*overflow-x:\s*auto;[^}]*overscroll-behavior-inline:\s*contain/,
+    );
+    expect(styles).toMatch(
+      /\.sl-markdown-content table :is\(th, td\):not\(:where\(\.not-content \*\)\)\s*{[^}]*min-inline-size:\s*9rem;[^}]*padding:\s*0\.875rem 1rem;[^}]*text-align:\s*start;[^}]*vertical-align:\s*top;[^}]*word-break:\s*normal/,
+    );
+    expect(styles).toMatch(
+      /\.sl-markdown-content\s+table\s+:is\(\s*th:first-child,\s*td:first-child,\s*th:last-child,\s*td:last-child\s*\):not\(:where\(\.not-content \*\)\)\s*{[^}]*padding-inline:\s*1rem/,
+    );
+    expect(styles).toMatch(
+      /\.sl-markdown-content table th:not\(:where\(\.not-content \*\)\)\s*{[^}]*white-space:\s*nowrap/,
+    );
+  });
+
   it("makes direction labels more prominent than destination page names", () => {
     const styles = read("src/styles/custom.css");
 
