@@ -161,64 +161,6 @@ domain <- ports <- application <- runtime/interfaces
 只有 `aether-api` 是远程应用边界，其他进程 API 必须保留在 loopback。生成式客户端只能使用
 公开 application capability，不能暴露或代理这些内部端口。
 
-## 项目状态
-
-AetherEdge 当前为 beta。版本化 SDK、Pack v1、六服务 Runtime、point/health 一致 SHM epoch、
-嵌入式本地运行、受治理命令、MCP 接口和 OpenAPI 契约检查已经可用。签名的 `v0.5.0`
-源码、Runtime 与 CLI 发行已经发布；下游 bootstrap pin 替换和剩余无 revision 兼容路径的
-清理仍未完成。精确边界见[架构说明](ARCHITECTURE.md)、
-[ADR-0007](docs/adr/0007-aether-core-and-ems-distribution.md)与
-[ADR-0012](docs/adr/0012-agent-first-application-surface.md)、
-[ADR-0013](docs/adr/0013-single-sdk-source-release.md)、
-[ADR-0014](docs/adr/0014-coordinated-shm-topology-publication.md)与
-[ADR-0015](docs/adr/0015-configuration-authority-and-reconciliation.md)。
-
-Point 与 health 两个 SHM 平面发布同一个已提交物理 epoch，History 与 Uplink 把同一份
-SQLite topology 快照绑定到该 epoch。SQLite 是已投运 topology、协议 mapping、逻辑 route、
-规则与 instance 的期望状态权威，并通过带 revision 的命令自动协调运行时。本地发布门禁会
-拒绝 registry 发布，确认所有 workspace package 仅随源码提供，并签名 Kernel 源码、Runtime、
-manifest 与 CLI 产物。AetherEMS 物理拆仓及其下游 bootstrap CI 已落地，但尚未使用签名发行
-证据替换 bootstrap Git pin。
-
-Broker-neutral CloudLink MQTT v1 的**边端基础**已经以实验性、显式 opt-in 方式落地：严格
-JSON schema/codec、只由 application durable ACK 清理的独立 memory/file spool、用户自选
-MQTT 3.1.1 Broker binding、session/heartbeat/manifest/真实 PointSample telemetry 与 replay
-测试。Legacy MQTT adapter 仍是兼容默认值。AetherCloud 与 AetherEdge 现在消费同一份通过摘要锁定的
-AetherContracts `v0.1.0-alpha.3`：Cloud 与 Edge 使用完全一致的 complete-consumer 锁，`pending_imports` 为空。该证据只证明分发完整性与公开 fixture 执行，不证明生产密钥生命周期、签名 ACK 或 Cloud 崩溃持久性。
-这只证明分发完整性，不代表 Rust/TypeScript codec 或边云正式联调已经完成；认证、真实双进程
-Broker harness、Cloud batch-position 应用模型和 durable Cloud store 仍未完成。边界见
-[CloudLink 参考](docs/reference/cloudlink-mqtt-v1.md)。
-
-独立的 `aether.cloudlink.integration.v1alpha1` 扩展仍处于实验阶段，默认关闭。它要求云端
-先启用兼容接收方，并在边缘运行时清单中明确声明；拓扑和观测分别使用独立持久流，每条完整
-MQTT 消息负载不得超过 256 KiB，且不提供任何物理设备控制能力。
-
-源码中还实现了实验性的 Home Assistant 边缘桥接。默认的可选装配仍然只读：`aether-io`
-在本地通过 WebSocket 完成认证，投影区域、设备、实体拓扑和类型化状态，并在事件流出现
-缺口后重新取得完整快照。另一个默认关闭的源码构建特性，可以在云端接收方先启用并完成
-明确确认后，通过两个可恢复的独立持久队列发布已经提交的只读拓扑与观测；MQTT 发布确认
-不会删除记录，只有云端应用确认才会删除。
-
-第三个需要单独启用的源码构建特性提供一条受治理的 `device.power.set.v1` 控制路径。
-只有当前 CloudLink 会话已经接纳并持久记录后，边缘端才会订阅经过签名的请求。随后还要
-依次通过精确拓扑、本地默认拒绝策略、持久审计和作业去重，最终只能把布尔开关意图映射为
-固定的 Home Assistant 开启或关闭调用。调用方不能指定 Home Assistant 服务或附加参数；
-提供方接纳后的物理结果仍为未知。预编译发行版尚未启用这些特性；公开集成查询、生产级
-OAuth 和生产密钥生命周期仍未完成。详情见
-[接入 Home Assistant](https://docs.aetheriot.workers.dev/guides/home-assistant/)。
-
-## 文档
-
-- [Agent Quickstart](https://docs.aetheriot.workers.dev/agent-quickstart/)
-- [AI 原生平台](https://docs.aetheriot.workers.dev/overview/ai-native-platform/)
-- [使用 AI 构建应用](docs/guides/build-applications-with-ai.md)
-- [连接 AI 助手](docs/guides/ai-assistants.md)
-- [连接设备](docs/guides/connect-devices.md)
-- [接入 Home Assistant](https://docs.aetheriot.workers.dev/guides/home-assistant/)
-- [HTTP API 与 Swagger](docs/reference/http-api.md)
-- [部署指南](docs/guides/deployment.md)
-- [llms.txt](https://docs.aetheriot.workers.dev/llms.txt)
-
 ## 开发验证
 
 ```bash
