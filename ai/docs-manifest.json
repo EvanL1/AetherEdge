@@ -26,7 +26,7 @@
       "implementation_status": "implemented",
       "production_readiness": "not-applicable",
       "context_sensitivity": "internal",
-      "updated": "2026-07-21",
+      "updated": "2026-07-22",
       "priority": "core",
       "media_type": "text/markdown",
       "capability_refs": [],
@@ -1583,6 +1583,34 @@
       "canonical_url": "https://github.com/EvanL1/AetherEdge/blob/main/docs/adr/0020-home-assistant-edge-bridge.md",
       "title": "ADR-0020: Integrate Home Assistant through an Edge bridge",
       "description": "Accepted staged decision for delegated topology, observations, governed actions, resynchronization, backpressure, and authority.",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "decision",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "inspect-edge-implementation"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "not-applicable",
+      "context_sensitivity": "internal",
+      "updated": "2026-07-18",
+      "priority": "optional",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-docs-adr-0021-cli-and-mcp-through-the-remote-application-boundary",
+      "path": "docs/adr/0021-cli-and-mcp-through-the-remote-application-boundary.md",
+      "canonical_url": "https://github.com/EvanL1/AetherEdge/blob/main/docs/adr/0021-cli-and-mcp-through-the-remote-application-boundary.md",
+      "title": "ADR-0021: CLI and MCP consume the remote application boundary",
+      "description": "Accepted.",
       "locale": "en",
       "translation_of": null,
       "document_role": "decision",

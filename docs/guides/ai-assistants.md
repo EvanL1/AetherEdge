@@ -1,7 +1,7 @@
 ---
 title: Connect AI Assistants
 description: Point Claude or any MCP client at aether mcp, and choose between read-only and write access
-updated: 2026-07-12
+updated: 2026-07-22
 ---
 
 # Connect AI Assistants
@@ -40,10 +40,13 @@ The production MCP catalog has 45 tools in two tiers:
   mandatory audit. See [Read-only vs write access](#read-only-vs-write-access)
   below.
 
-Each tool wraps one CLI client call against the same service HTTP APIs the
-`aether` command line uses. Results come back as structured content; a failed
-or unreachable service comes back as readable error text rather than an opaque
-protocol error.
+Each tool wraps one CLI client call against the authenticated API gateway
+(`aether-api:6005`) — the same remote application boundary every other client
+uses (ADR-0021). Set `AETHER_ACCESS_TOKEN` for the session: the gateway
+authenticates reads as well as writes. A Viewer token is enough for the
+read-only tier; obtain one from `POST /api/v1/auth/login`. Results come back
+as structured content; a failed or unreachable service comes back as readable
+error text rather than an opaque protocol error.
 
 The server also serves the documentation you are reading now as MCP
 [resources](#resources), so an assistant can learn the domain — what a PCS is,
@@ -83,39 +86,33 @@ claude mcp add aether -- aether mcp --allow-write
 ## Pointing at a remote system
 
 The MCP server does not have to run on the edge device. Every tool talks to
-the Aether service APIs, so `aether mcp` on a laptop can inspect a remote
-installation. Two mechanisms are resolved at server startup:
+the single API gateway (`aether-api:6005`), so one address configures
+everything (ADR-0021). Resolution order at server startup:
 
-- **`--host <hostname>`** rewrites the host for all five service URLs while
-  keeping plaintext HTTP and the default ports. This is a quick path for
-  read-only tools when all services run on one trusted network host:
+1. **`--host <hostname>`** targets the gateway on that host with the default
+   port: `aether mcp --host 192.168.1.50` resolves to
+   `http://192.168.1.50:6005`.
+2. **`AETHER_API_URL`** overrides the full base URL — scheme, host, and port —
+   when `--host` is not passed.
+3. Neither set: `http://localhost:6005`.
+
+The transport guard rejects any token-carrying request over non-loopback
+plaintext HTTP, so a remote gateway needs one of:
+
+- **SSH stdio pipe** — run the server on the edge host; the gateway stays on
+  loopback and nothing is exposed:
 
   ```bash
-  aether mcp --host 192.168.1.50
+  claude mcp add aether -- ssh user@gateway aether mcp
   ```
 
-- **Five environment variables** set each service URL independently, useful
-  when schemes, ports, or hosts differ per service:
+- **SSH port-forward** — `ssh -L 6005:localhost:6005 user@gateway`, then run
+  `aether mcp` locally against the default loopback URL.
+- **One HTTPS ingress** in front of `6005` for standing remote access:
+  `AETHER_API_URL=https://edge.example.test`.
 
-  | Environment variable | Service | Tools served | Default |
-  |----------------------|---------|--------------|---------|
-  | `AETHER_IO_URL` | io | channels, points, templates | `http://localhost:6001` |
-  | `AETHER_AUTOMATION_URL` | automation | rules, routing, models/instances | `http://localhost:6002` |
-  | `AETHER_ALARM_URL` | alarm | alarms | `http://localhost:6007` |
-  | `AETHER_UPLINK_URL` | uplink | MQTT, certificates | `http://localhost:6006` |
-  | `AETHER_HISTORY_URL` | history | history | `http://localhost:6004` |
-
-Precedence: `--host` wins — when it is passed, the environment variables are
-not consulted. When neither is set, everything defaults to `localhost`.
-
-Protected writes carrying `AETHER_ACCESS_TOKEN` are allowed over loopback HTTP
-for on-device operation. For any remote write-enabled MCP server, omit
-`--host` and point the service variables at certificate-validated HTTPS
-ingresses. The transport guard rejects non-loopback plaintext HTTP before the
-Bearer token is selected for the request or attached.
-
-In the Claude Desktop config, a remote write-enabled server can use the `env`
-block like this (replace the example hostnames with your ingress endpoints):
+In the Claude Desktop config, a remote write-enabled server looks like this
+(replace the hostname with your ingress endpoint):
 
 ```json
 {
@@ -124,11 +121,7 @@ block like this (replace the example hostnames with your ingress endpoints):
       "command": "aether",
       "args": ["mcp", "--allow-write"],
       "env": {
-        "AETHER_IO_URL": "https://io.edge.example.test",
-        "AETHER_AUTOMATION_URL": "https://automation.edge.example.test",
-        "AETHER_ALARM_URL": "https://alarm.edge.example.test",
-        "AETHER_UPLINK_URL": "https://uplink.edge.example.test",
-        "AETHER_HISTORY_URL": "https://history.edge.example.test",
+        "AETHER_API_URL": "https://edge.example.test",
         "AETHER_ACCESS_TOKEN": "<SIGNED_ADMIN_OR_ENGINEER_TOKEN>"
       }
     }
