@@ -82,7 +82,7 @@
       "implementation_status": "implemented",
       "production_readiness": "not-applicable",
       "context_sensitivity": "public",
-      "updated": "2026-07-21",
+      "updated": "2026-07-22",
       "priority": "core",
       "media_type": "text/markdown",
       "capability_refs": [],
