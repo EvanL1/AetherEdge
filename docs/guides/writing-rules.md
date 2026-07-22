@@ -1,7 +1,7 @@
 ---
 title: Writing Rules
 description: Author rules through the HTTP API or a downstream product console
-updated: 2026-07-10
+updated: 2026-07-22
 ---
 
 # Writing Rules
@@ -62,11 +62,14 @@ drift (see [Rule Engine](../concepts/rule-engine.md) for the invariant).
 
 ## Via the HTTP API
 
-automation serves the rule API (`services/automation/src/rule_routes.rs`):
-Swagger UI at `http://localhost:6002/docs` is the per-operation contract source.
+automation serves the rule API (`services/automation/src/rule_routes.rs`);
+applications reach it through the authenticated gateway under
+`/api/v1/automation` (ADR-0021). The loopback Swagger UI at
+`http://localhost:6002/docs` remains the per-operation contract source.
 Every mutation below accepts only a Bearer Admin/Engineer actor, requires
-`confirmed: true`, and writes mandatory audit records before changing SQLite
-or reloading the scheduler.
+`confirmed: true` plus the gateway's `x-aether-confirmed: true` header, and
+writes mandatory audit records before changing SQLite or reloading the
+scheduler.
 
 | Method | Path | Purpose |
 |--------|------|---------|
@@ -88,21 +91,24 @@ document, disabled. The flow content only lands via `PUT /api/rules/{id}`:
 
 ```bash
 # 1. Create the stub; the response carries the assigned id
-curl -X POST http://localhost:6002/api/rules \
+curl -X POST http://localhost:6005/api/v1/automation/api/rules \
   -H "Authorization: Bearer $AETHER_ACCESS_TOKEN" \
+  -H 'x-aether-confirmed: true' \
   -H 'Content-Type: application/json' \
   -d '{"name": "Battery SOC Protection", "description": "Protect battery when SOC is too low", "confirmed": true}'
 # → {"success": true, "data": {"id": 3, "name": "Battery SOC Protection", "status": "created"}}
 
 # 2. Write the flow and trigger
-curl -X PUT http://localhost:6002/api/rules/3 \
+curl -X PUT http://localhost:6005/api/v1/automation/api/rules/3 \
   -H "Authorization: Bearer $AETHER_ACCESS_TOKEN" \
+  -H 'x-aether-confirmed: true' \
   -H 'Content-Type: application/json' \
   -d @rule.json
 
 # 3. Enable it
-curl -X POST http://localhost:6002/api/rules/3/enable \
+curl -X POST http://localhost:6005/api/v1/automation/api/rules/3/enable \
   -H "Authorization: Bearer $AETHER_ACCESS_TOKEN" \
+  -H 'x-aether-confirmed: true' \
   -H 'Content-Type: application/json' \
   -d '{"confirmed": true}'
 ```

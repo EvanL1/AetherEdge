@@ -1,7 +1,7 @@
 ---
 title: Getting Started
 description: Build the workspace, initialize configuration, start services, and verify health
-updated: 2026-07-10
+updated: 2026-07-22
 ---
 
 # Getting Started
@@ -156,6 +156,28 @@ composition; the other five process APIs listen on `127.0.0.1`:
 
 AetherEdge intentionally exposes no bundled Web UI. Product consoles such as
 AetherEMS are deployed independently and enter through `aether-api`.
+
+## Get an operator token
+
+The CLI data plane and MCP speak only to the authenticated API gateway on
+port 6005 (ADR-0021), so every `aether` data command needs an access token.
+Log in as the bootstrap admin and export the token for the shell session —
+the login API expects the hex MD5 digest of the password, not the plaintext:
+
+```bash
+# The bootstrap value was unset from the shell above; read it back from .env
+bootstrap_password="$(grep '^AETHER_BOOTSTRAP_ADMIN_PASSWORD=' .env | cut -d= -f2-)"
+digest="$(printf '%s' "$bootstrap_password" | md5sum | cut -d' ' -f1)"
+export AETHER_ACCESS_TOKEN="$(curl -s http://localhost:6005/api/v1/auth/login \
+  -H 'content-type: application/json' \
+  -d "{\"username\":\"admin\",\"password\":\"$digest\"}" | jq -r '.data.access_token')"
+unset bootstrap_password digest
+```
+
+Tokens expire after 30 minutes by default; rerun the login when a command
+reports 401. Day-to-day operation should use a dedicated account instead of
+the bootstrap admin — see the auth endpoints in the
+[HTTP API reference](../reference/http-api.md).
 
 ## First look around
 
