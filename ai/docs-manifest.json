@@ -26,7 +26,7 @@
       "implementation_status": "implemented",
       "production_readiness": "not-applicable",
       "context_sensitivity": "internal",
-      "updated": "2026-07-21",
+      "updated": "2026-07-22",
       "priority": "core",
       "media_type": "text/markdown",
       "capability_refs": [],
@@ -924,7 +924,7 @@
       "implementation_status": "partial",
       "production_readiness": "not-applicable",
       "context_sensitivity": "public",
-      "updated": "2026-07-14",
+      "updated": "2026-07-22",
       "priority": "core",
       "media_type": "text/markdown",
       "capability_refs": [],
@@ -1606,6 +1606,34 @@
       "verification": []
     },
     {
+      "id": "edge-docs-adr-0021-cli-and-mcp-through-the-remote-application-boundary",
+      "path": "docs/adr/0021-cli-and-mcp-through-the-remote-application-boundary.md",
+      "canonical_url": "https://github.com/EvanL1/AetherEdge/blob/main/docs/adr/0021-cli-and-mcp-through-the-remote-application-boundary.md",
+      "title": "ADR-0021: CLI and MCP consume the remote application boundary",
+      "description": "Accepted.",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "decision",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "inspect-edge-implementation"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "not-applicable",
+      "context_sensitivity": "internal",
+      "updated": "2026-07-22",
+      "priority": "optional",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
       "id": "edge-docs-aethercloud-index",
       "path": "docs/aethercloud/index.md",
       "canonical_url": "https://docs.aetheriot.workers.dev/en/aethercloud.md",
@@ -2156,7 +2184,7 @@
       "implementation_status": "partial",
       "production_readiness": "experimental",
       "context_sensitivity": "public",
-      "updated": "2026-07-14",
+      "updated": "2026-07-22",
       "priority": "core",
       "media_type": "text/markdown",
       "capability_refs": [
@@ -3121,7 +3149,7 @@
       "implementation_status": "partial",
       "production_readiness": "experimental",
       "context_sensitivity": "public",
-      "updated": "2026-07-18",
+      "updated": "2026-07-22",
       "priority": "core",
       "media_type": "text/markdown",
       "capability_refs": [],

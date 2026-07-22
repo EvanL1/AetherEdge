@@ -13,7 +13,7 @@ fn json_output_has_no_log_lines_mixed_in() {
     let exe = env!("CARGO_BIN_EXE_aether");
     let output = Command::new(exe)
         .args(["--verbose", "--json", "net", "mqtt", "status"])
-        .env_remove("AETHER_UPLINK_URL")
+        .env_remove("AETHER_API_URL")
         .output()
         .expect("failed to run aether binary");
 

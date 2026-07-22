@@ -772,6 +772,12 @@ fn print_reconciliation_receipt(response: &Value, json: bool) -> Result<()> {
     Ok(())
 }
 
+fn access_token_from_env() -> Option<String> {
+    std::env::var("AETHER_ACCESS_TOKEN")
+        .ok()
+        .filter(|value| !value.trim().is_empty() && value.trim() == value)
+}
+
 // HTTP client for channel management
 pub(crate) struct ChannelClient {
     client: Client,
@@ -784,9 +790,7 @@ impl ChannelClient {
         Ok(Self {
             client: Client::new(),
             base_url: base_url.to_string(),
-            access_token: std::env::var("AETHER_ACCESS_TOKEN")
-                .ok()
-                .filter(|value| !value.trim().is_empty() && value.trim() == value),
+            access_token: access_token_from_env(),
         })
     }
 
@@ -799,12 +803,19 @@ impl ChannelClient {
         })
     }
 
+    fn apply_auth(&self, request: reqwest::RequestBuilder) -> Result<reqwest::RequestBuilder> {
+        match &self.access_token {
+            Some(token) => {
+                crate::transport_security::require_secure_bearer_transport(&self.base_url)?;
+                Ok(request.bearer_auth(token))
+            },
+            None => Ok(request),
+        }
+    }
+
     pub(crate) async fn list_channels(&self) -> Result<Value> {
-        let response = self
-            .client
-            .get(format!("{}/api/channels", self.base_url))
-            .send()
-            .await?;
+        let request = self.client.get(format!("{}/api/channels", self.base_url));
+        let response = self.apply_auth(request)?.send().await?;
 
         if response.status().is_success() {
             Ok(response.json().await?)
@@ -817,14 +828,11 @@ impl ChannelClient {
     }
 
     pub(crate) async fn get_channel_status(&self, channel_id: u32) -> Result<Value> {
-        let response = self
-            .client
-            .get(format!(
-                "{}/api/channels/{}/status",
-                self.base_url, channel_id
-            ))
-            .send()
-            .await?;
+        let request = self.client.get(format!(
+            "{}/api/channels/{}/status",
+            self.base_url, channel_id
+        ));
+        let response = self.apply_auth(request)?.send().await?;
 
         if response.status().is_success() {
             Ok(response.json().await?)
@@ -865,11 +873,8 @@ impl ChannelClient {
     }
 
     async fn check_health(&self) -> Result<Value> {
-        let response = self
-            .client
-            .get(format!("{}/health", self.base_url))
-            .send()
-            .await?;
+        let request = self.client.get(format!("{}/health", self.base_url));
+        let response = self.apply_auth(request)?.send().await?;
 
         if response.status().is_success() {
             Ok(response.json().await?)
@@ -1016,9 +1021,9 @@ impl ChannelClient {
         confirmed: bool,
         expected_revision: Option<u64>,
     ) -> Result<reqwest::RequestBuilder> {
-        let access_token = self.validate_mutation(confirmed, expected_revision)?;
-        let mut request = request
-            .bearer_auth(access_token)
+        self.validate_mutation(confirmed, expected_revision)?;
+        let mut request = self
+            .apply_auth(request)?
             .header("x-request-id", uuid::Uuid::new_v4().to_string())
             .header("x-aether-confirmed", "true");
         if let Some(revision) = expected_revision {
@@ -1045,14 +1050,11 @@ impl ChannelClient {
     }
 
     pub(crate) async fn mappings(&self, channel_id: u32) -> Result<Value> {
-        let resp = self
-            .client
-            .get(format!(
-                "{}/api/channels/{}/mappings",
-                self.base_url, channel_id
-            ))
-            .send()
-            .await?;
+        let request = self.client.get(format!(
+            "{}/api/channels/{}/mappings",
+            self.base_url, channel_id
+        ));
+        let resp = self.apply_auth(request)?.send().await?;
 
         if resp.status().is_success() {
             Ok(resp.json().await?)
@@ -1062,14 +1064,11 @@ impl ChannelClient {
     }
 
     pub(crate) async fn unmapped_points(&self, channel_id: u32) -> Result<Value> {
-        let resp = self
-            .client
-            .get(format!(
-                "{}/api/channels/{}/unmapped-points",
-                self.base_url, channel_id
-            ))
-            .send()
-            .await?;
+        let request = self.client.get(format!(
+            "{}/api/channels/{}/unmapped-points",
+            self.base_url, channel_id
+        ));
+        let resp = self.apply_auth(request)?.send().await?;
 
         if resp.status().is_success() {
             Ok(resp.json().await?)
@@ -1093,15 +1092,15 @@ impl ChannelClient {
             );
         }
         let body = serde_json::json!({ "type": point_type, "id": id, "value": value });
-        let resp = self
+        let request = self
             .client
             .post(format!(
                 "{}/api/channels/{}/write",
                 self.base_url, channel_id
             ))
             .json(&body)
-            .send()
-            .await?;
+            .header("x-aether-confirmed", "true");
+        let resp = self.apply_auth(request)?.send().await?;
 
         if resp.status().is_success() {
             Ok(resp.json().await?)
@@ -1115,6 +1114,7 @@ impl ChannelClient {
 pub(crate) struct PointClient {
     client: Client,
     base_url: String,
+    access_token: Option<String>,
 }
 
 impl PointClient {
@@ -1122,7 +1122,27 @@ impl PointClient {
         Ok(Self {
             client: Client::new(),
             base_url: base_url.to_string(),
+            access_token: access_token_from_env(),
         })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_access_token(base_url: &str, access_token: &str) -> Result<Self> {
+        Ok(Self {
+            client: Client::new(),
+            base_url: base_url.to_string(),
+            access_token: Some(access_token.to_string()),
+        })
+    }
+
+    fn apply_auth(&self, request: reqwest::RequestBuilder) -> Result<reqwest::RequestBuilder> {
+        match &self.access_token {
+            Some(token) => {
+                crate::transport_security::require_secure_bearer_transport(&self.base_url)?;
+                Ok(request.bearer_auth(token))
+            },
+            None => Ok(request),
+        }
     }
 
     pub(crate) async fn list_points(
@@ -1134,7 +1154,7 @@ impl PointClient {
         if let Some(t) = type_filter {
             url.push_str(&format!("?type={}", t));
         }
-        let response = self.client.get(&url).send().await?;
+        let response = self.apply_auth(self.client.get(&url))?.send().await?;
         if response.status().is_success() {
             Ok(response.json().await?)
         } else {
@@ -1176,7 +1196,12 @@ impl PointClient {
             "{}/api/channels/{}/{}/points/{}",
             self.base_url, channel_id, pt, point_id
         );
-        let response = self.client.post(&url).json(&body).send().await?;
+        let request = self
+            .client
+            .post(&url)
+            .json(&body)
+            .header("x-aether-confirmed", "true");
+        let response = self.apply_auth(request)?.send().await?;
         if response.status().is_success() {
             Ok(response.json().await?)
         } else {
@@ -1222,12 +1247,12 @@ impl PointClient {
             "{}/api/channels/{}/{}/points/{}",
             self.base_url, channel_id, pt, point_id
         );
-        let response = self
+        let request = self
             .client
             .put(&url)
             .json(&serde_json::Value::Object(body))
-            .send()
-            .await?;
+            .header("x-aether-confirmed", "true");
+        let response = self.apply_auth(request)?.send().await?;
         if response.status().is_success() {
             Ok(response.json().await?)
         } else {
@@ -1252,7 +1277,11 @@ impl PointClient {
             "{}/api/channels/{}/{}/points/{}",
             self.base_url, channel_id, pt, point_id
         );
-        let response = self.client.delete(&url).send().await?;
+        let request = self
+            .client
+            .delete(&url)
+            .header("x-aether-confirmed", "true");
+        let response = self.apply_auth(request)?.send().await?;
         if response.status().is_success() {
             Ok(response.json().await?)
         } else {
@@ -1267,15 +1296,15 @@ impl PointClient {
     }
 
     pub(crate) async fn points_batch(&self, channel_id: u32, body: &Value) -> Result<Value> {
-        let resp = self
+        let request = self
             .client
             .post(format!(
                 "{}/api/channels/{}/points/batch",
                 self.base_url, channel_id
             ))
             .json(body)
-            .send()
-            .await?;
+            .header("x-aether-confirmed", "true");
+        let resp = self.apply_auth(request)?.send().await?;
 
         if resp.status().is_success() {
             Ok(resp.json().await?)
@@ -1290,14 +1319,11 @@ impl PointClient {
         point_type: &str,
         point_id: u32,
     ) -> Result<Value> {
-        let resp = self
-            .client
-            .get(format!(
-                "{}/api/channels/{}/{}/points/{}/mapping",
-                self.base_url, channel_id, point_type, point_id
-            ))
-            .send()
-            .await?;
+        let request = self.client.get(format!(
+            "{}/api/channels/{}/{}/points/{}/mapping",
+            self.base_url, channel_id, point_type, point_id
+        ));
+        let resp = self.apply_auth(request)?.send().await?;
 
         if resp.status().is_success() {
             Ok(resp.json().await?)
@@ -1861,6 +1887,78 @@ mod tests {
             access_token: None,
         };
         client.list_channels().await.unwrap();
+
+        let requests = server.received_requests().await.unwrap();
+        assert_eq!(requests.len(), 1);
+        assert!(
+            requests[0].headers.get("authorization").is_none(),
+            "tokenless reads must go out unauthenticated"
+        );
+    }
+
+    #[tokio::test]
+    async fn channel_reads_attach_bearer_when_a_token_is_present() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/channels"))
+            .and(header("authorization", "Bearer signed-access-token"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([])))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let client =
+            ChannelClient::with_access_token(&server.uri(), "signed-access-token").unwrap();
+        client.list_channels().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn authenticated_channel_reads_refuse_remote_plaintext_transport() {
+        let client =
+            ChannelClient::with_access_token("http://192.0.2.10:6005", "signed-access-token")
+                .unwrap();
+        let error = client.list_channels().await.unwrap_err().to_string();
+        assert!(error.contains("non-loopback plaintext"), "{error}");
+    }
+
+    #[tokio::test]
+    async fn point_reads_attach_bearer_when_a_token_is_present() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/channels/1001/points"))
+            .and(header("authorization", "Bearer signed-access-token"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let client = PointClient::with_access_token(&server.uri(), "signed-access-token").unwrap();
+        client.list_points(1001, None).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn point_reads_remain_available_without_an_access_token() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/channels/1001/points"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let client = PointClient {
+            client: Client::new(),
+            base_url: server.uri(),
+            access_token: None,
+        };
+        client.list_points(1001, None).await.unwrap();
+
+        let requests = server.received_requests().await.unwrap();
+        assert_eq!(requests.len(), 1);
+        assert!(
+            requests[0].headers.get("authorization").is_none(),
+            "tokenless reads must go out unauthenticated"
+        );
     }
 
     #[tokio::test]
@@ -1983,6 +2081,7 @@ mod tests {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
             .and(path("/api/channels/1001/write"))
+            .and(header("x-aether-confirmed", "true"))
             .and(body_json(
                 serde_json::json!({ "type": "T", "id": "5", "value": 50.0 }),
             ))
@@ -2036,6 +2135,7 @@ mod tests {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
             .and(path("/api/channels/1001/points/batch"))
+            .and(header("x-aether-confirmed", "true"))
             .and(body_json(
                 serde_json::json!({ "delete": [{ "point_id": 3 }] }),
             ))
@@ -2047,6 +2147,35 @@ mod tests {
         let client = PointClient::new(&server.uri()).unwrap();
         let body = serde_json::json!({ "delete": [{ "point_id": 3 }] });
         client.points_batch(1001, &body).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn point_mutations_send_the_confirmed_header() {
+        let server = MockServer::start().await;
+        for verb in ["POST", "PUT", "DELETE"] {
+            Mock::given(method(verb))
+                .and(path("/api/channels/1001/T/points/5"))
+                .and(header("x-aether-confirmed", "true"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
+                .expect(1)
+                .mount(&server)
+                .await;
+        }
+
+        let client = PointClient {
+            client: Client::new(),
+            base_url: server.uri(),
+            access_token: None,
+        };
+        client
+            .add_point(1001, "T", 5, "voltage", "V", None, None, None)
+            .await
+            .unwrap();
+        client
+            .update_point(1001, "T", 5, Some("voltage"), None, None, None)
+            .await
+            .unwrap();
+        client.remove_point(1001, "T", 5).await.unwrap();
     }
 
     #[tokio::test]

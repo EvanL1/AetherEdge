@@ -143,6 +143,7 @@ async fn handle_cert_command(cmd: CertCommands, base_url: &str, json: bool) -> R
 pub(crate) struct NetClient {
     client: Client,
     base_url: String,
+    access_token: Option<String>,
 }
 
 impl NetClient {
@@ -150,15 +151,36 @@ impl NetClient {
         Ok(Self {
             client: Client::new(),
             base_url: base_url.trim_end_matches('/').to_string(),
+            access_token: std::env::var("AETHER_ACCESS_TOKEN")
+                .ok()
+                .filter(|value| !value.trim().is_empty() && value.trim() == value),
         })
     }
 
+    #[cfg(test)]
+    pub(crate) fn with_access_token(base_url: &str, access_token: &str) -> Result<Self> {
+        Ok(Self {
+            client: Client::new(),
+            base_url: base_url.trim_end_matches('/').to_string(),
+            access_token: Some(access_token.to_string()),
+        })
+    }
+
+    /// Attaches the session Bearer token when one is present. Requests without
+    /// a token go out unauthenticated and let the gateway respond 401.
+    fn apply_auth(&self, request: reqwest::RequestBuilder) -> Result<reqwest::RequestBuilder> {
+        match &self.access_token {
+            Some(token) => {
+                crate::transport_security::require_secure_bearer_transport(&self.base_url)?;
+                Ok(request.bearer_auth(token))
+            },
+            None => Ok(request),
+        }
+    }
+
     pub(crate) async fn mqtt_status(&self) -> Result<Value> {
-        let resp = self
-            .client
-            .get(format!("{}/netApi/mqtt/status", self.base_url))
-            .send()
-            .await?;
+        let request = self.client.get(format!("{}/mqtt/status", self.base_url));
+        let resp = self.apply_auth(request)?.send().await?;
 
         if resp.status().is_success() {
             Ok(resp.json().await?)
@@ -168,11 +190,8 @@ impl NetClient {
     }
 
     pub(crate) async fn mqtt_config(&self) -> Result<Value> {
-        let resp = self
-            .client
-            .get(format!("{}/netApi/mqtt/config", self.base_url))
-            .send()
-            .await?;
+        let request = self.client.get(format!("{}/mqtt/config", self.base_url));
+        let resp = self.apply_auth(request)?.send().await?;
 
         if resp.status().is_success() {
             Ok(resp.json().await?)
@@ -182,12 +201,12 @@ impl NetClient {
     }
 
     pub(crate) async fn mqtt_config_set(&self, cfg: &Value) -> Result<Value> {
-        let resp = self
+        let request = self
             .client
-            .post(format!("{}/netApi/mqtt/config", self.base_url))
-            .json(cfg)
-            .send()
-            .await?;
+            .post(format!("{}/mqtt/config", self.base_url))
+            .header("x-aether-confirmed", "true")
+            .json(cfg);
+        let resp = self.apply_auth(request)?.send().await?;
 
         if resp.status().is_success() {
             Ok(resp.json().await?)
@@ -197,21 +216,21 @@ impl NetClient {
     }
 
     pub(crate) async fn mqtt_reconnect(&self) -> Result<Value> {
-        self.post_empty("/netApi/mqtt/reconnect", "Failed to reconnect MQTT")
+        self.post_empty("/mqtt/reconnect", "Failed to reconnect MQTT")
             .await
     }
 
     pub(crate) async fn mqtt_disconnect(&self) -> Result<Value> {
-        self.post_empty("/netApi/mqtt/disconnect", "Failed to disconnect MQTT")
+        self.post_empty("/mqtt/disconnect", "Failed to disconnect MQTT")
             .await
     }
 
     async fn post_empty(&self, path: &str, context: &str) -> Result<Value> {
-        let resp = self
+        let request = self
             .client
             .post(format!("{}{}", self.base_url, path))
-            .send()
-            .await?;
+            .header("x-aether-confirmed", "true");
+        let resp = self.apply_auth(request)?.send().await?;
 
         if resp.status().is_success() {
             Ok(resp.json().await?)
@@ -221,11 +240,10 @@ impl NetClient {
     }
 
     pub(crate) async fn cert_info(&self) -> Result<Value> {
-        let resp = self
+        let request = self
             .client
-            .get(format!("{}/netApi/certificate/info", self.base_url))
-            .send()
-            .await?;
+            .get(format!("{}/certificate/info", self.base_url));
+        let resp = self.apply_auth(request)?.send().await?;
 
         if resp.status().is_success() {
             Ok(resp.json().await?)
@@ -235,14 +253,11 @@ impl NetClient {
     }
 
     pub(crate) async fn cert_delete(&self, cert_type: &str) -> Result<Value> {
-        let resp = self
+        let request = self
             .client
-            .delete(format!(
-                "{}/netApi/certificate/{}",
-                self.base_url, cert_type
-            ))
-            .send()
-            .await?;
+            .delete(format!("{}/certificate/{}", self.base_url, cert_type))
+            .header("x-aether-confirmed", "true");
+        let resp = self.apply_auth(request)?.send().await?;
 
         if resp.status().is_success() {
             Ok(resp.json().await?)
@@ -271,12 +286,12 @@ impl NetClient {
             .text("cert_type", cert_type.to_string())
             .part("file", part);
 
-        let resp = self
+        let request = self
             .client
-            .post(format!("{}/netApi/certificate/upload", self.base_url))
-            .multipart(form)
-            .send()
-            .await?;
+            .post(format!("{}/certificate/upload", self.base_url))
+            .header("x-aether-confirmed", "true")
+            .multipart(form);
+        let resp = self.apply_auth(request)?.send().await?;
 
         if resp.status().is_success() {
             Ok(resp.json().await?)
@@ -289,14 +304,53 @@ impl NetClient {
 #[cfg(test)]
 mod tests {
     use super::NetClient;
-    use wiremock::matchers::{method, path};
+    use reqwest::Client;
+    use wiremock::matchers::{header, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    #[tokio::test]
+    async fn reads_attach_bearer_token_when_present() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/mqtt/status"))
+            .and(header("authorization", "Bearer signed-access-token"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(serde_json::json!({ "connected": true })),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let client = NetClient::with_access_token(&server.uri(), "signed-access-token").unwrap();
+        client.mqtt_status().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn reads_without_token_carry_no_authorization_header() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/mqtt/status"))
+            .and(|request: &wiremock::Request| !request.headers.contains_key("authorization"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(serde_json::json!({ "connected": true })),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let client = NetClient {
+            client: Client::new(),
+            base_url: server.uri(),
+            access_token: None,
+        };
+        client.mqtt_status().await.unwrap();
+    }
 
     #[tokio::test]
     async fn mqtt_status_gets_the_status_endpoint() {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
-            .and(path("/netApi/mqtt/status"))
+            .and(path("/mqtt/status"))
             .respond_with(ResponseTemplate::new(200).set_body_json(
                 serde_json::json!({ "connected": true, "broker": "tcp://1.2.3.4:1883" }),
             ))
@@ -314,7 +368,7 @@ mod tests {
     async fn mqtt_status_surfaces_server_message_on_error() {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
-            .and(path("/netApi/mqtt/status"))
+            .and(path("/mqtt/status"))
             .respond_with(ResponseTemplate::new(500).set_body_json(
                 serde_json::json!({ "success": false, "message": "broker unreachable" }),
             ))
@@ -331,7 +385,7 @@ mod tests {
     async fn mqtt_config_get_hits_config_endpoint() {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
-            .and(path("/netApi/mqtt/config"))
+            .and(path("/mqtt/config"))
             .respond_with(
                 ResponseTemplate::new(200).set_body_json(serde_json::json!({ "host": "h" })),
             )
@@ -349,7 +403,7 @@ mod tests {
     async fn mqtt_config_surfaces_server_message_on_error() {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
-            .and(path("/netApi/mqtt/config"))
+            .and(path("/mqtt/config"))
             .respond_with(ResponseTemplate::new(500).set_body_json(
                 serde_json::json!({ "success": false, "message": "config store unreadable" }),
             ))
@@ -366,7 +420,8 @@ mod tests {
     async fn mqtt_config_set_posts_the_body_verbatim() {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
-            .and(path("/netApi/mqtt/config"))
+            .and(path("/mqtt/config"))
+            .and(header("x-aether-confirmed", "true"))
             .and(wiremock::matchers::body_json(
                 serde_json::json!({ "host": "new", "port": 1883 }),
             ))
@@ -386,7 +441,7 @@ mod tests {
     async fn mqtt_config_set_surfaces_server_message_on_error() {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
-            .and(path("/netApi/mqtt/config"))
+            .and(path("/mqtt/config"))
             .respond_with(ResponseTemplate::new(400).set_body_json(
                 serde_json::json!({ "success": false, "message": "invalid broker_port" }),
             ))
@@ -407,7 +462,8 @@ mod tests {
     async fn mqtt_reconnect_posts_its_endpoint() {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
-            .and(path("/netApi/mqtt/reconnect"))
+            .and(path("/mqtt/reconnect"))
+            .and(header("x-aether-confirmed", "true"))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
             .expect(1)
             .mount(&server)
@@ -424,7 +480,7 @@ mod tests {
         // what proves this hit its own path, not mqtt_disconnect's.
         let server = MockServer::start().await;
         Mock::given(method("POST"))
-            .and(path("/netApi/mqtt/reconnect"))
+            .and(path("/mqtt/reconnect"))
             .respond_with(ResponseTemplate::new(500).set_body_json(
                 serde_json::json!({ "success": false, "message": "broker unreachable" }),
             ))
@@ -442,7 +498,8 @@ mod tests {
     async fn mqtt_disconnect_posts_its_endpoint() {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
-            .and(path("/netApi/mqtt/disconnect"))
+            .and(path("/mqtt/disconnect"))
+            .and(header("x-aether-confirmed", "true"))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
             .expect(1)
             .mount(&server)
@@ -459,7 +516,7 @@ mod tests {
         // mqtt_reconnect's.
         let server = MockServer::start().await;
         Mock::given(method("POST"))
-            .and(path("/netApi/mqtt/disconnect"))
+            .and(path("/mqtt/disconnect"))
             .respond_with(ResponseTemplate::new(500).set_body_json(
                 serde_json::json!({ "success": false, "message": "client not connected" }),
             ))
@@ -477,7 +534,7 @@ mod tests {
     async fn cert_info_gets_info_endpoint() {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
-            .and(path("/netApi/certificate/info"))
+            .and(path("/certificate/info"))
             .respond_with(
                 ResponseTemplate::new(200)
                     .set_body_json(serde_json::json!({ "ca_cert": "present" })),
@@ -496,7 +553,7 @@ mod tests {
     async fn cert_info_surfaces_server_message_on_error() {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
-            .and(path("/netApi/certificate/info"))
+            .and(path("/certificate/info"))
             .respond_with(ResponseTemplate::new(500).set_body_json(
                 serde_json::json!({ "success": false, "message": "cert store unreadable" }),
             ))
@@ -513,7 +570,8 @@ mod tests {
     async fn cert_delete_uses_delete_with_cert_type_in_path() {
         let server = MockServer::start().await;
         Mock::given(method("DELETE"))
-            .and(path("/netApi/certificate/client_key"))
+            .and(path("/certificate/client_key"))
+            .and(header("x-aether-confirmed", "true"))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
             .expect(1)
             .mount(&server)
@@ -527,7 +585,7 @@ mod tests {
     async fn cert_delete_surfaces_server_message_on_error() {
         let server = MockServer::start().await;
         Mock::given(method("DELETE"))
-            .and(path("/netApi/certificate/client_key"))
+            .and(path("/certificate/client_key"))
             .respond_with(ResponseTemplate::new(404).set_body_json(serde_json::json!({
                 "success": false,
                 "message": "certificate client_key not found"
@@ -549,7 +607,8 @@ mod tests {
     async fn cert_upload_posts_multipart_with_cert_type_and_file_fields() {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
-            .and(path("/netApi/certificate/upload"))
+            .and(path("/certificate/upload"))
+            .and(header("x-aether-confirmed", "true"))
             .and(wiremock::matchers::header_regex(
                 "content-type",
                 "^multipart/form-data; boundary=",
@@ -593,7 +652,7 @@ mod tests {
     async fn cert_upload_surfaces_server_message_on_error() {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
-            .and(path("/netApi/certificate/upload"))
+            .and(path("/certificate/upload"))
             .respond_with(ResponseTemplate::new(400).set_body_json(serde_json::json!({
                 "success": false,
                 "message": "Unsupported file format 'txt'"

@@ -287,12 +287,15 @@ enum Commands {
     },
 }
 
-/// Resolve service URL from env var or default to scheme://localhost:port
-pub(crate) fn service_url(env_var: &str, scheme: &str, port: u16, host: Option<&str>) -> String {
+/// Resolve the API gateway base URL: `--host` wins, then `AETHER_API_URL`,
+/// then loopback. The gateway is the only remote application boundary
+/// (ADR-0021); the CLI data plane never addresses internal service ports.
+pub(crate) fn api_base_url(host: Option<&str>) -> String {
     if let Some(h) = host {
-        return format!("{scheme}://{h}:{port}");
+        return format!("http://{h}:{}", aether_model::service_ports::API_PORT);
     }
-    std::env::var(env_var).unwrap_or_else(|_| format!("{scheme}://localhost:{port}"))
+    std::env::var("AETHER_API_URL")
+        .unwrap_or_else(|_| format!("http://localhost:{}", aether_model::service_ports::API_PORT))
 }
 
 const BANNER: &str = "\
@@ -427,42 +430,22 @@ async fn run(cli: Cli) -> Result<()> {
             export_command(output, detailed, &config_path, &db_path, json).await?;
         },
 
-        // Service management commands (all use HTTP API)
+        // Service management commands (all use the API gateway, ADR-0021)
         Commands::Channels { command } => {
-            let url = service_url(
-                "AETHER_IO_URL",
-                "http",
-                aether_model::service_ports::IO_PORT,
-                host,
-            );
-            channels::handle_command(command, &url, json).await?;
+            let urls = mcp::BaseUrls::from_api_base(&api_base_url(host));
+            channels::handle_command(command, &urls.io, json).await?;
         },
         Commands::Models { command } => {
-            let url = service_url(
-                "AETHER_AUTOMATION_URL",
-                "http",
-                aether_model::service_ports::AUTOMATION_PORT,
-                host,
-            );
-            models::handle_command(command, &url, json).await?;
+            let urls = mcp::BaseUrls::from_api_base(&api_base_url(host));
+            models::handle_command(command, &urls.automation, json).await?;
         },
         Commands::Rules { command } => {
-            let url = service_url(
-                "AETHER_AUTOMATION_URL",
-                "http",
-                aether_model::service_ports::AUTOMATION_PORT,
-                host,
-            );
-            rules::handle_command(command, &url, json).await?;
+            let urls = mcp::BaseUrls::from_api_base(&api_base_url(host));
+            rules::handle_command(command, &urls.automation, json).await?;
         },
         Commands::Routing { command } => {
-            let url = service_url(
-                "AETHER_AUTOMATION_URL",
-                "http",
-                aether_model::service_ports::AUTOMATION_PORT,
-                host,
-            );
-            routing::handle_command(command, &url, json).await?;
+            let urls = mcp::BaseUrls::from_api_base(&api_base_url(host));
+            routing::handle_command(command, &urls.automation, json).await?;
         },
         Commands::Services { command } => {
             let mode = deploy_mode::DeployMode::detect(install_mode.as_deref())?;
@@ -495,55 +478,24 @@ async fn run(cli: Cli) -> Result<()> {
             doctor::run_doctor(config_path, db_path, mode, verbose, json).await?;
         },
         Commands::Templates { command } => {
-            let url = service_url(
-                "AETHER_IO_URL",
-                "http",
-                aether_model::service_ports::IO_PORT,
-                host,
-            );
-            templates::handle_command(command, &url, json).await?;
+            let urls = mcp::BaseUrls::from_api_base(&api_base_url(host));
+            templates::handle_command(command, &urls.io, json).await?;
         },
         Commands::Alarms { command } => {
-            let url = service_url(
-                "AETHER_ALARM_URL",
-                "http",
-                aether_model::service_ports::ALARM_PORT,
-                host,
-            );
-            alarms::handle_command(command, &url, json).await?;
+            let urls = mcp::BaseUrls::from_api_base(&api_base_url(host));
+            alarms::handle_command(command, &urls.alarm, json).await?;
         },
         Commands::Net { command } => {
-            let url = service_url(
-                "AETHER_UPLINK_URL",
-                "http",
-                aether_model::service_ports::UPLINK_PORT,
-                host,
-            );
-            net::handle_command(command, &url, json).await?;
+            let urls = mcp::BaseUrls::from_api_base(&api_base_url(host));
+            net::handle_command(command, &urls.uplink, json).await?;
         },
         Commands::History { command } => {
-            let url = service_url(
-                "AETHER_HISTORY_URL",
-                "http",
-                aether_model::service_ports::HISTORY_PORT,
-                host,
-            );
-            history::handle_command(command, &url, json).await?;
+            let urls = mcp::BaseUrls::from_api_base(&api_base_url(host));
+            history::handle_command(command, &urls.history, json).await?;
         },
         Commands::Top => {
-            let automation_url = service_url(
-                "AETHER_AUTOMATION_URL",
-                "http",
-                aether_model::service_ports::AUTOMATION_PORT,
-                host,
-            );
-            let io_url = service_url(
-                "AETHER_IO_URL",
-                "http",
-                aether_model::service_ports::IO_PORT,
-                host,
-            );
-            top::run_top(&io_url, &automation_url).await?;
+            let urls = mcp::BaseUrls::from_api_base(&api_base_url(host));
+            top::run_top(&urls.io, &urls.automation).await?;
         },
         Commands::RuntimeManifest { path } => {
             if host.is_some() {
@@ -587,38 +539,7 @@ async fn run(cli: Cli) -> Result<()> {
                     "warning: --json is ignored for 'mcp' (it always speaks MCP's own JSON-RPC protocol)"
                 );
             }
-            let urls = mcp::BaseUrls {
-                io: service_url(
-                    "AETHER_IO_URL",
-                    "http",
-                    aether_model::service_ports::IO_PORT,
-                    host,
-                ),
-                automation: service_url(
-                    "AETHER_AUTOMATION_URL",
-                    "http",
-                    aether_model::service_ports::AUTOMATION_PORT,
-                    host,
-                ),
-                alarm: service_url(
-                    "AETHER_ALARM_URL",
-                    "http",
-                    aether_model::service_ports::ALARM_PORT,
-                    host,
-                ),
-                uplink: service_url(
-                    "AETHER_UPLINK_URL",
-                    "http",
-                    aether_model::service_ports::UPLINK_PORT,
-                    host,
-                ),
-                history: service_url(
-                    "AETHER_HISTORY_URL",
-                    "http",
-                    aether_model::service_ports::HISTORY_PORT,
-                    host,
-                ),
-            };
+            let urls = mcp::BaseUrls::from_api_base(&api_base_url(host));
             let server = mcp::AetherMcp::from_active_pack_config(&urls, allow_write, &config_path)?;
             use rmcp::ServiceExt;
             let running = server.serve(rmcp::transport::stdio()).await?;

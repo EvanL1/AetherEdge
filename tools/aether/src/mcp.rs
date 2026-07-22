@@ -102,6 +102,22 @@ pub(crate) struct BaseUrls {
     pub history: String,
 }
 
+impl BaseUrls {
+    /// Derives every domain base from the single API gateway base URL.
+    /// The gateway proxies each capability domain under `/api/v1/{domain}`
+    /// (ADR-0021); internal service ports are never addressed directly.
+    pub(crate) fn from_api_base(api_base: &str) -> Self {
+        let api = api_base.trim_end_matches('/');
+        Self {
+            io: format!("{api}/api/v1/io"),
+            automation: format!("{api}/api/v1/automation"),
+            alarm: format!("{api}/api/v1/alarm"),
+            uplink: format!("{api}/api/v1/uplink"),
+            history: format!("{api}/api/v1/history"),
+        }
+    }
+}
+
 impl AetherMcp {
     /// Constructs the fail-safe generic MCP surface with no domain Pack active.
     #[cfg(test)]
@@ -1203,6 +1219,19 @@ mod tests {
         }
     }
 
+    #[test]
+    fn base_urls_derive_every_domain_from_the_gateway_base() {
+        let urls = BaseUrls::from_api_base("http://edge.example.test:6005/");
+        assert_eq!(urls.io, "http://edge.example.test:6005/api/v1/io");
+        assert_eq!(
+            urls.automation,
+            "http://edge.example.test:6005/api/v1/automation"
+        );
+        assert_eq!(urls.alarm, "http://edge.example.test:6005/api/v1/alarm");
+        assert_eq!(urls.uplink, "http://edge.example.test:6005/api/v1/uplink");
+        assert_eq!(urls.history, "http://edge.example.test:6005/api/v1/history");
+    }
+
     /// Shorthand for the common "construct an --allow-write server against
     /// this mock's base URL" step shared by every write-tool test below.
     fn write_mcp(base: &str) -> AetherMcp {
@@ -1495,7 +1524,7 @@ mod tests {
     async fn net_mqtt_status_calls_the_right_endpoint() {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
-            .and(path("/netApi/mqtt/status"))
+            .and(path("/mqtt/status"))
             .respond_with(
                 ResponseTemplate::new(200).set_body_json(serde_json::json!({ "connected": true })),
             )
@@ -1517,7 +1546,7 @@ mod tests {
     async fn net_mqtt_status_surfaces_server_error_as_visible_content() {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
-            .and(path("/netApi/mqtt/status"))
+            .and(path("/mqtt/status"))
             .respond_with(ResponseTemplate::new(500).set_body_json(
                 serde_json::json!({ "success": false, "message": "broker unreachable" }),
             ))
@@ -1540,7 +1569,7 @@ mod tests {
     async fn net_mqtt_config_get_calls_the_config_endpoint() {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
-            .and(path("/netApi/mqtt/config"))
+            .and(path("/mqtt/config"))
             .respond_with(
                 ResponseTemplate::new(200).set_body_json(serde_json::json!({ "host": "10.0.0.1" })),
             )
@@ -1561,7 +1590,7 @@ mod tests {
     async fn net_cert_info_calls_the_certificate_info_endpoint() {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
-            .and(path("/netApi/certificate/info"))
+            .and(path("/certificate/info"))
             .respond_with(
                 ResponseTemplate::new(200)
                     .set_body_json(serde_json::json!({ "ca_cert": "present" })),
@@ -1588,7 +1617,7 @@ mod tests {
     async fn alarms_list_forwards_all_filters() {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
-            .and(path("/alarmApi/alerts"))
+            .and(path("/alerts"))
             .and(query_param("channel_id", "1001"))
             .and(query_param("warning_level", "3"))
             .and(query_param("keyword", "temp"))
@@ -1619,7 +1648,7 @@ mod tests {
     async fn alarms_get_uses_the_id_in_the_path() {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
-            .and(path("/alarmApi/alerts/7"))
+            .and(path("/alerts/7"))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({ "id": 7 })))
             .expect(1)
             .mount(&server)
@@ -1638,7 +1667,7 @@ mod tests {
     async fn alarms_rules_list_forwards_the_enabled_filter() {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
-            .and(path("/alarmApi/rules"))
+            .and(path("/rules"))
             .and(query_param("enabled", "true"))
             .respond_with(
                 ResponseTemplate::new(200).set_body_json(serde_json::json!({ "rules": [] })),
@@ -1666,7 +1695,7 @@ mod tests {
     async fn alarms_rule_get_uses_the_id_in_the_path() {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
-            .and(path("/alarmApi/rules/12"))
+            .and(path("/rules/12"))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({ "id": 12 })))
             .expect(1)
             .mount(&server)
@@ -1687,7 +1716,7 @@ mod tests {
     async fn alarms_events_forwards_the_event_type_filter() {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
-            .and(path("/alarmApi/alert-events"))
+            .and(path("/alert-events"))
             .and(query_param("event_type", "recovery"))
             .respond_with(
                 ResponseTemplate::new(200).set_body_json(serde_json::json!({ "events": [] })),
@@ -1715,7 +1744,7 @@ mod tests {
     async fn alarms_stats_calls_the_statistics_endpoint() {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
-            .and(path("/alarmApi/alert-statistics"))
+            .and(path("/alert-statistics"))
             .respond_with(
                 ResponseTemplate::new(200).set_body_json(serde_json::json!({ "total": 3 })),
             )
@@ -1927,14 +1956,14 @@ mod tests {
         assert_ne!(result.is_error, Some(true), "{result:?}");
     }
 
-    // NOTE: `HistoryClient::query_range` GETs `/hisApi/data/query` (not
-    // `/hisApi/query` -- there's an extra `/data` segment shared with
+    // NOTE: `HistoryClient::query_range` GETs `/data/query` (not
+    // `/query` -- there's an extra `/data` segment shared with
     // `get_latest` below).
     #[tokio::test]
     async fn history_query_forwards_the_time_range() {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
-            .and(path("/hisApi/data/query"))
+            .and(path("/data/query"))
             .and(query_param("series_key", "io:1001:T"))
             .and(query_param("point_id", "5"))
             .respond_with(
@@ -1959,13 +1988,13 @@ mod tests {
         assert_ne!(result.is_error, Some(true), "{result:?}");
     }
 
-    // NOTE: `HistoryClient::get_latest` GETs `/hisApi/data/latest` (not
-    // `/hisApi/latest`).
+    // NOTE: `HistoryClient::get_latest` GETs `/data/latest` (not
+    // `/latest`).
     #[tokio::test]
     async fn history_latest_uses_the_point_id() {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
-            .and(path("/hisApi/data/latest"))
+            .and(path("/data/latest"))
             .and(query_param("series_key", "io:1001:T"))
             .and(query_param("point_id", "5"))
             .respond_with(
@@ -2619,7 +2648,7 @@ mod tests {
             "point_id": 5, "rule_name": "over-temp", "operator": ">", "value": 85.0
         });
         Mock::given(method("POST"))
-            .and(path("/alarmApi/rules"))
+            .and(path("/rules"))
             .and(header("authorization", "Bearer signed-access-token"))
             .and(header_exists("x-request-id"))
             .and(header("x-aether-confirmed", "true"))
@@ -2647,7 +2676,7 @@ mod tests {
     async fn alarms_rule_update_uses_put_on_the_id() {
         let server = MockServer::start().await;
         Mock::given(method("PUT"))
-            .and(path("/alarmApi/rules/7"))
+            .and(path("/rules/7"))
             .and(header("authorization", "Bearer signed-access-token"))
             .and(header_exists("x-request-id"))
             .and(header("x-aether-confirmed", "true"))
@@ -2673,7 +2702,7 @@ mod tests {
     async fn alarms_rule_delete_uses_delete_on_the_id() {
         let server = MockServer::start().await;
         Mock::given(method("DELETE"))
-            .and(path("/alarmApi/rules/7"))
+            .and(path("/rules/7"))
             .and(header("authorization", "Bearer signed-access-token"))
             .and(header_exists("x-request-id"))
             .and(header("x-aether-confirmed", "true"))
@@ -2701,7 +2730,7 @@ mod tests {
     async fn alarms_rule_enable_and_disable_use_patch_on_their_own_paths() {
         let enable_server = MockServer::start().await;
         Mock::given(method("PATCH"))
-            .and(path("/alarmApi/rules/7/enable"))
+            .and(path("/rules/7/enable"))
             .and(header("authorization", "Bearer signed-access-token"))
             .and(header_exists("x-request-id"))
             .and(header("x-aether-confirmed", "true"))
@@ -2720,7 +2749,7 @@ mod tests {
 
         let disable_server = MockServer::start().await;
         Mock::given(method("PATCH"))
-            .and(path("/alarmApi/rules/7/disable"))
+            .and(path("/rules/7/disable"))
             .and(header("authorization", "Bearer signed-access-token"))
             .and(header_exists("x-request-id"))
             .and(header("x-aether-confirmed", "true"))
@@ -2742,7 +2771,7 @@ mod tests {
     async fn alarms_resolve_forwards_authenticated_confirmation() {
         let server = MockServer::start().await;
         Mock::given(method("PATCH"))
-            .and(path("/alarmApi/alerts/12/resolve"))
+            .and(path("/alerts/12/resolve"))
             .and(header("authorization", "Bearer signed-access-token"))
             .and(header_exists("x-request-id"))
             .and(header("x-aether-confirmed", "true"))
@@ -2970,7 +2999,7 @@ mod tests {
     async fn net_mqtt_config_set_posts_the_body_verbatim() {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
-            .and(path("/netApi/mqtt/config"))
+            .and(path("/mqtt/config"))
             .and(body_json(
                 serde_json::json!({ "host": "new", "port": 1883 }),
             ))
@@ -2995,7 +3024,7 @@ mod tests {
     async fn net_mqtt_reconnect_and_disconnect_hit_their_own_paths() {
         let reconnect_server = MockServer::start().await;
         Mock::given(method("POST"))
-            .and(path("/netApi/mqtt/reconnect"))
+            .and(path("/mqtt/reconnect"))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
             .expect(1)
             .mount(&reconnect_server)
@@ -3006,7 +3035,7 @@ mod tests {
 
         let disconnect_server = MockServer::start().await;
         Mock::given(method("POST"))
-            .and(path("/netApi/mqtt/disconnect"))
+            .and(path("/mqtt/disconnect"))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
             .expect(1)
             .mount(&disconnect_server)
@@ -3020,7 +3049,7 @@ mod tests {
     async fn net_cert_upload_reads_the_file_and_posts_multipart() {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
-            .and(path("/netApi/certificate/upload"))
+            .and(path("/certificate/upload"))
             .and(wiremock::matchers::header_regex(
                 "content-type",
                 "^multipart/form-data; boundary=",
@@ -3074,7 +3103,7 @@ mod tests {
     async fn net_cert_delete_uses_the_cert_type_in_the_path() {
         let server = MockServer::start().await;
         Mock::given(method("DELETE"))
-            .and(path("/netApi/certificate/client_key"))
+            .and(path("/certificate/client_key"))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
             .expect(1)
             .mount(&server)

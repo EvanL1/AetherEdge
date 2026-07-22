@@ -333,6 +333,7 @@ fn print_batch_result(data: &Value) {
 pub(crate) struct HistoryClient {
     client: Client,
     base_url: String,
+    access_token: Option<String>,
 }
 
 impl HistoryClient {
@@ -340,16 +341,39 @@ impl HistoryClient {
         Ok(Self {
             client: Client::new(),
             base_url: base_url.to_string(),
+            access_token: std::env::var("AETHER_ACCESS_TOKEN")
+                .ok()
+                .filter(|value| !value.trim().is_empty() && value.trim() == value),
         })
     }
 
+    #[cfg(test)]
+    pub(crate) fn with_access_token(base_url: &str, access_token: &str) -> Result<Self> {
+        Ok(Self {
+            client: Client::new(),
+            base_url: base_url.to_string(),
+            access_token: Some(access_token.to_string()),
+        })
+    }
+
+    /// Attaches the session Bearer token when one is present. Requests without
+    /// a token go out unauthenticated and let the gateway respond 401.
+    fn apply_auth(&self, request: reqwest::RequestBuilder) -> Result<reqwest::RequestBuilder> {
+        match &self.access_token {
+            Some(token) => {
+                crate::transport_security::require_secure_bearer_transport(&self.base_url)?;
+                Ok(request.bearer_auth(token))
+            },
+            None => Ok(request),
+        }
+    }
+
     pub(crate) async fn get_latest(&self, series_key: &str, point_id: &str) -> Result<Value> {
-        let resp = self
+        let request = self
             .client
-            .get(format!("{}/hisApi/data/latest", self.base_url))
-            .query(&[("series_key", series_key), ("point_id", point_id)])
-            .send()
-            .await?;
+            .get(format!("{}/data/latest", self.base_url))
+            .query(&[("series_key", series_key), ("point_id", point_id)]);
+        let resp = self.apply_auth(request)?.send().await?;
 
         if resp.status().is_success() {
             Ok(resp.json().await?)
@@ -389,12 +413,11 @@ impl HistoryClient {
             params.push(("end_time".to_string(), t.to_string()));
         }
 
-        let resp = self
+        let request = self
             .client
-            .get(format!("{}/hisApi/data/query", self.base_url))
-            .query(&params)
-            .send()
-            .await?;
+            .get(format!("{}/data/query", self.base_url))
+            .query(&params);
+        let resp = self.apply_auth(request)?.send().await?;
 
         if resp.status().is_success() {
             Ok(resp.json().await?)
@@ -407,11 +430,8 @@ impl HistoryClient {
     }
 
     async fn list_channels(&self) -> Result<Value> {
-        let resp = self
-            .client
-            .get(format!("{}/hisApi/channels", self.base_url))
-            .send()
-            .await?;
+        let request = self.client.get(format!("{}/channels", self.base_url));
+        let resp = self.apply_auth(request)?.send().await?;
 
         if resp.status().is_success() {
             Ok(resp.json().await?)
@@ -424,11 +444,8 @@ impl HistoryClient {
     }
 
     async fn get_metrics(&self) -> Result<Value> {
-        let resp = self
-            .client
-            .get(format!("{}/hisApi/metrics", self.base_url))
-            .send()
-            .await?;
+        let request = self.client.get(format!("{}/metrics", self.base_url));
+        let resp = self.apply_auth(request)?.send().await?;
 
         if resp.status().is_success() {
             Ok(resp.json().await?)
@@ -438,11 +455,8 @@ impl HistoryClient {
     }
 
     async fn health(&self) -> Result<Value> {
-        let resp = self
-            .client
-            .get(format!("{}/hisApi/health", self.base_url))
-            .send()
-            .await?;
+        let request = self.client.get(format!("{}/health", self.base_url));
+        let resp = self.apply_auth(request)?.send().await?;
 
         if resp.status().is_success() {
             Ok(resp.json().await?)
@@ -475,12 +489,11 @@ impl HistoryClient {
             "limit_per_series": limit,
         });
 
-        let resp = self
+        let request = self
             .client
-            .post(format!("{}/hisApi/data/batch-query", self.base_url))
-            .json(&body)
-            .send()
-            .await?;
+            .post(format!("{}/data/batch-query", self.base_url))
+            .json(&body);
+        let resp = self.apply_auth(request)?.send().await?;
 
         if resp.status().is_success() {
             Ok(resp.json().await?)
@@ -493,5 +506,149 @@ impl HistoryClient {
                 msg
             ))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::HistoryClient;
+    use reqwest::Client;
+    use wiremock::matchers::{header, method, path, query_param};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    fn unauthenticated_client(base_url: &str) -> HistoryClient {
+        HistoryClient {
+            client: Client::new(),
+            base_url: base_url.to_string(),
+            access_token: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn get_latest_queries_gateway_relative_path() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/data/latest"))
+            .and(query_param("series_key", "inst:9:M"))
+            .and(query_param("point_id", "101"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "data": { "value": 21.5, "timestamp": "2026-07-22T00:00:00Z" }
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let client = unauthenticated_client(&server.uri());
+        let v = client.get_latest("inst:9:M", "101").await.unwrap();
+
+        assert_eq!(v["data"]["value"], 21.5);
+    }
+
+    #[tokio::test]
+    async fn query_range_queries_gateway_relative_path() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/data/query"))
+            .and(query_param("series_key", "inst:9:M"))
+            .and(query_param("point_id", "101"))
+            .and(query_param("page", "1"))
+            .and(query_param("page_size", "100"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(serde_json::json!({ "data": [], "total": 0 })),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let client = unauthenticated_client(&server.uri());
+        client
+            .query_range("inst:9:M", "101", None, None, 1, 100)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn batch_query_posts_gateway_relative_path() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/data/batch-query"))
+            .and(wiremock::matchers::body_json(serde_json::json!({
+                "start_time": "2026-05-01T00:00:00Z",
+                "end_time": "2026-05-02T00:00:00Z",
+                "series": [{ "series_key": "inst:9:M", "point_id": "101" }],
+                "limit_per_series": 500,
+            })))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(serde_json::json!({ "data": { "series": [] } })),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let client = unauthenticated_client(&server.uri());
+        client
+            .batch_query(
+                &[("inst:9:M".to_string(), "101".to_string())],
+                "2026-05-01T00:00:00Z",
+                Some("2026-05-02T00:00:00Z"),
+                500,
+            )
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn health_gets_gateway_relative_path() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/health"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(serde_json::json!({ "status": "ok" })),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let client = unauthenticated_client(&server.uri());
+        let v = client.health().await.unwrap();
+
+        assert_eq!(v["status"], "ok");
+    }
+
+    #[tokio::test]
+    async fn reads_attach_bearer_token_when_present() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/channels"))
+            .and(header("authorization", "Bearer signed-access-token"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(serde_json::json!({ "data": [] })),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let client =
+            HistoryClient::with_access_token(&server.uri(), "signed-access-token").unwrap();
+        client.list_channels().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn reads_without_token_carry_no_authorization_header() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/metrics"))
+            .and(|request: &wiremock::Request| !request.headers.contains_key("authorization"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(serde_json::json!({ "data": {} })),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let client = unauthenticated_client(&server.uri());
+        client.get_metrics().await.unwrap();
     }
 }

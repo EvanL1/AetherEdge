@@ -297,12 +297,19 @@ impl RuleClient {
         })
     }
 
+    fn apply_auth(&self, request: reqwest::RequestBuilder) -> Result<reqwest::RequestBuilder> {
+        match &self.access_token {
+            Some(token) => {
+                crate::transport_security::require_secure_bearer_transport(&self.base_url)?;
+                Ok(request.bearer_auth(token))
+            },
+            None => Ok(request),
+        }
+    }
+
     pub(crate) async fn list_rules(&self) -> Result<Value> {
-        let response = self
-            .client
-            .get(format!("{}/api/rules", self.base_url))
-            .send()
-            .await?;
+        let request = self.client.get(format!("{}/api/rules", self.base_url));
+        let response = self.apply_auth(request)?.send().await?;
 
         if response.status().is_success() {
             Ok(response.json().await?)
@@ -315,11 +322,10 @@ impl RuleClient {
     }
 
     pub(crate) async fn get_rule(&self, rule_id: i64) -> Result<Value> {
-        let response = self
+        let request = self
             .client
-            .get(format!("{}/api/rules/{}", self.base_url, rule_id))
-            .send()
-            .await?;
+            .get(format!("{}/api/rules/{}", self.base_url, rule_id));
+        let response = self.apply_auth(request)?.send().await?;
 
         if response.status().is_success() {
             Ok(response.json().await?)
@@ -329,19 +335,18 @@ impl RuleClient {
     }
 
     pub(crate) async fn enable_rule(&self, rule_id: i64, confirmed: bool) -> Result<Value> {
-        let access_token = self.rule_management_token(confirmed)?;
+        self.require_rule_management_auth(confirmed)?;
         let expected_revision = self.current_rules_revision().await?;
-        let response = self
+        let request = self
             .client
             .post(format!("{}/api/rules/{}/enable", self.base_url, rule_id))
-            .bearer_auth(access_token)
             .header("x-request-id", uuid::Uuid::new_v4().to_string())
+            .header("x-aether-confirmed", "true")
             .json(&serde_json::json!({
                 "confirmed": true,
                 "expected_revision": expected_revision
-            }))
-            .send()
-            .await?;
+            }));
+        let response = self.apply_auth(request)?.send().await?;
 
         if response.status().is_success() {
             Ok(response.json().await?)
@@ -354,19 +359,18 @@ impl RuleClient {
     }
 
     pub(crate) async fn disable_rule(&self, rule_id: i64, confirmed: bool) -> Result<Value> {
-        let access_token = self.rule_management_token(confirmed)?;
+        self.require_rule_management_auth(confirmed)?;
         let expected_revision = self.current_rules_revision().await?;
-        let response = self
+        let request = self
             .client
             .post(format!("{}/api/rules/{}/disable", self.base_url, rule_id))
-            .bearer_auth(access_token)
             .header("x-request-id", uuid::Uuid::new_v4().to_string())
+            .header("x-aether-confirmed", "true")
             .json(&serde_json::json!({
                 "confirmed": true,
                 "expected_revision": expected_revision
-            }))
-            .send()
-            .await?;
+            }));
+        let response = self.apply_auth(request)?.send().await?;
 
         if response.status().is_success() {
             Ok(response.json().await?)
@@ -380,15 +384,14 @@ impl RuleClient {
 
     #[allow(clippy::disallowed_methods)] // json! macro internally uses unwrap (safe for known valid JSON)
     pub(crate) async fn execute_rule(&self, rule_id: i64, confirmed: bool) -> Result<Value> {
-        let access_token = self.rule_execution_token(confirmed)?;
-        let response = self
+        self.require_rule_execution_auth(confirmed)?;
+        let request = self
             .client
             .post(format!("{}/api/rules/{}/execute", self.base_url, rule_id))
-            .bearer_auth(access_token)
             .header("x-request-id", uuid::Uuid::new_v4().to_string())
-            .json(&serde_json::json!({ "confirmed": confirmed }))
-            .send()
-            .await?;
+            .header("x-aether-confirmed", "true")
+            .json(&serde_json::json!({ "confirmed": confirmed }));
+        let response = self.apply_auth(request)?.send().await?;
 
         if response.status().is_success() {
             Ok(response.json().await?)
@@ -407,7 +410,7 @@ impl RuleClient {
         description: Option<&str>,
         confirmed: bool,
     ) -> Result<Value> {
-        let access_token = self.rule_management_token(confirmed)?;
+        self.require_rule_management_auth(confirmed)?;
         let expected_revision = self.current_rules_revision().await?;
         let mut body = serde_json::Map::new();
         body.insert("name".into(), Value::String(name.to_string()));
@@ -416,14 +419,13 @@ impl RuleClient {
         if let Some(d) = description {
             body.insert("description".into(), Value::String(d.to_string()));
         }
-        let response = self
+        let request = self
             .client
             .post(format!("{}/api/rules", self.base_url))
-            .bearer_auth(access_token)
             .header("x-request-id", uuid::Uuid::new_v4().to_string())
-            .json(&Value::Object(body))
-            .send()
-            .await?;
+            .header("x-aether-confirmed", "true")
+            .json(&Value::Object(body));
+        let response = self.apply_auth(request)?.send().await?;
 
         if response.status().is_success() {
             Ok(response.json().await?)
@@ -441,7 +443,7 @@ impl RuleClient {
         mut body: Value,
         confirmed: bool,
     ) -> Result<Value> {
-        let access_token = self.rule_management_token(confirmed)?;
+        self.require_rule_management_auth(confirmed)?;
         let expected_revision = self.current_rules_revision().await?;
         let fields = body
             .as_object_mut()
@@ -451,14 +453,13 @@ impl RuleClient {
             "expected_revision".to_string(),
             Value::from(expected_revision),
         );
-        let response = self
+        let request = self
             .client
             .put(format!("{}/api/rules/{}", self.base_url, rule_id))
-            .bearer_auth(access_token)
             .header("x-request-id", uuid::Uuid::new_v4().to_string())
-            .json(&body)
-            .send()
-            .await?;
+            .header("x-aether-confirmed", "true")
+            .json(&body);
+        let response = self.apply_auth(request)?.send().await?;
 
         if response.status().is_success() {
             Ok(response.json().await?)
@@ -472,19 +473,18 @@ impl RuleClient {
     }
 
     pub(crate) async fn delete_rule(&self, rule_id: i64, confirmed: bool) -> Result<Value> {
-        let access_token = self.rule_management_token(confirmed)?;
+        self.require_rule_management_auth(confirmed)?;
         let expected_revision = self.current_rules_revision().await?;
-        let response = self
+        let request = self
             .client
             .delete(format!("{}/api/rules/{}", self.base_url, rule_id))
-            .bearer_auth(access_token)
             .header("x-request-id", uuid::Uuid::new_v4().to_string())
+            .header("x-aether-confirmed", "true")
             .json(&serde_json::json!({
                 "confirmed": true,
                 "expected_revision": expected_revision
-            }))
-            .send()
-            .await?;
+            }));
+        let response = self.apply_auth(request)?.send().await?;
 
         if response.status().is_success() {
             Ok(response.json().await?)
@@ -497,26 +497,26 @@ impl RuleClient {
         }
     }
 
-    fn rule_management_token(&self, confirmed: bool) -> Result<&str> {
+    fn require_rule_management_auth(&self, confirmed: bool) -> Result<()> {
         if !confirmed {
             return Err(anyhow::anyhow!(
                 "rule management requires explicit --confirmed"
             ));
         }
         crate::transport_security::require_secure_bearer_transport(&self.base_url)?;
-        self.access_token.as_deref().ok_or_else(|| {
-            anyhow::anyhow!(
+        if self.access_token.is_none() {
+            return Err(anyhow::anyhow!(
                 "rule management requires AETHER_ACCESS_TOKEN from an authenticated Admin or Engineer session"
-            )
-        })
+            ));
+        }
+        Ok(())
     }
 
     async fn current_rules_revision(&self) -> Result<u64> {
-        let response = self
+        let request = self
             .client
-            .get(format!("{}/api/rules?page=1&page_size=1", self.base_url))
-            .send()
-            .await?;
+            .get(format!("{}/api/rules?page=1&page_size=1", self.base_url));
+        let response = self.apply_auth(request)?.send().await?;
         if !response.status().is_success() {
             return Err(anyhow::anyhow!(
                 "Failed to read automation-rules revision: {}",
@@ -537,24 +537,89 @@ impl RuleClient {
         Ok(value)
     }
 
-    fn rule_execution_token(&self, confirmed: bool) -> Result<&str> {
+    fn require_rule_execution_auth(&self, confirmed: bool) -> Result<()> {
         if !confirmed {
             return Err(anyhow::anyhow!(
                 "manual rule execution requires explicit confirmation"
             ));
         }
         crate::transport_security::require_secure_bearer_transport(&self.base_url)?;
-        self.access_token.as_deref().ok_or_else(|| {
-            anyhow::anyhow!(
+        if self.access_token.is_none() {
+            return Err(anyhow::anyhow!(
                 "manual rule execution requires AETHER_ACCESS_TOKEN from an authenticated Admin or Engineer session"
-            )
-        })
+            ));
+        }
+        Ok(())
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::RuleClient;
+    use wiremock::matchers::{header, method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    #[tokio::test]
+    async fn list_rules_attaches_bearer_when_access_token_is_present() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/rules"))
+            .and(header("authorization", "Bearer signed-access-token"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([])))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let client =
+            RuleClient::with_access_token(&server.uri(), "signed-access-token").expect("client");
+        client.list_rules().await.expect("authenticated list");
+    }
+
+    #[tokio::test]
+    async fn list_rules_stays_unauthenticated_without_access_token() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/rules"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([])))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let client = RuleClient {
+            client: reqwest::Client::new(),
+            base_url: server.uri(),
+            access_token: None,
+        };
+        client.list_rules().await.expect("tokenless list");
+
+        let requests = server.received_requests().await.expect("received requests");
+        assert!(
+            requests
+                .iter()
+                .all(|request| !request.headers.contains_key("authorization")),
+            "tokenless reads must not carry an authorization header"
+        );
+    }
+
+    #[tokio::test]
+    async fn execute_rule_sends_the_gateway_confirmation_header() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/api/rules/7/execute"))
+            .and(header("authorization", "Bearer signed-access-token"))
+            .and(header("x-aether-confirmed", "true"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let client =
+            RuleClient::with_access_token(&server.uri(), "signed-access-token").expect("client");
+        client
+            .execute_rule(7, true)
+            .await
+            .expect("governed execute");
+    }
 
     #[test]
     fn bearer_writes_reject_remote_plaintext_before_token_access() {
@@ -565,8 +630,8 @@ mod tests {
         };
 
         for result in [
-            client.rule_management_token(true),
-            client.rule_execution_token(true),
+            client.require_rule_management_auth(true),
+            client.require_rule_execution_auth(true),
         ] {
             let error = result.expect_err("remote plaintext must fail closed");
             assert!(error.to_string().contains("refusing to send"), "{error:#}");
