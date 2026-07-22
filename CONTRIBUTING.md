@@ -72,6 +72,17 @@ For the full local gate, run:
 ./scripts/quick-check.sh
 ```
 
+During the edit loop, prefer the focused form for the package you changed:
+
+```bash
+cargo fmt --all -- --check
+cargo clippy -p <affected-package> --all-targets --all-features -- -D warnings
+cargo test -p <affected-package>
+```
+
+`quick-check.sh` is an optional local release gate, not the default edit loop;
+the complete workspace matrix is enforced by pull-request CI.
+
 The equivalent required checks used by the repository are:
 
 ```bash
@@ -82,6 +93,7 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo clippy --workspace --lib --bins -- \
   -D clippy::unwrap_used -D clippy::expect_used
 cargo test --workspace --lib --bins
+./scripts/check-openapi-contracts.sh
 ```
 
 `cargo-nextest` is optional; `scripts/quick-check.sh` uses it when installed

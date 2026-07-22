@@ -10,33 +10,97 @@
 
 [AI-native platform](docs/overview/ai-native-platform.md) · [Get started](docs/guides/getting-started.md) · [Documentation](https://docs.aetheriot.workers.dev/en/) · [Agent Skill](skills/aether-iot/SKILL.md) · [MCP](docs/guides/ai-assistants.md) · [中文](README-CN.md)
 
-**The deterministic edge runtime for an agent-configured physical world.**
+**Let AI agents run your physical space — safely, locally, deterministically.**
 
 AetherEdge is an open-source, industry-neutral IoT edge kernel, runtime, and Rust SDK for Linux
 gateways. It connects field devices, keeps authoritative live state in shared memory, runs
-deterministic local rules and alarms, and stores embedded history without requiring Redis,
-PostgreSQL, a cloud service, a browser, or an LLM.
+deterministic local rules and alarms, and stores embedded history — no Redis, no PostgreSQL, no
+cloud service, no browser, no LLM required.
+
+What makes it different: AI is a first-class *client* behind a typed, governed boundary. Agents
+discover real capabilities over MCP and OpenAPI, propose changes, and commission behavior — while
+device control stays deny-by-default, explicitly confirmed, and audited, and the edge keeps
+executing deterministically even when no AI is connected.
+
+AetherEdge is the edge product in the [AetherIoT platform](docs/overview/platform.md), alongside
+[AetherCloud](https://github.com/EvanL1/AetherCloud) and
+[AetherContracts](https://github.com/EvanL1/AetherContracts). The official energy-management
+distribution is [AetherEMS](https://github.com/EvanL1/AetherEMS).
+
+## Try it in five minutes
+
+**Have a running edge system?** Expose it to your AI assistant as read-only MCP tools:
+
+```bash
+claude mcp add aether -- aether mcp
+```
+
+Then ask your assistant:
+
+```text
+Inspect my edge runtime and generate a read-only operations app for the
+capabilities it exposes.
+```
+
+**No hardware?** The SDK compositions run anywhere, need no external service, and commission
+nothing:
+
+```bash
+cargo run -p aether-example-minimal-gateway   # empty industry-neutral gateway
+cargo run -p aether-example-energy-gateway    # disabled-by-default Energy Pack proof
+```
+
+You can also simulate devices on the wire — Modbus TCP/RTU, CAN, J1939 — and acquire from them
+exactly like a physical site:
+
+```bash
+cargo run -p simulator -- --scenario tools/simulator/scenarios/pv_daily.yaml --port 5020
+```
+
+See [Getting Started](docs/guides/getting-started.md) for the full safe-empty runtime setup,
+[Connect devices](docs/guides/connect-devices.md) for wiring channels, and the
+[Agent Quickstart](https://docs.aetheriot.workers.dev/en/agent-quickstart/) for a complete
+assistant-driven setup.
+
+## Install AetherEdge
+
+For a Docker-based Linux edge host, download the matching `AetherEdge-<arch>-<version>.run` file and
+its `.sha256` file from [GitHub Releases](https://github.com/EvanL1/AetherEdge/releases). Verify and
+run the fresh-install package on the target host:
+
+```bash
+sha256sum -c AetherEdge-<arch>-<version>.run.sha256
+chmod +x AetherEdge-<arch>-<version>.run
+sudo ./AetherEdge-<arch>-<version>.run
+```
+
+The `.run` package installs the six-service edge Runtime and the `aether` CLI. Releases also contain
+standalone CLI archives; those do not install the Runtime. For a source checkout or SDK development,
+follow [Getting Started](docs/guides/getting-started.md). Running
+`cargo install --path tools/aether --locked` installs only the CLI. See
+[Deployment](docs/guides/deployment.md) for Docker and bare-metal package contracts. AetherEdge is
+not an npm or Bun package; `npx` and `bunx` do not install it.
+
+## What AetherEdge provides
+
+- **Deterministic edge runtime** — six isolated Rust services continue acquisition, rules, alarms,
+  history, and uplink when no AI client is connected.
+- **Local-first data plane** — shared memory is authoritative for live point state; SQLite provides
+  embedded desired state, history, audit, and durable outbox storage.
+- **Machine-readable contracts** — runtime manifests, OpenAPI, capability metadata, Pack manifests,
+  experimental CloudLink schemas, MCP tools, and Markdown documentation give agents facts instead
+  of prompt folklore.
+- **One application boundary** — HTTP, CLI, MCP, and generated clients share governed queries and
+  commands instead of writing SHM or storage directly.
+- **Domain Packs** — industry knowledge, models, mappings, rules, and processing declarations layer
+  over the kernel without becoming core dependencies.
+
+## AI-native product direction
 
 AetherIoT's product direction is to let people describe outcomes in conversation instead of
 programming device identifiers, triggers, conditions, and actions through fixed configuration
 screens. Agents discover typed capabilities, generate governed proposals, and commission behavior;
 AetherEdge executes the accepted behavior locally without the model.
-
-AetherEdge is the edge product in the [AetherIoT platform](docs/overview/platform.md), alongside
-[AetherCloud](https://github.com/EvanL1/AetherCloud) and
-[AetherContracts](https://github.com/EvanL1/AetherContracts). This repository was formerly named
-`EvanL1/AetherIot`; software identifiers remain stable during the
-[migration](docs/migration/aetheriot-to-aetheredge.md).
-
-AI is a client of AetherEdge, not part of the hard real-time loop. Agents, CLIs, generated apps, and
-operator interfaces all use the same typed command/query boundary; device control remains
-deny-by-default, explicitly confirmed, and audited.
-
-> **Beta:** AetherEdge is the industry-neutral Kernel, Runtime, and SDK. Existing crates, binaries,
-> the CLI, and some compatibility artifacts retain their `aether-*` / `aether` names. The official
-> energy-management implementation lives in [AetherEMS](https://github.com/EvanL1/AetherEMS).
-
-## AI-native product direction
 
 The complete end-user conversational agent is not shipped in the current beta. AetherEdge provides
 the foundations it requires today: runtime and Pack discovery, agent-readable documentation,
@@ -57,45 +121,16 @@ write SHM or SQLite, bypass confirmation, or become a hidden second configuratio
 the [AI-native platform](docs/overview/ai-native-platform.md) and
 [platform status](docs/roadmap/status.md) for the delivery boundary.
 
-## Install AetherEdge
+> **Beta:** AetherEdge is the industry-neutral Kernel, Runtime, and SDK. Existing crates, binaries,
+> the CLI, and some compatibility artifacts retain their `aether-*` / `aether` names. This
+> repository was formerly named `EvanL1/AetherIot`; software identifiers remain stable during the
+> [migration](docs/migration/aetheriot-to-aetheredge.md).
 
-AetherEdge is not an npm or Bun package. `npx` and `bunx` do not install the Kernel, Runtime, CLI,
-or Rust SDK.
-
-For a Docker-based Linux edge host, download the matching `AetherEdge-<arch>-<version>.run` file and
-its `.sha256` file from [GitHub Releases](https://github.com/EvanL1/AetherEdge/releases). Verify and
-run the fresh-install package on the target host:
-
-```bash
-sha256sum -c AetherEdge-<arch>-<version>.run.sha256
-chmod +x AetherEdge-<arch>-<version>.run
-sudo ./AetherEdge-<arch>-<version>.run
-```
-
-The `.run` package installs the six-service edge Runtime and the `aether` CLI. Releases also contain
-standalone CLI archives; those do not install the Runtime. For a source checkout or SDK development,
-follow [Getting Started](docs/guides/getting-started.md). Running
-`cargo install --path tools/aether --locked` installs only the CLI. See
-[Deployment](docs/guides/deployment.md) for Docker and bare-metal package contracts.
-
-## Optional: connect an AI agent
+## How agent access is governed
 
 The repository's Agent Skill is optional development guidance, not an AetherEdge software package.
 See [Build Applications with AI](docs/guides/build-applications-with-ai.md) if you want to add it to
 a compatible assistant.
-
-Expose a running edge system as read-only MCP tools:
-
-```bash
-claude mcp add aether -- aether mcp
-```
-
-Then ask your assistant:
-
-```text
-Get started with AetherEdge. Inspect this repository and generate a read-only
-operations app for the capabilities exposed by my edge runtime.
-```
 
 The optional Skill supplies the development method and pulls current Markdown from the online docs.
 MCP supplies live, structured capabilities. Write tools are not registered unless the operator
@@ -105,20 +140,6 @@ permission, confirmation, validation, and audit boundary.
 See [Build Applications with AI](docs/guides/build-applications-with-ai.md) for the client contract
 and [Agent Quickstart](https://docs.aetheriot.workers.dev/en/agent-quickstart/) for a complete safe-empty
 runtime setup.
-
-## What AetherEdge provides
-
-- **Deterministic edge runtime** — six isolated Rust services continue acquisition, rules, alarms,
-  history, and uplink when no AI client is connected.
-- **Local-first data plane** — shared memory is authoritative for live point state; SQLite provides
-  embedded desired state, history, audit, and durable outbox storage.
-- **Machine-readable contracts** — runtime manifests, OpenAPI, capability metadata, Pack manifests,
-  experimental CloudLink schemas, MCP tools, and Markdown documentation give agents facts instead
-  of prompt folklore.
-- **One application boundary** — HTTP, CLI, MCP, and generated clients share governed queries and
-  commands instead of writing SHM or storage directly.
-- **Domain Packs** — industry knowledge, models, mappings, rules, and processing declarations layer
-  over the kernel without becoming core dependencies.
 
 ## Conversation-first, headless by design
 
@@ -136,23 +157,14 @@ User interfaces are downstream clients and reference implementations. They consu
 application APIs, remain replaceable, and receive no direct SHM, SQLite, or internal-service
 access. The optional AetherEMS Console is one energy-domain implementation of this model.
 
-## Try the SDK
-
-These compositions require no external service and commission no hardware:
-
-```bash
-cargo run -p aether-example-minimal-gateway
-cargo run -p aether-example-energy-gateway
-```
+## Rust SDK
 
 `aether-edge-sdk`, imported as `aether_sdk`, is the only supported Rust
 application facade. Workspace implementation crates are source-only and cannot
 be published independently. Downstream builds pin the exact commit behind a
 signed source release and select local adapters through the SDK's
-`local-runtime` feature.
-
-The first is an empty industry-neutral gateway. The second proves a disabled-by-default Energy Pack
-composition. They are SDK smoke tests, not the supervised production runtime.
+`local-runtime` feature. The example compositions above are SDK smoke tests,
+not the supervised production runtime.
 
 ## Edge runtime
 
@@ -180,97 +192,11 @@ Only `aether-api` is a remote application boundary. The other process APIs stay 
 Generated clients must use published application capabilities and must not expose or proxy those
 internal ports.
 
-## Project status
+## Contributing
 
-AetherEdge is beta software. The versioned SDK, Pack v1, six-service runtime, coherent point/health
-SHM epochs, embedded local operation, governed commands, MCP interface, and OpenAPI contract checks
-are available. The signed `v0.5.0` source/runtime/CLI release is published;
-replacement of the downstream bootstrap pin and removal of the remaining
-revisionless compatibility paths are still pending. See [Architecture](ARCHITECTURE.md),
-[ADR-0007](docs/adr/0007-aether-core-and-ems-distribution.md), and
-[ADR-0012](docs/adr/0012-agent-first-application-surface.md),
-[ADR-0013](docs/adr/0013-single-sdk-source-release.md),
-[ADR-0014](docs/adr/0014-coordinated-shm-topology-publication.md), and
-[ADR-0015](docs/adr/0015-configuration-authority-and-reconciliation.md) for the exact boundaries.
-
-Point and health SHM planes publish one committed physical epoch, while History
-and Uplink bind one SQLite topology snapshot to that exact epoch. SQLite is the
-desired-state authority for commissioned topology, protocol mappings, logical
-routes, rules, and instances, with revisioned commands and automatic runtime
-reconciliation. The local release gate rejects registry publication, verifies
-that every workspace package is source-only, and signs the Kernel source,
-runtime, manifest, and CLI artifacts. The physical AetherEMS split and its
-downstream bootstrap CI exist, but AetherEMS has not yet replaced its bootstrap
-Git pin with the signed release evidence.
-
-The broker-neutral CloudLink MQTT v1 **edge foundation** is implemented as an
-experimental, opt-in candidate: strict JSON schemas/codecs, a dedicated
-application-ACK-driven memory/file spool, user-selected MQTT v3.1.1 broker
-binding, session/heartbeat/manifest/point telemetry, and replay tests. The
-legacy MQTT adapter remains the compatibility default. AetherCloud and
-AetherEdge now consume the same digest-pinned AetherContracts
-`v0.1.0-alpha.3` release with identical complete-consumer locks and no pending
-imports. This proves distribution integrity and public fixture execution, not
-production Rust/TypeScript transport conformance: key lifecycle, a future signed ACK,
-Cloud batch-position persistence, and crash-durable Cloud stores remain open.
-The dual-process Broker harness is development evidence only. See
-[ADR-0017](docs/adr/0017-experimental-cloudlink-mqtt-edge-foundation.md) and the
-[CloudLink reference](docs/reference/cloudlink-mqtt-v1.md). Public release
-authority is defined by [ADR-0018](docs/adr/0018-pinned-aethercontracts-consumption.md).
-
-The separate `aether.cloudlink.integration.v1alpha1` extension is experimental
-and disabled by default. It requires Cloud-first enablement plus an explicit
-Runtime Manifest declaration, keeps topology and observations in independent
-durable streams, enforces a 256 KiB complete MQTT payload limit, and adds no
-physical-control capability.
-
-An experimental Home Assistant edge bridge is also implemented in the source
-tree. Its default opt-in composition is read-only: `aether-io` authenticates
-locally over WebSocket, projects area/device/entity topology and typed state,
-and obtains a complete snapshot after an event-stream gap. A separate
-default-off source-build feature publishes that committed projection through
-two crash-recoverable CloudLink streams.
-
-A third, independently enabled source-build feature adds one governed
-`device.power.set.v1` path. Only after the current CloudLink session is
-accepted and durably recorded does the edge subscribe for signed offers. It
-then applies exact topology and deny-by-default local policy, persists audit
-and deduplication state before dispatch, and maps only Boolean power intent to
-fixed Home Assistant `turn_on` or `turn_off` calls. Callers cannot choose a
-Home Assistant service or service data, and provider acceptance leaves the
-physical outcome unknown. Prebuilt releases do not enable these features;
-public integration queries, production OAuth, and production key lifecycle
-remain gated. See
-[Connect Home Assistant](docs/guides/home-assistant.md).
-
-## Documentation
-
-- [Agent Quickstart](https://docs.aetheriot.workers.dev/en/agent-quickstart/)
-- [AI-native Platform](docs/overview/ai-native-platform.md)
-- [Build Applications with AI](docs/guides/build-applications-with-ai.md)
-- [Connect AI Assistants](docs/guides/ai-assistants.md)
-- [Connect Devices](docs/guides/connect-devices.md)
-- [Connect Home Assistant](docs/guides/home-assistant.md)
-- [HTTP API and Swagger](docs/reference/http-api.md)
-- [Deployment](docs/guides/deployment.md)
-- [llms.txt](https://docs.aetheriot.workers.dev/en/llms.txt)
-
-## Development
-
-Run focused checks for the crates or scripts you changed. The complete
-workspace matrix is enforced by pull-request CI; `quick-check.sh` remains an
-optional local release gate rather than the default edit loop.
-
-```bash
-cargo fmt --all -- --check
-cargo clippy -p <affected-package> --all-targets --all-features -- -D warnings
-cargo test -p <affected-package>
-
-# Optional full local release gate
-./scripts/quick-check.sh
-```
-
-Tests requiring an external service are excluded from the default path.
+Development setup and verification live in
+[CONTRIBUTING.md](CONTRIBUTING.md). Repository rules for agents and
+contributors live in [AGENTS.md](AGENTS.md).
 
 ## License
 

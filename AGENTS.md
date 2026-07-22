@@ -1,19 +1,49 @@
 # AetherEdge Agent Instructions
 
 This file is the canonical instruction source for coding agents working in this
-repository. Tool-specific files may add usage notes, but must not contradict it.
+repository. `CLAUDE.md` and `GEMINI.md` are symlinks to it, so every agent
+reads and edits the same content. Any further tool-specific file may add usage
+notes, but must not contradict this one.
 
 ## Product Direction
 
 AetherEdge is an AI-native, industry-neutral IoT edge kernel and SDK. Energy
 management is an optional domain pack, not a dependency of the core runtime.
 The default distribution must run on one Linux edge host without Redis,
-PostgreSQL, or any other external service.
+PostgreSQL, or any other external service. The default runtime is six Rust
+processes and requires no browser application and no LLM. The optional
+AetherEMS Console and Energy Pack live in
+[`EvanL1/AetherEMS`](https://github.com/EvanL1/AetherEMS).
 
 AetherIoT is the umbrella project name. This repository is the AetherEdge
 product formerly named AetherIot. Preserve `aether-*`, `aether`, configuration,
 installer, and protocol identifiers unless a separate compatibility decision
 explicitly changes them.
+
+## Repository Map
+
+```text
+crates/       domain, ports, application, SDK, Pack and testkit APIs
+libs/         shared internal libraries (core, model, shm, config, sim)
+extensions/   optional adapters chosen only by composition roots
+services/     io, automation, history, api, uplink and alarm processes
+tools/        aether CLI/MCP and the protocol simulator
+examples/     minimal generic and compatibility composition proofs
+packs/        Pack manifests
+contracts/    pinned AetherContracts release consumed under ADR-0018
+docs/         current concepts, guides, references and ADRs
+ai/           generated agent catalog and the safety-policy authority
+skills/       the repository-owned Agent Skill
+firmware/     separately targeted embedded workspace
+```
+
+The unified documentation site source and deployment live in
+[`EvanL1/AetherDocs`](https://github.com/EvanL1/AetherDocs).
+
+Historical migration plans under `docs/plans/` and `docs/superpowers/` are
+evidence of earlier decisions, not current architecture instructions. Current
+authority is this file, accepted ADRs, the runtime manifest, OpenAPI, and the
+active Pack manifests.
 
 ## Architecture Boundaries
 
@@ -34,6 +64,8 @@ domain <- ports <- application <- runtime/interfaces
 - Only composition roots may choose concrete adapters.
 - SHM is the authority for live point state. An external store may mirror it,
   but must never silently become the authority.
+- Remote applications enter only through authenticated `aether-api:6005`. The
+  internal IO, automation, history, uplink, and alarm ports stay on loopback.
 - Application interfaces receive the read-only `LiveState` port. Only the
   acquisition/data-plane owner receives `LiveStateWriter`.
 - AI, CLI, and HTTP interfaces use the same command/query application API.
@@ -65,6 +97,23 @@ domain <- ports <- application <- runtime/interfaces
   permission, confirmation, idempotency, or audit policy.
 - Static documentation does not grant runtime authority. Runtime agents must
   query the live application capability catalog before any write.
+
+## Key Documentation
+
+These are the shortest paths to the most used pages. `llms.txt` and
+`ai/docs-manifest.json` remain the complete catalog. `README.md` is a growth
+surface and deliberately does not carry this index or a project status report.
+
+- [Getting started](docs/guides/getting-started.md)
+- [AI-native platform](docs/overview/ai-native-platform.md)
+- [Build applications with AI](docs/guides/build-applications-with-ai.md)
+- [Connect AI assistants](docs/guides/ai-assistants.md)
+- [Connect devices](docs/guides/connect-devices.md)
+- [Connect Home Assistant](docs/guides/home-assistant.md)
+- [HTTP API and Swagger](docs/reference/http-api.md)
+- [Deployment](docs/guides/deployment.md)
+- [Platform status and roadmap](docs/roadmap/status.md)
+- [Architecture](ARCHITECTURE.md)
 
 ## Rust Conventions
 
