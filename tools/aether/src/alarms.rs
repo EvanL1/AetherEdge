@@ -580,12 +580,11 @@ impl AlarmClient {
             params.push(("keyword".to_string(), kw.to_string()));
         }
 
-        let resp = self
+        let request = self
             .client
-            .get(format!("{}/alarmApi/alerts", self.base_url))
-            .query(&params)
-            .send()
-            .await?;
+            .get(format!("{}/alerts", self.base_url))
+            .query(&params);
+        let resp = self.apply_auth(request)?.send().await?;
 
         if resp.status().is_success() {
             Ok(resp.json().await?)
@@ -598,11 +597,8 @@ impl AlarmClient {
     }
 
     pub(crate) async fn get_alert(&self, id: i64) -> Result<Value> {
-        let resp = self
-            .client
-            .get(format!("{}/alarmApi/alerts/{}", self.base_url, id))
-            .send()
-            .await?;
+        let request = self.client.get(format!("{}/alerts/{}", self.base_url, id));
+        let resp = self.apply_auth(request)?.send().await?;
 
         if resp.status().is_success() {
             Ok(resp.json().await?)
@@ -616,15 +612,13 @@ impl AlarmClient {
     }
 
     pub(crate) async fn resolve_alert(&self, id: i64, confirmed: bool) -> Result<Value> {
-        let access_token = self.alarm_management_token(confirmed)?;
-        let resp = self
+        self.alarm_management_token(confirmed)?;
+        let request = self
             .client
-            .patch(format!("{}/alarmApi/alerts/{}/resolve", self.base_url, id))
-            .bearer_auth(access_token)
+            .patch(format!("{}/alerts/{}/resolve", self.base_url, id))
             .header("x-request-id", uuid::Uuid::new_v4().to_string())
-            .header("x-aether-confirmed", "true")
-            .send()
-            .await?;
+            .header("x-aether-confirmed", "true");
+        let resp = self.apply_auth(request)?.send().await?;
 
         if resp.status().is_success() {
             Ok(resp.json().await?)
@@ -659,12 +653,11 @@ impl AlarmClient {
             params.push(("keyword".to_string(), kw.to_string()));
         }
 
-        let resp = self
+        let request = self
             .client
-            .get(format!("{}/alarmApi/rules", self.base_url))
-            .query(&params)
-            .send()
-            .await?;
+            .get(format!("{}/rules", self.base_url))
+            .query(&params);
+        let resp = self.apply_auth(request)?.send().await?;
 
         if resp.status().is_success() {
             Ok(resp.json().await?)
@@ -677,11 +670,8 @@ impl AlarmClient {
     }
 
     pub(crate) async fn get_rule(&self, id: i64) -> Result<Value> {
-        let resp = self
-            .client
-            .get(format!("{}/alarmApi/rules/{}", self.base_url, id))
-            .send()
-            .await?;
+        let request = self.client.get(format!("{}/rules/{}", self.base_url, id));
+        let resp = self.apply_auth(request)?.send().await?;
 
         if resp.status().is_success() {
             Ok(resp.json().await?)
@@ -720,12 +710,11 @@ impl AlarmClient {
             params.push(("keyword".to_string(), kw.to_string()));
         }
 
-        let resp = self
+        let request = self
             .client
-            .get(format!("{}/alarmApi/alert-events", self.base_url))
-            .query(&params)
-            .send()
-            .await?;
+            .get(format!("{}/alert-events", self.base_url))
+            .query(&params);
+        let resp = self.apply_auth(request)?.send().await?;
 
         if resp.status().is_success() {
             Ok(resp.json().await?)
@@ -738,11 +727,10 @@ impl AlarmClient {
     }
 
     pub(crate) async fn get_statistics(&self) -> Result<Value> {
-        let resp = self
+        let request = self
             .client
-            .get(format!("{}/alarmApi/alert-statistics", self.base_url))
-            .send()
-            .await?;
+            .get(format!("{}/alert-statistics", self.base_url));
+        let resp = self.apply_auth(request)?.send().await?;
 
         if resp.status().is_success() {
             Ok(resp.json().await?)
@@ -755,11 +743,8 @@ impl AlarmClient {
     }
 
     async fn get_monitor_status(&self) -> Result<Value> {
-        let resp = self
-            .client
-            .get(format!("{}/alarmApi/monitor/status", self.base_url))
-            .send()
-            .await?;
+        let request = self.client.get(format!("{}/monitor/status", self.base_url));
+        let resp = self.apply_auth(request)?.send().await?;
 
         if resp.status().is_success() {
             Ok(resp.json().await?)
@@ -772,16 +757,14 @@ impl AlarmClient {
     }
 
     pub(crate) async fn create_rule(&self, body: &Value, confirmed: bool) -> Result<Value> {
-        let access_token = self.alarm_management_token(confirmed)?;
-        let resp = self
+        self.alarm_management_token(confirmed)?;
+        let request = self
             .client
-            .post(format!("{}/alarmApi/rules", self.base_url))
-            .bearer_auth(access_token)
+            .post(format!("{}/rules", self.base_url))
             .header("x-request-id", uuid::Uuid::new_v4().to_string())
             .header("x-aether-confirmed", "true")
-            .json(body)
-            .send()
-            .await?;
+            .json(body);
+        let resp = self.apply_auth(request)?.send().await?;
 
         if resp.status().is_success() {
             Ok(resp.json().await?)
@@ -796,16 +779,14 @@ impl AlarmClient {
         body: &Value,
         confirmed: bool,
     ) -> Result<Value> {
-        let access_token = self.alarm_management_token(confirmed)?;
-        let resp = self
+        self.alarm_management_token(confirmed)?;
+        let request = self
             .client
-            .put(format!("{}/alarmApi/rules/{}", self.base_url, id))
-            .bearer_auth(access_token)
+            .put(format!("{}/rules/{}", self.base_url, id))
             .header("x-request-id", uuid::Uuid::new_v4().to_string())
             .header("x-aether-confirmed", "true")
-            .json(body)
-            .send()
-            .await?;
+            .json(body);
+        let resp = self.apply_auth(request)?.send().await?;
 
         if resp.status().is_success() {
             Ok(resp.json().await?)
@@ -815,15 +796,13 @@ impl AlarmClient {
     }
 
     pub(crate) async fn delete_rule(&self, id: i64, confirmed: bool) -> Result<Value> {
-        let access_token = self.alarm_management_token(confirmed)?;
-        let resp = self
+        self.alarm_management_token(confirmed)?;
+        let request = self
             .client
-            .delete(format!("{}/alarmApi/rules/{}", self.base_url, id))
-            .bearer_auth(access_token)
+            .delete(format!("{}/rules/{}", self.base_url, id))
             .header("x-request-id", uuid::Uuid::new_v4().to_string())
-            .header("x-aether-confirmed", "true")
-            .send()
-            .await?;
+            .header("x-aether-confirmed", "true");
+        let resp = self.apply_auth(request)?.send().await?;
 
         if resp.status().is_success() {
             Ok(resp.json().await?)
@@ -840,24 +819,31 @@ impl AlarmClient {
         enabled: bool,
         confirmed: bool,
     ) -> Result<Value> {
-        let access_token = self.alarm_management_token(confirmed)?;
+        self.alarm_management_token(confirmed)?;
         let action = if enabled { "enable" } else { "disable" };
-        let resp = self
+        let request = self
             .client
-            .patch(format!(
-                "{}/alarmApi/rules/{}/{}",
-                self.base_url, id, action
-            ))
-            .bearer_auth(access_token)
+            .patch(format!("{}/rules/{}/{}", self.base_url, id, action))
             .header("x-request-id", uuid::Uuid::new_v4().to_string())
-            .header("x-aether-confirmed", "true")
-            .send()
-            .await?;
+            .header("x-aether-confirmed", "true");
+        let resp = self.apply_auth(request)?.send().await?;
 
         if resp.status().is_success() {
             Ok(resp.json().await?)
         } else {
             Err(parse_error_body(&format!("Failed to {action} alarm rule"), resp).await)
+        }
+    }
+
+    /// Attaches the session Bearer token when one is present. Reads without a
+    /// token go out unauthenticated and let the gateway respond 401.
+    fn apply_auth(&self, request: reqwest::RequestBuilder) -> Result<reqwest::RequestBuilder> {
+        match &self.access_token {
+            Some(token) => {
+                crate::transport_security::require_secure_bearer_transport(&self.base_url)?;
+                Ok(request.bearer_auth(token))
+            },
+            None => Ok(request),
         }
     }
 
@@ -926,7 +912,7 @@ mod tests {
     async fn resolve_alert_uses_governed_patch_contract() {
         let server = MockServer::start().await;
         Mock::given(method("PATCH"))
-            .and(path("/alarmApi/alerts/12/resolve"))
+            .and(path("/alerts/12/resolve"))
             .and(header("authorization", "Bearer signed-access-token"))
             .and(header_exists("x-request-id"))
             .and(header("x-aether-confirmed", "true"))
@@ -953,7 +939,7 @@ mod tests {
     async fn create_rule_posts_full_body() {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
-            .and(path("/alarmApi/rules"))
+            .and(path("/rules"))
             .and(header("authorization", "Bearer signed-access-token"))
             .and(header_exists("x-request-id"))
             .and(header("x-aether-confirmed", "true"))
@@ -996,7 +982,7 @@ mod tests {
     async fn update_rule_uses_put_and_forwards_the_body() {
         let server = MockServer::start().await;
         Mock::given(method("PUT"))
-            .and(path("/alarmApi/rules/7"))
+            .and(path("/rules/7"))
             // Assert the body: without this, an implementation that never
             // forwards the request body would still pass.
             .and(body_json(serde_json::json!({ "value": 90.0 })))
@@ -1016,7 +1002,7 @@ mod tests {
     async fn delete_rule_uses_delete() {
         let server = MockServer::start().await;
         Mock::given(method("DELETE"))
-            .and(path("/alarmApi/rules/7"))
+            .and(path("/rules/7"))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
             .expect(1)
             .mount(&server)
@@ -1030,7 +1016,7 @@ mod tests {
     async fn enable_uses_patch_on_the_enable_path() {
         let server = MockServer::start().await;
         Mock::given(method("PATCH"))
-            .and(path("/alarmApi/rules/7/enable"))
+            .and(path("/rules/7/enable"))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
             .expect(1)
             .mount(&server)
@@ -1046,7 +1032,7 @@ mod tests {
     async fn disable_uses_patch_on_the_disable_path() {
         let server = MockServer::start().await;
         Mock::given(method("PATCH"))
-            .and(path("/alarmApi/rules/7/disable"))
+            .and(path("/rules/7/disable"))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
             .expect(1)
             .mount(&server)
@@ -1060,7 +1046,7 @@ mod tests {
     async fn delete_rule_surfaces_inline_error_message() {
         let server = MockServer::start().await;
         Mock::given(method("DELETE"))
-            .and(path("/alarmApi/rules/999"))
+            .and(path("/rules/999"))
             .respond_with(ResponseTemplate::new(404).set_body_json(
                 serde_json::json!({ "success": false, "message": "Rule 999 not found", "data": null }),
             ))
@@ -1077,7 +1063,7 @@ mod tests {
     async fn create_rule_surfaces_inline_error_message() {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
-            .and(path("/alarmApi/rules"))
+            .and(path("/rules"))
             .respond_with(ResponseTemplate::new(400).set_body_json(serde_json::json!({
                 "success": false,
                 "message": "Invalid operator. Allowed: >, <, >=, <=, ==, !=",
@@ -1100,7 +1086,7 @@ mod tests {
     async fn update_rule_surfaces_inline_error_message() {
         let server = MockServer::start().await;
         Mock::given(method("PUT"))
-            .and(path("/alarmApi/rules/7"))
+            .and(path("/rules/7"))
             .respond_with(ResponseTemplate::new(404).set_body_json(
                 serde_json::json!({ "success": false, "message": "Rule 7 not found", "data": null }),
             ))
@@ -1123,7 +1109,7 @@ mod tests {
         // script looping over both operations can tell which one failed (Fix 3).
         let server = MockServer::start().await;
         Mock::given(method("PATCH"))
-            .and(path("/alarmApi/rules/7/enable"))
+            .and(path("/rules/7/enable"))
             .respond_with(ResponseTemplate::new(500))
             .mount(&server)
             .await;
@@ -1139,10 +1125,52 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn reads_attach_bearer_token_when_present() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/rules"))
+            .and(header("authorization", "Bearer signed-access-token"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(
+                serde_json::json!({ "success": true, "data": { "list": [], "total": 0 } }),
+            ))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let client = AlarmClient::with_access_token(&server.uri(), "signed-access-token").unwrap();
+        client
+            .list_rules(None, None, None, None, 1, 50)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn reads_without_token_carry_no_authorization_header() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/alert-statistics"))
+            .and(|request: &wiremock::Request| !request.headers.contains_key("authorization"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(serde_json::json!({ "success": true, "data": {} })),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let client = AlarmClient {
+            client: Client::new(),
+            base_url: server.uri(),
+            access_token: None,
+        };
+        client.get_statistics().await.unwrap();
+    }
+
+    #[tokio::test]
     async fn disable_error_names_the_disable_action() {
         let server = MockServer::start().await;
         Mock::given(method("PATCH"))
-            .and(path("/alarmApi/rules/7/disable"))
+            .and(path("/rules/7/disable"))
             .respond_with(ResponseTemplate::new(500))
             .mount(&server)
             .await;

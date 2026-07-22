@@ -455,12 +455,19 @@ impl RoutingClient {
         })
     }
 
+    fn apply_auth(&self, request: reqwest::RequestBuilder) -> Result<reqwest::RequestBuilder> {
+        match &self.access_token {
+            Some(token) => {
+                crate::transport_security::require_secure_bearer_transport(&self.base_url)?;
+                Ok(request.bearer_auth(token))
+            },
+            None => Ok(request),
+        }
+    }
+
     pub(crate) async fn list_all(&self) -> Result<Value> {
-        let response = self
-            .client
-            .get(format!("{}/api/routing", self.base_url))
-            .send()
-            .await?;
+        let request = self.client.get(format!("{}/api/routing", self.base_url));
+        let response = self.apply_auth(request)?.send().await?;
 
         if response.status().is_success() {
             Ok(response.json().await?)
@@ -476,11 +483,10 @@ impl RoutingClient {
     }
 
     async fn list_by_instance(&self, id: u32) -> Result<Value> {
-        let response = self
+        let request = self
             .client
-            .get(format!("{}/api/instances/{}/routing", self.base_url, id))
-            .send()
-            .await?;
+            .get(format!("{}/api/instances/{}/routing", self.base_url, id));
+        let response = self.apply_auth(request)?.send().await?;
 
         if response.status().is_success() {
             Ok(response.json().await?)
@@ -497,11 +503,10 @@ impl RoutingClient {
     }
 
     async fn list_by_channel(&self, id: u32) -> Result<Value> {
-        let response = self
+        let request = self
             .client
-            .get(format!("{}/api/routing/by-channel/{}", self.base_url, id))
-            .send()
-            .await?;
+            .get(format!("{}/api/routing/by-channel/{}", self.base_url, id));
+        let response = self.apply_auth(request)?.send().await?;
 
         if response.status().is_success() {
             Ok(response.json().await?)
@@ -518,15 +523,18 @@ impl RoutingClient {
     }
 
     async fn create_routing(&self, instance_id: u32, entries: Value) -> Result<Value> {
-        let response = self
+        // The gateway treats every non-GET method as a governed mutation; the
+        // CLI invocation itself is the operator's confirmation for this
+        // service-level unguarded operation.
+        let request = self
             .client
             .post(format!(
                 "{}/api/instances/{}/routing",
                 self.base_url, instance_id
             ))
-            .json(&entries)
-            .send()
-            .await?;
+            .header("x-aether-confirmed", "true")
+            .json(&entries);
+        let response = self.apply_auth(request)?.send().await?;
 
         if response.status().is_success() {
             Ok(response.json().await?)
@@ -543,15 +551,15 @@ impl RoutingClient {
     }
 
     async fn batch_routing(&self, instance_id: u32, entries: Value) -> Result<Value> {
-        let response = self
+        let request = self
             .client
             .put(format!(
                 "{}/api/instances/{}/routing",
                 self.base_url, instance_id
             ))
-            .json(&entries)
-            .send()
-            .await?;
+            .header("x-aether-confirmed", "true")
+            .json(&entries);
+        let response = self.apply_auth(request)?.send().await?;
 
         if response.status().is_success() {
             Ok(response.json().await?)
@@ -580,24 +588,23 @@ impl RoutingClient {
         if !matches!(channel_type, "C" | "A") {
             anyhow::bail!("action routing channel type must be C or A");
         }
-        let access_token = self.routing_management_token(confirmed)?;
-        let response = self
+        self.require_routing_management_auth(confirmed)?;
+        let request = self
             .client
             .put(format!(
                 "{}/api/instances/{instance_id}/actions/{action_id}/routing",
                 self.base_url
             ))
-            .bearer_auth(access_token)
             .header("x-request-id", uuid::Uuid::new_v4().to_string())
+            .header("x-aether-confirmed", "true")
             .json(&serde_json::json!({
                 "channel_id": channel_id,
                 "four_remote": channel_type,
                 "channel_point_id": channel_point_id,
                 "enabled": enabled,
                 "confirmed": true
-            }))
-            .send()
-            .await?;
+            }));
+        let response = self.apply_auth(request)?.send().await?;
         if response.status().is_success() {
             Ok(response.json().await?)
         } else {
@@ -611,18 +618,17 @@ impl RoutingClient {
         action_id: u32,
         confirmed: bool,
     ) -> Result<Value> {
-        let access_token = self.routing_management_token(confirmed)?;
-        let response = self
+        self.require_routing_management_auth(confirmed)?;
+        let request = self
             .client
             .delete(format!(
                 "{}/api/instances/{instance_id}/actions/{action_id}/routing",
                 self.base_url
             ))
-            .bearer_auth(access_token)
             .header("x-request-id", uuid::Uuid::new_v4().to_string())
-            .json(&serde_json::json!({ "confirmed": true }))
-            .send()
-            .await?;
+            .header("x-aether-confirmed", "true")
+            .json(&serde_json::json!({ "confirmed": true }));
+        let response = self.apply_auth(request)?.send().await?;
         if response.status().is_success() {
             Ok(response.json().await?)
         } else {
@@ -637,21 +643,20 @@ impl RoutingClient {
         enabled: bool,
         confirmed: bool,
     ) -> Result<Value> {
-        let access_token = self.routing_management_token(confirmed)?;
-        let response = self
+        self.require_routing_management_auth(confirmed)?;
+        let request = self
             .client
             .patch(format!(
                 "{}/api/instances/{instance_id}/actions/{action_id}/routing",
                 self.base_url
             ))
-            .bearer_auth(access_token)
             .header("x-request-id", uuid::Uuid::new_v4().to_string())
+            .header("x-aether-confirmed", "true")
             .json(&serde_json::json!({
                 "enabled": enabled,
                 "confirmed": true
-            }))
-            .send()
-            .await?;
+            }));
+        let response = self.apply_auth(request)?.send().await?;
         if response.status().is_success() {
             Ok(response.json().await?)
         } else {
@@ -663,17 +668,16 @@ impl RoutingClient {
     }
 
     async fn delete_instance_routing(&self, name: &str, confirmed: bool) -> Result<()> {
-        let access_token = self.routing_management_token(confirmed)?;
-        let response = self
+        self.require_routing_management_auth(confirmed)?;
+        let request = self
             .client
             .delete(format!(
                 "{}/api/routing/instances/{}?confirm=true",
                 self.base_url, name
             ))
-            .bearer_auth(access_token)
             .header("x-request-id", uuid::Uuid::new_v4().to_string())
-            .send()
-            .await?;
+            .header("x-aether-confirmed", "true");
+        let response = self.apply_auth(request)?.send().await?;
 
         if response.status().is_success() {
             Ok(())
@@ -690,17 +694,16 @@ impl RoutingClient {
     }
 
     async fn delete_channel_routing(&self, id: u32, confirmed: bool) -> Result<()> {
-        let access_token = self.routing_management_token(confirmed)?;
-        let response = self
+        self.require_routing_management_auth(confirmed)?;
+        let request = self
             .client
             .delete(format!(
                 "{}/api/routing/channels/{}?confirm=true",
                 self.base_url, id
             ))
-            .bearer_auth(access_token)
             .header("x-request-id", uuid::Uuid::new_v4().to_string())
-            .send()
-            .await?;
+            .header("x-aether-confirmed", "true");
+        let response = self.apply_auth(request)?.send().await?;
 
         if response.status().is_success() {
             Ok(())
@@ -716,16 +719,17 @@ impl RoutingClient {
         }
     }
 
-    fn routing_management_token(&self, confirmed: bool) -> Result<&str> {
+    fn require_routing_management_auth(&self, confirmed: bool) -> Result<()> {
         if !confirmed {
             anyhow::bail!("action routing requires explicit confirmation (--confirmed)");
         }
         crate::transport_security::require_secure_bearer_transport(&self.base_url)?;
-        self.access_token.as_deref().ok_or_else(|| {
-            anyhow::anyhow!(
+        if self.access_token.is_none() {
+            anyhow::bail!(
                 "action routing requires AETHER_ACCESS_TOKEN from an authenticated Admin or Engineer session"
-            )
-        })
+            );
+        }
+        Ok(())
     }
 }
 
@@ -736,6 +740,81 @@ mod tests {
     use wiremock::matchers::{body_json, header, header_exists, method, path, query_param};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
+    #[tokio::test]
+    async fn list_all_attaches_bearer_when_access_token_is_present() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/routing"))
+            .and(header("authorization", "Bearer signed-access-token"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([])))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let client = RoutingClient::with_access_token(&server.uri(), "signed-access-token")
+            .expect("routing client");
+        client.list_all().await.expect("authenticated list");
+    }
+
+    #[tokio::test]
+    async fn list_all_stays_unauthenticated_without_access_token() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/routing"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([])))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let client = RoutingClient {
+            client: reqwest::Client::new(),
+            base_url: server.uri(),
+            access_token: None,
+        };
+        client.list_all().await.expect("tokenless list");
+
+        let requests = server.received_requests().await.expect("received requests");
+        assert!(
+            requests
+                .iter()
+                .all(|request| !request.headers.contains_key("authorization")),
+            "tokenless reads must not carry an authorization header"
+        );
+    }
+
+    #[tokio::test]
+    async fn measurement_routing_writes_send_the_gateway_confirmation_header() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/api/instances/7/routing"))
+            .and(header("x-aether-confirmed", "true"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("PUT"))
+            .and(path("/api/instances/7/routing"))
+            .and(header("x-aether-confirmed", "true"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let client = RoutingClient {
+            client: reqwest::Client::new(),
+            base_url: server.uri(),
+            access_token: None,
+        };
+        client
+            .create_routing(7, serde_json::json!({"point_type": "M"}))
+            .await
+            .expect("create routing");
+        client
+            .batch_routing(7, serde_json::json!([]))
+            .await
+            .expect("batch routing");
+    }
+
     #[test]
     fn bearer_writes_reject_remote_plaintext_before_token_access() {
         let client = RoutingClient {
@@ -745,7 +824,7 @@ mod tests {
         };
 
         let error = client
-            .routing_management_token(true)
+            .require_routing_management_auth(true)
             .expect_err("remote plaintext must fail closed");
         assert!(error.to_string().contains("refusing to send"), "{error:#}");
     }
@@ -780,6 +859,7 @@ mod tests {
         Mock::given(method("PUT"))
             .and(path("/api/instances/7/actions/1/routing"))
             .and(header("authorization", "Bearer signed-access-token"))
+            .and(header("x-aether-confirmed", "true"))
             .and(header_exists("x-request-id"))
             .and(body_json(serde_json::json!({
                 "channel_id": 3,
@@ -828,6 +908,7 @@ mod tests {
             .and(path("/api/routing/channels/3"))
             .and(query_param("confirm", "true"))
             .and(header("authorization", "Bearer signed-access-token"))
+            .and(header("x-aether-confirmed", "true"))
             .and(header_exists("x-request-id"))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
             .expect(1)

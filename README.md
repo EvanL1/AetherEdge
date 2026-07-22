@@ -42,6 +42,11 @@ Inspect my edge runtime and generate a read-only operations app for the
 capabilities it exposes.
 ```
 
+The MCP server talks to the authenticated API gateway (`aether-api:6005`), so set
+`AETHER_ACCESS_TOKEN` for the session. Claude on your laptop, edge on a server? One line still
+works: `claude mcp add aether -- ssh user@gateway aether mcp`, or point `AETHER_API_URL` at an
+HTTPS ingress — see [Connect AI assistants](docs/guides/ai-assistants.md).
+
 **No hardware?** The SDK compositions run anywhere, need no external service, and commission
 nothing:
 

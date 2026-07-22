@@ -39,6 +39,11 @@ claude mcp add aether -- aether mcp
 检查我的 Edge Runtime，并根据它暴露的能力生成一个只读运维应用。
 ```
 
+MCP server 与经认证的 API 网关（`aether-api:6005`）通信，会话需设置
+`AETHER_ACCESS_TOKEN`。Claude 在笔记本、Edge 在服务器？一行命令依然可用：
+`claude mcp add aether -- ssh user@gateway aether mcp`，或将 `AETHER_API_URL`
+指向 HTTPS ingress——详见[连接 AI 助手](docs/guides/ai-assistants.md)。
+
 **没有硬件？** SDK 组合可在任何环境运行，不需要外部服务，也不会投运任何硬件：
 
 ```bash
