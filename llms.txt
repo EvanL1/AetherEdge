@@ -33,7 +33,7 @@ Use the narrowest document that answers the task. The catalog covers every agent
 
 ## Safety and Governance
 
-- [AetherEdge Agent Instructions](https://github.com/EvanL1/AetherEdge/blob/main/AGENTS.md): This file is the canonical instruction source for coding agents working in this repository. Tool-specific files may add usage notes, but must not contradict it.
+- [AetherEdge Agent Instructions](https://github.com/EvanL1/AetherEdge/blob/main/AGENTS.md): This file is the canonical instruction source for coding agents working in this repository. CLAUDE.md and GEMINI.md are symlinks to it, so every agent reads and edits the same content. Any further tool-specific file may add usage notes,…
 - [Aether invariants](https://github.com/EvanL1/AetherEdge/blob/main/ai/invariants.md): These rules are more important than the current directory layout.
 - [safety-policy.yaml](https://raw.githubusercontent.com/EvanL1/AetherEdge/main/ai/safety-policy.yaml): Machine-readable AetherEdge safety-policy.yaml resource.
 - [Safe Operations for Applications and Agents](https://docs.aetheriot.workers.dev/en/guides/safe-operations.md): Preserve identity, confirmation, audit, topology fencing, and uncertain command outcomes when operating AetherEdge
