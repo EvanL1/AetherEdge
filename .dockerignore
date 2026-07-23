@@ -34,6 +34,16 @@ target/.cargo-lock
 *.md
 !README.md
 docs/
+# The aether CLI compiles these pages into the MCP binary (include_str! in
+# tools/aether/src/mcp_docs.rs); Dockerfile.mcp builds from source and needs
+# them in the context.
+!docs/concepts/architecture.md
+!docs/concepts/data-model.md
+!docs/concepts/shared-memory.md
+!docs/concepts/rule-engine.md
+!docs/concepts/data-flow.md
+!docs/guides/ai-assistants.md
+!docs/reference/mcp-tools.md
 
 # Test files
 tests/

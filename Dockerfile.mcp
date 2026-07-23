@@ -1,0 +1,38 @@
+# Self-contained image for the `aether mcp` stdio server.
+#
+# Unlike the root Dockerfile (which packages pre-compiled release binaries for
+# the six-service runtime), this file compiles the CLI from source so a plain
+# `docker build` works from a fresh clone — used by MCP directory sandboxes
+# (e.g. Glama) and by anyone who wants a containerized MCP server without a
+# local Rust toolchain:
+#
+#   docker build -f Dockerfile.mcp -t aetheredge-mcp .
+#   docker run -i --rm aetheredge-mcp
+#
+# The server starts with the generic kernel surface when no installation is
+# present. Point it at a real system with AETHER_API_URL and
+# AETHER_ACCESS_TOKEN:
+#
+#   docker run -i --rm \
+#     -e AETHER_API_URL=https://edge.example.test \
+#     -e AETHER_ACCESS_TOKEN=... \
+#     aetheredge-mcp
+
+FROM rust:1.90-slim-bookworm AS builder
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    pkg-config libssl-dev \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /src
+COPY . .
+RUN cargo build --release --locked -p aether
+
+FROM debian:bookworm-slim
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+COPY LICENSE-MIT /usr/share/licenses/aetheredge/LICENSE-MIT
+COPY LICENSE-APACHE /usr/share/licenses/aetheredge/LICENSE-APACHE
+COPY NOTICE /usr/share/licenses/aetheredge/NOTICE
+LABEL org.opencontainers.image.licenses="MIT OR Apache-2.0"
+COPY --from=builder /src/target/release/aether /usr/local/bin/aether
+ENTRYPOINT ["aether", "mcp"]
