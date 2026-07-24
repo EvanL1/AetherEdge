@@ -62,7 +62,7 @@ describe('Edge agent document metadata', () => {
     expect(record).toMatchObject({
       id: 'edge-docs-guides-deployment',
       path: 'docs/guides/deployment.md',
-      canonical_url: 'https://docs.aetheriot.workers.dev/en/guides/deployment.md',
+      canonical_url: 'https://docs.aetheriot.dev/en/guides/deployment.md',
       title: 'Deployment',
       description: 'Deploy and verify the edge runtime.',
       locale: 'en',
@@ -100,10 +100,10 @@ describe('Edge agent document metadata', () => {
 
   it('uses the unified site only for published English pages and raw URLs for machine files', () => {
     expect(canonicalUrlFor('docs/guides/deployment.md', { published: true })).toBe(
-      'https://docs.aetheriot.workers.dev/en/guides/deployment.md'
+      'https://docs.aetheriot.dev/en/guides/deployment.md'
     );
     expect(canonicalUrlFor('crates/aether-cloudlink/README.md', { published: true })).toBe(
-      'https://docs.aetheriot.workers.dev/en/crates/aether-cloudlink.md'
+      'https://docs.aetheriot.dev/en/crates/aether-cloudlink.md'
     );
     expect(
       canonicalUrlFor('docs/adr/0001-ai-native-edge-kernel.md', { published: true })
@@ -155,7 +155,7 @@ describe('Edge llms.txt generation', () => {
     expect(output).toContain('Default to read-only.');
     expect(output).toContain('Static documentation does not grant execution authority.');
     expect(output).toContain(
-      '[Connect devices](https://docs.aetheriot.workers.dev/en/guides/connect-devices.md): Connect heterogeneous devices.'
+      '[Connect devices](https://docs.aetheriot.dev/en/guides/connect-devices.md): Connect heterogeneous devices.'
     );
     expect(output).not.toContain('llms-full.txt');
     expect(

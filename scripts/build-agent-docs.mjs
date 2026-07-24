@@ -11,7 +11,7 @@ const repositoryUrl = 'https://github.com/EvanL1/AetherEdge';
 const githubBlobBase = `${repositoryUrl}/blob/main`;
 const rawRepositoryBase =
   'https://raw.githubusercontent.com/EvanL1/AetherEdge/main';
-const publicDocumentationBase = 'https://docs.aetheriot.workers.dev';
+const publicDocumentationBase = 'https://docs.aetheriot.dev';
 const manifestSchemaUrl = `${rawRepositoryBase}/ai/docs-manifest.schema.json`;
 
 const sectionOrder = [

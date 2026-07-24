@@ -99,5 +99,5 @@ change, unknown entity, or sequence conflict stops incremental processing and
 requires a complete new snapshot. Missed state is never fabricated.
 
 See the complete [English user guide](../../docs/guides/home-assistant.md) or
-the [Simplified Chinese user guide](https://docs.aetheriot.workers.dev/guides/home-assistant/)
+the [Simplified Chinese user guide](https://docs.aetheriot.dev/guides/home-assistant/)
 for security guidance, mapped attributes, and troubleshooting.

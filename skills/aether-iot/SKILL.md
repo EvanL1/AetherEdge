@@ -13,7 +13,7 @@ generated application as an untrusted client of the application boundary.
 ## Establish context
 
 1. In an AetherEdge checkout, read `AGENTS.md` before changing files.
-2. Outside a checkout, fetch `https://docs.aetheriot.workers.dev/llms.txt`, then fetch only the
+2. Outside a checkout, fetch `https://docs.aetheriot.dev/llms.txt`, then fetch only the
    relevant page as Markdown by appending `.md` or requesting `Accept: text/markdown`.
 3. Prefer documentation matching the installed release. Inspect local runtime facts with:
 

@@ -31,6 +31,6 @@ binary names, the `aether` CLI, `aether-edge-sdk`, configuration keys, service
 identities, installer names, and protocol identifiers do not change in this
 migration.
 
-Start with the [Agent Quickstart](https://docs.aetheriot.workers.dev/en/agent-quickstart/),
+Start with the [Agent Quickstart](https://docs.aetheriot.dev/en/agent-quickstart/),
 [Getting Started](../guides/getting-started.md), or the
 [migration guide](../migration/aetheriot-to-aetheredge.md).
