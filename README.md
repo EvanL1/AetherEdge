@@ -6,9 +6,9 @@
 [![Version](https://img.shields.io/badge/version-0.5.0-yellow.svg)](CHANGELOG.md)
 [![Status](https://img.shields.io/badge/status-beta-orange.svg)](CHANGELOG.md)
 
-**Documentation website:** [docs.aetheriot.workers.dev/en](https://docs.aetheriot.workers.dev/en/)
+**Documentation website:** [docs.aetheriot.dev/en](https://docs.aetheriot.dev/en/)
 
-[AI-native platform](docs/overview/ai-native-platform.md) · [Get started](docs/guides/getting-started.md) · [Documentation](https://docs.aetheriot.workers.dev/en/) · [Agent Skill](skills/aether-iot/SKILL.md) · [MCP](docs/guides/ai-assistants.md) · [中文](README-CN.md)
+[AI-native platform](docs/overview/ai-native-platform.md) · [Get started](docs/guides/getting-started.md) · [Documentation](https://docs.aetheriot.dev/en/) · [Agent Skill](skills/aether-iot/SKILL.md) · [MCP](docs/guides/ai-assistants.md) · [中文](README-CN.md)
 
 **Let AI agents run your physical space — safely, locally, deterministically.**
 
@@ -64,7 +64,7 @@ cargo run -p simulator -- --scenario tools/simulator/scenarios/pv_daily.yaml --p
 
 See [Getting Started](docs/guides/getting-started.md) for the full safe-empty runtime setup,
 [Connect devices](docs/guides/connect-devices.md) for wiring channels, and the
-[Agent Quickstart](https://docs.aetheriot.workers.dev/en/agent-quickstart/) for a complete
+[Agent Quickstart](https://docs.aetheriot.dev/en/agent-quickstart/) for a complete
 assistant-driven setup.
 
 ## Install AetherEdge
@@ -143,7 +143,7 @@ starts an explicitly write-enabled session, and every write still crosses the se
 permission, confirmation, validation, and audit boundary.
 
 See [Build Applications with AI](docs/guides/build-applications-with-ai.md) for the client contract
-and [Agent Quickstart](https://docs.aetheriot.workers.dev/en/agent-quickstart/) for a complete safe-empty
+and [Agent Quickstart](https://docs.aetheriot.dev/en/agent-quickstart/) for a complete safe-empty
 runtime setup.
 
 ## Conversation-first, headless by design

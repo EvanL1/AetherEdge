@@ -14,37 +14,37 @@ Use the narrowest document that answers the task. The catalog covers every agent
 - [Add a data processor](https://github.com/EvanL1/AetherEdge/blob/main/ai/runbooks/add-data-processor.md): Read the authoritative AetherEdge resource at ai/runbooks/add-data-processor.md.
 - [Add an extension](https://github.com/EvanL1/AetherEdge/blob/main/ai/runbooks/add-extension.md): Read the authoritative AetherEdge resource at ai/runbooks/add-extension.md.
 - [Change an AI-facing capability](https://github.com/EvanL1/AetherEdge/blob/main/ai/runbooks/change-capability.md): Read the authoritative AetherEdge resource at ai/runbooks/change-capability.md.
-- [Connect AI Assistants](https://docs.aetheriot.workers.dev/en/guides/ai-assistants.md): Point Claude or any MCP client at aether mcp, and choose between read-only and write access
-- [Build Applications with AI](https://docs.aetheriot.workers.dev/en/guides/build-applications-with-ai.md): Generate contract-first IoT applications without turning a Web UI or an AI agent into a second runtime authority
-- [Connect Devices](https://docs.aetheriot.workers.dev/en/guides/connect-devices.md): Configure channels, choose protocols, and map device points to instances
-- [Connect Data Processors](https://docs.aetheriot.workers.dev/en/guides/data-processors.md): Declare data-processing tasks in domain packs and connect request-driven local or remote processors
-- [Connect AetherEdge to AetherCloud through AetherContracts](https://docs.aetheriot.workers.dev/en/guides/edge-contracts-cloud.md): This agent task validates the current cross-repository integration path without claiming production CloudLink readiness. It starts with a safe local runtime, verifies the shared contract release, and then runs the available product…
-- [Getting Started](https://docs.aetheriot.workers.dev/en/guides/getting-started.md): Build the workspace, initialize configuration, start services, and verify health
-- [Connect Home Assistant](https://docs.aetheriot.workers.dev/en/guides/home-assistant.md): Use Home Assistant as a delegated device source and explicitly opt in to tightly governed semantic power control
-- [Writing Rules](https://docs.aetheriot.workers.dev/en/guides/writing-rules.md): Author rules through the HTTP API or a downstream product console
+- [Connect AI Assistants](https://docs.aetheriot.dev/en/guides/ai-assistants.md): Point Claude or any MCP client at aether mcp, and choose between read-only and write access
+- [Build Applications with AI](https://docs.aetheriot.dev/en/guides/build-applications-with-ai.md): Generate contract-first IoT applications without turning a Web UI or an AI agent into a second runtime authority
+- [Connect Devices](https://docs.aetheriot.dev/en/guides/connect-devices.md): Configure channels, choose protocols, and map device points to instances
+- [Connect Data Processors](https://docs.aetheriot.dev/en/guides/data-processors.md): Declare data-processing tasks in domain packs and connect request-driven local or remote processors
+- [Connect AetherEdge to AetherCloud through AetherContracts](https://docs.aetheriot.dev/en/guides/edge-contracts-cloud.md): This agent task validates the current cross-repository integration path without claiming production CloudLink readiness. It starts with a safe local runtime, verifies the shared contract release, and then runs the available product…
+- [Getting Started](https://docs.aetheriot.dev/en/guides/getting-started.md): Build the workspace, initialize configuration, start services, and verify health
+- [Connect Home Assistant](https://docs.aetheriot.dev/en/guides/home-assistant.md): Use Home Assistant as a delegated device source and explicitly opt in to tightly governed semantic power control
+- [Writing Rules](https://docs.aetheriot.dev/en/guides/writing-rules.md): Author rules through the HTTP API or a downstream product console
 - [AetherEdge](https://github.com/EvanL1/AetherEdge/blob/main/skills/aether-iot/SKILL.md): Build, integrate, diagnose, or generate applications for the AetherEdge AI-native edge kernel. Use for AetherEdge onboarding, SDK compositions, device and topology clients, read-only operations UIs, MCP integration, Domain Packs, or governed IoT commands where live-state authority and physical-device safety must be preserved.
 
 ## Deployment and Operations
 
-- [Deployment](https://docs.aetheriot.workers.dev/en/guides/deployment.md): Run with Docker Compose or build a self-contained installer for edge devices
-- [Migrate from AetherIot to AetherEdge](https://docs.aetheriot.workers.dev/en/migration/aetheriot-to-aetheredge.md): The edge product and repository are renamed from AetherIot to AetherEdge. AetherIoT becomes the umbrella project name for AetherEdge, AetherCloud, and AetherContracts. This is a product-identity change, not a protocol or package namespace…
-- [Deployment topologies](https://docs.aetheriot.workers.dev/en/overview/deployment-topologies.md): AetherIoT supports deployments that keep physical authority at the edge while adding cloud coordination only where it creates value.
-- [Configuration Reference](https://docs.aetheriot.workers.dev/en/reference/configuration.md): YAML configuration schema, the sync pipeline, and environment variables
+- [Deployment](https://docs.aetheriot.dev/en/guides/deployment.md): Run with Docker Compose or build a self-contained installer for edge devices
+- [Migrate from AetherIot to AetherEdge](https://docs.aetheriot.dev/en/migration/aetheriot-to-aetheredge.md): The edge product and repository are renamed from AetherIot to AetherEdge. AetherIoT becomes the umbrella project name for AetherEdge, AetherCloud, and AetherContracts. This is a product-identity change, not a protocol or package namespace…
+- [Deployment topologies](https://docs.aetheriot.dev/en/overview/deployment-topologies.md): AetherIoT supports deployments that keep physical authority at the edge while adding cloud coordination only where it creates value.
+- [Configuration Reference](https://docs.aetheriot.dev/en/reference/configuration.md): YAML configuration schema, the sync pipeline, and environment variables
 
 ## Safety and Governance
 
 - [AetherEdge Agent Instructions](https://github.com/EvanL1/AetherEdge/blob/main/AGENTS.md): This file is the canonical instruction source for coding agents working in this repository. CLAUDE.md and GEMINI.md are symlinks to it, so every agent reads and edits the same content. Any further tool-specific file may add usage notes,…
 - [Aether invariants](https://github.com/EvanL1/AetherEdge/blob/main/ai/invariants.md): These rules are more important than the current directory layout.
 - [safety-policy.yaml](https://raw.githubusercontent.com/EvanL1/AetherEdge/main/ai/safety-policy.yaml): Machine-readable AetherEdge safety-policy.yaml resource.
-- [Safe Operations for Applications and Agents](https://docs.aetheriot.workers.dev/en/guides/safe-operations.md): Preserve identity, confirmation, audit, topology fencing, and uncertain command outcomes when operating AetherEdge
-- [Dependency security exceptions](https://docs.aetheriot.workers.dev/en/security/dependency-exceptions.md): Security advisories are denied by default. An exception is permitted only when the affected operation is unreachable, the boundary is enforced in code and a removal condition is recorded here.
+- [Safe Operations for Applications and Agents](https://docs.aetheriot.dev/en/guides/safe-operations.md): Preserve identity, confirmation, audit, topology fencing, and uncertain command outcomes when operating AetherEdge
+- [Dependency security exceptions](https://docs.aetheriot.dev/en/security/dependency-exceptions.md): Security advisories are denied by default. An exception is permitted only when the affected operation is unreachable, the boundary is enforced in code and a removal condition is recorded here.
 
 ## Recovery
 
-- [CloudLink spool recovery](https://docs.aetheriot.workers.dev/en/recovery/cloudlink-spool-recovery.md): Recover a file-backed CloudLink spool without discarding unacknowledged facts or fabricating delivery evidence.
-- [Configuration rollback and reconciliation](https://docs.aetheriot.workers.dev/en/recovery/configuration-rollback.md): Recover a commissioned Edge configuration without creating a second authority or repeating an uncertain mutation.
-- [Gateway identity recovery](https://docs.aetheriot.workers.dev/en/recovery/gateway-identity-recovery.md): Contain a lost or compromised Gateway credential and re-establish an experimental CloudLink session without weakening Edge authority.
-- [Safe stop and control revocation](https://docs.aetheriot.workers.dev/en/recovery/safe-stop-and-control-revocation.md): Contain an unsafe or uncertain control path while preserving deterministic local safety and audit evidence.
+- [CloudLink spool recovery](https://docs.aetheriot.dev/en/recovery/cloudlink-spool-recovery.md): Recover a file-backed CloudLink spool without discarding unacknowledged facts or fabricating delivery evidence.
+- [Configuration rollback and reconciliation](https://docs.aetheriot.dev/en/recovery/configuration-rollback.md): Recover a commissioned Edge configuration without creating a second authority or repeating an uncertain mutation.
+- [Gateway identity recovery](https://docs.aetheriot.dev/en/recovery/gateway-identity-recovery.md): Contain a lost or compromised Gateway credential and re-establish an experimental CloudLink session without weakening Edge authority.
+- [Safe stop and control revocation](https://docs.aetheriot.dev/en/recovery/safe-stop-and-control-revocation.md): Contain an unsafe or uncertain control path while preserving deterministic local safety and audit evidence.
 
 ## Platform Reference
 
@@ -54,38 +54,38 @@ Use the narrowest document that answers the task. The catalog covers every agent
 - [AI-native assets](https://github.com/EvanL1/AetherEdge/blob/main/ai/README.md): This directory contains vendor-neutral assets used by coding agents and by AI operators of an Aether gateway.
 - [Aether Architecture](https://github.com/EvanL1/AetherEdge/blob/main/ARCHITECTURE.md): Aether is migrating from a Redis-centred multi-service EMS product to an AI-native, industry-neutral edge kernel. The target architecture and migration rules are defined in:
 - [Legacy CLI guide](https://github.com/EvanL1/AetherEdge/blob/main/docs/AETHER_CLI_GUIDE.md): Migration-period CLI guide retained for historical lookup; the current CLI reference remains authoritative.
-- [AetherCloud](https://docs.aetheriot.workers.dev/en/aethercloud.md): AetherCloud is the AI-native, industry-neutral, multi-cloud IoT fusion and control plane for AetherEdge runtimes and cloud-side workloads. It is a separate product, not a hosted copy of the edge runtime.
-- [AetherContracts](https://docs.aetheriot.workers.dev/en/aethercontracts.md): AetherContracts is the public, language-neutral interoperability authority for AetherEdge, AetherCloud, and independent implementations.
-- [AetherEdge](https://docs.aetheriot.workers.dev/en/aetheredge.md): AetherEdge is the open-source, industry-neutral Linux edge runtime, Kernel, CLI, and Rust SDK formerly published from the AetherIot repository name.
+- [AetherCloud](https://docs.aetheriot.dev/en/aethercloud.md): AetherCloud is the AI-native, industry-neutral, multi-cloud IoT fusion and control plane for AetherEdge runtimes and cloud-side workloads. It is a separate product, not a hosted copy of the edge runtime.
+- [AetherContracts](https://docs.aetheriot.dev/en/aethercontracts.md): AetherContracts is the public, language-neutral interoperability authority for AetherEdge, AetherCloud, and independent implementations.
+- [AetherEdge](https://docs.aetheriot.dev/en/aetheredge.md): AetherEdge is the open-source, industry-neutral Linux edge runtime, Kernel, CLI, and Rust SDK formerly published from the AetherIot repository name.
 - [Legacy API reference entry](https://github.com/EvanL1/AetherEdge/blob/main/docs/API_REFERENCE.md): Compatibility entry that routes readers to service-owned OpenAPI instead of duplicating endpoint definitions.
 - [Historical AetherEMS and OpenClaw comparison](https://github.com/EvanL1/AetherEdge/blob/main/docs/architecture/openclaw-comparison.md): Pre-split architecture comparison retained as historical product research, not current AetherEdge authority.
 - [Target repository layout](https://github.com/EvanL1/AetherEdge/blob/main/docs/architecture/target-layout.md): The migration target separates stable libraries, optional executable extensions, user/AI interfaces, and declarative industry knowledge.
 - [Historical AetherEMS competitive research](https://github.com/EvanL1/AetherEdge/blob/main/docs/benchmarking.md): Pre-split energy-product research retained for history; AetherEMS owns current solution strategy.
-- [System Architecture](https://docs.aetheriot.workers.dev/en/concepts/architecture.md): Isolated edge services communicating over shared memory, per-consumer UDS events, SQLite, HTTP, and MQTT
-- [Data Flow](https://docs.aetheriot.workers.dev/en/concepts/data-flow.md): SHM-native uplink and downlink paths end to end, with latency budgets
-- [Data Model](https://docs.aetheriot.workers.dev/en/concepts/data-model.md): Products, instances, and T/S/C/A points - and why an instance is a pure thing-model with no status field
-- [Data Processing Flow](https://docs.aetheriot.workers.dev/en/concepts/data-processing-flow.md): How Aether assembles governed IoT data, invokes a request-driven processor, validates derived data, and keeps control separate
-- [Aether Data Processing](https://docs.aetheriot.workers.dev/en/concepts/data-processing.md): Industry-neutral, request-driven processing of governed IoT data into validated derived data
-- [Rule Engine](https://docs.aetheriot.workers.dev/en/concepts/rule-engine.md): Dual-column rule storage, tick and event scheduling, execution, and hot reload
-- [Shared Memory](https://docs.aetheriot.workers.dev/en/concepts/shared-memory.md): The SHM data plane - slot layout, writer ownership, seqlock reads, generations, and the PointWatch event plane
+- [System Architecture](https://docs.aetheriot.dev/en/concepts/architecture.md): Isolated edge services communicating over shared memory, per-consumer UDS events, SQLite, HTTP, and MQTT
+- [Data Flow](https://docs.aetheriot.dev/en/concepts/data-flow.md): SHM-native uplink and downlink paths end to end, with latency budgets
+- [Data Model](https://docs.aetheriot.dev/en/concepts/data-model.md): Products, instances, and T/S/C/A points - and why an instance is a pure thing-model with no status field
+- [Data Processing Flow](https://docs.aetheriot.dev/en/concepts/data-processing-flow.md): How Aether assembles governed IoT data, invokes a request-driven processor, validates derived data, and keeps control separate
+- [Aether Data Processing](https://docs.aetheriot.dev/en/concepts/data-processing.md): Industry-neutral, request-driven processing of governed IoT data into validated derived data
+- [Rule Engine](https://docs.aetheriot.dev/en/concepts/rule-engine.md): Dual-column rule storage, tick and event scheduling, execution, and hot reload
+- [Shared Memory](https://docs.aetheriot.dev/en/concepts/shared-memory.md): The SHM data plane - slot layout, writer ownership, seqlock reads, generations, and the PointWatch event plane
 - [Legacy AetherEMS configuration formats](https://github.com/EvanL1/AetherEdge/blob/main/docs/CONFIG_FORMAT_GUIDE.md): Historical AetherEMS configuration material retained for migration; it is not AetherEdge configuration authority.
 - [Legacy AetherEMS development quickstart](https://github.com/EvanL1/AetherEdge/blob/main/docs/GETTING_STARTED_DEVELOPMENT.md): Historical pre-split development instructions retained for migration and not current AetherEdge onboarding.
-- [AI-native platform](https://docs.aetheriot.workers.dev/en/overview/ai-native-platform.md): AetherIoT is building an open runtime platform for agents to turn human intent into governed, verifiable behavior across physical spaces.
-- [AetherIoT platform overview](https://docs.aetheriot.workers.dev/en/overview/platform.md): AetherIoT is the open-source, AI-native project identity for a family of interoperable products that turn human intent into governed, verifiable behavior across physical spaces. It is not a fourth runtime and does not own a separate wire…
-- [Typical user journeys](https://docs.aetheriot.workers.dev/en/overview/user-journeys.md): Choose the shortest path that matches your role. All write paths remain governed and deny by default.
+- [AI-native platform](https://docs.aetheriot.dev/en/overview/ai-native-platform.md): AetherIoT is building an open runtime platform for agents to turn human intent into governed, verifiable behavior across physical spaces.
+- [AetherIoT platform overview](https://docs.aetheriot.dev/en/overview/platform.md): AetherIoT is the open-source, AI-native project identity for a family of interoperable products that turn human intent into governed, verifiable behavior across physical spaces. It is not a fourth runtime and does not own a separate wire…
+- [Typical user journeys](https://docs.aetheriot.dev/en/overview/user-journeys.md): Choose the shortest path that matches your role. All write paths remain governed and deny by default.
 - [Repository documentation map](https://github.com/EvanL1/AetherEdge/blob/main/docs/README.md): Navigation for repository documentation, current authority records, compatibility notes, and historical material.
-- [CLI Reference](https://docs.aetheriot.workers.dev/en/reference/cli.md): Every aether command - services, sync, doctor, channels, rules, and more
-- [Experimental CloudLink MQTT v1 edge contract](https://docs.aetheriot.workers.dev/en/reference/cloudlink-mqtt-v1.md): This document describes the experimental CloudLink candidate. The public AetherContracts v0.1.0-alpha.3 release is the sole authority, and AetherEdge and AetherCloud commit the same digest-pinned consumer lock. The current claim is…
-- [Data Processing Contracts](https://docs.aetheriot.workers.dev/en/reference/data-processing-contracts.md): Version 1 contracts for processing frames, requests, derived results, validation, and failure semantics
-- [HTTP API](https://docs.aetheriot.workers.dev/en/reference/http-api.md): The single remote gateway, service-local OpenAPI, authentication, and compatibility conventions
-- [MCP Tools Reference](https://docs.aetheriot.workers.dev/en/reference/mcp-tools.md): All MCP tools grouped by domain, with parameters and write-safety markers
+- [CLI Reference](https://docs.aetheriot.dev/en/reference/cli.md): Every aether command - services, sync, doctor, channels, rules, and more
+- [Experimental CloudLink MQTT v1 edge contract](https://docs.aetheriot.dev/en/reference/cloudlink-mqtt-v1.md): This document describes the experimental CloudLink candidate. The public AetherContracts v0.1.0-alpha.3 release is the sole authority, and AetherEdge and AetherCloud commit the same digest-pinned consumer lock. The current claim is…
+- [Data Processing Contracts](https://docs.aetheriot.dev/en/reference/data-processing-contracts.md): Version 1 contracts for processing frames, requests, derived results, validation, and failure semantics
+- [HTTP API](https://docs.aetheriot.dev/en/reference/http-api.md): The single remote gateway, service-local OpenAPI, authentication, and compatibility conventions
+- [MCP Tools Reference](https://docs.aetheriot.dev/en/reference/mcp-tools.md): All MCP tools grouped by domain, with parameters and write-safety markers
 - [Legacy rule-monitor WebSocket API](https://github.com/EvanL1/AetherEdge/blob/main/docs/websocket-rule-monitor-api.md): Historical rule-monitoring interface retained for compatibility lookup.
 - [AetherEdge](https://github.com/EvanL1/AetherEdge/blob/main/README.md): Repository overview, current product status, installation paths, architecture boundaries, and development entry points.
 
 ## Compatibility and Status
 
-- [Product version compatibility](https://docs.aetheriot.workers.dev/en/compatibility/version-matrix.md): This matrix distinguishes released compatibility evidence from planned product combinations. A green local test never upgrades an experimental public contract to production status.
-- [Platform status and roadmap](https://docs.aetheriot.workers.dev/en/roadmap/status.md): Status is reported separately for implemented, experimental, and planned capabilities. Product names do not upgrade technical readiness.
+- [Product version compatibility](https://docs.aetheriot.dev/en/compatibility/version-matrix.md): This matrix distinguishes released compatibility evidence from planned product combinations. A green local test never upgrades an experimental public contract to production status.
+- [Platform status and roadmap](https://docs.aetheriot.dev/en/roadmap/status.md): Status is reported separately for implemented, experimental, and planned capabilities. Product names do not upgrade technical readiness.
 
 ## Optional
 
@@ -97,17 +97,17 @@ Use the narrowest document that answers the task. The catalog covers every agent
 - [CloudLink MQTT v1 AetherEdge implementation overlay](https://github.com/EvanL1/AetherEdge/blob/main/contracts/cloudlink/v1/README.md): This directory consumes AetherContracts v0.1.0-alpha.3, the sole CloudLink wire authority. Imported files are exact release bytes. Local manifests, profiles, gates, scenarios, and migration notes are non-authoritative AetherEdge…
 - [Aether Data Processing JSON Schemas](https://github.com/EvanL1/AetherEdge/blob/main/contracts/data-processing/README.md): This directory publishes the Draft 2020-12 transport schemas for version 1 of the Aether Data Processing contract family.
 - [Machine-readable contracts](https://github.com/EvanL1/AetherEdge/blob/main/contracts/README.md): This directory is reserved for stable configuration, command, event, and MCP schemas. Generated files must carry a generated header and are updated through the repository generation task rather than edited manually.
-- [aether-application](https://docs.aetheriot.workers.dev/en/crates/aether-application.md): Transport-neutral command and query use cases for the Aether edge kernel.
-- [aether-cloudlink](https://docs.aetheriot.workers.dev/en/crates/aether-cloudlink.md): Transport-neutral implementation of the experimental, digest-pinned public AetherContracts CloudLink subset. It provides strict closed JSON decoding, RFC 8785 business digests, session/version/epoch validation, stable delivery envelopes,…
-- [aether-data-processing crate](https://docs.aetheriot.workers.dev/en/crates/aether-data-processing.md): Strict, transport-neutral JSON codec for the Aether Data Processing v1 processor boundary. It converts validated domain values to and from the versioned RFC 3339/JSON DTOs, encodes Aether-accepted DerivedData, and computes RFC 8785 input…
-- [aether-dataplane](https://docs.aetheriot.workers.dev/en/crates/aether-dataplane.md): aether-dataplane is Aether's business-neutral shared-memory core. It can be used by an embedded gateway without Redis, PostgreSQL, SQLx, routing models, or any HTTP stack.
-- [aether-domain](https://docs.aetheriot.workers.dev/en/crates/aether-domain.md): Industry-neutral, nostd domain types for the Aether edge kernel.
-- [aether-integration-contract](https://docs.aetheriot.workers.dev/en/crates/aether-integration-contract.md): Strict product-side Rust binding for the experimental AetherContracts aether.integration v1alpha1 contract in the 0.1.0-alpha.4 candidate.
-- [aether-integration-control](https://docs.aetheriot.workers.dev/en/crates/aether-integration-control.md): Experimental, default-off AetherEdge binding for the frozen AetherContracts integration-control v1alpha1 candidate in release 0.1.0-alpha.4.
-- [aether-pack](https://docs.aetheriot.workers.dev/en/crates/aether-pack.md): Versioned, industry-neutral domain-pack manifest loading for the Aether edge kernel. The crate validates a pack's own release identity, distribution identity, compatible Aether range, required capability and protocol IDs, explicitly…
-- [aether-ports](https://docs.aetheriot.workers.dev/en/crates/aether-ports.md): Small, object-safe capability interfaces for Aether edge extensions.
-- [aether-edge-sdk](https://docs.aetheriot.workers.dev/en/crates/aether-sdk.md): Versioned beta facade for embedding the Aether AI-native IoT edge kernel.
-- [aether-testkit](https://docs.aetheriot.workers.dev/en/crates/aether-testkit.md): Reusable conformance checks and deterministic test doubles for Aether extension authors.
+- [aether-application](https://docs.aetheriot.dev/en/crates/aether-application.md): Transport-neutral command and query use cases for the Aether edge kernel.
+- [aether-cloudlink](https://docs.aetheriot.dev/en/crates/aether-cloudlink.md): Transport-neutral implementation of the experimental, digest-pinned public AetherContracts CloudLink subset. It provides strict closed JSON decoding, RFC 8785 business digests, session/version/epoch validation, stable delivery envelopes,…
+- [aether-data-processing crate](https://docs.aetheriot.dev/en/crates/aether-data-processing.md): Strict, transport-neutral JSON codec for the Aether Data Processing v1 processor boundary. It converts validated domain values to and from the versioned RFC 3339/JSON DTOs, encodes Aether-accepted DerivedData, and computes RFC 8785 input…
+- [aether-dataplane](https://docs.aetheriot.dev/en/crates/aether-dataplane.md): aether-dataplane is Aether's business-neutral shared-memory core. It can be used by an embedded gateway without Redis, PostgreSQL, SQLx, routing models, or any HTTP stack.
+- [aether-domain](https://docs.aetheriot.dev/en/crates/aether-domain.md): Industry-neutral, nostd domain types for the Aether edge kernel.
+- [aether-integration-contract](https://docs.aetheriot.dev/en/crates/aether-integration-contract.md): Strict product-side Rust binding for the experimental AetherContracts aether.integration v1alpha1 contract in the 0.1.0-alpha.4 candidate.
+- [aether-integration-control](https://docs.aetheriot.dev/en/crates/aether-integration-control.md): Experimental, default-off AetherEdge binding for the frozen AetherContracts integration-control v1alpha1 candidate in release 0.1.0-alpha.4.
+- [aether-pack](https://docs.aetheriot.dev/en/crates/aether-pack.md): Versioned, industry-neutral domain-pack manifest loading for the Aether edge kernel. The crate validates a pack's own release identity, distribution identity, compatible Aether range, required capability and protocol IDs, explicitly…
+- [aether-ports](https://docs.aetheriot.dev/en/crates/aether-ports.md): Small, object-safe capability interfaces for Aether edge extensions.
+- [aether-edge-sdk](https://docs.aetheriot.dev/en/crates/aether-sdk.md): Versioned beta facade for embedding the Aether AI-native IoT edge kernel.
+- [aether-testkit](https://docs.aetheriot.dev/en/crates/aether-testkit.md): Reusable conformance checks and deterministic test doubles for Aether extension authors.
 - [Core Crate Instructions](https://github.com/EvanL1/AetherEdge/blob/main/crates/AGENTS.md): These instructions apply to all crates in this directory.
 - [ADR-0001: Adopt an AI-native edge-kernel architecture](https://github.com/EvanL1/AetherEdge/blob/main/docs/adr/0001-ai-native-edge-kernel.md): Accepted for incremental migration on 2026-07-10. Runtime-composition clauses were amended by ADR-0003 on the same date; ADR-0003 governs where the two records differ.
 - [ADR-0002: Extract the SHM data plane and add a local durable outbox](https://github.com/EvanL1/AetherEdge/blob/main/docs/adr/0002-dataplane-and-local-outbox.md): Accepted and implemented on 2026-07-10. Compatibility aggregate removal completed on 2026-07-13 after ADR-0014 rolling conformance passed.
@@ -153,12 +153,12 @@ Use the narrowest document that answers the task. The catalog covers every agent
 - [Historical bare-metal installation design](https://github.com/EvanL1/AetherEdge/blob/main/docs/superpowers/specs/2026-07-10-baremetal-install-design.md): Superseded design that bundled Redis, nginx, and a Web UI; current deployment guidance is authoritative.
 - [Unified documentation site design](https://github.com/EvanL1/AetherEdge/blob/main/docs/superpowers/specs/2026-07-11-aether-docs-site-design.md): Historical design record for Cloudflare-hosted HTML, Markdown representations, and agent indexes.
 - [Extension Instructions](https://github.com/EvanL1/AetherEdge/blob/main/extensions/AGENTS.md): Extensions implement one or more ports from aether-ports.
-- [aether-cloudlink-mqtt](https://docs.aetheriot.workers.dev/en/extensions/cloudlink-mqtt.md): Broker-neutral MQTT v3.1.1/QoS 1 binding for the experimental CloudLink edge foundation. It validates a user-selected endpoint, TLS/authentication settings, topic prefix and gateway namespace; publishes with retain = false; subscribes…
-- [Home Assistant bridge](https://docs.aetheriot.workers.dev/en/extensions/home-assistant-bridge.md): Local Home Assistant projection with an experimental default-off governed power binding
-- [Aether HTTP Data Processor](https://docs.aetheriot.workers.dev/en/extensions/http-data-processor.md): Optional, bounded HTTP implementation of the DataProcessor port. It sends a complete request frame to /v1/process; it exposes no callback into Aether, SHM, history, or configuration.
-- [Aether HTTP History Query](https://docs.aetheriot.workers.dev/en/extensions/http-history-query.md): This optional extension maps semantic Data Processing history features to a loopback-only batch endpoint containing an already materialized cadence grid. It only accepts the task policy aggregation=last and duplicatepolicy=reject; it does…
-- [aether-postgres-history](https://docs.aetheriot.workers.dev/en/extensions/postgres-history.md): Optional PostgreSQL implementation of Aether's append-only history capability.
-- [aether-redis-bridge](https://docs.aetheriot.workers.dev/en/extensions/redis-bridge.md): Optional, non-authoritative Redis mirror for Aether point state.
-- [aether-shm-bridge](https://docs.aetheriot.workers.dev/en/extensions/shm-bridge.md): Read-only capability bridge from Aether's authoritative shared-memory data plane to the public LiveState port.
-- [Aether SQLite History Query](https://docs.aetheriot.workers.dev/en/extensions/sqlite-history-query.md): Production HistoryQuery adapter for the embedded SQLite file owned by aether-history. It reads the existing table:
-- [aether-store-local](https://docs.aetheriot.workers.dev/en/extensions/store-local.md): Local adapters for a gateway that must run without external services.
+- [aether-cloudlink-mqtt](https://docs.aetheriot.dev/en/extensions/cloudlink-mqtt.md): Broker-neutral MQTT v3.1.1/QoS 1 binding for the experimental CloudLink edge foundation. It validates a user-selected endpoint, TLS/authentication settings, topic prefix and gateway namespace; publishes with retain = false; subscribes…
+- [Home Assistant bridge](https://docs.aetheriot.dev/en/extensions/home-assistant-bridge.md): Local Home Assistant projection with an experimental default-off governed power binding
+- [Aether HTTP Data Processor](https://docs.aetheriot.dev/en/extensions/http-data-processor.md): Optional, bounded HTTP implementation of the DataProcessor port. It sends a complete request frame to /v1/process; it exposes no callback into Aether, SHM, history, or configuration.
+- [Aether HTTP History Query](https://docs.aetheriot.dev/en/extensions/http-history-query.md): This optional extension maps semantic Data Processing history features to a loopback-only batch endpoint containing an already materialized cadence grid. It only accepts the task policy aggregation=last and duplicatepolicy=reject; it does…
+- [aether-postgres-history](https://docs.aetheriot.dev/en/extensions/postgres-history.md): Optional PostgreSQL implementation of Aether's append-only history capability.
+- [aether-redis-bridge](https://docs.aetheriot.dev/en/extensions/redis-bridge.md): Optional, non-authoritative Redis mirror for Aether point state.
+- [aether-shm-bridge](https://docs.aetheriot.dev/en/extensions/shm-bridge.md): Read-only capability bridge from Aether's authoritative shared-memory data plane to the public LiveState port.
+- [Aether SQLite History Query](https://docs.aetheriot.dev/en/extensions/sqlite-history-query.md): Production HistoryQuery adapter for the embedded SQLite file owned by aether-history. It reads the existing table:
+- [aether-store-local](https://docs.aetheriot.dev/en/extensions/store-local.md): Local adapters for a gateway that must run without external services.

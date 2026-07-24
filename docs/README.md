@@ -16,7 +16,7 @@ MQTT 边端基础、application ACK 与 legacy 迁移边界。
 
 - [快速开始](./guides/getting-started.md) — 安全空配置、首次启动与验收
 - [连接设备](./guides/connect-devices.md) — 协议、通道、点位与投运流程
-- [接入 Home Assistant](https://docs.aetheriot.workers.dev/guides/home-assistant/) —
+- [接入 Home Assistant](https://docs.aetheriot.dev/guides/home-assistant/) —
   本地设备投影、密钥引用、重同步，以及单独启用的受治理开关控制
 - [部署指南](./guides/deployment.md) — Compose、安装包与生产检查
 - [配置参考](./reference/configuration.md) — 配置文件与环境变量
