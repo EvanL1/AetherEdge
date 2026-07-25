@@ -112,6 +112,7 @@ const CLOUDLINK_INTEGRATION_EXTENSION_ID: &str = "aether.cloudlink.integration.v
 const CLOUDLINK_INTEGRATION_CONTROL_EXTENSION_ID: &str =
     "aether.cloudlink.integration-control.v1alpha1";
 const DEFAULT_CLOUDLINK_SPOOL_CAPACITY: usize = 4_096;
+#[cfg(feature = "home-assistant-cloudlink")]
 const DEFAULT_CLOUDLINK_CHALLENGE_LEDGER_CAPACITY: usize = 256;
 #[cfg(feature = "home-assistant-cloudlink")]
 const CLOUDLINK_CHALLENGE_REQUEST_LIFETIME_MS: u64 = 60_000;
