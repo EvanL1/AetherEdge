@@ -6,9 +6,11 @@ use aether_domain::{
     IntegrationTopologySnapshot, ObservedValue, ObservedValueType, SnapshotDigest, TimestampMs,
     TopologyGeneration,
 };
+#[cfg(feature = "home-assistant-cloudlink")]
+use aether_io::home_assistant::HomeAssistantCloudLinkOriginModel;
 use aether_io::home_assistant::{
-    HomeAssistantCloudLinkOriginModel, HomeAssistantRuntimeConfig, HomeAssistantStartupError,
-    InMemoryIntegrationProjection, start_home_assistant_integration_with_config,
+    HomeAssistantRuntimeConfig, HomeAssistantStartupError, InMemoryIntegrationProjection,
+    start_home_assistant_integration_with_config,
 };
 use aether_ports::{IntegrationProjectionQuery, IntegrationProjectionSink, PortErrorKind};
 use tokio_util::sync::CancellationToken;
