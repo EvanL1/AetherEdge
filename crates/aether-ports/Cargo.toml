@@ -1,7 +1,6 @@
 [package]
 name = "aether-ports"
 version.workspace = true
-publish = false
 edition = "2024"
 rust-version = "1.90"
 description = "Object-safe capability ports for Aether edge extensions"

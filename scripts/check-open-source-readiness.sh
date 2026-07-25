@@ -27,6 +27,8 @@ readonly REQUIRED_FILES=(
 readonly SDK_SOURCE_PACKAGES=(
     "aether-domain:crates/aether-domain"
     "aether-integration-contract:crates/aether-integration-contract"
+    "aether-integration-control:crates/aether-integration-control"
+    "aether-cloudlink:crates/aether-cloudlink"
     "aether-dataplane:crates/aether-dataplane"
     "aether-ports:crates/aether-ports"
     "aether-application:crates/aether-application"
@@ -41,6 +43,27 @@ readonly SDK_SOURCE_PACKAGES=(
     "aether-sqlite-history-query:extensions/sqlite-history-query"
     "aether-redis-bridge:extensions/redis-bridge"
     "aether-postgres-history:extensions/postgres-history"
+)
+
+# ADR-0022: the crates.io release set is aether-edge-sdk plus the transitive
+# closure of its normal and optional dependencies, plus aether-testkit for
+# port conformance suites. Adding a name here makes it a permanent public
+# registry entry, so this list is the deliberate gate. Every Rust package in
+# the workspace that is absent from it must keep publish = false.
+readonly REGISTRY_RELEASE_PACKAGES=(
+    aether-application
+    aether-cloudlink
+    aether-data-processing
+    aether-dataplane
+    aether-domain
+    aether-edge-sdk
+    aether-integration-contract
+    aether-integration-control
+    aether-pack
+    aether-ports
+    aether-shm-bridge
+    aether-store-local
+    aether-testkit
 )
 
 generate_validation_credential() {
@@ -90,6 +113,17 @@ is_sdk_source_package() {
     local entry
     for entry in "${SDK_SOURCE_PACKAGES[@]}"; do
         if [[ ${entry%%:*} == "$candidate" ]]; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+is_registry_release_package() {
+    local candidate=$1
+    local entry
+    for entry in "${REGISTRY_RELEASE_PACKAGES[@]}"; do
+        if [[ $entry == "$candidate" ]]; then
             return 0
         fi
     done
@@ -158,16 +192,23 @@ for entry in "${SDK_SOURCE_PACKAGES[@]}"; do
     if [[ ! -s "$directory/README.md" ]]; then
         fail "$package README is missing or empty: $directory/README.md"
     fi
-    if ! rg -q '^publish[[:space:]]*=[[:space:]]*false' "$manifest"; then
+    if is_registry_release_package "$package"; then
+        if rg -q '^publish[[:space:]]*=[[:space:]]*false' "$manifest"; then
+            fail "$package is in the ADR-0022 registry release set and must not set publish=false"
+        fi
+    elif ! rg -q '^publish[[:space:]]*=[[:space:]]*false' "$manifest"; then
         fail "$package is a source-only implementation package and must set publish=false"
     fi
 done
 
-echo "Checking that every other Rust package is explicitly private..."
+echo "Checking that every package outside the registry release set is private..."
 while IFS= read -r manifest; do
     package=$(manifest_package_name "$manifest")
     if [[ -z "$package" ]] || is_sdk_source_package "$package"; then
         continue
+    fi
+    if is_registry_release_package "$package"; then
+        fail "$package is published but missing from SDK_SOURCE_PACKAGES metadata checks"
     fi
     if ! rg -q '^publish[[:space:]]*=[[:space:]]*false' "$manifest"; then
         fail "$package must set publish=false in $manifest"
@@ -310,8 +351,15 @@ else
 fi
 
 echo "Checking the signed source-release boundary..."
-if rg -n 'cargo publish|CARGO_REGISTRY_TOKEN|publish-crates' .github/workflows/release.yml; then
-    fail "the source release workflow must not publish workspace crates"
+# ADR-0022 keeps the signed source release and adds a registry release beside
+# it. The registry step must publish the workspace as one ordered unit rather
+# than hand-rolling a per-crate order, and must run only after the GitHub
+# Release job has succeeded.
+if ! rg -q 'cargo publish --workspace --locked' .github/workflows/release.yml; then
+    fail "the release workflow must publish the registry set with cargo publish --workspace --locked"
+fi
+if ! rg -q '^\s+needs: release$' .github/workflows/release.yml; then
+    fail "the crates.io job must run only after the GitHub Release job succeeds"
 fi
 if ! rg -q 'aetheriot-source-\$\{GITHUB_REF_NAME\}\.tar\.gz' \
     .github/workflows/release.yml; then

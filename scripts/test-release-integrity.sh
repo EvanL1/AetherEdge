@@ -263,10 +263,13 @@ assert_file_not_contains "$INSTALLER_BUILDER" '--list | grep'
 assert_file_not_contains "$RELEASE_WORKFLOW" '--list | grep'
 assert_file_not_contains "$RELEASE_WORKFLOW" '| grep -Fxq'
 
-echo "Testing the release is source-and-binary only..."
-assert_file_not_contains "$RELEASE_WORKFLOW" 'cargo publish'
-assert_file_not_contains "$RELEASE_WORKFLOW" 'CARGO_REGISTRY_TOKEN'
+echo "Testing the registry release rides alongside the source release..."
+# ADR-0022 replaced the blanket ban on publishing with a single ordered
+# workspace publish. A hand-rolled per-crate loop would reintroduce the
+# ordering bug the workspace publish exists to avoid.
 assert_file_not_contains "$RELEASE_WORKFLOW" 'publish-crates'
+assert_file_not_contains "$RELEASE_WORKFLOW" 'cargo publish -p'
+assert_file_contains "$RELEASE_WORKFLOW" 'cargo publish --workspace --locked'
 assert_file_contains "$RELEASE_WORKFLOW" 'aetheriot-source-${GITHUB_REF_NAME}.tar.gz'
 assert_file_contains "$RELEASE_WORKFLOW" 'release/aetheriot-source-*.tar.gz'
 assert_file_contains "$RELEASE_WORKFLOW" 'release/aetheriot-source-${{ github.ref_name }}.tar.gz.sha256'
@@ -292,24 +295,36 @@ assert_file_contains "$RELEASE_WORKFLOW" 'id-token: write'
 assert_file_contains "$RELEASE_WORKFLOW" 'subject-path: release/${{ steps.version.outputs.artifact_name }}'
 assert_file_contains "$RELEASE_WORKFLOW" 'subject-path: release/aether-linux-${{ matrix.zig_arch }}.tar.gz'
 
-echo "Testing workspace implementation crates cannot be published..."
-private_manifests=(
+echo "Testing the ADR-0022 registry release set is publishable..."
+registry_manifests=(
     crates/aether-application/Cargo.toml
+    crates/aether-cloudlink/Cargo.toml
     crates/aether-data-processing/Cargo.toml
     crates/aether-dataplane/Cargo.toml
     crates/aether-domain/Cargo.toml
     crates/aether-integration-contract/Cargo.toml
+    crates/aether-integration-control/Cargo.toml
     crates/aether-pack/Cargo.toml
     crates/aether-ports/Cargo.toml
     crates/aether-sdk/Cargo.toml
     crates/aether-testkit/Cargo.toml
+    extensions/shm-bridge/Cargo.toml
+    extensions/store-local/Cargo.toml
+)
+for manifest in "${registry_manifests[@]}"; do
+    assert_file_not_contains "$ROOT_DIR/$manifest" 'publish = false'
+done
+
+echo "Testing crates outside the registry release set cannot be published..."
+private_manifests=(
     extensions/http-data-processor/Cargo.toml
     extensions/http-history-query/Cargo.toml
     extensions/postgres-history/Cargo.toml
     extensions/redis-bridge/Cargo.toml
-    extensions/shm-bridge/Cargo.toml
     extensions/sqlite-history-query/Cargo.toml
-    extensions/store-local/Cargo.toml
+    libs/aether-runtime-catalog/Cargo.toml
+    tools/aether/Cargo.toml
+    tools/simulator/Cargo.toml
 )
 for manifest in "${private_manifests[@]}"; do
     assert_file_contains "$ROOT_DIR/$manifest" 'publish = false'

@@ -1,7 +1,6 @@
 [package]
 name = "aether-edge-sdk"
 version.workspace = true
-publish = false
 edition = "2024"
 rust-version = "1.90"
 description = "Stable public facade for embedding the Aether edge kernel"
@@ -28,7 +27,7 @@ aether-store-local = { version = "0.0.1", path = "../../extensions/store-local",
 thiserror = { workspace = true }
 
 [dev-dependencies]
-aether-store-local = { version = "0.0.1", path = "../../extensions/store-local" }
+aether-store-local = { path = "../../extensions/store-local" }
 async-trait = { workspace = true }
 tokio = { workspace = true }
 

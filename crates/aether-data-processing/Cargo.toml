@@ -1,7 +1,6 @@
 [package]
 name = "aether-data-processing"
 version.workspace = true
-publish = false
 edition = "2024"
 rust-version = "1.90"
 description = "Strict Data Processing v1 wire codec and canonical digest for Aether"

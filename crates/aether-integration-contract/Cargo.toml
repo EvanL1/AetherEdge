@@ -1,7 +1,6 @@
 [package]
 name = "aether-integration-contract"
 version.workspace = true
-publish = false
 edition = "2024"
 rust-version = "1.90"
 description = "Strict AetherContracts integration v1alpha1 wire binding for AetherEdge"

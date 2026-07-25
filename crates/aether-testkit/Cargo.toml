@@ -1,7 +1,6 @@
 [package]
 name = "aether-testkit"
 version.workspace = true
-publish = false
 edition = "2024"
 rust-version = "1.90"
 description = "Conformance suites for Aether port implementations"

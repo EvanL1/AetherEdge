@@ -1,7 +1,6 @@
 [package]
 name = "aether-shm-bridge"
 version.workspace = true
-publish = false
 edition = "2024"
 rust-version = "1.90"
 description = "Typed Aether domain-port bridge for the shared-memory data plane"

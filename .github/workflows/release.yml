@@ -566,3 +566,44 @@ jobs:
           fail_on_unmatched_files: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ============================================================================
+  # Job 5: Publish the ADR-0022 registry release set to crates.io
+  # ============================================================================
+  crates-io:
+    name: Publish crates.io
+    runs-on: ubuntu-latest
+    needs: release
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: true
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@1.90.0
+
+      - name: Install build prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y protobuf-compiler
+          protoc --version
+
+      - name: Require a registry token
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          if [[ -z "${CARGO_REGISTRY_TOKEN:-}" ]]; then
+            echo "CARGO_REGISTRY_TOKEN must be a crates.io token with publish permission" >&2
+            exit 1
+          fi
+
+      # Cargo orders the publishable members by their normal dependency edges.
+      # Local dev-dependencies are declared path-only under ADR-0022 clause 4,
+      # so they neither reach the registry nor constrain that order.
+      - name: Publish the registry release set
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: cargo publish --workspace --locked

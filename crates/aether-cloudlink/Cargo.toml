@@ -1,12 +1,15 @@
 [package]
 name = "aether-cloudlink"
 version.workspace = true
-publish = false
 edition = "2024"
 rust-version = "1.90"
 description = "Transport-neutral experimental CloudLink protocol foundation"
 license.workspace = true
 repository.workspace = true
+documentation = "https://docs.aetheriot.dev/crates/aether-cloudlink"
+readme = "README.md"
+keywords = ["iot", "edge", "gateway", "mqtt"]
+categories = ["embedded", "network-programming"]
 
 [dependencies]
 aether-domain = { version = "0.0.1", path = "../aether-domain" }
@@ -25,9 +28,9 @@ tokio = { workspace = true, features = ["sync"] }
 zeroize = { workspace = true }
 
 [dev-dependencies]
-aether-runtime-catalog = { version = "0.0.1", path = "../../libs/aether-runtime-catalog" }
-aether-store-local = { version = "0.0.1", path = "../../extensions/store-local" }
-aether-testkit = { version = "0.0.1", path = "../aether-testkit" }
+aether-runtime-catalog = { path = "../../libs/aether-runtime-catalog" }
+aether-store-local = { path = "../../extensions/store-local" }
+aether-testkit = { path = "../aether-testkit" }
 tempfile = { workspace = true }
 tokio = { workspace = true }
 

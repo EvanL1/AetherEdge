@@ -164,12 +164,18 @@ access. The optional AetherEMS Console is one energy-domain implementation of th
 
 ## Rust SDK
 
+```bash
+cargo add aether-edge-sdk --features local-runtime
+```
+
 `aether-edge-sdk`, imported as `aether_sdk`, is the only supported Rust
-application facade. Workspace implementation crates are source-only and cannot
-be published independently. Downstream builds pin the exact commit behind a
-signed source release and select local adapters through the SDK's
-`local-runtime` feature. The example compositions above are SDK smoke tests,
-not the supervised production runtime.
+application facade and the only package carrying a SemVer promise. The other
+`aether-*` packages it pulls in are published so Cargo can resolve them; they
+are implementation detail and depending on them directly is unsupported.
+Downstream builds may instead pin the exact commit behind a signed source
+release. Local adapters are selected through the SDK's `local-runtime` feature.
+The example compositions above are SDK smoke tests, not the supervised
+production runtime.
 
 ## Edge runtime
 
