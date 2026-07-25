@@ -2,7 +2,11 @@
 
 ## Status
 
-Accepted on 2026-07-14.
+Accepted on 2026-07-14. Clauses 3 and 7 are superseded by
+[ADR-0022](./0022-crates-io-sdk-registry-release.md), which adds a crates.io
+release for the SDK facade and its dependency closure. Clauses 1, 2, 4, 5, and
+6 remain in force: `aether-edge-sdk` is still the only supported facade, and
+the signed source release still stands alongside the registry release.
 
 ## Context
 

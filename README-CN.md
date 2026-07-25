@@ -144,10 +144,15 @@ SQLite 或内部服务。可选的 AetherEMS Console 是这种模式下的一个
 
 ## Rust SDK
 
-`aether-edge-sdk`（导入名为 `aether_sdk`）是唯一受支持的 Rust 应用门面。Workspace
-实现 crate 仅随源码提供，不能独立发布。下游构建固定到签名源码发行标签对应的精确 commit，
-并通过 SDK 的 `local-runtime` feature 选择本地 adapter。上文的示例组合是 SDK 冒烟测试，
-不是受监管的生产运行时。
+```bash
+cargo add aether-edge-sdk --features local-runtime
+```
+
+`aether-edge-sdk`（导入名为 `aether_sdk`）是唯一受支持的 Rust 应用门面，也是唯一
+承担 SemVer 兼容承诺的包。它带入的其他 `aether-*` 包只是为满足 Cargo 的传递依赖
+解析而发布，属于实现细节，直接依赖它们不受支持。下游构建也可以改为固定到签名源码
+发行标签对应的精确 commit，并通过 SDK 的 `local-runtime` feature 选择本地 adapter。
+上文的示例组合是 SDK 冒烟测试，不是受监管的生产运行时。
 
 ## Edge Runtime
 

@@ -1,7 +1,6 @@
 [package]
 name = "aether-store-local"
 version.workspace = true
-publish = false
 edition = "2024"
 rust-version = "1.90"
 description = "Zero-external-service adapters for the Aether edge kernel"
@@ -38,7 +37,7 @@ sqlite-audit = ["dep:sqlx"]
 sqlite-topology = ["dep:aether-shm-bridge", "dep:rustc-hash", "dep:sqlx"]
 
 [dev-dependencies]
-aether-testkit = { version = "0.0.1", path = "../../crates/aether-testkit" }
+aether-testkit = { path = "../../crates/aether-testkit" }
 tempfile = { workspace = true }
 tokio = { workspace = true }
 sqlx = { workspace = true }
