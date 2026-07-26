@@ -163,3 +163,38 @@ CI runs; retrieve detailed logs only for failures or when the user asks.
 - Record changes to dependency direction or data authority as an ADR.
 - Keep compatibility shims during staged migration and state their removal
   criteria in the relevant ADR.
+
+## Cursor Cloud specific instructions
+
+Durable, non-obvious notes for agents in the Cursor Cloud VM. The startup
+update script runs `cargo fetch`; the Rust toolchain (`1.90.0`) auto-installs
+from `rust-toolchain.toml` on first build. Standard lint/test/build commands
+live in the `## Verification` section above — use those, not new ones.
+
+- This product is headless by design: no browser UI ships here. Verify it by
+  running services and reading data over HTTP, not through a web app. Standard
+  bring-up is in [Getting started](docs/guides/getting-started.md).
+- The default runtime is SHM-authoritative and needs **no Redis and no
+  Postgres**. `scripts/ci-e2e-test.sh` is a legacy Redis-based demo; do not use
+  it for a live check. Redis, `socat`, and `cargo-nextest` are not installed
+  (tests fall back to `cargo test`).
+- Hardware-free end-to-end (no Docker): build `simulator aether-io aether-api
+  aether`, then run against the ready-made `config.e2e` (4 Modbus TCP channels
+  on ports 5020-5023 matching `tools/simulator/scenarios/e2e_{pv,battery,diesel,load}.yaml`).
+- GOTCHA: `config.e2e`'s per-channel point/mapping CSVs are **git-ignored and
+  not committed** — only `config.e2e/io/io.yaml` is. Without them a synced
+  channel loads **0 points** and never acquires (status `running:false`,
+  `read_count:0`). Regenerate them first with
+  `python3 scripts/generate-e2e-config.py` (PyYAML is present), then
+  `aether init` + `aether sync --confirmed --config-path config.e2e --db-path <dir> --force`.
+- Running services from source (not via `aether services start`/Docker): each
+  service reads `AETHER_DB_PATH=<db-dir>/aether.db`. Set `AETHER_LOG_DIR` to a
+  writable dir — the default per-channel log path is `/app/logs`, which is not
+  writable in the VM (errors are noisy but non-fatal). `aether-io` and
+  `aether-api` require `JWT_SECRET_KEY` (>=32 bytes); `aether-api` also requires
+  `AETHER_BOOTSTRAP_ADMIN_PASSWORD` (>=16 chars, no common default) on first
+  start to create the `admin` user.
+- Authenticated reads: `POST /api/v1/auth/login` expects the **hex MD5 digest**
+  of the password (not plaintext); tokens expire in 30 min. `aether-api:6005`
+  proxies internal services at `/api/v1/{io,automation,history,uplink,alarm}/*`
+  and reads the same SHM segment `aether-io` writes.
