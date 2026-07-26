@@ -29,12 +29,15 @@ not manufacture physical acquisition samples.
 3. `AcquiredPointSample` contains finite engineering and raw values, source
    timestamp, and quality. NaN remains an internal unwritten-slot sentinel and
    is never a valid acquired sample.
-4. `AcquisitionStateWriter` is the batch-oriented port granted only to the IO
-   composition root. A batch must be rejected before its first write if any
-   item is unknown or belongs to another writer.
+4. `AcquisitionStateWriter` is the batch-oriented port in the dedicated
+   `aether-acquisition-port` crate. Only `aether-shm-bridge` may depend directly
+   on that crate; IO receives its concrete adapter from the composition root.
+   A batch must be rejected before its first write if any item is unknown or
+   belongs to another writer.
 5. `aether-shm-bridge` owns channel manifests, typed channel readers, the IO
    writer lifecycle, and per-consumer PointWatch publication. Application
-   interfaces never receive the acquisition writer port.
+   interfaces depend on the read-oriented `aether-ports` crate and never
+   receive the acquisition writer port.
 6. The existing logical `LiveStateWriter` remains a compatibility surface for
    embedded test compositions only during the staged move. It is removed once
    the production SHM acquisition adapter implements `AcquisitionStateWriter`,
@@ -49,10 +52,12 @@ not manufacture physical acquisition samples.
    Mapped `(device, inode)` identity and header generation checks remain a
    fail-closed second layer for crashes or a replacement that bypasses the
    composition-root protocol.
-8. `ChannelPointManifest` resolves slots only from a typed
-   `PhysicalPointAddress`. The temporary raw-ID `slot(channel_id, kind,
-   point_id)` entry point is removed; database and wire adapters must make the
-   legacy-to-domain conversion explicit at their own boundary.
+8. `ChannelPointManifest` resolves production slots from a typed
+   `PhysicalPointAddress`. The published raw-ID `slot(channel_id, kind,
+   point_id)` entry point remains deprecated for 0.5 compatibility, delegates
+   to `slot_for`, and is covered by a behavioral equivalence test. Database and
+   wire adapters make the legacy-to-domain conversion explicit at their own
+   boundary.
 
 ## Consequences
 
@@ -69,14 +74,16 @@ not manufacture physical acquisition samples.
 - The six service binaries, rules engine, CLI, and test graph have no
   dependency on the retired `aether-rtdb-shm` aggregate. Wire conformance is
   owned by `aether-dataplane` and `aether-shm-bridge` fixtures.
-- A caller can no longer bypass physical-address validation by passing three
-  unrelated integers directly to a SHM manifest.
+- Production code cannot silently acquire the writer trait or use the raw-ID
+  SHM lookup without adding an explicit dependency or triggering a deprecation
+  failure in CI.
 
 ## Verification
 
 ```bash
 cargo test -p aether-domain --test domain_contract
 cargo test -p aether-ports --test port_contract
+cargo test -p aether-acquisition-port --test port_contract
 cargo test -p aether-shm-bridge --test acquisition_writer_contract \
   --test runtime_generation_contract --test point_watch_publisher_contract \
   --test device_command_sink_contract

@@ -2,9 +2,11 @@
 
 Small, object-safe capability interfaces for Aether edge extensions.
 
-The crate separates authoritative live reads, acquisition-owned writes,
-device command dispatch, audit, history, mirroring, durable outbox, uplink
-publishing, I/O channel commissioning, and request-driven data processing.
+The crate separates authoritative live reads, device command dispatch, audit,
+history, mirroring, durable outbox, uplink publishing, I/O channel
+commissioning, and request-driven data processing. The owner-only physical
+writer is deliberately isolated in `aether-acquisition-port`, so application
+interfaces cannot acquire it through this general port crate.
 `ChannelMutator` keeps durable desired configuration authoritative and reports
 the rebuildable runtime projection, resulting revision, and reconciliation
 state without choosing a wire encoding. `HistoryQuery` and

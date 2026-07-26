@@ -9,8 +9,10 @@ repository.workspace = true
 description = "Executable repository architecture contracts for AetherEdge"
 
 [dev-dependencies]
+proc-macro2 = "1"
 serde = { workspace = true }
 serde_json = { workspace = true }
+syn = { version = "2", features = ["full", "visit"] }
 
 [lints]
 workspace = true

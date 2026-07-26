@@ -78,10 +78,11 @@ assert_not_contains "$ARCHITECTURE_CHECK" 'ruby -r'
 assert_not_contains "$ARCHITECTURE_CHECK" 'python3 '
 assert_not_contains "$ARCHITECTURE_CHECK" 'docker compose'
 assert_not_contains "$ARCHITECTURE_CHECK" 'test-installer-layout.sh'
-assert_contains "$ARCHITECTURE_CHECK" \
-    'cargo test -p aether-architecture-tests --test workspace_boundaries'
-assert_contains "$ARCHITECTURE_CHECK" \
-    'channel_management_capabilities_remain_high_risk_and_audited'
+assert_not_contains "$ARCHITECTURE_CHECK" 'production_rust_source'
+assert_not_contains "$ARCHITECTURE_CHECK" 'test-channel-management-architecture-boundary.sh'
+assert_contains "$ARCHITECTURE_CHECK" '--test workspace_boundaries'
+assert_contains "$ARCHITECTURE_CHECK" '--test source_boundaries'
+assert_contains "$ARCHITECTURE_CHECK" '--test safety_policy_contract'
 assert_contains "$DISTRIBUTION_CHECK" './scripts/check-shm-only-runtime.sh'
 assert_contains "$DISTRIBUTION_CHECK" './scripts/test-installer-layout.sh'
 for job in unit-tests coverage-report config-validation; do
@@ -93,6 +94,7 @@ assert_contains "$TOPOLOGY_SOAK_WORKFLOW" 'workflow_dispatch:'
 assert_contains "$TOPOLOGY_SOAK_WORKFLOW" 'schedule:'
 assert_contains "$TOPOLOGY_SOAK_WORKFLOW" 'cancel-in-progress: ${{ github.event_name == '\''pull_request'\'' }}'
 for required_path in \
+    'crates/aether-acquisition-port/**' \
     'crates/aether-dataplane/**' \
     'crates/aether-ports/**' \
     'extensions/shm-bridge/**' \

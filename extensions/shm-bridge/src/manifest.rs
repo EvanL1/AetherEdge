@@ -200,6 +200,7 @@ impl ChannelPointManifest {
     /// New code should construct a [`PhysicalPointAddress`] and call
     /// [`Self::slot_for`]. This method preserves the published 0.5 API.
     #[must_use]
+    #[deprecated(note = "use slot_for(PhysicalPointAddress) at typed boundaries")]
     pub fn slot(&self, channel_id: u32, kind: PointKind, point_id: u32) -> Option<usize> {
         self.slot_for(PhysicalPointAddress::from_legacy_raw(
             channel_id, kind, point_id,

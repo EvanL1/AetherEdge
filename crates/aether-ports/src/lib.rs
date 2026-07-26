@@ -1,6 +1,5 @@
 //! Capability-oriented ports implemented by Aether extensions.
 
-mod acquisition;
 mod alarm;
 mod audit;
 mod automation;
@@ -19,7 +18,6 @@ mod outbox;
 mod secret;
 mod uplink;
 
-pub use acquisition::AcquisitionStateWriter;
 pub use alarm::{
     AlarmRuleMutation, AlarmRuleMutationKind, AlarmRuleMutationReceipt, AlarmRuleMutator,
     AlarmRulePatch, AlertResolutionReceipt, AlertResolver,

@@ -206,6 +206,10 @@ fn canonical_layers_only_depend_inward() {
         ("aether-ports", &["aether-domain"]),
         ("aether-data-processing", &["aether-domain"]),
         (
+            "aether-acquisition-port",
+            &["aether-domain", "aether-ports"],
+        ),
+        (
             "aether-application",
             &["aether-data-processing", "aether-domain", "aether-ports"],
         ),
@@ -313,6 +317,25 @@ fn retired_workspace_crates_stay_retired() {
     }
 
     assert_no_violations("retired workspace crates were restored", violations);
+}
+
+#[test]
+fn acquisition_writer_dependency_has_exactly_one_runtime_owner() {
+    let workspace = workspace();
+    let owners: BTreeSet<_> = workspace
+        .members()
+        .filter(|package| {
+            production_dependencies(package)
+                .any(|dependency| dependency.name == "aether-acquisition-port")
+        })
+        .map(|package| package.name.as_str())
+        .collect();
+    let expected = BTreeSet::from(["aether-shm-bridge"]);
+
+    assert_eq!(
+        owners, expected,
+        "only the SHM acquisition adapter may depend on the acquisition writer capability"
+    );
 }
 
 #[test]

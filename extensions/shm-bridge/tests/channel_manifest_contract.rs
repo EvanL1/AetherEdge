@@ -102,15 +102,29 @@ fn typed_lookup_rejects_missing_channel_kind_and_point() {
 }
 
 #[test]
-fn legacy_raw_lookup_matches_the_typed_lookup() {
-    let manifest = ChannelPointManifest::from_entries([(4, [2, 1, 0, 0])]);
-    let address =
-        PhysicalPointAddress::new(ChannelId::new(4), PointKind::Telemetry, PointId::new(1));
+#[allow(deprecated)]
+fn legacy_raw_lookup_matches_the_typed_lookup_for_every_physical_slot() {
+    let manifest = ChannelPointManifest::from_entries([(4, [2, 1, 1, 1]), (9, [1, 2, 0, 1])]);
 
-    assert_eq!(manifest.slot(4, PointKind::Telemetry, 1), Some(1));
-    assert_eq!(
-        manifest.slot(4, PointKind::Telemetry, 1),
-        manifest.slot_for(address)
-    );
-    assert_eq!(manifest.slot(4, PointKind::Command, 0), None);
+    for (slot, address) in manifest.iter_physical_points() {
+        assert_eq!(
+            manifest.slot(
+                address.channel_id().get(),
+                address.kind(),
+                address.point_id().get(),
+            ),
+            Some(slot)
+        );
+        assert_eq!(
+            manifest.slot(
+                address.channel_id().get(),
+                address.kind(),
+                address.point_id().get(),
+            ),
+            manifest.slot_for(address)
+        );
+    }
+
+    assert_eq!(manifest.slot(4, PointKind::Telemetry, 2), None);
+    assert_eq!(manifest.slot(99, PointKind::Command, 0), None);
 }

@@ -4,9 +4,10 @@ use std::collections::HashSet;
 use std::path::Path;
 use std::sync::{Arc, RwLock};
 
+use aether_acquisition_port::AcquisitionStateWriter;
 use aether_dataplane::{DataplaneError, SlotIo, SlotWriter};
 use aether_domain::AcquiredPointSample;
-use aether_ports::{AcquisitionStateWriter, PortError, PortErrorKind, PortResult};
+use aether_ports::{PortError, PortErrorKind, PortResult};
 use async_trait::async_trait;
 
 use crate::{ChannelPointManifest, PhysicalPointAddress};

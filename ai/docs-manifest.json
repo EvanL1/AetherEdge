@@ -598,6 +598,34 @@
       "verification": []
     },
     {
+      "id": "edge-crates-aether-acquisition-port-readme",
+      "path": "crates/aether-acquisition-port/README.md",
+      "canonical_url": "https://docs.aetheriot.dev/crates/aether-acquisition-port.md",
+      "title": "aether-acquisition-port",
+      "description": "Owner-only write capability for physical telemetry and status acquisition.",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "reference",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "inspect-edge-implementation"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "not-applicable",
+      "context_sensitivity": "public",
+      "updated": "2026-07-26",
+      "priority": "optional",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
       "id": "edge-crates-aether-application-readme",
       "path": "crates/aether-application/README.md",
       "canonical_url": "https://docs.aetheriot.dev/crates/aether-application.md",
@@ -840,7 +868,7 @@
       "implementation_status": "partial",
       "production_readiness": "not-applicable",
       "context_sensitivity": "public",
-      "updated": "2026-07-16",
+      "updated": "2026-07-26",
       "priority": "optional",
       "media_type": "text/markdown",
       "capability_refs": [],
@@ -1316,7 +1344,7 @@
       "implementation_status": "partial",
       "production_readiness": "not-applicable",
       "context_sensitivity": "internal",
-      "updated": "2026-07-14",
+      "updated": "2026-07-26",
       "priority": "optional",
       "media_type": "text/markdown",
       "capability_refs": [],
@@ -1484,7 +1512,7 @@
       "implementation_status": "partial",
       "production_readiness": "not-applicable",
       "context_sensitivity": "internal",
-      "updated": "2026-07-15",
+      "updated": "2026-07-26",
       "priority": "optional",
       "media_type": "text/markdown",
       "capability_refs": [],
@@ -1667,6 +1695,34 @@
       "canonical_url": "https://github.com/EvanL1/AetherEdge/blob/main/docs/adr/0023-canonical-domain-model.md",
       "title": "ADR-0023: Make aether-domain the canonical business-model owner",
       "description": "Accepted and implemented on 2026-07-26.",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "decision",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "inspect-edge-implementation"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "not-applicable",
+      "context_sensitivity": "internal",
+      "updated": "2026-07-26",
+      "priority": "optional",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-docs-adr-0024-typed-architecture-contracts",
+      "path": "docs/adr/0024-typed-architecture-contracts.md",
+      "canonical_url": "https://github.com/EvanL1/AetherEdge/blob/main/docs/adr/0024-typed-architecture-contracts.md",
+      "title": "ADR-0024: Typed Architecture Contracts",
+      "description": "The repository architecture gate had accumulated package checks, source-text regular expressions, exact file paths, documentation policy, Compose checks, and installer tests in one large Bash process. A source file rename could silently…",
       "locale": "en",
       "translation_of": null,
       "document_role": "decision",

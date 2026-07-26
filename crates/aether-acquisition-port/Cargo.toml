@@ -1,0 +1,21 @@
+[package]
+name = "aether-acquisition-port"
+version.workspace = true
+edition = "2024"
+rust-version = "1.90"
+description = "Acquisition-owner-only write capability for the Aether data plane"
+license.workspace = true
+repository.workspace = true
+documentation = "https://docs.aetheriot.dev/crates/aether-acquisition-port"
+readme = "README.md"
+publish = false
+keywords = ["iot", "edge", "acquisition", "data-plane"]
+categories = ["asynchronous", "data-structures"]
+
+[dependencies]
+aether-domain = { version = "0.0.1", path = "../aether-domain" }
+aether-ports = { version = "0.0.1", path = "../aether-ports" }
+async-trait = { workspace = true }
+
+[lints]
+workspace = true

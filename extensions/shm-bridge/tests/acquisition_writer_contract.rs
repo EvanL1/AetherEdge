@@ -1,12 +1,13 @@
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 
+use aether_acquisition_port::AcquisitionStateWriter;
 use aether_dataplane::{AuthorityWriteGuard, SlotIo, SlotWriter};
 use aether_domain::{
     AcquiredPointSample, ChannelId, ChannelPointAddress, PointId, PointKind, PointQuality,
     TimestampMs,
 };
-use aether_ports::{AcquisitionStateWriter, PortErrorKind};
+use aether_ports::PortErrorKind;
 use aether_shm_bridge::{
     AcquisitionCommitObserver, ChannelPointManifest, ShmAcquisitionStateWriter,
 };

@@ -2,8 +2,8 @@ use std::sync::Arc;
 
 use aether_domain::{AlarmRuleId, AlarmSeverity, AlertId, ChannelId, TimestampMs};
 use aether_ports::{
-    AcquisitionStateWriter, AlarmRuleMutation, AlarmRuleMutationKind, AlarmRuleMutator,
-    AlarmRulePatch, AlertResolutionReceipt, AlertResolver, AuditSink, ChannelHealthObservation,
+    AlarmRuleMutation, AlarmRuleMutationKind, AlarmRuleMutator, AlarmRulePatch,
+    AlertResolutionReceipt, AlertResolver, AuditSink, ChannelHealthObservation,
     ChannelHealthSource, CommandDispatcher, DeviceCommandSink, DurableOutbox, HistorySink,
     LiveState, LiveStateWriter, PortError, PortErrorKind, StateMirror,
 };
@@ -30,7 +30,6 @@ fn error_kind_exposes_recovery_semantics() {
 fn extension_ports_are_object_safe() {
     fn accepts_live_state(_: Option<Arc<dyn LiveState>>) {}
     fn accepts_live_state_writer(_: Option<Arc<dyn LiveStateWriter>>) {}
-    fn accepts_acquisition_writer(_: Option<Arc<dyn AcquisitionStateWriter>>) {}
     fn accepts_dispatcher(_: Option<Arc<dyn CommandDispatcher>>) {}
     fn accepts_device_command_sink(_: Option<Arc<dyn DeviceCommandSink>>) {}
     fn accepts_history(_: Option<Arc<dyn HistorySink>>) {}
@@ -43,7 +42,6 @@ fn extension_ports_are_object_safe() {
 
     accepts_live_state(None);
     accepts_live_state_writer(None);
-    accepts_acquisition_writer(None);
     accepts_dispatcher(None);
     accepts_device_command_sink(None);
     accepts_history(None);

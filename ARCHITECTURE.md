@@ -13,6 +13,7 @@ rules are defined in:
 - [ADR-0017: Experimental CloudLink MQTT edge foundation](docs/adr/0017-experimental-cloudlink-mqtt-edge-foundation.md)
 - [ADR-0018: Pinned AetherContracts consumption](docs/adr/0018-pinned-aethercontracts-consumption.md)
 - [ADR-0023: Canonical domain-model owner](docs/adr/0023-canonical-domain-model.md)
+- [ADR-0024: Typed architecture contracts](docs/adr/0024-typed-architecture-contracts.md)
 - [Target repository layout](docs/architecture/target-layout.md)
 - [AI invariants](ai/invariants.md)
 - [Capability safety policy](ai/safety-policy.yaml)
@@ -27,7 +28,9 @@ plane, and typed SHM port adapters. In particular:
   snapshots without depending on Redis, SQLx, or the legacy service model.
 - `aether-shm-bridge` owns the typed channel manifest, channel-aware readers,
   generation lifecycle, isolated PointWatch publication, and production
-  `AcquisitionStateWriter` and `DeviceCommandSink` adapters. IO acquisition can
+  `AcquisitionStateWriter` and `DeviceCommandSink` adapters. The writer trait
+  lives in the owner-only `aether-acquisition-port` crate, whose sole direct
+  runtime consumer is `aether-shm-bridge`. IO acquisition can
   represent only T/S writes; automation command transport can represent only
   C/A writes and returns success only after the local SHM + UDS command plane
   accepts the frame. Neither writer port is exposed to HTTP, CLI, MCP, or AI
@@ -169,10 +172,15 @@ runtime/composition ---+          extensions
 Only a composition root may depend on both application code and concrete
 extensions. Executable package-edge contracts live in
 `tools/aether-architecture-tests`; they consume Cargo metadata rather than
-matching dependency text or source-file paths. `scripts/check-architecture.sh`
-invokes those Rust tests and retains only source-level checks that do not yet
-have a compile-time contract. Deployment, installer, runtime-manifest, and Pack
-layout checks run separately through `scripts/check-distribution-contracts.sh`.
+matching dependency text or source-file paths. Writer authority is represented
+by dedicated dependency edges, and governed command entry points have behavior
+contracts. The few source policies that cannot be expressed by visibility or a
+trait are parsed structurally with `syn` by recursively following Cargo target
+module roots. `scripts/check-architecture.sh` is only a thin Rust-test and Cargo
+graph orchestrator. README wording, branding strings, and similar prose are
+not architecture gates. Deployment, installer, runtime-manifest, and Pack
+layout checks run independently through
+`scripts/check-distribution-contracts.sh`.
 
 The concrete extraction and local-outbox decisions are recorded in
 [ADR-0002](docs/adr/0002-dataplane-and-local-outbox.md).

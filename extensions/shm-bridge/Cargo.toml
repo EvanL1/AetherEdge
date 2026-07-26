@@ -12,6 +12,7 @@ keywords = ["iot", "edge", "shared-memory", "gateway"]
 categories = ["embedded", "asynchronous"]
 
 [dependencies]
+aether-acquisition-port = { version = "0.0.1", path = "../../crates/aether-acquisition-port" }
 aether-domain = { version = "0.0.1", path = "../../crates/aether-domain" }
 aether-dataplane = { version = "0.0.1", path = "../../crates/aether-dataplane" }
 aether-ports = { version = "0.0.1", path = "../../crates/aether-ports" }
