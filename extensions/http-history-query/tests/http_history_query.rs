@@ -10,6 +10,8 @@ use serde_json::json;
 use wiremock::matchers::{body_json, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
+const CADENCE_MS: u64 = 15 * 60 * 1_000;
+
 fn binding() -> BindingIdentity {
     BindingIdentity::new("energy.site-a", 1).expect("binding is valid")
 }
@@ -27,7 +29,8 @@ fn routes() -> Vec<HistoryFeatureRoute> {
         HistoryFeatureRoute::stored(
             task(),
             binding(),
-            "load",
+            numeric("load", "kW"),
+            CADENCE_MS,
             "inst:1:M",
             "1",
             "energy.site.load.active_power",
@@ -36,7 +39,8 @@ fn routes() -> Vec<HistoryFeatureRoute> {
         HistoryFeatureRoute::stored(
             task(),
             binding(),
-            "temp_avg",
+            numeric("temp_avg", "Cel"),
+            CADENCE_MS,
             "inst:2:M",
             "2",
             "weather.observed.air_temperature",
@@ -45,7 +49,8 @@ fn routes() -> Vec<HistoryFeatureRoute> {
         HistoryFeatureRoute::calendar(
             task(),
             binding(),
-            "quarter_hour",
+            numeric("quarter_hour", "1"),
+            CADENCE_MS,
             CalendarFeature::QuarterHourOfDay,
             "calendar.quarter_hour",
         )
@@ -97,7 +102,8 @@ fn configuration_rejects_unsafe_endpoints_duplicate_routes_and_unbounded_limits(
         HistoryFeatureRoute::stored(
             task(),
             binding(),
-            "load",
+            numeric("load", "kW"),
+            CADENCE_MS,
             "inst:1:M",
             "1",
             "energy.site.load",
@@ -106,7 +112,8 @@ fn configuration_rejects_unsafe_endpoints_duplicate_routes_and_unbounded_limits(
         HistoryFeatureRoute::stored(
             task(),
             binding(),
-            "voltage",
+            numeric("voltage", "V"),
+            CADENCE_MS,
             "inst:1:M",
             "1",
             "energy.site.voltage",
@@ -127,7 +134,8 @@ fn configuration_rejects_unsafe_endpoints_duplicate_routes_and_unbounded_limits(
         HistoryFeatureRoute::stored(
             task(),
             binding(),
-            "load",
+            numeric("load", "kW"),
+            CADENCE_MS,
             "inst:1:M",
             "1",
             "energy.site.load",
@@ -136,7 +144,8 @@ fn configuration_rejects_unsafe_endpoints_duplicate_routes_and_unbounded_limits(
         HistoryFeatureRoute::stored(
             TaskIdentity::new("iot.anomaly-detection", 1).expect("second task is valid"),
             binding(),
-            "load",
+            numeric("load", "kW"),
+            CADENCE_MS,
             "inst:1:M",
             "1",
             "energy.site.load",

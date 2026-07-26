@@ -13,6 +13,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::{CalendarFeature, HistoryFeatureRoute, HistoryFeatureSource, HttpHistoryQueryConfig};
 
+const MAX_UPSTREAM_SAMPLES: usize = 5_000;
+
 /// Bounded adapter for the existing aether-history batch query endpoint.
 pub struct HttpHistoryQuery {
     config: HttpHistoryQueryConfig,
@@ -31,15 +33,22 @@ impl HttpHistoryQuery {
             .features()
             .iter()
             .map(|feature| {
-                self.config
+                let route = self
+                    .config
                     .routes()
                     .iter()
                     .find(|route| {
                         route.task() == window.task()
                             && route.binding() == window.binding()
-                            && route.feature() == feature.name()
+                            && route.definition().name() == feature.name()
                     })
-                    .ok_or_else(|| permanent("history feature mapping is incomplete"))
+                    .ok_or_else(|| permanent("history feature mapping is incomplete"))?;
+                if route.definition() != feature {
+                    return Err(permanent(
+                        "history feature type, role, unit, or constraints mismatch its mapping",
+                    ));
+                }
+                Ok(route)
             })
             .collect()
     }
@@ -94,6 +103,48 @@ impl HttpHistoryQuery {
     }
 }
 
+struct RegularGrid {
+    timestamps: Vec<TimestampMs>,
+}
+
+impl RegularGrid {
+    fn new(window: &HistoryWindow, cadence_ms: u64) -> PortResult<Self> {
+        let span = window
+            .end()
+            .get()
+            .checked_sub(window.start().get())
+            .ok_or_else(|| invalid("history window span is invalid"))?;
+        if cadence_ms == 0 || span == 0 || !span.is_multiple_of(cadence_ms) {
+            return Err(invalid(
+                "history window does not match its commissioned cadence",
+            ));
+        }
+        let sample_count = usize::try_from(span / cadence_ms)
+            .map_err(|_| rejected("history logical sample count exceeds usize"))?;
+        if sample_count == 0 || sample_count > window.max_samples() {
+            return Err(rejected(
+                "history logical sample count exceeds the requested bound",
+            ));
+        }
+        if sample_count > MAX_UPSTREAM_SAMPLES {
+            return Err(permanent(
+                "history window exceeds the aether-history per-series limit",
+            ));
+        }
+        let timestamps = (0..sample_count)
+            .map(|index| {
+                u64::try_from(index)
+                    .ok()
+                    .and_then(|index| cadence_ms.checked_mul(index))
+                    .and_then(|offset| window.start().get().checked_add(offset))
+                    .map(TimestampMs::new)
+                    .ok_or_else(|| invalid("history timestamp grid overflowed"))
+            })
+            .collect::<PortResult<Vec<_>>>()?;
+        Ok(Self { timestamps })
+    }
+}
+
 #[async_trait]
 impl HistoryQuery for HttpHistoryQuery {
     async fn query(&self, window: HistoryWindow) -> PortResult<SourcedSegment> {
@@ -105,32 +156,18 @@ impl HistoryQuery for HttpHistoryQuery {
                 "HTTP history requires a pre-aligned last-value series with duplicate rejection",
             ));
         }
-        if window.max_samples() > 5_000 {
+        let routes = self.routes(&window)?;
+        let cadence_ms = routes
+            .first()
+            .map(|route| route.cadence_ms())
+            .ok_or_else(|| permanent("HTTP history query has no routes"))?;
+        if routes.iter().any(|route| route.cadence_ms() != cadence_ms) {
             return Err(permanent(
-                "history window exceeds the aether-history per-series limit",
+                "one HTTP history window cannot mix commissioned cadences",
             ));
         }
-        let routes = self.routes(&window)?;
-        let span = window.end().get().saturating_sub(window.start().get());
-        let sample_count = window.max_samples();
-        let sample_count_u64 = u64::try_from(sample_count)
-            .map_err(|_| invalid("history sample bound does not fit u64"))?;
-        if !span.is_multiple_of(sample_count_u64) || span == 0 {
-            return Err(invalid("history window cannot form a regular bounded grid"));
-        }
-        let cadence_ms = span / sample_count_u64;
-        let timestamps = (0..sample_count)
-            .map(|index| {
-                cadence_ms
-                    .checked_mul(
-                        u64::try_from(index)
-                            .map_err(|_| invalid("history timestamp index does not fit u64"))?,
-                    )
-                    .and_then(|offset| window.start().get().checked_add(offset))
-                    .map(TimestampMs::new)
-                    .ok_or_else(|| invalid("history timestamp grid overflowed"))
-            })
-            .collect::<PortResult<Vec<_>>>()?;
+        let timestamps = RegularGrid::new(&window, cadence_ms)?.timestamps;
+        let sample_count = timestamps.len();
 
         let stored = routes
             .iter()
@@ -332,6 +369,10 @@ fn invalid(message: &'static str) -> PortError {
 
 fn permanent(message: &'static str) -> PortError {
     PortError::new(PortErrorKind::Permanent, message)
+}
+
+fn rejected(message: &'static str) -> PortError {
+    PortError::new(PortErrorKind::Rejected, message)
 }
 
 #[derive(Debug, Serialize)]

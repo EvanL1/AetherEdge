@@ -1,6 +1,9 @@
 use std::time::Duration;
 
-use aether_domain::{BindingIdentity, TaskIdentity, is_semantic_source_ref};
+use aether_domain::{
+    BindingIdentity, FeatureDefinition, FeatureRole, FeatureValueType, TaskIdentity,
+    is_semantic_source_ref,
+};
 use aether_ports::{PortError, PortErrorKind, PortResult};
 use reqwest::{Client, Url, redirect::Policy};
 
@@ -31,21 +34,23 @@ pub enum HistoryFeatureSource {
     },
 }
 
-/// Binding-scoped semantic feature route.
+/// Binding-scoped, cadence-aware semantic feature route.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HistoryFeatureRoute {
     task: TaskIdentity,
     binding: BindingIdentity,
-    feature: String,
+    definition: FeatureDefinition,
+    cadence_ms: u64,
     source: HistoryFeatureSource,
 }
 
 impl HistoryFeatureRoute {
-    /// Maps a semantic feature to an existing aether-history series.
+    /// Maps one numeric history feature to an existing aether-history series.
     pub fn stored(
         task: TaskIdentity,
         binding: BindingIdentity,
-        feature: impl Into<String>,
+        definition: FeatureDefinition,
+        cadence_ms: u64,
         series_key: impl Into<String>,
         point_id: impl Into<String>,
         source_ref: impl Into<String>,
@@ -53,7 +58,8 @@ impl HistoryFeatureRoute {
         Self::new(
             task,
             binding,
-            feature,
+            definition,
+            cadence_ms,
             HistoryFeatureSource::Stored {
                 series_key: nonempty(series_key, "series key")?,
                 point_id: nonempty(point_id, "point id")?,
@@ -62,18 +68,25 @@ impl HistoryFeatureRoute {
         )
     }
 
-    /// Maps a semantic feature to a deterministic calendar transform.
+    /// Maps one numeric unitless history feature to a calendar transform.
     pub fn calendar(
         task: TaskIdentity,
         binding: BindingIdentity,
-        feature: impl Into<String>,
+        definition: FeatureDefinition,
+        cadence_ms: u64,
         transform: CalendarFeature,
         source_ref: impl Into<String>,
     ) -> PortResult<Self> {
+        if definition.unit() != Some("1") {
+            return Err(invalid(
+                "calendar history features require the exact unit '1'",
+            ));
+        }
         Self::new(
             task,
             binding,
-            feature,
+            definition,
+            cadence_ms,
             HistoryFeatureSource::Calendar {
                 transform,
                 source_ref: semantic_ref(source_ref)?,
@@ -84,13 +97,24 @@ impl HistoryFeatureRoute {
     fn new(
         task: TaskIdentity,
         binding: BindingIdentity,
-        feature: impl Into<String>,
+        definition: FeatureDefinition,
+        cadence_ms: u64,
         source: HistoryFeatureSource,
     ) -> PortResult<Self> {
+        if definition.role() != FeatureRole::History
+            || definition.value_type() != FeatureValueType::Number
+            || definition.unit().is_none()
+            || cadence_ms == 0
+        {
+            return Err(invalid(
+                "HTTP history routes require a numeric history feature and cadence",
+            ));
+        }
         Ok(Self {
             task,
             binding,
-            feature: nonempty(feature, "feature")?,
+            definition,
+            cadence_ms,
             source,
         })
     }
@@ -103,8 +127,12 @@ impl HistoryFeatureRoute {
         &self.binding
     }
 
-    pub(crate) fn feature(&self) -> &str {
-        &self.feature
+    pub(crate) const fn definition(&self) -> &FeatureDefinition {
+        &self.definition
+    }
+
+    pub(crate) const fn cadence_ms(&self) -> u64 {
+        self.cadence_ms
     }
 
     pub(crate) const fn source(&self) -> &HistoryFeatureSource {
@@ -129,12 +157,7 @@ impl HttpHistoryQueryConfig {
         max_response_bytes: usize,
     ) -> PortResult<Self> {
         let endpoint = Url::parse(endpoint).map_err(|_| invalid("history endpoint is invalid"))?;
-        let host_is_loopback = endpoint.host_str().is_some_and(|host| {
-            host.eq_ignore_ascii_case("localhost")
-                || host
-                    .parse::<std::net::IpAddr>()
-                    .is_ok_and(|ip| ip.is_loopback())
-        });
+        let host_is_loopback = url_host_is_loopback(&endpoint);
         let stored_count = routes
             .iter()
             .filter(|route| matches!(route.source, HistoryFeatureSource::Stored { .. }))
@@ -156,7 +179,8 @@ impl HttpHistoryQueryConfig {
                 routes[..index].iter().any(|seen| {
                     seen.task == route.task
                         && seen.binding == route.binding
-                        && (seen.feature == route.feature
+                        && (seen.definition.name() == route.definition.name()
+                            || seen.cadence_ms != route.cadence_ms
                             || physical_source_matches(&seen.source, &route.source))
                 })
             })
@@ -191,6 +215,19 @@ impl HttpHistoryQueryConfig {
     pub(crate) const fn max_response_bytes(&self) -> usize {
         self.max_response_bytes
     }
+}
+
+fn url_host_is_loopback(endpoint: &Url) -> bool {
+    endpoint.host_str().is_some_and(|host| {
+        let ip_literal = host
+            .strip_prefix('[')
+            .and_then(|value| value.strip_suffix(']'))
+            .unwrap_or(host);
+        host.eq_ignore_ascii_case("localhost")
+            || ip_literal
+                .parse::<std::net::IpAddr>()
+                .is_ok_and(|ip| ip.is_loopback())
+    })
 }
 
 fn physical_source_matches(left: &HistoryFeatureSource, right: &HistoryFeatureSource) -> bool {
