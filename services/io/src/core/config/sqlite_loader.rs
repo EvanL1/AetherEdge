@@ -445,8 +445,8 @@ mod tests {
         sqlx::query(
             "INSERT INTO channels (channel_id, name, protocol, enabled, config) VALUES
                 (1001, 'Test Modbus Channel', 'modbus_tcp', 1, '{\"parameters\":{\"host\":\"192.168.1.100\",\"port\":502}}'),
-                (1002, 'Test Virtual Channel', 'virtual', 1, '{\"parameters\":{\"point_count\":5}}'),
-                (1003, 'Test Disabled Channel', 'virtual', 0, '{}')",
+                (1002, 'Test Modbus Channel 2', 'modbus_tcp', 1, '{\"parameters\":{\"host\":\"127.0.0.1\",\"port\":502}}'),
+                (1003, 'Test Disabled Channel', 'modbus_tcp', 0, '{}')",
         )
         .execute(&pool)
         .await
@@ -480,7 +480,7 @@ mod tests {
         sqlx::query(
             "INSERT INTO telemetry_points (channel_id, point_id, signal_name, scale, offset, unit, reverse, data_type, description, protocol_mappings) VALUES
                 (1001, 1, 'Temperature', 0.1, 0.0, '°C', 0, 'float32', 'Test temperature', '{\"slave_id\":1,\"function_code\":3,\"register_address\":100,\"data_type\":\"float32\",\"byte_order\":\"ABCD\"}'),
-                (1002, 1, 'Virtual Point 1', 1.0, 0.0, '', 0, 'float32', 'Test virtual point', '{\"update_interval\":1000,\"initial_value\":25.0,\"noise_range\":2.0}')",
+                (1002, 1, 'Modbus Point 1', 1.0, 0.0, '', 0, 'float32', 'Test Modbus point', '{\"slave_id\":1,\"function_code\":3,\"register_address\":1}')",
         )
         .execute(&pool)
         .await
@@ -531,7 +531,7 @@ mod tests {
         .await
         .unwrap();
 
-        // Update telemetry_points with protocol_mappings for Virtual channel
+        // Update telemetry_points with protocol_mappings for the second channel.
         sqlx::query(
             "UPDATE telemetry_points SET protocol_mappings = '{\"update_interval\":1000,\"initial_value\":25.0,\"noise_range\":2.0}'
              WHERE channel_id = 1002 AND point_id = 1",
@@ -600,10 +600,10 @@ mod tests {
         assert!(channel1.is_enabled());
         assert!(channel1.parameters.contains_key("host"));
 
-        // Verify second channel (Virtual)
+        // Verify the second Modbus channel.
         let channel2 = &config.channels[1];
         assert_eq!(channel2.id(), 1002);
-        assert_eq!(channel2.protocol(), "virtual");
+        assert_eq!(channel2.protocol(), "modbus_tcp");
         assert!(channel2.is_enabled());
 
         // Verify third channel (Disabled)
@@ -643,12 +643,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_load_runtime_channel_points_virtual() {
+    async fn test_load_runtime_channel_points_second_modbus_channel() {
         let (_temp_dir, db_path) = create_test_database().await;
         let loader = IoSqliteLoader::new(&db_path).await.unwrap();
         let config = loader.load_config().await.unwrap();
 
-        // Get second channel (Virtual)
+        // Get the second Modbus channel.
         let channel = config.channels.into_iter().nth(1).unwrap();
         let mut runtime_config = RuntimeChannelConfig::from_base((*channel).clone());
 

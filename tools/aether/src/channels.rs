@@ -39,7 +39,7 @@ pub enum ChannelCommands {
         /// Channel name (must be unique)
         #[arg(long)]
         name: String,
-        /// Protocol type (modbus_tcp, modbus_rtu, virtual, di_do, can)
+        /// Protocol type (for example modbus_tcp, modbus_rtu, di_do, or can)
         #[arg(long)]
         protocol: String,
         /// Protocol parameters as JSON string (e.g. '{"host":"192.168.1.10","port":502}')
@@ -1587,7 +1587,7 @@ mod tests {
             authenticated
                 .create_channel(
                     "blocked",
-                    "virtual",
+                    "modbus_tcp",
                     serde_json::json!({}),
                     None,
                     None,
@@ -1626,7 +1626,7 @@ mod tests {
             unauthenticated
                 .create_channel(
                     "blocked",
-                    "virtual",
+                    "modbus_tcp",
                     serde_json::json!({}),
                     None,
                     None,

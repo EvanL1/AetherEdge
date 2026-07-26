@@ -88,7 +88,7 @@ pub struct ChannelConfig {
     /// Channel display name.
     pub name: String,
 
-    /// Protocol type: "modbus", "iec104", "opcua", "can", "gpio", "virtual".
+    /// Protocol type selected by the composition (for example `modbus` or `opcua`).
     pub protocol: String,
 
     /// Whether this channel is enabled.
@@ -136,7 +136,6 @@ pub enum ChannelModeConfig {
 /// - OPC UA: "ns=N;i=ID" or "ns=N;s=Name" (e.g., "ns=2;i=1234")
 /// - CAN: "can_id:byte_offset:bit_pos:bit_len" (e.g., "0x100:0:0:16")
 /// - GPIO: "pin_number" (e.g., "17")
-/// - Virtual: "key" (e.g., "temperature")
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct PointDef {
     /// Point unique identifier.

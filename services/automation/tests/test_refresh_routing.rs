@@ -35,7 +35,7 @@ fn make_manager(pool: SqlitePool) -> InstanceManager {
 async fn insert_action_routing(pool: &SqlitePool) {
     sqlx::query(
         "INSERT OR IGNORE INTO channels (channel_id, name, protocol, enabled) \
-         VALUES (1, 'ch1', 'Virtual', 1)",
+         VALUES (1, 'ch1', 'modbus_tcp', 1)",
     )
     .execute(pool)
     .await

@@ -14,6 +14,7 @@ rules are defined in:
 - [ADR-0018: Pinned AetherContracts consumption](docs/adr/0018-pinned-aethercontracts-consumption.md)
 - [ADR-0023: Canonical domain-model owner](docs/adr/0023-canonical-domain-model.md)
 - [ADR-0024: Typed architecture contracts](docs/adr/0024-typed-architecture-contracts.md)
+- [ADR-0025: Physical IO and optional protocol extensions](docs/adr/0025-physical-io-and-optional-protocol-extensions.md)
 - [Target repository layout](docs/architecture/target-layout.md)
 - [AI invariants](ai/invariants.md)
 - [Capability safety policy](ai/safety-policy.yaml)

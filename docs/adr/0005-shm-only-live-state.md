@@ -2,7 +2,8 @@
 
 ## Status
 
-Accepted and implemented on 2026-07-10.
+Accepted and implemented on 2026-07-10. Decision 6 was superseded by
+ADR-0025 when the production-only Virtual protocol was retired.
 
 ## Context
 

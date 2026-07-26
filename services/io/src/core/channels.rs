@@ -30,7 +30,6 @@ pub use shm_listener::ShmCommandListener;
 // Re-export converters
 #[cfg(feature = "modbus")]
 pub use converters::convert_to_modbus_point_configs;
-pub use converters::convert_to_point_configs;
 #[cfg(all(feature = "can", target_os = "linux"))]
 pub use converters::{convert_can_to_point_configs, convert_to_can_point_configs};
 
@@ -39,6 +38,5 @@ pub use converters::{convert_can_to_point_configs, convert_to_can_point_configs}
 pub use factory::create_can_channel;
 #[cfg(all(target_os = "linux", feature = "gpio"))]
 pub use factory::create_gpio_channel;
-pub use factory::create_virtual_channel;
 #[cfg(feature = "modbus")]
 pub use factory::{create_modbus_channel, create_modbus_rtu_channel};

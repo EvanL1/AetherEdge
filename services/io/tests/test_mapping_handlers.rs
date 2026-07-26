@@ -7,7 +7,7 @@
 //! Test scenarios cover:
 //! - Happy path (success cases) for GET and PUT
 //! - Replace mode vs Merge mode for batch updates
-//! - Protocol validation (Modbus, Virtual, GPIO)
+//! - Protocol validation (Modbus and GPIO)
 //! - Validation-only (dry-run) mode
 //! - Error handling (channel not found, point not found, invalid protocol_data)
 
@@ -224,29 +224,6 @@ async fn create_test_database_with_gpio_channel() -> Result<sqlx::SqlitePool> {
     sqlx::query(
         r#"INSERT INTO control_points (channel_id, point_id, signal_name, protocol_mappings)
            VALUES (2001, 601, 'Digital_Output_1', '{"gpio_number": 504}')"#,
-    )
-    .execute(&pool)
-    .await?;
-
-    Ok(pool)
-}
-
-/// Create a test database with a Virtual channel and sample points
-async fn create_test_database_with_virtual_channel() -> Result<sqlx::SqlitePool> {
-    let pool = create_test_database().await?;
-
-    // Insert a Virtual channel
-    sqlx::query(
-        r#"INSERT INTO channels (channel_id, name, protocol, enabled, config)
-           VALUES (3001, 'Virtual Channel', 'virtual', 1, '{}')"#,
-    )
-    .execute(&pool)
-    .await?;
-
-    // Insert telemetry point with expression
-    sqlx::query(
-        r#"INSERT INTO telemetry_points (channel_id, point_id, signal_name, protocol_mappings)
-           VALUES (3001, 701, 'Calculated_Value', '{"expression": "P1 + P2 * 2"}')"#,
     )
     .execute(&pool)
     .await?;
@@ -1134,72 +1111,6 @@ async fn test_gpio_validation_invalid_point_type() -> Result<()> {
         &app,
         "PUT",
         "/api/channels/2001/mappings",
-        Some(update_request),
-    )
-    .await?;
-
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-
-    Ok(())
-}
-
-// ============================================================================
-// Virtual Protocol Validation Tests
-// ============================================================================
-
-#[tokio::test]
-async fn test_virtual_validation_success() -> Result<()> {
-    let pool = create_test_database_with_virtual_channel().await?;
-    let app = create_test_app_with_pool(pool).await?;
-
-    let update_request = json!({
-        "mappings": [
-            {
-                "point_id": 701,
-                "four_remote": "T",
-                "protocol_data": {
-                    "expression": "sqrt(P1) + P2 * 3.14"
-                }
-            }
-        ],
-        "mode": "replace"
-    });
-
-    let (status, body) = make_request(
-        &app,
-        "PUT",
-        "/api/channels/3001/mappings",
-        Some(update_request),
-    )
-    .await?;
-
-    assert_eq!(status, StatusCode::OK, "Response: {:?}", body);
-
-    Ok(())
-}
-
-#[tokio::test]
-async fn test_virtual_validation_empty_expression() -> Result<()> {
-    let pool = create_test_database_with_virtual_channel().await?;
-    let app = create_test_app_with_pool(pool).await?;
-
-    let update_request = json!({
-        "mappings": [
-            {
-                "point_id": 701,
-                "four_remote": "T",
-                "protocol_data": {
-                    "expression": "   "  // Empty/whitespace expression
-                }
-            }
-        ],
-        "mode": "replace"
-    });
-
-    let (status, _body) = make_request(
-        &app,
-        "PUT",
-        "/api/channels/3001/mappings",
         Some(update_request),
     )
     .await?;

@@ -74,7 +74,6 @@ pub enum ProtocolAddress {
     Modbus(ModbusAddress),
     Iec104(Iec104Address),
     OpcUa(OpcUaAddress),
-    Virtual(VirtualAddress),
     #[cfg(feature = "gpio")]
     Gpio(GpioAddress),
     #[cfg(feature = "can")]
@@ -90,30 +89,6 @@ pub enum ProtocolAddress {
     Matter(MatterAddress),
     #[cfg(feature = "iec61850")]
     Iec61850(Iec61850Address),
-}
-
-/// Virtual channel address (no physical device).
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct VirtualAddress {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub group: Option<String>,
-    pub tag: String,
-}
-
-impl VirtualAddress {
-    pub fn new(tag: impl Into<String>) -> Self {
-        Self {
-            group: None,
-            tag: tag.into(),
-        }
-    }
-
-    pub fn grouped(group: impl Into<String>, tag: impl Into<String>) -> Self {
-        Self {
-            group: Some(group.into()),
-            tag: tag.into(),
-        }
-    }
 }
 
 /// DL/T 645-2007 point address (DI code only).

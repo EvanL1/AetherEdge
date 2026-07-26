@@ -329,15 +329,6 @@ async fn validate_physical_history_routes(
             "S" => ("signal_points", PointKind::Status),
             _ => anyhow::bail!("history series resolves to an unsupported physical point kind"),
         };
-        let protocol =
-            sqlx::query_scalar::<_, String>("SELECT protocol FROM channels WHERE channel_id = ?")
-                .bind(channel_id)
-                .fetch_optional(database)
-                .await?
-                .context("history physical channel does not exist")?;
-        if protocol.eq_ignore_ascii_case("virtual") {
-            anyhow::bail!("virtual channels are not collected by the history service");
-        }
         let query = format!(
             "SELECT unit, scale, offset FROM {table} WHERE channel_id = ? AND point_id = ?"
         );
@@ -1375,21 +1366,5 @@ mod tests {
             .expect_err("online physical metadata drift fails before stale history is read");
         assert_eq!(drift_error.kind(), PortErrorKind::Unavailable);
         assert_eq!(calls.load(Ordering::SeqCst), 1);
-
-        sqlx::query(
-            "UPDATE telemetry_points SET unit = '1' WHERE channel_id = 10 AND point_id = 1",
-        )
-        .execute(&pool)
-        .await
-        .expect("unit fixture is restored");
-        sqlx::query("UPDATE channels SET protocol = 'virtual' WHERE channel_id = 10")
-            .execute(&pool)
-            .await
-            .expect("channel fixture is mutated");
-        assert!(
-            validate_physical_history_routes(&pool, &task, &binding, &route.history)
-                .await
-                .is_err()
-        );
     }
 }

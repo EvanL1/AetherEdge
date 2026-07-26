@@ -191,24 +191,34 @@ async fn test_pool() -> sqlx::SqlitePool {
     pool
 }
 
+fn modbus_tcp_parameters() -> BTreeMap<String, ChannelParameterValue> {
+    BTreeMap::from([
+        (
+            "host".to_owned(),
+            ChannelParameterValue::String("127.0.0.1".to_owned()),
+        ),
+        ("port".to_owned(), ChannelParameterValue::Integer(502)),
+    ])
+}
+
 fn definition(channel_id: u32, enabled: bool) -> ChannelDefinition {
+    let mut parameters = modbus_tcp_parameters();
+    parameters.insert(
+        "credential".to_string(),
+        ChannelParameterValue::String("never-log-secret".to_string()),
+    );
+    parameters.insert(
+        "nested".to_string(),
+        ChannelParameterValue::Object(BTreeMap::from([(
+            "retry".to_string(),
+            ChannelParameterValue::Integer(3),
+        )])),
+    );
     ChannelDefinition::new(
         Some(ChannelId::new(channel_id)),
         format!("channel-{channel_id}"),
-        "virtual",
-        BTreeMap::from([
-            (
-                "credential".to_string(),
-                ChannelParameterValue::String("never-log-secret".to_string()),
-            ),
-            (
-                "nested".to_string(),
-                ChannelParameterValue::Object(BTreeMap::from([(
-                    "retry".to_string(),
-                    ChannelParameterValue::Integer(3),
-                )])),
-            ),
-        ]),
+        "modbus_tcp",
+        parameters,
     )
     .with_description("test channel")
     .with_logging(
@@ -221,7 +231,7 @@ fn definition(channel_id: u32, enabled: bool) -> ChannelDefinition {
 }
 
 fn auto_definition(name: &str) -> ChannelDefinition {
-    ChannelDefinition::new(None, name, "virtual", BTreeMap::new())
+    ChannelDefinition::new(None, name, "modbus_tcp", modbus_tcp_parameters())
 }
 
 fn protocol_definition(
@@ -377,19 +387,20 @@ async fn governed_modbus_create_rejects_fallback_and_truncation_inputs_before_co
 }
 
 #[tokio::test]
-async fn governed_virtual_mutations_reject_zero_poll_interval_before_commit_or_activation() {
+async fn governed_physical_mutations_reject_zero_poll_interval_before_commit_or_activation() {
     let pool = test_pool().await;
     let runtime = Arc::new(FakeRuntime::default());
     let mutator = adapter(pool.clone(), Arc::clone(&runtime));
-    let poll_zero = BTreeMap::from([(
+    let mut poll_zero = modbus_tcp_parameters();
+    poll_zero.insert(
         "poll_interval_ms".to_owned(),
         ChannelParameterValue::Integer(0),
-    )]);
+    );
 
     let create_error = mutator
         .mutate(ChannelMutation::create(protocol_definition(
             36,
-            "virtual",
+            "modbus_tcp",
             poll_zero.clone(),
             true,
         )))
@@ -400,8 +411,8 @@ async fn governed_virtual_mutations_reject_zero_poll_interval_before_commit_or_a
     mutator
         .mutate(ChannelMutation::create(protocol_definition(
             37,
-            "virtual",
-            BTreeMap::new(),
+            "modbus_tcp",
+            modbus_tcp_parameters(),
             true,
         )))
         .await
@@ -428,15 +439,15 @@ async fn governed_virtual_mutations_reject_zero_poll_interval_before_commit_or_a
     mutator
         .mutate(ChannelMutation::create(protocol_definition(
             38,
-            "virtual",
-            BTreeMap::new(),
+            "modbus_tcp",
+            modbus_tcp_parameters(),
             false,
         )))
         .await
         .expect("valid disabled channel");
     sqlx::query(
         "UPDATE channels \
-         SET config = '{\"parameters\":{\"poll_interval_ms\":0}}' \
+         SET config = '{\"parameters\":{\"host\":\"127.0.0.1\",\"port\":502,\"poll_interval_ms\":0}}' \
          WHERE channel_id = 38",
     )
     .execute(&pool)
@@ -622,8 +633,8 @@ async fn manual_duplicate_identifier_and_name_are_conflicts_without_orphans() {
     let duplicate_id = ChannelDefinition::new(
         Some(ChannelId::new(18)),
         "different-name",
-        "virtual",
-        BTreeMap::new(),
+        "modbus_tcp",
+        modbus_tcp_parameters(),
     );
     let error = mutator
         .mutate(ChannelMutation::create(duplicate_id))
@@ -634,8 +645,8 @@ async fn manual_duplicate_identifier_and_name_are_conflicts_without_orphans() {
     let duplicate_name = ChannelDefinition::new(
         Some(ChannelId::new(19)),
         "channel-18",
-        "virtual",
-        BTreeMap::new(),
+        "modbus_tcp",
+        modbus_tcp_parameters(),
     );
     let error = mutator
         .mutate(ChannelMutation::create(duplicate_name))
@@ -1364,7 +1375,8 @@ async fn delete_conflict_never_restores_runtime_for_a_recreated_identity() {
         .expect("external delete");
     sqlx::query(
         "INSERT INTO channels (channel_id, name, protocol, enabled, config) \
-         VALUES (33, 'replacement', 'virtual', 0, '{}')",
+         VALUES (33, 'replacement', 'modbus_tcp', 0, \
+                 '{\"parameters\":{\"host\":\"127.0.0.1\",\"port\":502}}')",
     )
     .execute(&pool)
     .await
@@ -1782,15 +1794,21 @@ async fn invalid_desired_runtime_is_degraded_without_stopping_other_channels() {
     let pool = test_pool().await;
     let runtime = Arc::new(FakeRuntime::default());
     let adapter = adapter(pool.clone(), Arc::clone(&runtime));
-    for (channel_id, protocol) in [(10_i64, "rejected"), (11, "virtual")] {
+    for (channel_id, protocol) in [(10_i64, "rejected"), (11, "modbus_tcp")] {
+        let config = if protocol == "modbus_tcp" {
+            r#"{"parameters":{"host":"127.0.0.1","port":502}}"#
+        } else {
+            "{}"
+        };
         sqlx::query(
             "INSERT INTO channels \
              (channel_id, name, protocol, enabled, config, revision) \
-             VALUES (?, ?, ?, 1, '{}', 1)",
+             VALUES (?, ?, ?, 1, ?, 1)",
         )
         .bind(channel_id)
         .bind(format!("channel-{channel_id}"))
         .bind(protocol)
+        .bind(config)
         .execute(&pool)
         .await
         .expect("desired channel");

@@ -113,8 +113,8 @@ channels:
     enabled: true
 
   - channel_id: 1002
-    channel_name: "Virtual Channel"
-    protocol_type: "virtual"
+    channel_name: "Second Modbus Channel"
+    protocol_type: "modbus_tcp"
     enabled: true
 "#;
 

@@ -1,16 +1,16 @@
 //! Modbus TCP Slave Simulator for AetherEdge CI Testing.
 //!
-//! This tool simulates industrial devices (PCS, BMS, PV) as Modbus TCP slaves,
-//! generating realistic waveform data for testing io.
+//! This tool simulates generic Modbus TCP devices and deterministic register
+//! changes for protocol and IO integration testing.
 //!
 //! # Usage
 //!
 //! ```bash
 //! # Start with a scenario file
-//! simulator --scenario scenarios/pcs_normal.yaml --port 5020
+//! simulator --scenario tools/simulator/scenarios/modbus_protocol_verification.yaml --port 5020
 //!
 //! # Start with fault injection enabled
-//! simulator --scenario scenarios/network_fault.yaml --port 5020
+//! simulator --scenario tools/simulator/scenarios/network_fault.yaml --port 5020
 //! ```
 
 #[cfg(all(target_os = "linux", feature = "can"))]

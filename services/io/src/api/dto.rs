@@ -1007,7 +1007,7 @@ mod tests {
         let status = ChannelStatusDto {
             id: 1,
             name: "Simple Channel".to_string(),
-            protocol: "Virtual".to_string(),
+            protocol: "Modbus TCP".to_string(),
             connected: false,
             running: false,
             last_update: now,

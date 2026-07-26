@@ -82,6 +82,7 @@ IEC 61850, and CAN.
 | Protocol | Compiled by default | Platform notes |
 |----------|--------------------:|----------------|
 | Modbus TCP/RTU (`modbus`) | yes | |
+| SunSpec TCP/RTU (`sunspec`) | no | Optional model catalog and provisioning extension; implies `modbus` |
 | IEC 60870-5-104 (`iec104`) | no | |
 | IEC 61850 MMS (`iec61850`) | yes | |
 | OPC UA (`opcua`) | no | Optional feature; currently restricted to anonymous `SecurityPolicy::None` sessions. |
@@ -94,14 +95,12 @@ IEC 61850, and CAN.
 | Zigbee (`zigbee`) | no | via TCP gateway |
 | Matter (`matter`) | no | |
 | Aether-485 (`aether_485`) | yes | private RS-485 protocol |
-| Virtual | always | no feature gate; exists for testing and simulation |
 
 Two protocols are additionally OS-gated in the channel factory
 (`services/io/src/protocols/gateway/factory.rs`): CAN and GPIO are
 compiled only on Linux, so they never exist in a macOS build regardless of
-features. Virtual is the one protocol with no gate at all — it is always
-available, and it is the right first target for trying out rules and
-mappings before real hardware is involved.
+features. Hardware-independent protocol tests run against `tools/simulator`;
+the production IO binary contains no in-memory simulation protocol.
 
 The rule of thumb: **if a channel fails to create, check the feature gate
 first.** The factory's error is literal about it — `Unsupported protocol:

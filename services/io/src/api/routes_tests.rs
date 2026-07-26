@@ -4,24 +4,24 @@
 
 use super::*;
 use crate::dto::{AdjustmentRequest, ControlRequest};
+#[cfg(feature = "sunspec")]
+use axum::Extension;
 use axum::{
-    Extension,
     body::Body,
     http::{Request, Response, StatusCode},
 };
 use serde_json::json;
 use sqlx::SqlitePool;
 use std::collections::{BTreeMap, HashMap};
-use std::sync::{
-    Arc, Mutex,
-    atomic::{AtomicUsize, Ordering},
-};
+#[cfg(feature = "sunspec")]
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 
-#[cfg(feature = "modbus")]
+#[cfg(feature = "sunspec")]
 use crate::api::handlers::provision_handlers::{
     SunSpecDiscoveryBoundary, SunSpecDiscoveryPort, provision_channel_handler,
 };
-#[cfg(feature = "modbus")]
+#[cfg(feature = "sunspec")]
 use crate::protocols::adapters::modbus_config::ModbusChannelParamsConfig;
 
 use aether_core::PointType;
@@ -38,14 +38,14 @@ const TEST_JWT_SECRET: &str = "0123456789abcdef0123456789abcdef";
 const ADMIN_ACCESS_TOKEN: &str = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyX2lkIjo3LCJyb2xlIjoiQWRtaW4iLCJ0eXBlIjoiYWNjZXNzIiwiaWF0IjoxNzAwMDAwMDAwLCJleHAiOjQxMDI0NDQ4MDB9.JtjQvDBo7j0bLOxwed6yC9-M9qFCloc4H2Dt0LjzF9E";
 const TEST_REQUEST_ID: &str = "018f0000-0000-7000-8000-000000000041";
 
-#[cfg(feature = "modbus")]
+#[cfg(feature = "sunspec")]
 #[derive(Default)]
 struct RecordingSunSpecDiscovery {
     connect_calls: AtomicUsize,
     read_calls: AtomicUsize,
 }
 
-#[cfg(feature = "modbus")]
+#[cfg(feature = "sunspec")]
 impl RecordingSunSpecDiscovery {
     fn connect_calls(&self) -> usize {
         self.connect_calls.load(Ordering::SeqCst)
@@ -56,7 +56,7 @@ impl RecordingSunSpecDiscovery {
     }
 }
 
-#[cfg(feature = "modbus")]
+#[cfg(feature = "sunspec")]
 #[async_trait::async_trait]
 impl SunSpecDiscoveryPort for RecordingSunSpecDiscovery {
     async fn connect_and_discover(
@@ -66,12 +66,12 @@ impl SunSpecDiscoveryPort for RecordingSunSpecDiscovery {
         _slave_id: u8,
         _function_code: u8,
         _base_address: Option<u16>,
-    ) -> Result<(u16, Vec<crate::protocols::sunspec::DiscoveredModel>), String> {
+    ) -> Result<(u16, Vec<aether_sunspec::DiscoveredModel>), String> {
         self.connect_calls.fetch_add(1, Ordering::SeqCst);
         self.read_calls.fetch_add(1, Ordering::SeqCst);
         Ok((
             40_000,
-            vec![crate::protocols::sunspec::DiscoveredModel {
+            vec![aether_sunspec::DiscoveredModel {
                 model_id: 103,
                 length: 50,
                 start_register: 40_002,
@@ -170,7 +170,7 @@ async fn create_test_api_with_pool(
     )
 }
 
-#[cfg(feature = "modbus")]
+#[cfg(feature = "sunspec")]
 async fn create_provision_test_api(
     sqlite_pool: SqlitePool,
     discovery: Arc<RecordingSunSpecDiscovery>,
@@ -211,7 +211,7 @@ async fn create_provision_test_api(
         .with_state(state)
 }
 
-#[cfg(feature = "modbus")]
+#[cfg(feature = "sunspec")]
 fn provision_request(
     authorization: bool,
     confirmed: bool,
@@ -244,7 +244,7 @@ fn provision_request(
         .expect("provision request")
 }
 
-#[cfg(feature = "modbus")]
+#[cfg(feature = "sunspec")]
 #[tokio::test]
 async fn provision_authorization_precedes_device_io_and_stale_cas_fails_closed() {
     let pool = create_test_sqlite_pool_with_points().await;
@@ -580,7 +580,7 @@ async fn channel_mutations_require_real_bearer_auth_and_confirmation_before_side
     let body = json!({
         "channel_id": 41,
         "name": "governed channel",
-        "protocol": "virtual",
+        "protocol": "modbus_tcp",
         "parameters": {}
     });
 
@@ -618,7 +618,7 @@ async fn channel_create_defaults_disabled_and_returns_the_typed_receipt() {
             "channel_id": 41,
             "name": "safe commissioning",
             "description": "disabled until explicitly enabled",
-            "protocol": "virtual",
+            "protocol": "modbus_tcp",
             "parameters": {}
         })),
     );
@@ -629,7 +629,7 @@ async fn channel_create_defaults_disabled_and_returns_the_typed_receipt() {
     assert_eq!(payload["data"]["id"], 41);
     assert_eq!(payload["data"]["channel_id"], 41);
     assert_eq!(payload["data"]["name"], "safe commissioning");
-    assert_eq!(payload["data"]["protocol"], "virtual");
+    assert_eq!(payload["data"]["protocol"], "modbus_tcp");
     assert_eq!(payload["data"]["operation"], "create");
     assert_eq!(payload["data"]["resulting_revision"], 1);
     assert_eq!(payload["data"]["desired_enabled"], false);
@@ -744,7 +744,7 @@ async fn degraded_runtime_projection_is_an_accepted_non_retryable_outcome() {
         Some(json!({
             "channel_id": 41,
             "name": "degraded projection",
-            "protocol": "virtual",
+            "protocol": "modbus_tcp",
             "enabled": true,
             "parameters": {}
         })),
@@ -771,7 +771,7 @@ async fn terminal_audit_failure_stays_accepted_and_is_never_retryable() {
         Some(json!({
             "channel_id": 41,
             "name": "audit reconciliation",
-            "protocol": "virtual",
+            "protocol": "modbus_tcp",
             "parameters": {}
         })),
     );
@@ -911,7 +911,7 @@ async fn test_get_all_channels_with_filters() {
     common::test_utils::schema::init_io_schema(&pool)
         .await
         .unwrap();
-    sqlx::query("INSERT INTO channels (channel_id, name, protocol, enabled, config) VALUES (100, 'Ch100', 'virtual', 1, '{}')")
+    sqlx::query("INSERT INTO channels (channel_id, name, protocol, enabled, config) VALUES (100, 'Ch100', 'modbus_tcp', 1, '{}')")
         .execute(&pool)
         .await
         .unwrap();
@@ -932,7 +932,7 @@ async fn test_get_all_channels_with_filters() {
 
     // Protocol filter
     let req1 = Request::builder()
-        .uri("/api/channels?protocol=virtual")
+        .uri("/api/channels?protocol=modbus_tcp")
         .body(Body::empty())
         .unwrap();
     let resp1 = app.clone().oneshot(req1).await.unwrap();
@@ -1039,11 +1039,11 @@ async fn test_create_channel_returns_description() {
     let app = create_test_api_with_pool(channel_manager, sqlite_pool).await;
 
     let body = serde_json::json!({
-        "name": "Virtual Channel A",
+        "name": "Modbus Channel A",
         "description": "desc-A",
-        "protocol": "virtual",
+        "protocol": "modbus_tcp",
         "enabled": true,
-        "parameters": {}
+        "parameters": {"host": "127.0.0.1", "port": 502}
     });
 
     let req = channel_mutation_request("POST", "/api/channels", Some(body));
@@ -1058,9 +1058,9 @@ async fn test_create_channel_returns_description() {
     assert_eq!(v["data"]["operation"], "create");
     assert_eq!(v["data"]["desired_enabled"], true);
     assert_eq!(v["data"]["retryable"], false);
-    assert_eq!(v["data"]["name"], "Virtual Channel A");
+    assert_eq!(v["data"]["name"], "Modbus Channel A");
     assert_eq!(v["data"]["description"], "desc-A");
-    assert_eq!(v["data"]["protocol"], "virtual");
+    assert_eq!(v["data"]["protocol"], "modbus_tcp");
 }
 
 #[tokio::test]
@@ -1083,8 +1083,12 @@ async fn test_update_channel_returns_description() {
         .await
         .unwrap();
 
-    let config = serde_json::json!({"description": "old-desc", "host": "127.0.0.1"}).to_string();
-    sqlx::query("INSERT INTO channels (channel_id, name, protocol, enabled, config) VALUES (42, 'Ch42', 'virtual', 1, ?)")
+    let config = serde_json::json!({
+        "description": "old-desc",
+        "parameters": {"host": "127.0.0.1", "port": 502}
+    })
+    .to_string();
+    sqlx::query("INSERT INTO channels (channel_id, name, protocol, enabled, config) VALUES (42, 'Ch42', 'modbus_tcp', 1, ?)")
         .bind(&config)
         .execute(&pool)
         .await
@@ -1136,8 +1140,12 @@ async fn test_enable_disable_preserves_description() {
     common::test_utils::schema::init_io_schema(&pool)
         .await
         .unwrap();
-    let config = serde_json::json!({"description": "keep-me"}).to_string();
-    sqlx::query("INSERT INTO channels (channel_id, name, protocol, enabled, config) VALUES (77, 'Ch77', 'virtual', 0, ?)")
+    let config = serde_json::json!({
+        "description": "keep-me",
+        "parameters": {"host": "127.0.0.1", "port": 502}
+    })
+    .to_string();
+    sqlx::query("INSERT INTO channels (channel_id, name, protocol, enabled, config) VALUES (77, 'Ch77', 'modbus_tcp', 0, ?)")
         .bind(&config)
         .execute(&pool)
         .await
@@ -1177,7 +1185,7 @@ async fn test_grouped_points_unfiltered_and_filtered() {
     let pool = create_test_sqlite_pool_with_points().await;
 
     // Seed a channel and some points
-    sqlx::query("INSERT INTO channels (channel_id, name, protocol, enabled, config) VALUES (9001, 'Ch9001', 'virtual', 1, '{}')")
+    sqlx::query("INSERT INTO channels (channel_id, name, protocol, enabled, config) VALUES (9001, 'Ch9001', 'modbus_tcp', 1, '{}')")
         .execute(&pool)
         .await
         .unwrap();
@@ -1258,7 +1266,7 @@ async fn test_grouped_mappings_unfiltered() {
     let pool = create_test_sqlite_pool_with_points().await;
 
     // Seed channel and points with protocol_mappings
-    sqlx::query("INSERT INTO channels (channel_id, name, protocol, enabled, config) VALUES (9002, 'Ch9002', 'virtual', 1, '{}')")
+    sqlx::query("INSERT INTO channels (channel_id, name, protocol, enabled, config) VALUES (9002, 'Ch9002', 'modbus_tcp', 1, '{}')")
         .execute(&pool)
         .await
         .unwrap();
@@ -1360,7 +1368,7 @@ async fn test_delete_channel_ok() {
     common::test_utils::schema::init_io_schema(&pool)
         .await
         .unwrap();
-    sqlx::query("INSERT INTO channels (channel_id, name, protocol, enabled, config) VALUES (600, 'Ch600', 'virtual', 0, '{}')")
+    sqlx::query("INSERT INTO channels (channel_id, name, protocol, enabled, config) VALUES (600, 'Ch600', 'modbus_tcp', 0, '{}')")
         .execute(&pool)
         .await
         .unwrap();
@@ -1644,7 +1652,7 @@ async fn test_reload_compatibility_reconciles_disabled_channel_without_runtime()
     common::test_utils::schema::init_io_schema(&pool)
         .await
         .unwrap();
-    sqlx::query("INSERT INTO channels (channel_id, name, protocol, enabled, config) VALUES (9009, 'Ch9009', 'virtual', 0, '{\"description\": \"d\"}')")
+    sqlx::query("INSERT INTO channels (channel_id, name, protocol, enabled, config) VALUES (9009, 'Ch9009', 'modbus_tcp', 0, '{\"description\": \"d\"}')")
         .execute(&pool)
         .await
         .unwrap();
@@ -1697,7 +1705,7 @@ async fn test_grouped_points_filter_c_and_a() {
     );
     let pool = create_test_sqlite_pool_with_points().await;
     // Seed channel and minimal points
-    sqlx::query("INSERT INTO channels (channel_id, name, protocol, enabled, config) VALUES (9101, 'Ch9101', 'virtual', 1, '{}')")
+    sqlx::query("INSERT INTO channels (channel_id, name, protocol, enabled, config) VALUES (9101, 'Ch9101', 'modbus_tcp', 1, '{}')")
         .execute(&pool)
         .await
         .unwrap();
@@ -2042,8 +2050,8 @@ async fn create_channel_without_enabled_stays_disabled_and_has_no_runtime() {
         Some(json!({
             "channel_id": 2101,
             "name": "Safe Default Channel",
-            "protocol": "virtual",
-            "parameters": {}
+            "protocol": "modbus_tcp",
+            "parameters": {"host": "127.0.0.1", "port": 502}
         })),
     );
 
@@ -2065,7 +2073,7 @@ async fn create_channel_without_enabled_stays_disabled_and_has_no_runtime() {
 }
 
 #[tokio::test]
-async fn create_channel_with_explicit_true_still_creates_runtime() {
+async fn create_enabled_physical_channel_reports_degraded_when_device_is_unavailable() {
     let pool = create_test_sqlite_pool().await;
     let channel_manager = Arc::new(
         ChannelManager::with_shared_memory(
@@ -2084,9 +2092,9 @@ async fn create_channel_with_explicit_true_still_creates_runtime() {
         Some(json!({
             "channel_id": 2102,
             "name": "Explicitly Enabled Channel",
-            "protocol": "virtual",
+            "protocol": "modbus_tcp",
             "enabled": true,
-            "parameters": {}
+            "parameters": {"host": "127.0.0.1", "port": 502}
         })),
     );
 
@@ -2095,12 +2103,8 @@ async fn create_channel_with_explicit_true_still_creates_runtime() {
     assert_eq!(response.status(), StatusCode::OK);
     let payload = extract_json(response).await;
     assert_json_field(&payload, "/data/enabled", json!(true));
-    assert!(matches!(
-        payload
-            .pointer("/data/runtime_status")
-            .and_then(|value| value.as_str()),
-        Some("connecting" | "running")
-    ));
+    assert_json_field(&payload, "/data/runtime_status", json!("degraded"));
+    assert_json_field(&payload, "/data/reconciliation_required", json!(true));
     let persisted_enabled: bool =
         sqlx::query_scalar("SELECT enabled FROM channels WHERE channel_id = ?")
             .bind(2102_i64)
@@ -2108,10 +2112,8 @@ async fn create_channel_with_explicit_true_still_creates_runtime() {
             .await
             .unwrap();
     assert!(persisted_enabled);
-    assert!(channel_manager.get_channel(2102).is_some());
-    assert_eq!(channel_manager.channel_count(), 1);
-
-    channel_manager.remove_channel(2102).await.unwrap();
+    assert!(channel_manager.get_channel(2102).is_none());
+    assert_eq!(channel_manager.channel_count(), 0);
 }
 
 #[tokio::test]
@@ -2133,7 +2135,7 @@ async fn test_create_channel_handler_returns_response() {
         channel_id: Some(2001),
         name: "Test Channel".to_string(),
         description: Some("Test Description".to_string()),
-        protocol: "virtual".to_string(),
+        protocol: "modbus_tcp".to_string(),
         enabled: Some(true),
         parameters: params,
         logging: None,
@@ -2494,12 +2496,13 @@ async fn test_create_channel_full_closed_loop() {
     // Step 1: POST - Create channel with full configuration
     let create_body = serde_json::json!({
         "channel_id": 2001,
-        "name": "test_virtual_channel",
-        "protocol": "virtual",
+        "name": "test_modbus_channel",
+        "protocol": "modbus_tcp",
         "enabled": true,
         "parameters": {
-            "interval_ms": 1000,
-            "initial_value": 100
+            "host": "127.0.0.1",
+            "port": 502,
+            "poll_interval_ms": 1000
         },
         "description": "Full closed-loop test channel"
     });
@@ -2532,9 +2535,9 @@ async fn test_create_channel_full_closed_loop() {
     assert_json_field(
         &json,
         "/data/name",
-        serde_json::json!("test_virtual_channel"),
+        serde_json::json!("test_modbus_channel"),
     );
-    assert_json_field(&json, "/data/protocol", serde_json::json!("virtual"));
+    assert_json_field(&json, "/data/protocol", serde_json::json!("modbus_tcp"));
     assert_json_field(&json, "/data/enabled", serde_json::json!(true));
     assert_json_field(
         &json,
@@ -2564,11 +2567,12 @@ async fn test_update_channel_full_closed_loop() {
     let create_body = serde_json::json!({
         "channel_id": 2002,
         "name": "initial_name",
-        "protocol": "virtual",
+        "protocol": "modbus_tcp",
         "enabled": true,
         "parameters": {
-            "interval_ms": 1000,
-            "initial_value": 100
+            "host": "127.0.0.1",
+            "port": 502,
+            "poll_interval_ms": 1000
         },
         "description": "Initial description"
     });
@@ -2581,8 +2585,8 @@ async fn test_update_channel_full_closed_loop() {
     // Note: enabled field is managed via /control endpoint, not PUT
     let update_body = serde_json::json!({
         "name": "updated_name",
-        "protocol": "virtual",
-        "parameters": {"interval_ms": 2000},
+        "protocol": "modbus_tcp",
+        "parameters": {"poll_interval_ms": 2000},
         "description": "Updated description"
     });
 
@@ -2607,7 +2611,7 @@ async fn test_update_channel_full_closed_loop() {
     let json = extract_json(get_resp).await;
     assert_json_field(&json, "/data/id", serde_json::json!(2002));
     assert_json_field(&json, "/data/name", serde_json::json!("updated_name"));
-    assert_json_field(&json, "/data/protocol", serde_json::json!("virtual"));
+    assert_json_field(&json, "/data/protocol", serde_json::json!("modbus_tcp"));
     // Note: enabled field remains true (initial value) - use /control endpoint to change it
     assert_json_field(&json, "/data/enabled", serde_json::json!(true));
     assert_json_field(
@@ -2638,11 +2642,12 @@ async fn test_delete_channel_closed_loop() {
     let create_body = serde_json::json!({
         "channel_id": 3001,
         "name": "channel_to_delete",
-        "protocol": "virtual",
+        "protocol": "modbus_tcp",
         "enabled": true,
         "parameters": {
-            "interval_ms": 1000,
-            "initial_value": 50
+            "host": "127.0.0.1",
+            "port": 502,
+            "poll_interval_ms": 1000
         },
         "description": "This channel will be deleted"
     });
@@ -3400,7 +3405,7 @@ async fn setup_write_test_env() -> (Router, Arc<ShmWriterHandle>, tokio::task::J
     let pool = create_test_sqlite_pool().await;
     sqlx::query(
         "INSERT INTO channels (channel_id, name, protocol, enabled)
-         VALUES (1005, 'write-test', 'virtual', 1)",
+         VALUES (1005, 'write-test', 'modbus_tcp', 1)",
     )
     .execute(&pool)
     .await
@@ -4376,7 +4381,7 @@ async fn channel_management_logger_does_not_consume_large_chunked_json() {
     let body = json!({
         "channel_id": 7,
         "name": "large commissioning body",
-        "protocol": "virtual",
+        "protocol": "modbus_tcp",
         "parameters": {"credential": credential}
     });
     assert!(body.to_string().len() > 2_048);
@@ -4629,7 +4634,7 @@ async fn channel_management_requires_authentication_and_confirmation_before_side
     let body = json!({
         "channel_id": 7,
         "name": "Packaging PLC",
-        "protocol": "virtual",
+        "protocol": "modbus_tcp",
         "parameters": {}
     });
 
@@ -4694,7 +4699,7 @@ async fn invalid_channel_http_inputs_never_reach_the_mutator() {
             Some(json!({
                 "channel_id": 7,
                 "name": "cannot compare a create",
-                "protocol": "virtual",
+                "protocol": "modbus_tcp",
                 "parameters": {}
             })),
             true,
@@ -4792,7 +4797,7 @@ async fn channel_application_errors_have_stable_http_statuses_without_internal_d
             Some(json!({
                 "channel_id": 7,
                 "name": "Packaging PLC",
-                "protocol": "virtual",
+                "protocol": "modbus_tcp",
                 "parameters": {}
             })),
         ))
@@ -4967,7 +4972,7 @@ async fn legacy_route_constructor_fails_closed_for_channel_mutations() {
             Some(json!({
                 "channel_id": 91,
                 "name": "Must Not Be Created",
-                "protocol": "virtual",
+                "protocol": "modbus_tcp",
                 "parameters": {}
             })),
             true,
@@ -5699,7 +5704,7 @@ mod openapi_tests {
             .sum::<usize>();
 
         assert_eq!(
-            operation_count, 59,
+            operation_count, 55,
             "HTTP operation count changed; re-audit Router/OpenAPI parity before updating this guard"
         );
     }

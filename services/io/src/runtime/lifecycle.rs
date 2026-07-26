@@ -476,13 +476,13 @@ mod tests {
             .await
             .unwrap();
 
-        sqlx::query("INSERT INTO channels (channel_id, name, protocol, enabled) VALUES (1001, 'Test Channel 1', 'virtual', ?)")
+        sqlx::query("INSERT INTO channels (channel_id, name, protocol, enabled) VALUES (1001, 'Test Channel 1', 'modbus_tcp', ?)")
             .bind(enabled)
             .execute(&pool)
             .await
             .unwrap();
 
-        sqlx::query("INSERT INTO channels (channel_id, name, protocol, enabled) VALUES (1002, 'Test Channel 2', 'virtual', ?)")
+        sqlx::query("INSERT INTO channels (channel_id, name, protocol, enabled) VALUES (1002, 'Test Channel 2', 'modbus_tcp', ?)")
             .bind(enabled)
             .execute(&pool)
             .await
@@ -776,7 +776,7 @@ mod tests {
             .await
             .unwrap();
         for i in 1001..1006 {
-            sqlx::query("INSERT INTO channels (channel_id, name, protocol, enabled) VALUES (?, ?, 'virtual', true)")
+            sqlx::query("INSERT INTO channels (channel_id, name, protocol, enabled) VALUES (?, ?, 'modbus_tcp', true)")
                 .bind(i)
                 .bind(format!("Channel {}", i))
                 .execute(&pool)

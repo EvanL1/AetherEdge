@@ -50,7 +50,7 @@ impl Fixture {
             "INSERT INTO instances (instance_id, instance_name, product_name) \
              VALUES (7, 'sensor_7', 'GenericSensor')",
             "INSERT INTO channels (channel_id, name, protocol, enabled) \
-             VALUES (3, 'fieldbus_3', 'virtual', 1)",
+             VALUES (3, 'fieldbus_3', 'modbus_tcp', 1)",
             "INSERT INTO telemetry_points (channel_id, point_id, signal_name) \
              VALUES (3, 5, 'temperature')",
             "INSERT INTO signal_points (channel_id, point_id, signal_name) \

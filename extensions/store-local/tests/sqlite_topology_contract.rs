@@ -29,9 +29,9 @@ async fn topology_pool() -> sqlx::SqlitePool {
 }
 
 #[tokio::test]
-async fn snapshot_includes_virtual_measurements_and_all_channel_health() {
+async fn snapshot_includes_sparse_measurements_and_all_channel_health() {
     let pool = topology_pool().await;
-    for (channel_id, protocol) in [(7_i64, "virtual"), (20, "modbus-tcp")] {
+    for (channel_id, protocol) in [(7_i64, "modbus_tcp"), (20, "modbus-tcp")] {
         sqlx::query("INSERT INTO channels (channel_id, protocol) VALUES (?, ?)")
             .bind(channel_id)
             .bind(protocol)
@@ -73,7 +73,7 @@ async fn snapshot_includes_virtual_measurements_and_all_channel_health() {
 #[tokio::test]
 async fn snapshot_rejects_negative_stored_identifiers() {
     let pool = topology_pool().await;
-    sqlx::query("INSERT INTO channels (channel_id, protocol) VALUES (-1, 'virtual')")
+    sqlx::query("INSERT INTO channels (channel_id, protocol) VALUES (-1, 'modbus_tcp')")
         .execute(&pool)
         .await
         .expect("malformed channel row");

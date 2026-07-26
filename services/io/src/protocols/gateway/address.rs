@@ -5,7 +5,6 @@
 use crate::protocols::core::error::{GatewayError, Result};
 use crate::protocols::core::point::{
     ByteOrder, DataFormat, Iec104Address, ModbusAddress, OpcUaAddress, ProtocolAddress,
-    VirtualAddress,
 };
 
 #[cfg(feature = "gpio")]
@@ -56,8 +55,6 @@ fn parse_field<T: std::str::FromStr>(s: &str, field: &str) -> Result<T> {
 ///   - Example: `"17"` → pin=17, direction=input (default)
 ///   - Example: `"18:output"` → pin=18, direction=output
 ///
-/// - **Virtual**: Any string key
-///   - Example: `"temperature"` → key="temperature"
 pub fn parse_address(protocol: &str, address: &str) -> Result<ProtocolAddress> {
     // Use eq_ignore_ascii_case to avoid String allocation from to_lowercase()
     if crate::utils::is_modbus_family(protocol) {
@@ -68,8 +65,6 @@ pub fn parse_address(protocol: &str, address: &str) -> Result<ProtocolAddress> {
         parse_opcua_address(address)
     } else if protocol.eq_ignore_ascii_case("can") {
         parse_can_address(address)
-    } else if protocol.eq_ignore_ascii_case("virtual") {
-        Ok(ProtocolAddress::Virtual(VirtualAddress::new(address)))
     } else {
         #[cfg(feature = "gpio")]
         if protocol.eq_ignore_ascii_case("gpio") {
@@ -475,15 +470,6 @@ mod tests {
         assert_eq!(o.node_id, "i=1234");
     }
 
-    #[test]
-    fn test_parse_virtual_address() {
-        let addr = parse_address("virtual", "temperature").unwrap();
-        let ProtocolAddress::Virtual(v) = addr else {
-            unreachable!("parse_address(\"virtual\", ..) always returns Virtual variant")
-        };
-        assert_eq!(v.tag, "temperature");
-    }
-
     // ========== Error Path Tests ==========
     // Verify that invalid inputs return Result::Err instead of panicking
 
@@ -589,7 +575,6 @@ mod tests {
         assert!(parse_address("Modbus", "1:100").is_ok());
         assert!(parse_address("IEC104", "1001").is_ok());
         assert!(parse_address("OPCUA", "i=1234").is_ok());
-        assert!(parse_address("Virtual", "key").is_ok());
     }
 
     #[test]

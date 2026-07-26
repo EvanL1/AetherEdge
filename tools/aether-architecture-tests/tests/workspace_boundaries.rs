@@ -1,4 +1,5 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::OnceLock;
@@ -11,6 +12,14 @@ const RETIRED_ROOT_PATHS: &[&str] = &[
     "libs/aether-rtdb",
     "libs/aether-rtdb-shm",
     "libs/aether-shm",
+    "services/io/assets/script-host",
+    "services/io/src/api/handlers/network_handlers.rs",
+    "services/io/src/protocols/adapters/virtual_channel.rs",
+    "services/io/src/protocols/core/script_runner.rs",
+    "services/io/src/protocols/sunspec/expand.rs",
+    "services/io/src/protocols/sunspec/model.rs",
+    "services/io/src/protocols/sunspec/models",
+    "services/io/src/protocols/sunspec/types.rs",
 ];
 const CORE_INFRASTRUCTURE_DEPENDENCIES: &[&str] = &[
     "aether-http-data-processor",
@@ -38,6 +47,7 @@ struct Package {
     name: String,
     manifest_path: PathBuf,
     dependencies: Vec<Dependency>,
+    features: BTreeMap<String, Vec<String>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -165,6 +175,37 @@ fn assert_no_violations(contract: &str, mut violations: Vec<String>) {
     }
     violations.sort();
     panic!("{contract}:\n- {}", violations.join("\n- "));
+}
+
+fn files_with_extension(root: &Path, extension: &str) -> Vec<PathBuf> {
+    let mut matches = Vec::new();
+    let mut pending = vec![root.to_path_buf()];
+    while let Some(directory) = pending.pop() {
+        for entry in fs::read_dir(&directory)
+            .unwrap_or_else(|error| panic!("failed to inspect {}: {error}", directory.display()))
+        {
+            let entry = entry.unwrap_or_else(|error| {
+                panic!(
+                    "failed to inspect entry below {}: {error}",
+                    directory.display()
+                )
+            });
+            let path = entry.path();
+            let file_type = entry.file_type().unwrap_or_else(|error| {
+                panic!(
+                    "failed to inspect file type for {}: {error}",
+                    path.display()
+                )
+            });
+            if file_type.is_dir() {
+                pending.push(path);
+            } else if path.extension().and_then(|value| value.to_str()) == Some(extension) {
+                matches.push(path);
+            }
+        }
+    }
+    matches.sort();
+    matches
 }
 
 fn has_production_workspace_dependency(
@@ -317,6 +358,76 @@ fn retired_workspace_crates_stay_retired() {
     }
 
     assert_no_violations("retired workspace crates were restored", violations);
+}
+
+#[test]
+fn production_io_is_rust_only_and_sunspec_is_an_explicit_extension() {
+    let workspace = workspace();
+    let io = workspace.package("aether-io");
+    let sunspec = workspace.package("aether-sunspec");
+
+    assert!(
+        workspace.package_is_under(sunspec, "extensions"),
+        "SunSpec catalog must be owned by an extension"
+    );
+    let dependency = production_dependencies(io)
+        .find(|dependency| dependency.name == "aether-sunspec")
+        .unwrap_or_else(|| panic!("aether-io is missing its explicit SunSpec extension edge"));
+    assert!(
+        dependency.optional,
+        "aether-io must not compile SunSpec into its default composition"
+    );
+    let sunspec_features = io
+        .features
+        .get("sunspec")
+        .unwrap_or_else(|| panic!("aether-io is missing its explicit sunspec feature"));
+    assert_eq!(
+        sunspec_features
+            .iter()
+            .map(String::as_str)
+            .collect::<BTreeSet<_>>(),
+        BTreeSet::from(["dep:aether-sunspec", "modbus"]),
+        "aether-io/sunspec must compose the catalog and its Modbus transport"
+    );
+    assert!(
+        io.features
+            .get("default")
+            .is_some_and(|features| !features.iter().any(|feature| feature == "sunspec")),
+        "SunSpec must stay default-off"
+    );
+
+    let python_files = files_with_extension(&workspace.root().join("services/io"), "py");
+    assert!(
+        python_files.is_empty(),
+        "production IO contains Python assets: {python_files:?}"
+    );
+
+    let catalog = workspace.root().join("extensions/sunspec/models/json");
+    let catalog_entries = fs::read_dir(&catalog)
+        .unwrap_or_else(|error| panic!("failed to inspect {}: {error}", catalog.display()))
+        .map(|entry| {
+            entry.unwrap_or_else(|error| {
+                panic!(
+                    "failed to inspect entry below {}: {error}",
+                    catalog.display()
+                )
+            })
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        !catalog_entries.is_empty(),
+        "SunSpec model catalog is empty"
+    );
+    assert!(
+        catalog_entries.iter().all(|entry| {
+            entry.file_type().is_ok_and(|kind| kind.is_file())
+                && entry
+                    .file_name()
+                    .to_str()
+                    .is_some_and(|name| name.starts_with("model_") && name.ends_with(".json"))
+        }),
+        "SunSpec catalog contains assets that its build does not consume"
+    );
 }
 
 #[test]

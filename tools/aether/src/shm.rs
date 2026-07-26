@@ -340,15 +340,11 @@ impl ShmRuntimeView {
                 point_type: 0,
                 point_id,
             } => {
-                let (channel_id, point_type, channel_point_id) = self
+                let (channel_id, kind, channel_point_id) = self
                     .routing_cache
                     .lookup_c2m_reverse(*instance_id, *point_id)?;
-                let kind = match point_type {
-                    PointType::Telemetry => PointKind::Telemetry,
-                    PointType::Signal => PointKind::Status,
-                    PointType::Control | PointType::Adjustment => return None,
-                };
-                Some((channel_id, kind, channel_point_id))
+                kind.is_acquisition_owned()
+                    .then_some((channel_id, kind, channel_point_id))
             },
             ShmKey::Instance {
                 instance_id,
@@ -357,20 +353,19 @@ impl ShmRuntimeView {
             } => {
                 let target = self
                     .routing_cache
-                    .lookup_m2c_by_parts(*instance_id, PointType::Control, *point_id)
+                    .lookup_m2c_by_parts(*instance_id, PointKind::Command, *point_id)
                     .or_else(|| {
                         self.routing_cache.lookup_m2c_by_parts(
                             *instance_id,
-                            PointType::Adjustment,
+                            PointKind::Action,
                             *point_id,
                         )
                     })?;
-                let kind = match target.point_type {
-                    PointType::Control => PointKind::Command,
-                    PointType::Adjustment => PointKind::Action,
-                    PointType::Telemetry | PointType::Signal => return None,
-                };
-                Some((target.channel_id, kind, target.point_id))
+                target.point_kind.is_writable().then_some((
+                    target.channel_id,
+                    target.point_kind,
+                    target.point_id,
+                ))
             },
             ShmKey::Instance { .. } => None,
         }

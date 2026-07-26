@@ -7,13 +7,13 @@ use std::sync::Arc;
 
 use aether_config::io::MAX_CHANNEL_TIMING_MS;
 use common::{ValidationLevel, ValidationResult};
-use tracing::{debug, info, warn};
+#[cfg(any(feature = "aether_485", all(feature = "can", target_os = "linux")))]
+use tracing::warn;
+use tracing::{debug, info};
 
 use crate::core::channels::channel_entry::ChannelEntry;
 use crate::core::channels::channel_manager::ChannelManager;
 use crate::core::channels::command_guard::CommandGuard;
-use crate::core::channels::converters::convert_to_point_configs;
-use crate::core::channels::factory::create_virtual_channel;
 use crate::core::config::{ChannelConfig, RuntimeChannelConfig};
 use crate::error::{IoError, Result};
 use crate::protocols::core::file_logging::{ChannelFileLogHandler, FileLogLevel};
@@ -386,17 +386,23 @@ impl ChannelManager {
         base_config: Arc<ChannelConfig>,
     ) -> Result<ChannelEntry> {
         match protocol_name {
-            "virtual" => {
-                self.create_virtual_channel_impl(channel_id, runtime_config, base_config)
+            #[cfg(feature = "modbus")]
+            "modbus_tcp" => {
+                self.create_modbus_channel_impl(channel_id, runtime_config, base_config)
                     .await
             },
-            #[cfg(feature = "modbus")]
-            "modbus_tcp" | "sunspec_tcp" => {
+            #[cfg(feature = "sunspec")]
+            "sunspec_tcp" => {
                 self.create_modbus_channel_impl(channel_id, runtime_config, base_config)
                     .await
             },
             #[cfg(feature = "modbus")]
-            "modbus_rtu" | "sunspec_rtu" => {
+            "modbus_rtu" => {
+                self.create_modbus_rtu_channel_impl(channel_id, runtime_config, base_config)
+                    .await
+            },
+            #[cfg(feature = "sunspec")]
+            "sunspec_rtu" => {
                 self.create_modbus_rtu_channel_impl(channel_id, runtime_config, base_config)
                     .await
             },
@@ -455,29 +461,31 @@ impl ChannelManager {
             },
             _ => {
                 #[allow(unused_mut)]
-                let mut supported = String::from("virtual");
+                let mut supported = Vec::new();
                 #[cfg(feature = "modbus")]
-                supported.push_str(", modbus_tcp, modbus_rtu, sunspec_tcp, sunspec_rtu");
+                supported.extend(["modbus_tcp", "modbus_rtu"]);
+                #[cfg(feature = "sunspec")]
+                supported.extend(["sunspec_tcp", "sunspec_rtu"]);
                 #[cfg(all(target_os = "linux", feature = "gpio"))]
-                supported.push_str(", gpio/di_do");
+                supported.push("gpio/di_do");
                 #[cfg(all(feature = "can", target_os = "linux"))]
-                supported.push_str(", can");
+                supported.push("can");
                 #[cfg(feature = "aether_485")]
-                supported.push_str(", aether_485");
+                supported.push("aether_485");
                 #[cfg(feature = "iec104")]
-                supported.push_str(", iec104");
+                supported.push("iec104");
                 #[cfg(feature = "opcua")]
-                supported.push_str(", opcua");
+                supported.push("opcua");
                 #[cfg(feature = "dl645")]
-                supported.push_str(", dl645");
+                supported.push("dl645");
                 #[cfg(feature = "iec61850")]
-                supported.push_str(", iec61850");
+                supported.push("iec61850");
 
                 Err(anyhow::anyhow!(
                     "Unsupported protocol '{}' for channel {}. Supported: {}",
                     protocol_name,
                     channel_id,
-                    supported
+                    supported.join(", ")
                 )
                 .into())
             },
@@ -511,40 +519,6 @@ impl ChannelManager {
 
         // 4. Register in active channel index for O(1) iteration
         self.active_channel_ids.insert(channel_id);
-    }
-
-    /// Create virtual channel entry.
-    async fn create_virtual_channel_impl(
-        &self,
-        channel_id: u32,
-        runtime_config: &Arc<RuntimeChannelConfig>,
-        base_config: Arc<ChannelConfig>,
-    ) -> Result<ChannelEntry> {
-        debug!("Ch{} creating virtual channel", channel_id);
-
-        let store = self.create_data_store();
-        let point_configs = convert_to_point_configs(runtime_config);
-
-        let mut protocol = create_virtual_channel(channel_id, runtime_config.name(), point_configs);
-
-        let log_handler = Self::configure_channel_logging(
-            &mut protocol,
-            channel_id,
-            runtime_config.name(),
-            &base_config.logging,
-        );
-
-        let poll_interval_ms = poll_interval_ms(&runtime_config.base.parameters, 1000)?;
-
-        ChannelEntry::new(
-            protocol,
-            store,
-            base_config,
-            "virtual".to_string(),
-            poll_interval_ms,
-            log_handler,
-            command_guard(runtime_config)?,
-        )
     }
 
     /// Create an optional protocol adapter through the shared gateway factory.
@@ -1050,17 +1024,19 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "modbus")]
     #[test]
     fn direct_runtime_validation_accepts_historical_zero_id_but_rejects_zero_poll() {
-        assert!(validate_channel_config_for_runtime(&config(0, "virtual", HashMap::new())).is_ok());
+        let valid = HashMap::from([
+            ("host".to_owned(), serde_json::json!("127.0.0.1")),
+            ("port".to_owned(), serde_json::json!(502)),
+        ]);
         assert!(
-            validate_channel_config_for_runtime(&config(
-                0,
-                "virtual",
-                HashMap::from([("poll_interval_ms".to_owned(), serde_json::json!(0))]),
-            ))
-            .is_err()
+            validate_channel_config_for_runtime(&config(0, "modbus_tcp", valid.clone())).is_ok()
         );
+        let mut invalid = valid;
+        invalid.insert("poll_interval_ms".to_owned(), serde_json::json!(0));
+        assert!(validate_channel_config_for_runtime(&config(0, "modbus_tcp", invalid)).is_err());
     }
 
     #[tokio::test]
@@ -1074,8 +1050,12 @@ mod tests {
         for config in [
             config(
                 1,
-                "virtual",
-                HashMap::from([("poll_interval_ms".to_owned(), serde_json::json!(0))]),
+                "modbus_tcp",
+                HashMap::from([
+                    ("host".to_owned(), serde_json::json!("127.0.0.1")),
+                    ("port".to_owned(), serde_json::json!(502)),
+                    ("poll_interval_ms".to_owned(), serde_json::json!(0)),
+                ]),
             ),
             config(
                 2,

@@ -1515,7 +1515,7 @@ mod atomic_sync_tests {
 channels:
   - id: 1
     name: configured-channel
-    protocol: virtual
+    protocol: modbus_tcp
     enabled: false
 "#,
         )
@@ -1858,7 +1858,7 @@ instances:
 channels:
   - id: 1
     name: disabled-simulator
-    protocol: virtual
+    protocol: modbus_tcp
     enabled: false
 "#,
         )
@@ -1929,7 +1929,7 @@ channels:
 channels:
   - id: 1
     name: disabled-simulator
-    protocol: virtual
+    protocol: modbus_tcp
     enabled: false
 "#,
         )
@@ -1995,7 +1995,7 @@ channels:
         let pool = connect_to_database(&database_file).await;
         sqlx::query(
             "INSERT INTO channels (channel_id, name, protocol, enabled, config) \
-             VALUES (99, 'concurrent-channel', 'virtual', 1, '{}')",
+             VALUES (99, 'concurrent-channel', 'modbus_tcp', 1, '{}')",
         )
         .execute(&pool)
         .await
@@ -2061,7 +2061,7 @@ channels:
         sqlx::query(
             "INSERT INTO channel_templates \
              (name, protocol, points_snapshot, mappings_snapshot, source_channel_id) \
-             VALUES ('api-template', 'virtual', '[]', '[]', 1)",
+             VALUES ('api-template', 'modbus_tcp', '[]', '[]', 1)",
         )
         .execute(&pool)
         .await
@@ -2083,7 +2083,7 @@ channels:
         .unwrap();
         sqlx::query(
             "INSERT INTO channels (channel_id, name, protocol, enabled, config) \
-             VALUES (99, 'api-channel', 'virtual', 0, '{}')",
+             VALUES (99, 'api-channel', 'modbus_tcp', 0, '{}')",
         )
         .execute(&pool)
         .await

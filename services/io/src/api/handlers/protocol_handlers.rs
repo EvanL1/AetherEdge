@@ -199,7 +199,11 @@ mod tests {
     async fn protocol_discovery_separates_strict_modbus_tcp_and_rtu_contracts() {
         let Json(response) = list_protocols().await.expect("protocol discovery");
 
-        for protocol_type in ["modbus_tcp", "sunspec_tcp"] {
+        #[allow(unused_mut)]
+        let mut tcp_protocols = vec!["modbus_tcp"];
+        #[cfg(feature = "sunspec")]
+        tcp_protocols.push("sunspec_tcp");
+        for protocol_type in tcp_protocols {
             let driver = &protocol(&response.data, protocol_type).drivers[0];
             assert_required_string(parameter(driver, "host"));
             assert_required_integer(parameter(driver, "port"), u64::from(u16::MAX));
@@ -213,7 +217,11 @@ mod tests {
             );
         }
 
-        for protocol_type in ["modbus_rtu", "sunspec_rtu"] {
+        #[allow(unused_mut)]
+        let mut rtu_protocols = vec!["modbus_rtu"];
+        #[cfg(feature = "sunspec")]
+        rtu_protocols.push("sunspec_rtu");
+        for protocol_type in rtu_protocols {
             let driver = &protocol(&response.data, protocol_type).drivers[0];
             assert_required_string(parameter(driver, "device"));
             assert_required_integer(parameter(driver, "baud_rate"), u64::from(u32::MAX));
@@ -227,7 +235,11 @@ mod tests {
             );
         }
 
-        for protocol_type in ["modbus_tcp", "modbus_rtu", "sunspec_tcp", "sunspec_rtu"] {
+        #[allow(unused_mut)]
+        let mut bounded_protocols = vec!["modbus_tcp", "modbus_rtu"];
+        #[cfg(feature = "sunspec")]
+        bounded_protocols.extend(["sunspec_tcp", "sunspec_rtu"]);
+        for protocol_type in bounded_protocols {
             let driver = &protocol(&response.data, protocol_type).drivers[0];
             let poll = parameter(driver, "poll_interval_ms");
             assert_eq!(poll.minimum, Some(1));

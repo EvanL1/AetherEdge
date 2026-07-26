@@ -98,7 +98,7 @@ one channel. New channels are disabled by default. Before enabling one:
 5. review the resulting topology and unresolved mappings;
 6. explicitly enable the channel.
 
-Start with a virtual channel or protocol simulator when hardware is not yet
+Start with the protocol simulator when hardware is not yet
 available. Follow [Connect Devices](../guides/connect-devices.md) for the
 channel and routing workflow.
 

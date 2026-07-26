@@ -161,7 +161,7 @@ impl SqliteShmTopologySnapshot {
 /// Loads point and channel-health topology from one authoritative SQLite snapshot.
 ///
 /// All configured point rows participate, including telemetry and signal rows
-/// owned by virtual channels. This keeps every SHM client on the writer's exact
+/// owned by commissioned channels. This keeps every SHM client on the writer's exact
 /// layout hash.
 pub async fn load_sqlite_shm_topology(pool: &SqlitePool) -> PortResult<SqliteShmTopologySnapshot> {
     let mut transaction = pool.begin().await.map_err(topology_unavailable)?;

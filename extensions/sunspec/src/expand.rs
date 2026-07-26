@@ -2,7 +2,7 @@
 
 use serde::Serialize;
 
-use super::types::{SunSpecGroup, SunSpecModel, SunSpecPoint};
+use crate::types::{SunSpecGroup, SunSpecModel, SunSpecPoint};
 
 /// A model block discovered on a SunSpec device.
 #[derive(Debug, Clone, Serialize)]
@@ -190,8 +190,8 @@ fn sunspec_type_to_data_type(point_type: &str, size: u16) -> Option<&'static str
 
 #[cfg(test)]
 mod tests {
-    use super::super::model::load_model;
     use super::*;
+    use crate::model::load_model;
 
     #[test]
     fn expand_model_103_skips_header_and_sf_by_default() {

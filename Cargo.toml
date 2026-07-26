@@ -42,6 +42,7 @@ members = [
     "extensions/http-data-processor",
     "extensions/http-history-query",
     "extensions/sqlite-history-query",
+    "extensions/sunspec",
     "extensions/redis-bridge",
     "extensions/postgres-history",
     "examples/minimal-gateway",

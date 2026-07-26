@@ -23,8 +23,8 @@ use crate::api::{
     handlers::health::*,
     handlers::{
         channel_handlers::*, channel_management_handlers::*, control_handlers::*,
-        mapping_handlers::*, network_handlers::*, point_handlers::*, protocol_handlers::*,
-        provision_handlers::*, template_handlers::*,
+        mapping_handlers::*, point_handlers::*, protocol_handlers::*, provision_handlers::*,
+        template_handlers::*,
     },
 };
 use common::admin_api::{get_log_level, list_log_files, set_log_level, view_log_file};
@@ -172,13 +172,7 @@ pub type ProductionAppState = AppState;
         common::admin_api::set_log_level,
         common::admin_api::get_log_level,
         common::admin_api::list_log_files,
-        common::admin_api::view_log_file,
-
-        // Network configuration endpoints
-        crate::api::handlers::network_handlers::list_network_interfaces,
-        crate::api::handlers::network_handlers::get_network_interface,
-        crate::api::handlers::network_handlers::update_network_interface,
-        crate::api::handlers::network_handlers::apply_network_changes
+        common::admin_api::view_log_file
     ),
     components(
         schemas(
@@ -253,20 +247,13 @@ pub type ProductionAppState = AppState;
             crate::api::handlers::provision_handlers::DiscoveredModelInfo,
             // Admin schemas
             common::admin_api::SetLogLevelRequest,
-            common::admin_api::LogLevelResponse,
-            // Network configuration schemas
-            crate::api::handlers::network_handlers::NetworkInterfaceConfig,
-            crate::api::handlers::network_handlers::NetworkInterfaceList,
-            crate::api::handlers::network_handlers::NetworkConfigUpdateRequest,
-            crate::api::handlers::network_handlers::NetworkConfigUpdateResult,
-            crate::api::handlers::network_handlers::NetworkApplyResult
+            common::admin_api::LogLevelResponse
         )
     ),
     tags(
         (name = "io", description = "Device protocol and field I/O API"),
         (name = "templates", description = "Channel template management (snapshot & apply)"),
-        (name = "admin", description = "Administration and service management"),
-        (name = "network", description = "Network interface configuration")
+        (name = "admin", description = "Administration and service management")
     ),
     modifiers(&SecurityAddon),
     info(
@@ -510,18 +497,11 @@ fn create_api_routes_with_boundary(
         .route("/api/templates/from-channel/{channel_id}", post(create_template_from_channel))
         .route("/api/templates/{id}", get(get_template).put(update_template).delete(delete_template))
         .route("/api/templates/{id}/apply/{channel_id}", post(apply_template))
-        // Network configuration endpoints
-        .route("/api/network/interfaces", get(list_network_interfaces))
-        .route(
-            "/api/network/interfaces/{name}",
-            get(get_network_interface).put(update_network_interface),
-        )
-        .route("/api/network/apply", post(apply_network_changes))
         .layer(axum::Extension(channel_management))
         .layer(axum::Extension(point_topology));
     #[cfg(feature = "openapi")]
     let router = router.route("/openapi.json", get(openapi_document));
-    #[cfg(feature = "modbus")]
+    #[cfg(feature = "sunspec")]
     let router = router.layer(axum::Extension(SunSpecDiscoveryBoundary::production()));
     router
         // CRITICAL: Apply middleware BEFORE .with_state() for it to work

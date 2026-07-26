@@ -7,7 +7,7 @@
 
 #![allow(clippy::disallowed_methods)]
 
-use aether_core::PointType;
+use aether_domain::PointKind;
 use aether_routing::RoutingCache;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -37,7 +37,7 @@ fn test_concurrent_reads_during_update() {
             for i in 0..1000 {
                 let point_id = i % 100;
                 // Lookup should never panic, even during concurrent updates
-                let _ = cache_clone.lookup_c2m_by_parts(1001, PointType::Telemetry, point_id);
+                let _ = cache_clone.lookup_c2m_by_parts(1001, PointKind::Telemetry, point_id);
             }
         }));
     }
@@ -95,8 +95,8 @@ fn test_concurrent_c2c_operations() {
         handles.push(std::thread::spawn(move || {
             for i in 0..1000 {
                 let pid = i % 50;
-                let _ = cache_clone.lookup_c2c_by_parts(1001, PointType::Telemetry, pid);
-                let _ = cache_clone.lookup_c2m_by_parts(1002, PointType::Telemetry, pid);
+                let _ = cache_clone.lookup_c2c_by_parts(1001, PointKind::Telemetry, pid);
+                let _ = cache_clone.lookup_c2m_by_parts(1002, PointKind::Telemetry, pid);
             }
         }));
     }
@@ -116,7 +116,7 @@ fn test_large_routing_table_1000_entries() {
     let mut m2c = HashMap::new();
 
     // 100 channels × 10 points each = 1000 C2M entries
-    // M2C keys use valid PointType (A = Adjustment), not "M"
+    // M2C keys use a physical Action kind (A), not the instance marker "M".
     for ch in 0..100 {
         let channel_id = 1000 + ch;
         let instance_id = 100 + ch;
@@ -139,7 +139,7 @@ fn test_large_routing_table_1000_entries() {
         let channel_id = 1000 + ch;
         let instance_id = 100 + ch;
         for pid in 0..10 {
-            let c2m_result = cache.lookup_c2m_by_parts(channel_id, PointType::Telemetry, pid);
+            let c2m_result = cache.lookup_c2m_by_parts(channel_id, PointKind::Telemetry, pid);
             assert!(
                 c2m_result.is_some(),
                 "Missing C2M for ch={}, pid={}",
@@ -150,7 +150,7 @@ fn test_large_routing_table_1000_entries() {
             assert_eq!(target.instance_id, instance_id);
             assert_eq!(target.point_id, pid);
 
-            let m2c_result = cache.lookup_m2c_by_parts(instance_id, PointType::Adjustment, pid);
+            let m2c_result = cache.lookup_m2c_by_parts(instance_id, PointKind::Action, pid);
             assert!(
                 m2c_result.is_some(),
                 "Missing M2C for inst={}, pid={}",
@@ -185,14 +185,14 @@ fn test_large_routing_table_update_performance() {
     cache.update(c2m, HashMap::new(), HashMap::new());
 
     // Old entries are gone (update = full replacement via ArcSwap)
-    let result_old = cache.lookup_c2m_by_parts(1001, PointType::Telemetry, 0);
+    let result_old = cache.lookup_c2m_by_parts(1001, PointKind::Telemetry, 0);
     assert!(
         result_old.is_none(),
         "Old entries should be replaced after update"
     );
 
     // New entries should be accessible
-    let result_new = cache.lookup_c2m_by_parts(2001, PointType::Telemetry, 999);
+    let result_new = cache.lookup_c2m_by_parts(2001, PointKind::Telemetry, 999);
     assert!(result_new.is_some(), "New entries should be accessible");
 
     // Verify full replacement count
@@ -271,29 +271,29 @@ fn test_all_point_types_routing() {
 
     assert!(
         cache
-            .lookup_c2m_by_parts(1001, PointType::Telemetry, 0)
+            .lookup_c2m_by_parts(1001, PointKind::Telemetry, 0)
             .is_some()
     );
     assert!(
         cache
-            .lookup_c2m_by_parts(1001, PointType::Signal, 0)
+            .lookup_c2m_by_parts(1001, PointKind::Status, 0)
             .is_some()
     );
     assert!(
         cache
-            .lookup_c2m_by_parts(1001, PointType::Control, 0)
+            .lookup_c2m_by_parts(1001, PointKind::Command, 0)
             .is_some()
     );
     assert!(
         cache
-            .lookup_c2m_by_parts(1001, PointType::Adjustment, 0)
+            .lookup_c2m_by_parts(1001, PointKind::Action, 0)
             .is_some()
     );
 
     // Non-existent point should return None
     assert!(
         cache
-            .lookup_c2m_by_parts(1001, PointType::Telemetry, 999)
+            .lookup_c2m_by_parts(1001, PointKind::Telemetry, 999)
             .is_none()
     );
 }
@@ -302,7 +302,7 @@ fn test_all_point_types_routing() {
 fn test_m2c_routing_lookups() {
     let mut m2c = HashMap::new();
     // instance 23, Adjustment points → channel 1001, Adjustment points
-    // M2C key uses valid PointType (A), not "M"
+    // M2C key uses a physical Action kind (A), not the instance marker "M".
     for i in 0..5 {
         m2c.insert(format!("23:A:{}", i), format!("1001:A:{}", i));
     }
@@ -310,18 +310,18 @@ fn test_m2c_routing_lookups() {
     let cache = RoutingCache::from_maps(HashMap::new(), m2c, HashMap::new());
 
     for i in 0..5 {
-        let result = cache.lookup_m2c_by_parts(23, PointType::Adjustment, i);
+        let result = cache.lookup_m2c_by_parts(23, PointKind::Action, i);
         assert!(result.is_some(), "M2C lookup failed for pid={}", i);
         let target = result.unwrap();
         assert_eq!(target.channel_id, 1001);
-        assert_eq!(target.point_type, PointType::Adjustment);
+        assert_eq!(target.point_kind, PointKind::Action);
         assert_eq!(target.point_id, i);
     }
 
     // Non-existent instance
     assert!(
         cache
-            .lookup_m2c_by_parts(999, PointType::Adjustment, 0)
+            .lookup_m2c_by_parts(999, PointKind::Action, 0)
             .is_none()
     );
 }

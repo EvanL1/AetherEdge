@@ -29,9 +29,6 @@ fn default_manifest_is_feature_exact_and_uses_the_live_capability_catalog() {
         "iec61850",
         "modbus_rtu",
         "modbus_tcp",
-        "sunspec_rtu",
-        "sunspec_tcp",
-        "virtual",
     ]);
 
     assert_eq!(
@@ -58,13 +55,7 @@ fn trimmed_manifest_does_not_advertise_uncompiled_protocols() {
 
     assert_eq!(
         manifest.protocols().map(String::as_str).collect::<Vec<_>>(),
-        vec![
-            "modbus_rtu",
-            "modbus_tcp",
-            "sunspec_rtu",
-            "sunspec_tcp",
-            "virtual",
-        ]
+        vec!["modbus_rtu", "modbus_tcp"]
     );
     assert_eq!(
         manifest
@@ -72,6 +63,38 @@ fn trimmed_manifest_does_not_advertise_uncompiled_protocols() {
             .map(String::as_str)
             .collect::<Vec<_>>(),
         vec!["aether-io/modbus"]
+    );
+}
+
+#[test]
+fn sunspec_protocols_require_the_explicit_extension_feature() {
+    let modbus_only = linux_manifest(&["modbus"]);
+    assert!(
+        !modbus_only
+            .protocols()
+            .any(|protocol| protocol.starts_with("sunspec_"))
+    );
+
+    let enabled = linux_manifest(&["sunspec"]);
+    assert!(
+        enabled
+            .protocols()
+            .any(|protocol| protocol == "sunspec_tcp")
+    );
+    assert!(
+        enabled
+            .protocols()
+            .any(|protocol| protocol == "sunspec_rtu")
+    );
+    assert!(
+        enabled
+            .cargo_features()
+            .any(|feature| feature == "aether-io/modbus")
+    );
+    assert!(
+        enabled
+            .cargo_features()
+            .any(|feature| feature == "aether-io/sunspec")
     );
 }
 

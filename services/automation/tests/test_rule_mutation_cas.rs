@@ -105,7 +105,7 @@ async fn point_watch_publication_failure_is_gated_and_a_later_reload_recovers() 
         .expect("IO schema");
     sqlx::query(
         "INSERT INTO channels (channel_id, name, protocol, enabled) \
-         VALUES (3, 'fieldbus', 'virtual', 1)",
+         VALUES (3, 'fieldbus', 'modbus_tcp', 1)",
     )
     .execute(&pool)
     .await

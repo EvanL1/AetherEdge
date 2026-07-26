@@ -75,7 +75,6 @@ pub enum PacketMetadata {
         destination: u8,
     },
     Gpio,
-    Virtual,
     Other {
         protocol: String,
     },
@@ -112,7 +111,6 @@ impl PacketMetadata {
             Self::OpcUa { .. } => "opcua",
             Self::J1939 { .. } => "j1939",
             Self::Gpio => "gpio",
-            Self::Virtual => "virtual",
             Self::Other { protocol } => protocol,
         }
     }

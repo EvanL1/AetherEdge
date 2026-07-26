@@ -205,7 +205,7 @@ mod tests {
         sqlx::query(
             "INSERT INTO channels (channel_id, name, protocol, enabled, config) VALUES
                 (1001, 'Test Channel 1', 'modbus_tcp', TRUE, '{}'),
-                (1002, 'Test Channel 2', 'virtual', TRUE, '{}'),
+                (1002, 'Test Channel 2', 'modbus_tcp', TRUE, '{}'),
                 (1003, 'Test Channel 3', 'modbus_rtu', FALSE, '{}')",
         )
         .execute(&pool)
@@ -372,7 +372,7 @@ mod tests {
         // Test another channel
         let channel = manager.get_channel(1002);
         assert!(channel.is_some(), "Channel 1002 should exist");
-        assert_eq!(channel.unwrap().protocol(), "virtual");
+        assert_eq!(channel.unwrap().protocol(), "modbus_tcp");
     }
 
     #[tokio::test]
@@ -470,7 +470,7 @@ mod tests {
         sqlx::query(
             "INSERT INTO channels (channel_id, name, protocol, config) VALUES
                 (1001, 'Channel 1', 'modbus_tcp', '{}'),
-                (1002, 'Channel 2', 'virtual', '{}')",
+                (1002, 'Channel 2', 'modbus_tcp', '{}')",
         )
         .execute(&pool)
         .await

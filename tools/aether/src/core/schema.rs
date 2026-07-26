@@ -2211,7 +2211,7 @@ mod tests {
 
         sqlx::query(
             "INSERT INTO channels (channel_id, name, protocol, enabled, config) \
-             VALUES (7, 'fresh-v10', 'virtual', 0, '{}')",
+             VALUES (7, 'fresh-v10', 'modbus_tcp', 0, '{}')",
         )
         .execute(&pool)
         .await?;
@@ -2226,7 +2226,7 @@ mod tests {
         );
 
         sqlx::query(
-            "UPDATE channels SET protocol = 'virtual', revision = revision + 1 \
+            "UPDATE channels SET protocol = 'modbus_tcp', revision = revision + 1 \
              WHERE channel_id = 7 AND revision = 2",
         )
         .execute(&pool)
@@ -2271,7 +2271,7 @@ mod tests {
 
         sqlx::query(
             "INSERT INTO channels (channel_id, name, protocol, enabled, config) \
-             VALUES (7, 'governed-channel', 'virtual', 0, '{}')",
+             VALUES (7, 'governed-channel', 'modbus_tcp', 0, '{}')",
         )
         .execute(&pool)
         .await?;
@@ -2390,7 +2390,7 @@ mod tests {
 
         for statement in [
             "INSERT INTO channels (channel_id, name, protocol, enabled, config) \
-             VALUES (8, 'measurement-channel', 'virtual', 0, '{}')",
+             VALUES (8, 'measurement-channel', 'modbus_tcp', 0, '{}')",
             "INSERT INTO instances (instance_id, instance_name, product_name) \
              VALUES (2, 'measurement-instance', 'ExampleDevice')",
             "INSERT INTO telemetry_points (point_id, channel_id, signal_name) \
@@ -2502,7 +2502,7 @@ mod tests {
 
         for statement in [
             "INSERT INTO channels (channel_id, name, protocol, enabled, config) \
-             VALUES (9, 'action-channel', 'virtual', 0, '{}')",
+             VALUES (9, 'action-channel', 'modbus_tcp', 0, '{}')",
             "INSERT INTO instances (instance_id, instance_name, product_name) \
              VALUES (3, 'action-instance', 'ExampleDevice')",
             "INSERT INTO adjustment_points (point_id, channel_id, signal_name) \
@@ -2617,7 +2617,7 @@ mod tests {
 
         for statement in [
             "INSERT INTO channels (channel_id, name, protocol, enabled, config) \
-             VALUES (10, 'legacy-channel', 'virtual', 0, '{}')",
+             VALUES (10, 'legacy-channel', 'modbus_tcp', 0, '{}')",
             "INSERT INTO instances (instance_id, instance_name, product_name) \
              VALUES (4, 'legacy-instance', 'ExampleDevice')",
             "DROP TRIGGER validate_measurement_routing_target_on_insert",
@@ -3038,7 +3038,7 @@ mod tests {
         .await?;
         sqlx::query(
             "INSERT INTO channels (channel_id, name, protocol, enabled, config) \
-             VALUES (7, 'pre-v9', 'virtual', 0, '{}')",
+             VALUES (7, 'pre-v9', 'modbus_tcp', 0, '{}')",
         )
         .execute(&pool)
         .await?;
@@ -3071,7 +3071,7 @@ mod tests {
             3
         );
         sqlx::query(
-            "UPDATE channels SET protocol = 'virtual', revision = 4 \
+            "UPDATE channels SET protocol = 'modbus_tcp', revision = 4 \
              WHERE channel_id = 7 AND revision = 3",
         )
         .execute(&pool)
@@ -3097,7 +3097,7 @@ mod tests {
         );
         sqlx::query(
             "INSERT INTO channels (channel_id, name, protocol, enabled, config) \
-             VALUES (7, 'legacy-recreate', 'virtual', 0, '{}')",
+             VALUES (7, 'legacy-recreate', 'modbus_tcp', 0, '{}')",
         )
         .execute(&pool)
         .await?;
@@ -3128,7 +3128,7 @@ mod tests {
         sqlx::query(
             "INSERT INTO channels \
              (channel_id, name, protocol, enabled, config, revision) \
-             VALUES (7, 'original-v9-entity', 'virtual', 0, '{}', 1)",
+             VALUES (7, 'original-v9-entity', 'modbus_tcp', 0, '{}', 1)",
         )
         .execute(&pool)
         .await?;
@@ -3138,7 +3138,7 @@ mod tests {
         sqlx::query(
             "INSERT INTO channels \
              (channel_id, name, protocol, enabled, config, revision) \
-             VALUES (7, 'replacement-v9-entity', 'virtual', 0, '{}', 1)",
+             VALUES (7, 'replacement-v9-entity', 'modbus_tcp', 0, '{}', 1)",
         )
         .execute(&pool)
         .await?;
@@ -3174,7 +3174,7 @@ mod tests {
         );
         sqlx::query(
             "INSERT INTO channels (channel_id, name, protocol, enabled, config) \
-             VALUES (7, 'legacy-recreate', 'virtual', 0, '{}')",
+             VALUES (7, 'legacy-recreate', 'modbus_tcp', 0, '{}')",
         )
         .execute(&pool)
         .await?;

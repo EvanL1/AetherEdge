@@ -60,7 +60,6 @@ pub use types::{
     SqlInsertablePoint,
     TELEMETRY_POINTS_TABLE,
     TelemetryPoint,
-    VirtualMapping,
     install_channel_revision_triggers,
 };
 

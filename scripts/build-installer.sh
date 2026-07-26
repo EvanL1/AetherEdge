@@ -11,7 +11,7 @@
 # Service names: aether-io, aether-automation, aether-history, aether-api,
 # aether-uplink, aether-alarm, redis, timescaledb (canonical
 # aether-redis/aether-timescaledb names are accepted as aliases)
-# Service groups: rust (all Rust services), py (the four former Python services)
+# Service groups: rust (all six Rust services)
 #
 # Examples:
 #   ./build-installer.sh                                    # Build the Rust core (ARM64, today's date)
@@ -201,10 +201,6 @@ expand_service_groups() {
             rust)
                 expanded="${expanded}${RUST_SERVICES},"
                 ;;
-            py)
-                # 4 services rewritten from Python
-                expanded="${expanded}aether-alarm,aether-api,aether-history,aether-uplink,"
-                ;;
             *)
                 expanded="${expanded}${item},"
                 ;;
@@ -224,32 +220,26 @@ if [[ -n "$SELECTED_SERVICES" ]]; then
 fi
 
 # ── Dev mode detection ────────────────────────────────────────────────────────
-# Triggered when the ORIGINAL input (before expansion) is:
-#   • A single Rust service name  →  aetherems:dev-<name>, restart that 1 container
-#   • "py"                        →  aetherems:dev-py,    restart 4 py-rewritten containers
-# aetherems:latest is NEVER touched in dev mode.
-DEV_SERVICE=""        # image tag suffix  (e.g. "uplink" or "py")
+# Triggered when the ORIGINAL input (before expansion) is one Rust service
+# name. The package uses aetherems:dev-<name> and restarts only that container;
+# aetherems:latest is never touched in dev mode.
+DEV_SERVICE=""        # image tag suffix (for example "aether-uplink")
 DEV_SERVICES_LIST=""  # space-separated container service names to restart
 _RUST_SVC_LIST="aether-io aether-automation aether-history aether-api aether-uplink aether-alarm"
 
 if [[ -n "$ORIGINAL_SERVICES_INPUT" ]]; then
     _orig=$(echo "$ORIGINAL_SERVICES_INPUT" | xargs)
-    if [[ "$_orig" == "py" ]]; then
-        DEV_SERVICE="py"
-        DEV_SERVICES_LIST="aether-alarm aether-api aether-history aether-uplink"
-    else
-        _cnt=$(echo "$ORIGINAL_SERVICES_INPUT" | tr ',' '\n' | grep -c .)
-        if [[ $_cnt -eq 1 ]]; then
-            for _s in $_RUST_SVC_LIST; do
-                if [[ "$_orig" == "$_s" ]]; then
-                    DEV_SERVICE="$_s"
-                    DEV_SERVICES_LIST="$_s"
-                    break
-                fi
-            done
-        fi
-        unset _cnt
+    _cnt=$(echo "$ORIGINAL_SERVICES_INPUT" | tr ',' '\n' | grep -c .)
+    if [[ $_cnt -eq 1 ]]; then
+        for _s in $_RUST_SVC_LIST; do
+            if [[ "$_orig" == "$_s" ]]; then
+                DEV_SERVICE="$_s"
+                DEV_SERVICES_LIST="$_s"
+                break
+            fi
+        done
     fi
+    unset _cnt
     unset _orig
 fi
 unset _RUST_SVC_LIST
@@ -643,7 +633,7 @@ if csv_contains "$BUILD_IMAGES" "aetherems:latest"; then
         echo -e "${BLUE}[3/3] Packaging bare-metal installer...${NC}"
         BM_PKG_DIR="$BUILD_DIR/baremetal-pkg"
         rm -rf "$BM_PKG_DIR"
-        mkdir -p "$BM_PKG_DIR/bin" "$BM_PKG_DIR/systemd" "$BM_PKG_DIR/config.template" "$BM_PKG_DIR/script-host"
+        mkdir -p "$BM_PKG_DIR/bin" "$BM_PKG_DIR/systemd" "$BM_PKG_DIR/config.template"
 
         for svc in aether aether-io aether-automation aether-history aether-api aether-uplink aether-alarm; do
             cp "target/$TARGET/release/$svc" "$BM_PKG_DIR/bin/$svc"
@@ -658,7 +648,6 @@ if csv_contains "$BUILD_IMAGES" "aetherems:latest"; then
             rm -f "$BM_PKG_DIR/systemd/aether-redis.service"
         fi
         cp scripts/install-baremetal.sh "$BM_PKG_DIR/install.sh"
-        cp services/io/assets/script-host/main.py "$BM_PKG_DIR/script-host/main.py"
         cp "$LICENSE_MIT_FILE" "$BM_PKG_DIR/LICENSE-MIT"
         cp "$LICENSE_APACHE_FILE" "$BM_PKG_DIR/LICENSE-APACHE"
         cp "$NOTICE_FILE" "$BM_PKG_DIR/NOTICE"

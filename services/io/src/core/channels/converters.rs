@@ -11,9 +11,7 @@ use tracing::warn;
 use crate::core::config::{
     AdjustmentPoint, ControlPoint, Point, RuntimeChannelConfig, SignalPoint, TelemetryPoint,
 };
-use crate::protocols::core::point::{
-    PointConfig, ProtocolAddress, TransformConfig, VirtualAddress,
-};
+use crate::protocols::core::point::{PointConfig, ProtocolAddress, TransformConfig};
 use aether_core::PointType;
 
 #[cfg(feature = "modbus")]
@@ -128,28 +126,6 @@ fn convert_all_points(
     configs.extend(convert_points(&rc.control_points, addr_fn));
     configs.extend(convert_points(&rc.adjustment_points, addr_fn));
     configs
-}
-
-// ============================================================================
-// Virtual Channel Point Conversion
-// ============================================================================
-
-/// Convert RuntimeChannelConfig to PointConfig list.
-///
-/// This function sets up TransformConfig for each point type:
-/// - Telemetry: scale/offset transformation
-/// - Signal: reverse boolean transformation
-/// - Control: reverse boolean transformation
-/// - Adjustment: scale/offset transformation
-///
-/// Each PointConfig carries an explicit `point_type` field that routes
-/// the data to the correct typed SHM slot.
-pub fn convert_to_point_configs(runtime_config: &RuntimeChannelConfig) -> Vec<PointConfig> {
-    convert_all_points(runtime_config, &|base: &Point| {
-        Some(ProtocolAddress::Virtual(VirtualAddress::new(
-            base.point_id.to_string(),
-        )))
-    })
 }
 
 // ============================================================================
@@ -387,122 +363,8 @@ pub fn convert_can_to_point_configs(runtime_config: &RuntimeChannelConfig) -> Ve
 #[allow(clippy::disallowed_methods)] // Test code - unwrap is acceptable
 mod tests {
     use super::*;
-    use crate::core::config::{
-        AdjustmentPoint, ChannelConfig, ChannelCore, ControlPoint, Point, SignalPoint,
-        TelemetryPoint,
-    };
+    use crate::core::config::{ChannelConfig, ChannelCore, Point, SignalPoint, TelemetryPoint};
     use std::collections::HashMap;
-
-    fn create_test_runtime_config() -> RuntimeChannelConfig {
-        let base_config = ChannelConfig {
-            core: ChannelCore {
-                id: 1,
-                name: "test_channel".to_string(),
-                description: None,
-                protocol: "virtual".to_string(),
-                enabled: true,
-            },
-            parameters: HashMap::new(),
-            logging: Default::default(),
-        };
-        let mut config = RuntimeChannelConfig::from_base(base_config);
-
-        config.telemetry_points.push(TelemetryPoint {
-            base: Point {
-                point_id: 10,
-                signal_name: "temperature".to_string(),
-                description: None,
-                unit: Some("C".to_string()),
-                protocol_mappings: None,
-            },
-            scale: 1.0,
-            offset: 0.0,
-            data_type: "float32".to_string(),
-            reverse: false,
-        });
-
-        config.signal_points.push(SignalPoint {
-            base: Point {
-                point_id: 20,
-                signal_name: "status".to_string(),
-                description: None,
-                unit: None,
-                protocol_mappings: None,
-            },
-            reverse: false,
-        });
-
-        config.control_points.push(ControlPoint {
-            base: Point {
-                point_id: 30,
-                signal_name: "switch".to_string(),
-                description: None,
-                unit: None,
-                protocol_mappings: None,
-            },
-            reverse: false,
-            control_type: "latching".to_string(),
-            on_value: 1,
-            off_value: 0,
-            pulse_duration_ms: None,
-        });
-
-        config.adjustment_points.push(AdjustmentPoint {
-            base: Point {
-                point_id: 40,
-                signal_name: "setpoint".to_string(),
-                description: None,
-                unit: Some("C".to_string()),
-                protocol_mappings: None,
-            },
-            min_value: None,
-            max_value: None,
-            step: 1.0,
-            data_type: "float32".to_string(),
-            scale: 1.0,
-            offset: 0.0,
-        });
-
-        config
-    }
-
-    #[test]
-    fn test_convert_to_point_configs() {
-        use aether_core::PointType;
-
-        let runtime_config = create_test_runtime_config();
-        let configs = convert_to_point_configs(&runtime_config);
-
-        assert_eq!(configs.len(), 4);
-
-        // Check telemetry point - uses original point_id and explicit point_type
-        let telemetry = configs
-            .iter()
-            .find(|c| c.id == 10 && c.point_type == PointType::Telemetry)
-            .unwrap();
-        assert_eq!(telemetry.name, Some("temperature".to_string()));
-
-        // Check signal point exists with original point_id and point_type
-        assert!(
-            configs
-                .iter()
-                .any(|c| c.id == 20 && c.point_type == PointType::Signal)
-        );
-
-        // Check control point exists with original point_id and point_type
-        assert!(
-            configs
-                .iter()
-                .any(|c| c.id == 30 && c.point_type == PointType::Control)
-        );
-
-        // Check adjustment point exists with original point_id and point_type
-        assert!(
-            configs
-                .iter()
-                .any(|c| c.id == 40 && c.point_type == PointType::Adjustment)
-        );
-    }
 
     #[test]
     #[cfg(feature = "modbus")]

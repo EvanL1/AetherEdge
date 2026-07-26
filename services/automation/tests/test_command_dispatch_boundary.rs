@@ -59,7 +59,7 @@ async fn application(
         .expect("IO schema");
     sqlx::query(
         "INSERT INTO channels (channel_id, name, protocol, enabled)
-         VALUES (2, 'device', 'virtual', 1)",
+         VALUES (2, 'device', 'modbus_tcp', 1)",
     )
     .execute(&pool)
     .await

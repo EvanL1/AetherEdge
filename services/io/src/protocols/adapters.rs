@@ -2,8 +2,6 @@
 //!
 //! This module contains adapters that integrate protocol crates with the protocol layer.
 
-pub mod virtual_channel;
-
 // Cross-platform CAN types and decoder (no hardware dependency)
 pub mod can_decoder;
 pub mod can_types;
@@ -27,8 +25,8 @@ pub mod modbus_poll;
 #[cfg(feature = "modbus")]
 pub mod command_batcher;
 
-// Mock Modbus server for testing (available in both test and non-test builds for integration tests)
-#[cfg(feature = "modbus")]
+// In-process Modbus simulator is test-only; production simulation lives in tools/simulator.
+#[cfg(all(test, feature = "modbus"))]
 pub mod modbus_mock;
 
 #[cfg(feature = "iec104")]

@@ -192,18 +192,16 @@ fn build_registry() -> ProtocolRegistry {
         });
     }
 
-    // Register Modbus protocol
+    // Register Modbus protocol.
     #[cfg(feature = "modbus")]
     {
         use crate::protocols::adapters::modbus::ModbusChannel;
-        let modbus_tcp = ModbusChannel::tcp_metadata();
-        let modbus_rtu = ModbusChannel::rtu_metadata();
         registry.register(ProtocolMetadata {
             name: "modbus",
             display_name: "Modbus TCP",
             description: "Industrial Modbus TCP protocol",
             protocol_type: "modbus_tcp",
-            drivers: vec![modbus_tcp.clone()],
+            drivers: vec![ModbusChannel::tcp_metadata()],
             supports_points: true,
         });
         registry.register(ProtocolMetadata {
@@ -211,25 +209,29 @@ fn build_registry() -> ProtocolRegistry {
             display_name: "Modbus RTU",
             description: "Industrial Modbus RTU protocol over a serial device",
             protocol_type: "modbus_rtu",
-            drivers: vec![modbus_rtu.clone()],
+            drivers: vec![ModbusChannel::rtu_metadata()],
             supports_points: true,
         });
+    }
+
+    // SunSpec aliases and model provisioning are an explicit extension.
+    #[cfg(feature = "sunspec")]
+    {
+        use crate::protocols::adapters::modbus::ModbusChannel;
         registry.register(ProtocolMetadata {
             name: "sunspec_tcp",
             display_name: "SunSpec TCP",
-            description:
-                "SunSpec information model over Modbus TCP (same transport and point mappings as Modbus)",
+            description: "SunSpec information model over Modbus TCP",
             protocol_type: "sunspec_tcp",
-            drivers: vec![modbus_tcp],
+            drivers: vec![ModbusChannel::tcp_metadata()],
             supports_points: true,
         });
         registry.register(ProtocolMetadata {
             name: "sunspec_rtu",
             display_name: "SunSpec RTU",
-            description:
-                "SunSpec information model over Modbus RTU (same transport and point mappings as Modbus)",
+            description: "SunSpec information model over Modbus RTU",
             protocol_type: "sunspec_rtu",
-            drivers: vec![modbus_rtu],
+            drivers: vec![ModbusChannel::rtu_metadata()],
             supports_points: true,
         });
     }
@@ -324,20 +326,6 @@ fn build_registry() -> ProtocolRegistry {
         });
     }
 
-    // Register Virtual protocol
-    {
-        use crate::protocols::adapters::virtual_channel::VirtualChannel;
-        let virtual_meta = VirtualChannel::metadata();
-        registry.register(ProtocolMetadata {
-            name: "virtual",
-            display_name: "Virtual",
-            description: "Virtual channel for testing and simulation",
-            protocol_type: "virtual",
-            drivers: vec![virtual_meta],
-            supports_points: true,
-        });
-    }
-
     registry
 }
 
@@ -356,7 +344,18 @@ mod tests {
     #[test]
     fn test_registry_creation() {
         let registry = get_protocol_registry();
-        // Should have at least one protocol (virtual is always available)
-        assert!(!registry.protocols().is_empty());
+        if cfg!(any(
+            feature = "modbus",
+            feature = "iec104",
+            feature = "opcua",
+            feature = "ble",
+            feature = "zigbee",
+            feature = "matter",
+            feature = "iec61850"
+        )) {
+            assert!(!registry.protocols().is_empty());
+        } else {
+            assert!(registry.protocols().is_empty());
+        }
     }
 }

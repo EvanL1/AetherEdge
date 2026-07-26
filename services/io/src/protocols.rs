@@ -9,7 +9,6 @@
 //! - DL/T 645-2007
 //! - CAN/J1939
 //! - GPIO
-//! - Virtual Channel
 //!
 //! ## Design Principles
 //!
@@ -23,7 +22,7 @@ pub mod config;
 pub mod core;
 pub mod gateway;
 
-#[cfg(feature = "modbus")]
+#[cfg(feature = "sunspec")]
 pub mod sunspec;
 
 /// Prelude module for convenient imports

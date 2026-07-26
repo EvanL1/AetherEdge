@@ -25,7 +25,6 @@ extensions/
   http-api             optional REST/WebSocket transport
   http-data-processor  optional local/remote DataProcessor adapter
   linux-platform       Linux GPIO/CAN/device support
-  python-transform     optional Python transform host
 
 interfaces/
   cli                  human command-line transport

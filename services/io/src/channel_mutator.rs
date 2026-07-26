@@ -1104,9 +1104,10 @@ fn validate_runtime_config(config: &ChannelConfig) -> PortResult<()> {
     }
     let protocol = crate::utils::normalize_protocol_name(config.protocol());
     let supported = match protocol.as_ref() {
-        "virtual" => true,
         #[cfg(feature = "modbus")]
-        "modbus_tcp" | "modbus_rtu" | "sunspec_tcp" | "sunspec_rtu" => true,
+        "modbus_tcp" | "modbus_rtu" => true,
+        #[cfg(feature = "sunspec")]
+        "sunspec_tcp" | "sunspec_rtu" => true,
         #[cfg(all(target_os = "linux", feature = "gpio"))]
         "gpio" | "di_do" | "dido" => true,
         #[cfg(all(target_os = "linux", feature = "can"))]
@@ -1446,19 +1447,30 @@ mod tests {
         }
     }
 
-    #[test]
-    fn production_validator_keeps_explicit_zero_channel_identity_compatible() {
-        assert!(validate_runtime_config(&runtime_config(0, "virtual", HashMap::new())).is_ok());
+    #[cfg(feature = "modbus")]
+    fn modbus_tcp_parameters() -> HashMap<String, serde_json::Value> {
+        HashMap::from([
+            ("host".to_owned(), serde_json::json!("127.0.0.1")),
+            ("port".to_owned(), serde_json::json!(502)),
+        ])
     }
 
+    #[cfg(feature = "modbus")]
+    #[test]
+    fn production_validator_keeps_explicit_zero_channel_identity_compatible() {
+        assert!(
+            validate_runtime_config(&runtime_config(0, "modbus_tcp", modbus_tcp_parameters()))
+                .is_ok()
+        );
+    }
+
+    #[cfg(feature = "modbus")]
     #[test]
     fn production_validator_rejects_zero_poll_before_runtime_creation() {
-        let error = validate_runtime_config(&runtime_config(
-            1,
-            "virtual",
-            HashMap::from([("poll_interval_ms".to_owned(), serde_json::json!(0))]),
-        ))
-        .expect_err("zero poll interval must be rejected");
+        let mut parameters = modbus_tcp_parameters();
+        parameters.insert("poll_interval_ms".to_owned(), serde_json::json!(0));
+        let error = validate_runtime_config(&runtime_config(1, "modbus_tcp", parameters))
+            .expect_err("zero poll interval must be rejected");
         assert_eq!(error.kind(), PortErrorKind::InvalidData);
     }
 

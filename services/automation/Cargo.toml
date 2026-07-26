@@ -39,7 +39,6 @@ anyhow = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
 chrono = { workspace = true }
-bytes = { workspace = true }
 async-trait = { workspace = true }
 uuid = { workspace = true }
 axum = { workspace = true }
@@ -48,8 +47,6 @@ tokio-util = { workspace = true }
 sqlx = { workspace = true }
 # cron removed - not currently used
 arc-swap = "1.7"  # ArcSwapOption for runtime-swappable SHM writer
-dashmap = { workspace = true }  # For high-performance concurrent name→id cache
-itoa = { workspace = true }  # Stack-allocated u32→str formatting
 tower = { workspace = true }
 subtle = "2.6"
 

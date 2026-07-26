@@ -159,12 +159,14 @@ async fn test_create_channel_with_auto_id() -> Result<()> {
 
     // Create a channel without specifying ID (auto-assign)
     let create_payload = json!({
-        "name": "Test Virtual Channel",
+        "name": "Test Modbus Channel",
         "description": "A test channel for integration testing",
-        "protocol": "virtual",
+        "protocol": "modbus_tcp",
         "enabled": true,
         "parameters": {
-            "update_interval_ms": 1000
+            "host": "127.0.0.1",
+            "port": 502,
+            "poll_interval_ms": 1000
         }
     });
 
@@ -177,8 +179,8 @@ async fn test_create_channel_with_auto_id() -> Result<()> {
         body["data"]["id"].as_u64().is_some(),
         "Should have auto-assigned ID"
     );
-    assert_eq!(body["data"]["name"], "Test Virtual Channel");
-    assert_eq!(body["data"]["protocol"], "virtual");
+    assert_eq!(body["data"]["name"], "Test Modbus Channel");
+    assert_eq!(body["data"]["protocol"], "modbus_tcp");
     assert_eq!(body["data"]["enabled"], true);
 
     Ok(())
@@ -219,9 +221,9 @@ async fn test_create_channel_duplicate_name() -> Result<()> {
     // Create first channel
     let create_payload1 = json!({
         "name": "Duplicate Name Test",
-        "protocol": "virtual",
+        "protocol": "modbus_tcp",
         "enabled": true,
-        "parameters": {}
+        "parameters": {"host": "127.0.0.1", "port": 502}
     });
 
     let (status, _) = make_request(
@@ -256,9 +258,9 @@ async fn test_create_channel_duplicate_id() -> Result<()> {
     let create_payload1 = json!({
         "channel_id": 9001,
         "name": "First Channel",
-        "protocol": "virtual",
+        "protocol": "modbus_tcp",
         "enabled": true,
-        "parameters": {}
+        "parameters": {"host": "127.0.0.1", "port": 502}
     });
 
     let (status, _) =
@@ -269,9 +271,9 @@ async fn test_create_channel_duplicate_id() -> Result<()> {
     let create_payload2 = json!({
         "channel_id": 9001,
         "name": "Second Channel",
-        "protocol": "virtual",
+        "protocol": "modbus_tcp",
         "enabled": true,
-        "parameters": {}
+        "parameters": {"host": "127.0.0.1", "port": 502}
     });
 
     let (status, body) =
@@ -290,9 +292,9 @@ async fn test_create_channel_disabled() -> Result<()> {
     // Create a disabled channel
     let create_payload = json!({
         "name": "Disabled Channel",
-        "protocol": "virtual",
+        "protocol": "modbus_tcp",
         "enabled": false,
-        "parameters": {}
+        "parameters": {"host": "127.0.0.1", "port": 502}
     });
 
     let (status, body) =
@@ -318,9 +320,9 @@ async fn test_update_channel_name() -> Result<()> {
     let create_payload = json!({
         "channel_id": 2001,
         "name": "Original Name",
-        "protocol": "virtual",
+        "protocol": "modbus_tcp",
         "enabled": true,
-        "parameters": {}
+        "parameters": {"host": "127.0.0.1", "port": 502}
     });
 
     let (status, _) = make_request(&mut app, "POST", "/api/channels", Some(create_payload)).await?;
@@ -412,17 +414,17 @@ async fn test_update_channel_name_conflict() -> Result<()> {
     let create_payload1 = json!({
         "channel_id": 3001,
         "name": "Channel A",
-        "protocol": "virtual",
+        "protocol": "modbus_tcp",
         "enabled": true,
-        "parameters": {}
+        "parameters": {"host": "127.0.0.1", "port": 502}
     });
 
     let create_payload2 = json!({
         "channel_id": 3002,
         "name": "Channel B",
-        "protocol": "virtual",
+        "protocol": "modbus_tcp",
         "enabled": true,
-        "parameters": {}
+        "parameters": {"host": "127.0.0.1", "port": 502}
     });
 
     let (status, _) =
@@ -459,9 +461,9 @@ async fn test_enable_disable_channel() -> Result<()> {
     let create_payload = json!({
         "channel_id": 4001,
         "name": "Enable/Disable Test",
-        "protocol": "virtual",
+        "protocol": "modbus_tcp",
         "enabled": true,
-        "parameters": {}
+        "parameters": {"host": "127.0.0.1", "port": 502}
     });
 
     let (status, _) = make_request(&mut app, "POST", "/api/channels", Some(create_payload)).await?;
@@ -507,9 +509,9 @@ async fn test_enable_already_enabled_channel() -> Result<()> {
     let create_payload = json!({
         "channel_id": 4002,
         "name": "Already Enabled Test",
-        "protocol": "virtual",
+        "protocol": "modbus_tcp",
         "enabled": true,
-        "parameters": {}
+        "parameters": {"host": "127.0.0.1", "port": 502}
     });
 
     let (status, _) = make_request(&mut app, "POST", "/api/channels", Some(create_payload)).await?;
@@ -566,9 +568,9 @@ async fn test_delete_channel() -> Result<()> {
     let create_payload = json!({
         "channel_id": 5001,
         "name": "Delete Test Channel",
-        "protocol": "virtual",
+        "protocol": "modbus_tcp",
         "enabled": true,
-        "parameters": {}
+        "parameters": {"host": "127.0.0.1", "port": 502}
     });
 
     let (status, _) = make_request(&mut app, "POST", "/api/channels", Some(create_payload)).await?;
@@ -615,9 +617,9 @@ async fn test_reload_configuration() -> Result<()> {
         let create_payload = json!({
             "channel_id": 6000 + i,
             "name": format!("Reload Test Channel {}", i),
-            "protocol": "virtual",
+            "protocol": "modbus_tcp",
             "enabled": true,
-            "parameters": {}
+            "parameters": {"host": "127.0.0.1", "port": 502}
         });
 
         let (status, _) =
@@ -664,9 +666,9 @@ async fn test_create_channel_missing_required_fields() -> Result<()> {
 
     // Missing name (required field)
     let create_payload = json!({
-        "protocol": "virtual",
+        "protocol": "modbus_tcp",
         "enabled": true,
-        "parameters": {}
+        "parameters": {"host": "127.0.0.1", "port": 502}
     });
 
     // Make request without parsing JSON response (may be plain text error)
@@ -696,9 +698,9 @@ async fn test_create_channel_with_logging_config() -> Result<()> {
 
     let create_payload = json!({
         "name": "Logging Config Test",
-        "protocol": "virtual",
+        "protocol": "modbus_tcp",
         "enabled": true,
-        "parameters": {},
+        "parameters": {"host": "127.0.0.1", "port": 502},
         "logging": {
             "enabled": true,
             "level": "debug"
@@ -723,9 +725,9 @@ async fn test_update_channel_logging_config() -> Result<()> {
     let create_payload = json!({
         "channel_id": 7001,
         "name": "Logging Update Test",
-        "protocol": "virtual",
+        "protocol": "modbus_tcp",
         "enabled": true,
-        "parameters": {}
+        "parameters": {"host": "127.0.0.1", "port": 502}
     });
 
     let (status, _) = make_request(&mut app, "POST", "/api/channels", Some(create_payload)).await?;
@@ -755,9 +757,9 @@ async fn test_sequential_channel_id_assignment() -> Result<()> {
     // Create first channel with auto-assigned ID
     let create_payload1 = json!({
         "name": "Auto ID 1",
-        "protocol": "virtual",
+        "protocol": "modbus_tcp",
         "enabled": true,
-        "parameters": {}
+        "parameters": {"host": "127.0.0.1", "port": 502}
     });
 
     let (status, body1) =
@@ -768,9 +770,9 @@ async fn test_sequential_channel_id_assignment() -> Result<()> {
     // Create second channel with auto-assigned ID
     let create_payload2 = json!({
         "name": "Auto ID 2",
-        "protocol": "virtual",
+        "protocol": "modbus_tcp",
         "enabled": true,
-        "parameters": {}
+        "parameters": {"host": "127.0.0.1", "port": 502}
     });
 
     let (status, body2) =

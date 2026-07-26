@@ -187,7 +187,7 @@ validate_bare_metal_bundle() {
     local redis_included=$2
     local binary unit
 
-    for directory in bin systemd config.template script-host; do
+    for directory in bin systemd config.template; do
         validate_tree_without_links_or_special_files \
             "$bundle_root/$directory" "bundled $directory tree"
     done
@@ -211,11 +211,6 @@ validate_bare_metal_bundle() {
             return 1
         fi
     done
-    if [[ ! -f "$bundle_root/script-host/main.py" \
-        || -L "$bundle_root/script-host/main.py" ]]; then
-        echo "ERROR: required bundled script host is missing or unsafe" >&2
-        return 1
-    fi
     if [[ "$redis_included" == true ]]; then
         for binary in redis-server redis-cli; do
             if [[ ! -f "$bundle_root/bin/$binary" \
@@ -389,8 +384,7 @@ validate_bare_metal_host_layout() {
         validate_secure_installed_tree "$INSTALL_DIR/bin" "installed binary tree"
     fi
     for path in \
-        "$CONFIG_DIR/config" "$CONFIG_DIR/config.template" \
-        "$CONFIG_DIR/script-host"; do
+        "$CONFIG_DIR/config" "$CONFIG_DIR/config.template"; do
         if [[ -e "$path" ]]; then
             validate_secure_installed_tree "$path" "installed configuration tree"
         else
@@ -399,7 +393,6 @@ validate_bare_metal_host_layout() {
     done
     for path in \
         "$CONFIG_DIR/aether.env" "$CONFIG_DIR/install.yaml" \
-        "$CONFIG_DIR/script-host/main.py" \
         "$INSTALL_DIR/uninstall.sh" \
         /etc/profile.d/aether.sh; do
         validate_secure_regular_file_if_exists "$path" "installer write target"
@@ -879,11 +872,8 @@ fi
 
 echo "[5/7] Installing configuration to $CONFIG_DIR ..."
 mkdir -p "$CONFIG_DIR"
-mkdir -p "$CONFIG_DIR/script-host"
-chown 0:0 "$CONFIG_DIR" "$CONFIG_DIR/script-host"
-chmod go-w "$CONFIG_DIR" "$CONFIG_DIR/script-host"
-install -o 0 -g 0 -m 0644 \
-    script-host/main.py "$CONFIG_DIR/script-host/main.py"
+chown 0:0 "$CONFIG_DIR"
+chmod go-w "$CONFIG_DIR"
 
 if [[ ! -e "$CONFIG_DIR/config" ]]; then
     echo "  First install detected: activating config.template/ -> $CONFIG_DIR/config"

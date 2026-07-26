@@ -859,7 +859,7 @@ mod tests {
 
         let revision: i64 = sqlx::query_scalar(
             "INSERT INTO channels (channel_id, name, protocol, enabled, config) \
-             VALUES (7, 'revision-contract', 'virtual', 0, '{}') \
+             VALUES (7, 'revision-contract', 'modbus_tcp', 0, '{}') \
              RETURNING revision",
         )
         .fetch_one(&pool)
@@ -899,7 +899,7 @@ mod tests {
         init_io_schema(&pool).await.unwrap();
         sqlx::query(
             "INSERT INTO channels (channel_id, name, protocol, enabled, config) \
-             VALUES (7, 'legacy-writer', 'virtual', 0, '{}')",
+             VALUES (7, 'legacy-writer', 'modbus_tcp', 0, '{}')",
         )
         .execute(&pool)
         .await
@@ -979,7 +979,7 @@ mod tests {
         init_io_schema(&pool).await.unwrap();
         sqlx::query(
             "INSERT INTO channels (channel_id, name, protocol, enabled, config) \
-             VALUES (8, 'first-entity', 'virtual', 0, '{}')",
+             VALUES (8, 'first-entity', 'modbus_tcp', 0, '{}')",
         )
         .execute(&pool)
         .await
@@ -1000,7 +1000,7 @@ mod tests {
 
         sqlx::query(
             "INSERT INTO channels (channel_id, name, protocol, enabled, config) \
-             VALUES (8, 'legacy-recreate', 'virtual', 0, '{}')",
+             VALUES (8, 'legacy-recreate', 'modbus_tcp', 0, '{}')",
         )
         .execute(&pool)
         .await
@@ -1040,7 +1040,7 @@ mod tests {
 
         let error = sqlx::query(
             "INSERT INTO channels (channel_id, name, protocol, enabled, config) \
-             VALUES (9, 'exhausted-recreate', 'virtual', 0, '{}')",
+             VALUES (9, 'exhausted-recreate', 'modbus_tcp', 0, '{}')",
         )
         .execute(&pool)
         .await
@@ -1105,7 +1105,7 @@ mod tests {
         .unwrap();
         sqlx::query(
             "INSERT INTO channels (channel_id, name, protocol, enabled) \
-             VALUES (3, 'fixture-channel', 'virtual', 0)",
+             VALUES (3, 'fixture-channel', 'modbus_tcp', 0)",
         )
         .execute(&pool)
         .await

@@ -480,7 +480,7 @@ fn existing_site_plan_and_apply_never_modify_the_site() {
     copy_all_safe_config_files(&config_path);
     std::fs::write(
         config_path.join("io/io.yaml"),
-        "channels:\n  - id: 1\n    name: existing\n    protocol: virtual\n    enabled: false\n",
+        "channels:\n  - id: 1\n    name: existing\n    protocol: modbus_tcp\n    enabled: false\n",
     )
     .expect("write existing site channel");
     let io_before = std::fs::read(config_path.join("io/io.yaml")).expect("read existing io");
@@ -724,7 +724,7 @@ async fn setup_plan_observes_commissioned_rows_still_in_the_live_wal() {
         .expect("disable automatic WAL checkpointing");
     sqlx::query(
         "INSERT INTO channels (channel_id, name, protocol, enabled, config) \
-         VALUES (99, 'live-wal-channel', 'virtual', 1, '{}')",
+         VALUES (99, 'live-wal-channel', 'modbus_tcp', 1, '{}')",
     )
     .execute(&writer)
     .await

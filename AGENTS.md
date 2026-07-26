@@ -74,6 +74,13 @@ domain <- ports <- application <- runtime/interfaces
   acquisition/data-plane owner receives `LiveStateWriter`.
 - AI, CLI, and HTTP interfaces use the same command/query application API.
   They must not write SHM or storage directly.
+- The production `aether-io` runtime is Rust-only and contains only explicitly
+  composed physical protocol adapters. It must not load scripts, launch
+  subprocesses, provide an in-process simulation protocol, or manage host
+  networking. Python and protocol simulators are limited to tooling outside
+  `services/`.
+- Protocol-specific model catalogs such as SunSpec belong in default-off
+  extensions selected by a composition root, never in a core or service crate.
 
 ## AI Safety
 
@@ -153,7 +160,7 @@ workspace suite locally by default. CI is responsible for:
 ```bash
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
-cargo test --workspace --lib --bins
+cargo nextest run --workspace --lib --bins --tests
 ./scripts/check-architecture.sh
 ./scripts/check-distribution-contracts.sh
 ```

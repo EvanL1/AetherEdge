@@ -1190,7 +1190,7 @@
       "path": "docs/adr/0005-shm-only-live-state.md",
       "canonical_url": "https://github.com/EvanL1/AetherEdge/blob/main/docs/adr/0005-shm-only-live-state.md",
       "title": "ADR-0005: Make SHM the only core live-state plane",
-      "description": "Accepted and implemented on 2026-07-10.",
+      "description": "Accepted and implemented on 2026-07-10. Decision 6 was superseded by ADR-0025 when the production-only Virtual protocol was retired.",
       "locale": "en",
       "translation_of": null,
       "document_role": "decision",
@@ -1737,6 +1737,34 @@
       "production_readiness": "not-applicable",
       "context_sensitivity": "internal",
       "updated": "2026-07-26",
+      "priority": "optional",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-docs-adr-0025-physical-io-and-optional-protocol-extensions",
+      "path": "docs/adr/0025-physical-io-and-optional-protocol-extensions.md",
+      "canonical_url": "https://github.com/EvanL1/AetherEdge/blob/main/docs/adr/0025-physical-io-and-optional-protocol-extensions.md",
+      "title": "ADR-0025: Keep production IO physical and move protocol catalogs to optional extensions",
+      "description": "Accepted and implemented on 2026-07-26.",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "decision",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "inspect-edge-implementation"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "not-applicable",
+      "context_sensitivity": "internal",
+      "updated": "2026-07-18",
       "priority": "optional",
       "media_type": "text/markdown",
       "capability_refs": [],
@@ -3465,6 +3493,62 @@
       "canonical_url": "https://docs.aetheriot.dev/extensions/store-local.md",
       "title": "aether-store-local",
       "description": "Local adapters for a gateway that must run without external services.",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "reference",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "inspect-edge-implementation"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "not-applicable",
+      "context_sensitivity": "public",
+      "updated": "2026-07-18",
+      "priority": "optional",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-extensions-sunspec-readme",
+      "path": "extensions/sunspec/README.md",
+      "canonical_url": "https://docs.aetheriot.dev/extensions/sunspec.md",
+      "title": "Aether SunSpec extension",
+      "description": "Optional compile-time SunSpec model catalog and point-expansion support for AetherEdge Modbus compositions.",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "reference",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "inspect-edge-implementation"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "not-applicable",
+      "context_sensitivity": "public",
+      "updated": "2026-07-18",
+      "priority": "optional",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-extensions-sunspec-models-readme",
+      "path": "extensions/sunspec/models/README.md",
+      "canonical_url": "https://github.com/EvanL1/AetherEdge/blob/main/extensions/sunspec/models/README.md",
+      "title": "Vendored SunSpec model definitions",
+      "description": "aether-sunspec/build.rs consumes only json/model.json. The files provide the optional SunSpec model catalog and are licensed under the adjacent Apache-2.0 LICENSE file. Upstream generation tooling and alternate XML/workbook…",
       "locale": "en",
       "translation_of": null,
       "document_role": "reference",

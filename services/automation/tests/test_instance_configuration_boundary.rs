@@ -201,7 +201,7 @@ async fn create_and_atomic_rename_advance_only_instances_revision_and_publish_na
     );
 
     for statement in [
-        "INSERT INTO channels (channel_id, name, protocol, enabled) VALUES (3, 'bus', 'virtual', 1)",
+        "INSERT INTO channels (channel_id, name, protocol, enabled) VALUES (3, 'bus', 'modbus_tcp', 1)",
         "INSERT INTO telemetry_points (channel_id, point_id, signal_name) VALUES (3, 5, 'reading')",
         "INSERT INTO measurement_routing (instance_id, instance_name, channel_id, channel_type, channel_point_id, measurement_id, enabled) VALUES (7, 'before', 3, 'T', 5, 1, 1)",
     ] {
@@ -446,7 +446,7 @@ async fn subtree_delete_prechecks_routes_and_any_delete_failure_rolls_back_every
         .unwrap();
 
     for statement in [
-        "INSERT INTO channels (channel_id, name, protocol, enabled) VALUES (9, 'delete-bus', 'virtual', 1)",
+        "INSERT INTO channels (channel_id, name, protocol, enabled) VALUES (9, 'delete-bus', 'modbus_tcp', 1)",
         "INSERT INTO telemetry_points (channel_id, point_id, signal_name) VALUES (9, 1, 'child-reading')",
         "INSERT INTO measurement_routing (instance_id, instance_name, measurement_id, channel_id, channel_type, channel_point_id, enabled) VALUES (2, 'child', 1, 9, 'T', 1, 1)",
     ] {

@@ -9,7 +9,6 @@
 //! - JSONPath-based value extraction (RFC 9535 via `serde_json_path`)
 //! - Timestamp format conversion (Unix seconds/millis, ISO 8601)
 //! - Data type conversion and linear scaling (scale * value + offset)
-//! - Optional Python script fallback for complex transformations
 
 use aether_core::PointType;
 use chrono::{DateTime, TimeZone, Utc};
@@ -21,7 +20,6 @@ use tracing::{debug, trace};
 
 use super::data::{DataBatch, DataPoint, Value};
 use super::error::{GatewayError, Result};
-use super::script_runner::ScriptRunner;
 
 // ============================================================================
 // Configuration enums
@@ -69,6 +67,7 @@ pub struct CompiledMapping {
 
 /// JSON mapping configuration for a channel (from channel parameters)
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct JsonMappingConfig {
     #[serde(default)]
     pub device_id_path: Option<String>,
@@ -76,8 +75,6 @@ pub struct JsonMappingConfig {
     pub timestamp_path: Option<String>,
     #[serde(default)]
     pub timestamp_format: TimestampFormat,
-    #[serde(default)]
-    pub transform_script: Option<String>,
 }
 
 // ============================================================================
@@ -106,7 +103,6 @@ pub struct JsonMapper {
     timestamp_path: Option<JsonPath>,
     timestamp_format: TimestampFormat,
     device_id_path: Option<JsonPath>,
-    script_runner: Option<ScriptRunner>,
 }
 
 impl JsonMapper {
@@ -118,7 +114,6 @@ impl JsonMapper {
             timestamp_path: None,
             timestamp_format: TimestampFormat::default(),
             device_id_path: None,
-            script_runner: None,
         }
     }
 
@@ -182,26 +177,11 @@ impl JsonMapper {
             self.device_id_path = Some(compile_path(path_str)?);
         }
 
-        if let Some(ref script) = config.transform_script {
-            self.script_runner = Some(ScriptRunner::new(self.channel_id, script.clone()));
-        }
-
         Ok(self)
     }
 
-    /// Parse a raw JSON payload (bytes) and extract data points.
-    ///
-    /// If a Python transform script is configured, delegates to the script runner.
-    /// Otherwise, uses JSONPath mappings to extract values.
+    /// Parse a raw JSON payload (bytes) using deterministic JSONPath mappings.
     pub fn parse(&self, payload: &[u8]) -> Result<DataBatch> {
-        // Python script path: parse JSON, send to subprocess
-        if let Some(ref runner) = self.script_runner {
-            let json: serde_json::Value = serde_json::from_slice(payload)
-                .map_err(|e| GatewayError::InvalidData(format!("Invalid JSON: {e}")))?;
-            return runner.transform(&json);
-        }
-
-        // JSONPath mapping path
         if self.mappings.is_empty() {
             return Ok(DataBatch::new());
         }
@@ -518,7 +498,6 @@ mod tests {
             timestamp_path: None,
             timestamp_format: TimestampFormat::Now,
             device_id_path: None,
-            script_runner: None,
         }
     }
 
@@ -699,7 +678,6 @@ mod tests {
             timestamp_path: None,
             timestamp_format: TimestampFormat::Now,
             device_id_path: Some(JsonPath::parse("$.device.serial").unwrap()),
-            script_runner: None,
         };
         let json = json!({"device": {"serial": "SN-12345"}});
         assert_eq!(
@@ -759,13 +737,26 @@ mod tests {
     }
 
     #[test]
+    fn retired_python_transform_configuration_is_rejected() {
+        let error = serde_json::from_value::<JsonMappingConfig>(json!({
+            "transform_script": "/tmp/transform.py"
+        }))
+        .expect_err("the Rust-only IO runtime must reject Python transform configuration");
+
+        assert!(
+            error
+                .to_string()
+                .contains("unknown field `transform_script`")
+        );
+    }
+
+    #[test]
     fn test_with_config_applies_paths() {
         let mapper = JsonMapper::new(1)
             .with_config(&JsonMappingConfig {
                 timestamp_path: Some("$.ts".to_string()),
                 timestamp_format: TimestampFormat::UnixSeconds,
                 device_id_path: Some("$.dev".to_string()),
-                transform_script: None,
             })
             .unwrap();
 
@@ -780,7 +771,6 @@ mod tests {
             timestamp_path: Some("invalid[[[".to_string()),
             timestamp_format: TimestampFormat::Now,
             device_id_path: None,
-            transform_script: None,
         });
         assert!(result.is_err());
     }

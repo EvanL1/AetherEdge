@@ -40,7 +40,7 @@ async fn create_test_database() -> Result<sqlx::SqlitePool> {
     common::test_utils::schema::init_io_schema(&pool).await?;
     sqlx::query(
         "INSERT INTO channels (channel_id, name, protocol, enabled, config) \
-         VALUES (1001, 'Test Channel', 'virtual', 0, '{}')",
+         VALUES (1001, 'Test Channel', 'modbus_tcp', 0, '{}')",
     )
     .execute(&pool)
     .await?;

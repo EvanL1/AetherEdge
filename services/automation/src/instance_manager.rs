@@ -297,8 +297,8 @@ impl InstanceManager {
 
     /// Get instance_id by instance_name (with caching)
     ///
-    /// This method provides fast lookup of instance IDs from names, using a
-    /// DashMap cache for sub-microsecond performance on cache hits.
+    /// This method provides fast lookup of instance IDs from names using the
+    /// atomically published read-only cache snapshot.
     ///
     /// # Cache Strategy
     /// - Cache hit: Returns immediately (~100ns)

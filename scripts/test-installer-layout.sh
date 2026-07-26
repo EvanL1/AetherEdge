@@ -806,10 +806,19 @@ done
 assert_not_contains "$ROOT_DIR/scripts/systemd/aether.target" 'aether-apps.service'
 assert_contains "$INSTALLER_BUILDER" 'BUILD_IMAGES="aetherems:latest"'
 assert_not_contains "$INSTALLER_BUILDER" 'BUILD_IMAGES="aetherems:latest,aether-apps:latest"'
+assert_not_contains "$INSTALLER_BUILDER" 'dev-py'
+assert_not_contains "$INSTALLER_BUILDER" 'former Python'
+assert_not_contains "$INSTALLER_BUILDER" '"py"'
 if bash "$INSTALLER_BUILDER" v0-test amd64 --services=redis \
     >/dev/null 2>&1; then
     fail "Docker installer builder accepted an extension-only fresh package"
 fi
+for retired_python_group in py dev-py; do
+    if bash "$INSTALLER_BUILDER" v0-test amd64 --services="$retired_python_group" \
+        >/dev/null 2>&1; then
+        fail "Docker installer builder accepted retired service group $retired_python_group"
+    fi
+done
 assert_contains "$INSTALLER_BUILDER" '! csv_contains "$BUILD_IMAGES" "aetherems:latest"'
 assert_contains "$INSTALLER_BUILDER" 'csv_contains "$BUILD_IMAGES" "redis:8-alpine"'
 assert_contains "$INSTALLER_BUILDER" 'CARGO_FEATURES=""'
