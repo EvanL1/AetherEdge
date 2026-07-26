@@ -9,11 +9,12 @@
 
 mod support;
 
+use aether_domain::{HistoryAggregation, HistoryDuplicatePolicy};
 use aether_ports::HistoryQuery;
 use aether_testkit::{assert_history_query_bounded, assert_history_query_provenance};
 use support::{
-    adapter_for, batch_data, batch_series, calendar_route, envelope, load_feature, mount_json,
-    point, quarter_hour_feature, stored_route, window,
+    CADENCE_MS, WINDOW_START_MS, adapter_for, batch_data, batch_series, calendar_route, envelope,
+    load_feature, mount_json, point, quarter_hour_feature, stored_route, window, window_spanning,
 };
 use wiremock::MockServer;
 
@@ -31,7 +32,14 @@ async fn bounded_conformance_holds_for_a_single_sample_grid() {
     )
     .await;
     let adapter = adapter_for(&server, vec![stored_route(), calendar_route()]);
-    let requested = window(vec![load_feature(), quarter_hour_feature()], 1);
+    let requested = window_spanning(
+        vec![load_feature(), quarter_hour_feature()],
+        WINDOW_START_MS,
+        WINDOW_START_MS + CADENCE_MS,
+        1,
+        HistoryAggregation::Last,
+        HistoryDuplicatePolicy::Reject,
+    );
 
     let expected = adapter
         .query(requested.clone())
@@ -72,22 +80,8 @@ async fn provenance_conformance_holds_for_stored_and_calendar_features() {
         .expect("HTTP adapter satisfies provenance conformance");
 }
 
-/// Fails: an exceeded sample bound is reported as `InvalidData`, not `Rejected`.
-///
-/// `assert_history_query_bounded` re-issues the same window with
-/// `max_samples - 1` and requires `PortErrorKind::Rejected`. The adapter
-/// returns `InvalidData` from `src/adapter.rs:189-190`, so the observed
-/// failure is `"history query used the wrong error kind for an exceeded
-/// sample bound"`.
-///
-/// The underlying cause is that `max_samples` is not treated as a bound at
-/// all: the grid cadence is derived as `span / max_samples`
-/// (`src/adapter.rs:114-121`), so a tighter bound becomes a coarser grid and
-/// only the downstream response-size check notices. `Rejected` is otherwise
-/// produced solely by a 4xx from the history service (`src/adapter.rs:55-63`).
-#[ignore = "implementation gap: exceeded sample bound yields InvalidData instead of Rejected"]
 #[tokio::test]
-async fn bounded_conformance_requires_a_sample_bound_rejection() {
+async fn bounded_conformance_rejects_a_bound_below_the_commissioned_grid() {
     let server = MockServer::start().await;
     mount_json(
         &server,

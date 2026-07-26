@@ -197,61 +197,31 @@ async fn a_calendar_grid_outside_the_representable_range_fails_closed() {
 
 #[tokio::test]
 async fn a_json_value_outside_the_f64_range_is_not_projected_as_a_number() {
-    let server = MockServer::start().await;
-    let oversized: serde_json::Value = match serde_json::from_str("1e400") {
-        Ok(value) => value,
-        Err(_) => {
-            // The upstream parser refuses the literal outright, which is
-            // itself a fail-closed outcome; nothing further to assert.
-            return;
-        },
-    };
-    mount_json(
-        &server,
-        200,
-        envelope(batch_data(vec![serde_json::json!({
-            "series_key": "inst:1:M",
-            "point_id": "1",
-            "count": 1,
-            "data": [{"time": "2026-07-11T11:00:00Z", "value": oversized}],
-        })])),
-    )
-    .await;
+    let body = br#"{
+        "success": true,
+        "message": "OK",
+        "data": {
+            "start_time": "2026-07-11T11:00:00Z",
+            "end_time": "2026-07-11T11:30:00Z",
+            "series": [{
+                "series_key": "inst:1:M",
+                "point_id": "1",
+                "count": 1,
+                "data": [{"time": "2026-07-11T11:00:00Z", "value": 1e400}]
+            }]
+        }
+    }"#
+    .to_vec();
+    let endpoint = spawn_chunked_responder(body, 1).await;
+    let adapter = adapter_at(&endpoint, 64 * 1024);
 
-    let adapter = adapter_for(&server, vec![stored_route()]);
-    let outcome = adapter.query(window(vec![load_feature()], 2)).await;
-
-    match outcome {
-        Ok(sourced) => {
-            let load = &sourced.segment().series()[0];
-            assert!(
-                load.values()[0]
-                    .as_number()
-                    .is_none_or(|value| value.is_finite()),
-                "a non-finite observation must never reach a processor as a number"
-            );
-        },
-        Err(error) => assert_eq!(error.kind(), PortErrorKind::InvalidData),
-    }
+    let error = adapter
+        .query(window(vec![load_feature()], 2))
+        .await
+        .expect_err("an observation outside the f64 range must fail closed");
+    assert_eq!(error.kind(), PortErrorKind::InvalidData);
 }
 
-/// Fails: the unit is not part of the commissioned mapping.
-///
-/// `HistoryFeatureRoute` stores only a feature *name*
-/// (`src/config.rs:38-39`, `src/config.rs:48`), and `HttpHistoryQuery::routes`
-/// matches on `route.feature() == feature.name()` (`src/adapter.rs:37-41`).
-/// A window asking for `load` in `MW` therefore binds to the route
-/// commissioned for `load` in `kW`, and `src/adapter.rs:237` builds the series
-/// from the *requested* definition, so kW samples are relabelled as MW and
-/// handed to a processor a thousand times too small.
-///
-/// The sibling adapter does not have this gap: `SqliteHistoryFeatureRoute`
-/// takes a full `FeatureDefinition` and rejects a unit mismatch with
-/// `PortErrorKind::Permanent`
-/// (`extensions/sqlite-history-query/tests/sqlite_history_query.rs:530-534`).
-/// The fix is to commission `HistoryFeatureRoute` with a `FeatureDefinition`
-/// and compare definitions rather than names.
-#[ignore = "implementation gap: routes match on feature name only, so a unit mismatch is silently accepted"]
 #[tokio::test]
 async fn a_unit_outside_the_commissioned_mapping_is_refused() {
     let server = MockServer::start().await;
@@ -287,7 +257,8 @@ async fn an_unmapped_calendar_feature_cannot_borrow_a_stored_route() {
         HistoryFeatureRoute::calendar(
             support::task(),
             support::binding(),
-            "quarter_hour",
+            quarter_hour_feature(),
+            support::CADENCE_MS,
             aether_http_history_query::CalendarFeature::QuarterHourOfDay,
             "calendar.quarter_hour",
         )

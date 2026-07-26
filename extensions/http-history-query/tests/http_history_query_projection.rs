@@ -7,9 +7,9 @@ use aether_domain::{HistoryAggregation, HistoryDuplicatePolicy, SampleQuality, S
 use aether_http_history_query::HistoryFeatureRoute;
 use aether_ports::{HistoryQuery, HistoryWindow, PortErrorKind};
 use support::{
-    WINDOW_END_MS, WINDOW_START_MS, adapter_for, batch_data, batch_series, binding, calendar_route,
-    envelope, load_feature, mount_json, numeric, point, quarter_hour_feature, stored_route, task,
-    window, window_spanning, window_with_policy,
+    CADENCE_MS, WINDOW_END_MS, WINDOW_START_MS, adapter_for, batch_data, batch_series, binding,
+    calendar_route, envelope, load_feature, mount_json, numeric, point, quarter_hour_feature,
+    stored_route, task, window, window_spanning, window_with_policy,
 };
 use wiremock::MockServer;
 
@@ -240,33 +240,73 @@ async fn the_quarter_hour_transform_spans_the_whole_utc_day_inclusively() {
 }
 
 #[tokio::test]
-async fn a_window_whose_span_is_not_divisible_by_its_bound_cannot_form_a_grid() {
+async fn a_window_not_divisible_by_its_commissioned_cadence_cannot_form_a_grid() {
     let server = MockServer::start().await;
 
     assert_query_error(
         &server,
         vec![calendar_route()],
-        window(vec![quarter_hour_feature()], 7),
+        window_spanning(
+            vec![quarter_hour_feature()],
+            WINDOW_START_MS,
+            WINDOW_START_MS + CADENCE_MS + 1,
+            2,
+            HistoryAggregation::Last,
+            HistoryDuplicatePolicy::Reject,
+        ),
         PortErrorKind::InvalidData,
-        "a 1800000 ms span split into 7 samples",
+        "a span one millisecond beyond the commissioned cadence",
     )
     .await;
 }
 
 #[tokio::test]
-async fn the_per_series_sample_bound_is_inclusive_at_five_thousand() {
+async fn a_loose_sample_bound_does_not_change_the_commissioned_grid() {
     let server = MockServer::start().await;
     let adapter = adapter_for(&server, vec![calendar_route()]);
 
+    let sourced = adapter
+        .query(window(vec![quarter_hour_feature()], 7))
+        .await
+        .expect("a bound above the two-sample grid is accepted");
+
+    assert_eq!(sourced.segment().sample_count(), 2);
+    assert_eq!(
+        sourced.segment().series()[0].values()[1].as_number(),
+        Some(45.0)
+    );
+}
+
+#[tokio::test]
+async fn the_per_series_sample_limit_is_inclusive_at_five_thousand() {
+    let server = MockServer::start().await;
+    let one_millisecond_route = HistoryFeatureRoute::calendar(
+        task(),
+        binding(),
+        quarter_hour_feature(),
+        1,
+        aether_http_history_query::CalendarFeature::QuarterHourOfDay,
+        "calendar.quarter_hour",
+    )
+    .expect("one-millisecond calendar route is valid for the boundary fixture");
+    let adapter = adapter_for(&server, vec![one_millisecond_route.clone()]);
+
     let at_limit = adapter
-        .query(window(vec![quarter_hour_feature()], 5_000))
+        .query(window_spanning(
+            vec![quarter_hour_feature()],
+            WINDOW_START_MS,
+            WINDOW_START_MS + 5_000,
+            5_000,
+            HistoryAggregation::Last,
+            HistoryDuplicatePolicy::Reject,
+        ))
         .await
         .expect("5000 samples is the inclusive aether-history per-series limit");
     assert_eq!(at_limit.segment().sample_count(), 5_000);
 
     assert_query_error(
         &server,
-        vec![calendar_route()],
+        vec![one_millisecond_route],
         window_spanning(
             vec![quarter_hour_feature()],
             WINDOW_START_MS,

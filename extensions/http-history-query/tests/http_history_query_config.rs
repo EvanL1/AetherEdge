@@ -5,12 +5,15 @@
 
 mod support;
 
-use aether_domain::TaskIdentity;
+use aether_domain::{FeatureDefinition, FeatureRole, FeatureValueType, TaskIdentity};
 use aether_http_history_query::{
     CalendarFeature, HistoryFeatureRoute, HttpHistoryQuery, HttpHistoryQueryConfig,
 };
 use aether_ports::PortErrorKind;
-use support::{BATCH_PATH, binding, calendar_route, stored_route, task};
+use support::{
+    BATCH_PATH, CADENCE_MS, binding, calendar_route, load_feature, numeric, quarter_hour_feature,
+    stored_route, task,
+};
 
 const MAX_TIMEOUT_MS: u64 = 30_000;
 const MAX_RESPONSE_BYTES: usize = 16 * 1024 * 1024;
@@ -40,16 +43,26 @@ fn assert_invalid(result: Result<HttpHistoryQueryConfig, aether_ports::PortError
     }
 }
 
-fn stored_named(feature: &str, series_key: &str, point_id: &str) -> HistoryFeatureRoute {
+fn stored_defined(
+    definition: FeatureDefinition,
+    cadence_ms: u64,
+    series_key: &str,
+    point_id: &str,
+) -> HistoryFeatureRoute {
     HistoryFeatureRoute::stored(
         task(),
         binding(),
-        feature,
+        definition,
+        cadence_ms,
         series_key,
         point_id,
         "energy.site.load.active_power",
     )
     .expect("distinct stored route is valid")
+}
+
+fn stored_named(feature: &str, series_key: &str, point_id: &str) -> HistoryFeatureRoute {
+    stored_defined(numeric(feature, "kW"), CADENCE_MS, series_key, point_id)
 }
 
 /// `HistoryFeatureRoute::source` is `pub(crate)`, so a route's commissioned
@@ -77,6 +90,16 @@ fn routes_compare_by_every_commissioned_coordinate() {
         stored_named("voltage", "inst:1:M", "1"),
         "the semantic feature name is part of route identity"
     );
+    assert_ne!(
+        stored_route(),
+        stored_defined(numeric("load", "MW"), CADENCE_MS, "inst:1:M", "1"),
+        "the commissioned unit is part of route identity"
+    );
+    assert_ne!(
+        stored_route(),
+        stored_defined(load_feature(), CADENCE_MS * 2, "inst:1:M", "1"),
+        "the commissioned cadence is part of route identity"
+    );
 }
 
 #[test]
@@ -94,54 +117,29 @@ fn the_only_calendar_transform_is_comparable_and_copyable() {
 
 #[test]
 fn empty_control_and_non_semantic_route_fields_are_rejected() {
-    for (feature, series_key, point_id, source_ref, context) in [
-        ("", "inst:1:M", "1", "energy.site.load", "an empty feature"),
+    for (series_key, point_id, source_ref, context) in [
+        ("", "1", "energy.site.load", "an empty series key"),
+        ("inst:1:M", "", "energy.site.load", "an empty point id"),
         (
-            "   ",
-            "inst:1:M",
-            "1",
-            "energy.site.load",
-            "a whitespace feature",
-        ),
-        ("load", "", "1", "energy.site.load", "an empty series key"),
-        (
-            "load",
-            "inst:1:M",
-            "",
-            "energy.site.load",
-            "an empty point id",
-        ),
-        (
-            "lo\u{0}ad",
-            "inst:1:M",
-            "1",
-            "energy.site.load",
-            "a control character in the feature",
-        ),
-        (
-            "load",
             "inst:\u{7}1:M",
             "1",
             "energy.site.load",
             "a control character in the series key",
         ),
-        ("load", "inst:1:M", "1", "", "an empty source ref"),
+        ("inst:1:M", "1", "", "an empty source ref"),
         (
-            "load",
             "inst:1:M",
             "1",
             "inst:1:M",
             "a storage coordinate used as a source ref",
         ),
         (
-            "load",
             "inst:1:M",
             "1",
             ".leading-dot",
             "a source ref that does not start alphanumerically",
         ),
         (
-            "load",
             "inst:1:M",
             "1",
             "energy site load",
@@ -151,7 +149,8 @@ fn empty_control_and_non_semantic_route_fields_are_rejected() {
         let error = HistoryFeatureRoute::stored(
             task(),
             binding(),
-            feature,
+            load_feature(),
+            CADENCE_MS,
             series_key,
             point_id,
             source_ref,
@@ -166,13 +165,62 @@ fn empty_control_and_non_semantic_route_fields_are_rejected() {
 }
 
 #[test]
+fn routes_require_an_exact_numeric_history_definition_and_positive_cadence() {
+    let invalid_definitions = [
+        FeatureDefinition::numeric("load", FeatureRole::FutureCovariate, "kW")
+            .expect("future feature is structurally valid"),
+        FeatureDefinition::new("load", FeatureRole::History, FeatureValueType::Text)
+            .expect("text feature is structurally valid"),
+        FeatureDefinition::new("load", FeatureRole::History, FeatureValueType::Number)
+            .expect("unitless number is structurally valid"),
+    ];
+    for definition in invalid_definitions {
+        let error = HistoryFeatureRoute::stored(
+            task(),
+            binding(),
+            definition,
+            CADENCE_MS,
+            "inst:1:M",
+            "1",
+            "energy.site.load",
+        )
+        .expect_err("a non-history, non-numeric, or unitless definition must fail");
+        assert_eq!(error.kind(), PortErrorKind::InvalidData);
+    }
+
+    let zero_cadence = HistoryFeatureRoute::stored(
+        task(),
+        binding(),
+        load_feature(),
+        0,
+        "inst:1:M",
+        "1",
+        "energy.site.load",
+    )
+    .expect_err("a zero cadence must fail");
+    assert_eq!(zero_cadence.kind(), PortErrorKind::InvalidData);
+
+    let dimensional_calendar = HistoryFeatureRoute::calendar(
+        task(),
+        binding(),
+        load_feature(),
+        CADENCE_MS,
+        CalendarFeature::QuarterHourOfDay,
+        "calendar.quarter_hour",
+    )
+    .expect_err("a calendar feature must use the exact unit '1'");
+    assert_eq!(dimensional_calendar.kind(), PortErrorKind::InvalidData);
+}
+
+#[test]
 fn a_source_ref_at_the_length_limit_is_accepted_and_one_byte_over_is_not() {
     let at_limit = "a".repeat(2_048);
     assert!(
         HistoryFeatureRoute::calendar(
             task(),
             binding(),
-            "quarter_hour",
+            quarter_hour_feature(),
+            CADENCE_MS,
             CalendarFeature::QuarterHourOfDay,
             at_limit,
         )
@@ -184,7 +232,8 @@ fn a_source_ref_at_the_length_limit_is_accepted_and_one_byte_over_is_not() {
     let error = HistoryFeatureRoute::calendar(
         task(),
         binding(),
-        "quarter_hour",
+        quarter_hour_feature(),
+        CADENCE_MS,
         CalendarFeature::QuarterHourOfDay,
         over_limit,
     )
@@ -202,7 +251,15 @@ fn only_loopback_http_endpoints_on_the_batch_path_are_accepted() {
     }
 
     for (candidate, context) in [
-        (endpoint("0.0.0.0"), "an unspecified address"),
+        (endpoint("0.0.0.0"), "an unspecified IPv4 address"),
+        (
+            format!("http://[::]:6004{BATCH_PATH}"),
+            "an unspecified IPv6 address",
+        ),
+        (
+            format!("http://[2001:db8::1]:6004{BATCH_PATH}"),
+            "a non-loopback IPv6 address",
+        ),
         (endpoint("10.0.0.1"), "a routable private address"),
         (endpoint("example.com"), "a public hostname"),
         (
@@ -242,18 +299,6 @@ fn only_loopback_http_endpoints_on_the_batch_path_are_accepted() {
     }
 }
 
-/// Fails: IPv6 loopback cannot be commissioned.
-///
-/// `config.rs:132-137` reads `Url::host_str()` and feeds it straight to
-/// `str::parse::<IpAddr>()`. For an IPv6 authority `host_str()` returns the
-/// bracketed literal `"[::1]"`, which never parses as an `IpAddr`, so
-/// `host_is_loopback` is false and every IPv6 loopback endpoint is rejected.
-///
-/// This fails closed, so it is a reachability limitation rather than a safety
-/// hole, but an IPv6-only loopback host cannot use this adapter at all. The
-/// fix is to match on `Url::host()` and accept `Host::Ipv6(addr)` when
-/// `addr.is_loopback()`.
-#[ignore = "implementation gap: bracketed IPv6 host_str never parses as an IpAddr"]
 #[test]
 fn ipv6_loopback_is_a_valid_history_endpoint() {
     assert!(
@@ -380,7 +425,8 @@ fn one_task_may_not_reuse_a_feature_name_or_a_physical_series() {
         HistoryFeatureRoute::calendar(
             task(),
             binding(),
-            "quarter_hour_alias",
+            numeric("quarter_hour_alias", "1"),
+            CADENCE_MS,
             CalendarFeature::QuarterHourOfDay,
             "calendar.quarter_hour_alias",
         )
@@ -393,12 +439,25 @@ fn one_task_may_not_reuse_a_feature_name_or_a_physical_series() {
 }
 
 #[test]
+fn one_task_cannot_mix_commissioned_cadences() {
+    let mixed = vec![
+        stored_route(),
+        stored_defined(numeric("voltage", "V"), CADENCE_MS * 2, "inst:2:M", "2"),
+    ];
+    assert_invalid(
+        config(&endpoint("127.0.0.1"), mixed, 1_000, 4_096),
+        "two cadences commissioned for one task and binding",
+    );
+}
+
+#[test]
 fn a_different_task_or_binding_may_reuse_the_same_physical_series() {
     let other_task = vec![stored_named("load", "inst:1:M", "1"), {
         HistoryFeatureRoute::stored(
             TaskIdentity::new("iot.anomaly-detection", 1).expect("second task is valid"),
             binding(),
-            "load",
+            load_feature(),
+            CADENCE_MS,
             "inst:1:M",
             "1",
             "energy.site.load.active_power",
@@ -415,7 +474,8 @@ fn a_different_task_or_binding_may_reuse_the_same_physical_series() {
             task(),
             aether_domain::BindingIdentity::new("energy.site-a", 2)
                 .expect("second binding revision is valid"),
-            "load",
+            load_feature(),
+            CADENCE_MS,
             "inst:1:M",
             "1",
             "energy.site.load.active_power",

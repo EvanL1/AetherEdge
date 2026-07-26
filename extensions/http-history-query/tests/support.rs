@@ -23,6 +23,8 @@ pub const BATCH_PATH: &str = "/hisApi/data/batch-query";
 pub const WINDOW_START_MS: u64 = 1_783_767_600_000;
 /// 2026-07-11T11:30:00Z, giving a 30-minute span.
 pub const WINDOW_END_MS: u64 = 1_783_769_400_000;
+/// Fifteen-minute cadence commissioned by the shared fixture routes.
+pub const CADENCE_MS: u64 = 15 * 60 * 1_000;
 
 pub fn binding() -> BindingIdentity {
     BindingIdentity::new("energy.site-a", 1).expect("fixture binding is valid")
@@ -48,7 +50,8 @@ pub fn stored_route() -> HistoryFeatureRoute {
     HistoryFeatureRoute::stored(
         task(),
         binding(),
-        "load",
+        load_feature(),
+        CADENCE_MS,
         "inst:1:M",
         "1",
         "energy.site.load.active_power",
@@ -60,7 +63,8 @@ pub fn calendar_route() -> HistoryFeatureRoute {
     HistoryFeatureRoute::calendar(
         task(),
         binding(),
-        "quarter_hour",
+        quarter_hour_feature(),
+        CADENCE_MS,
         CalendarFeature::QuarterHourOfDay,
         "calendar.quarter_hour",
     )

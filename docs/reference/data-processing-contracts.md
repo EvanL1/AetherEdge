@@ -320,9 +320,11 @@ restart `aether-history`, verify the active SQLite backend and a commissioned
 sentinel series, then restart `aether-api` with the matching path.
 
 `HttpHistoryQuery` is an optional loopback adapter for an upstream service that
-already materializes the exact cadence grid. It accepts only
-`aggregation=last` and `duplicate_policy=reject`; it is not a substitute for
-raw SQLite aggregation.
+already materializes the exact cadence grid. Each route commissions the full
+numeric feature definition and cadence; requested role, type, unit, constraints,
+and grid must match exactly, while `max_samples` remains only a hard bound. It
+accepts only `aggregation=last` and `duplicate_policy=reject`; it is not a
+substitute for raw SQLite aggregation.
 
 ## `ProcessTaskRequest`
 
