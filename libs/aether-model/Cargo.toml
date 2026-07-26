@@ -4,7 +4,7 @@ publish = false
 version.workspace = true
 edition = "2024"
 license.workspace = true
-description = "Model layer library for AetherEMS - calculations, products, and instance management"
+description = "Temporary legacy model compatibility layer for AetherEdge"
 
 [features]
 default = []

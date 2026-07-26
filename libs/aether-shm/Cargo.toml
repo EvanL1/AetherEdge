@@ -3,7 +3,7 @@ name = "aether-shm"
 publish = false
 version.workspace = true
 edition = "2024"
-description = "Shared memory abstraction for AetherEMS - platform-agnostic reader/writer"
+description = "Shared memory abstraction for AetherEdge - platform-agnostic reader/writer"
 license.workspace = true
 
 [features]

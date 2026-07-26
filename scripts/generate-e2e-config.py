@@ -477,7 +477,7 @@ def generate_simulator_scenario(base_path: Path):
 
 def main():
     print("=" * 60)
-    print("  AetherEMS E2E Configuration Generator")
+    print("  AetherEdge E2E Configuration Generator")
     print("  4 Devices × 1000+ Points per Channel")
     print("=" * 60)
     print()

@@ -1,6 +1,6 @@
 //! Aether Model Library
 //!
-//! Core domain model for AetherEMS.
+//! Core domain model for AetherEdge.
 //! This library provides fundamental types and business logic.
 //!
 //! # Modules

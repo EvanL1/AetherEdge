@@ -1,6 +1,6 @@
 //! # aether-config
 //!
-//! Cross-platform configuration schema for AetherEMS services.
+//! Cross-platform configuration schema for AetherEdge services.
 //!
 //! This crate contains the YAML / SQLite-backed configuration structs
 //! consumed by `io`, `automation`, and the `aether` management CLI.

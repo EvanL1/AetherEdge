@@ -187,13 +187,7 @@ gates):
 | `AETHER_BOOTSTRAP_ADMIN_PASSWORD` | unset | Required only while `users` is empty; installers generate a strong value in their mode-0600 environment file, and it should be removed after the first password change |
 | `AETHER_ALLOW_PUBLIC_REGISTRATION` | `false` | Explicit opt-in for anonymous Viewer registration; Admin creation is never available through public registration |
 | `AETHER_DATA_PROCESSING_ENABLED` | `false` | Explicitly enables the opt-in Data Processing application and HTTP routes; startup fails closed if enabled configuration is invalid |
-| `AETHER_DATA_PROCESSING_CONFIG` | `/app/data/config/data-processing/runtime.yaml` | Strict runtime YAML containing commissioned task, binding, history, covariate, processor, and audit composition |
-| `AETHER_LOAD_FORECASTING_BEARER_TOKEN` | unset | Shared deployment secret used by `aether-api` to authenticate to the Load-Forecasting sidecar; required by the production override |
-| `AETHER_LOAD_FORECASTING_REQUIRE_AUTH` | `false` in development | Processor-side startup gate; the production override fixes it to `true` |
-| `AETHER_LOAD_FORECASTING_MAX_CONCURRENCY` | `1` | Bounds occupied model execution slots; cancellation does not release a slot until background work actually finishes |
-| `AETHER_LOAD_FORECASTING_ARTIFACT_BUNDLES` | unset | Strict JSON array pinning every actual commissioned model/scaler/config artifact; required for production readiness |
-| `AETHER_LOAD_FORECASTING_IMAGE` | mutable local development image | Production must use an immutable `@sha256` image reference through the explicit Compose override and preflight validator |
-| `AETHER_LOAD_FORECASTING_PORT` | `8989` | Host-loopback published processor port for the Compose sidecar |
+| `AETHER_DATA_PROCESSING_CONFIG` | `/app/data/config/data-processing/runtime.yaml` | Strict runtime YAML containing commissioned task, binding, history, covariate, processor, and audit composition; downstream compositions provide processor-specific credential variables named by this file |
 | `RUST_LOG` | `info` | Log level for the Rust services; supports filter syntax such as `info,io=debug,automation=trace` |
 
 ### Experimental Home Assistant bridge settings

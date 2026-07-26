@@ -797,27 +797,8 @@ internal_loopback_count=$(grep -Fc -- '- API_HOST=127.0.0.1' "$ROOT_DIR/docker-c
 [[ "$internal_loopback_count" == 4 ]] \
     || fail "the four internal service APIs must bind to loopback"
 assert_contains "$ROOT_DIR/docker-compose.yml" 'API_HOST=${AETHER_API_HOST:-0.0.0.0}'
-processor_compose_section=$(awk '
-    /^  aether-load-forecasting-processor:/ { in_processor = 1 }
-    in_processor && /^  [a-zA-Z0-9_-]+:/ && !/^  aether-load-forecasting-processor:/ { exit }
-    in_processor { print }
-' "$ROOT_DIR/docker-compose.yml")
-grep -Fq -- 'profiles: ["data-processing-dev"]' <<< "$processor_compose_section" \
-    || fail "the mutable data processor image must remain development-only"
-grep -Fq -- '127.0.0.1:${AETHER_LOAD_FORECASTING_PORT:-8989}:8989' \
-    <<< "$processor_compose_section" \
-    || fail "the bridged data processor must publish only on host loopback"
-grep -Fq -- 'API_HOST=0.0.0.0' <<< "$processor_compose_section" \
-    || fail "the bridged data processor must listen on its container interface"
-grep -Fq -- 'data-processing-local' <<< "$processor_compose_section" \
-    || fail "the optional data processor must use its dedicated internal network"
-if grep -Fq -- 'network_mode: host' <<< "$processor_compose_section"; then
-    fail "the optional data processor must not share the host network namespace"
-fi
-assert_contains "$ROOT_DIR/docker-compose.yml" '  data-processing-local:'
-assert_contains "$ROOT_DIR/docker-compose.yml" '    internal: true'
-assert_contains "$ROOT_DIR/integrations/load-forecasting/deploy/aether-load-forecasting-processor.service" \
-    '--host 127.0.0.1 --port 8989'
+assert_not_contains "$ROOT_DIR/docker-compose.yml" 'aether-load-forecasting-processor'
+assert_not_contains "$ROOT_DIR/docker-compose.yml" 'AETHER_LOAD_FORECASTING_'
 assert_contains "$ROOT_DIR/scripts/systemd/aether-io.service" 'ExecStart=/opt/aether/bin/aether-io --bind-address 127.0.0.1:6001'
 for unit in aether-automation aether-history aether-uplink aether-alarm; do
     assert_contains "$ROOT_DIR/scripts/systemd/${unit}.service" 'Environment=API_HOST=127.0.0.1'
@@ -1001,6 +982,10 @@ transaction_commit_line=$(grep -nF 'INSTALL_TRANSACTION_COMMITTED=true' "$DOCKER
 assert_contains "$BARE_METAL_INSTALLER" 'ensure_bare_metal_bootstrap_admin'
 assert_contains "$BARE_METAL_INSTALLER" 'AETHER_ALLOW_PUBLIC_REGISTRATION'
 assert_contains "$BARE_METAL_INSTALLER" 'Change the bootstrap administrator password immediately'
+for installer in "$DOCKER_INSTALLER" "$BARE_METAL_INSTALLER"; do
+    assert_contains "$installer" 'prove the safe-empty runtime before commissioning hardware'
+    assert_contains "$installer" 'https://docs.aetheriot.dev/overview/user-journeys/'
+done
 
 echo "Testing user-facing Docker paths match the installed layout..."
 assert_not_contains "$ROOT_DIR/.env.example" 'AETHER_CONFIG_PATH=/opt/AetherEdge/config'

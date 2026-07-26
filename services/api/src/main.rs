@@ -825,7 +825,7 @@ mod openapi_tests {
             !specification["info"]["title"]
                 .as_str()
                 .expect("title string")
-                .contains("AetherEMS")
+                .contains(&["Aether", "EMS"].concat())
         );
 
         for (path, method) in [

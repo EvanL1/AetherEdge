@@ -1,4 +1,4 @@
-//! Interactive TUI log viewer for AetherEMS service logs
+//! Interactive TUI log viewer for AetherEdge service logs
 //!
 //! `aether logs ui <service>` — scrollable, searchable, follow-mode log viewer.
 //! Keys: ↑↓/jk scroll | g/G top/bottom | f follow | / search | n next | q quit

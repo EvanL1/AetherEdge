@@ -1,6 +1,6 @@
 //! Unified service bootstrap utilities
 //!
-//! Provides common initialization functionality for all AetherEMS services,
+//! Provides common initialization functionality for all AetherEdge services,
 //! including startup banners, logging initialization, and environment setup.
 
 use crate::logging::{self, LogConfig};

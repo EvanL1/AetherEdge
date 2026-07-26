@@ -53,8 +53,8 @@ packs/
   building             building-automation assets
   factory              manufacturing assets
 
-integrations/
-  load-forecasting     opt-in request-driven legacy forecasting adapter
+# Domain-specific processors, including Load-Forecasting, live in downstream
+# solution repositories such as EvanL1/AetherEMS.
 
 ai/                    agent navigation, invariants, safety, runbooks, evals
 contracts/             machine-readable config/command/event/tool schemas

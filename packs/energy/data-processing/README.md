@@ -216,7 +216,7 @@ production. The pinned upstream future-covariate off-by-one must be fixed with
 a golden step-to-row test, verbose sensitive output removed, actual artifact
 files resolved and pinned, upstream licensing cleared, and a real artifact
 benchmarked below the frame-and-processor work deadline at target-hardware p95. See the
-[`integrations/load-forecasting` readiness gates](../../../integrations/load-forecasting/README.md#production-cutover-blockers).
+[downstream Load-Forecasting readiness gates](https://github.com/EvanL1/AetherEMS/tree/main/processors/load-forecasting#production-cutover-blockers).
 
 Processor loss or network failure must leave acquisition, SHM, history,
 alarms, deterministic rules, and device control available.

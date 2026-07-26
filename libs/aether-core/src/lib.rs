@@ -1,6 +1,6 @@
 //! # aether-core
 //!
-//! Core types and codecs for AetherEMS firmware and gateway.
+//! Core types and codecs for AetherEdge firmware and gateway.
 //!
 //! This crate is `no_std` compatible by default, enabling it to run on:
 //! - Bare-metal MCU firmware (Cortex-M, RISC-V)

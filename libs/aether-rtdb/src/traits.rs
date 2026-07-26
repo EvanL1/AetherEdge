@@ -12,7 +12,7 @@ pub type HashMsetOps = Vec<(String, Vec<(Arc<str>, Bytes)>)>;
 
 /// Unified RTDB Storage Trait
 ///
-/// Provides complete storage interface for AetherEMS, combining:
+/// Provides complete storage interface for AetherEdge, combining:
 /// - Basic key-value operations
 /// - Structured data (Hash, List, Set)
 /// - Pipeline operations for batch writes

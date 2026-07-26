@@ -4,7 +4,7 @@ publish = false
 version.workspace = true
 edition = "2024"
 license.workspace = true
-description = "Rule engine library for AetherEMS - Vue Flow based rule parsing, execution and scheduling"
+description = "Rule engine library for AetherEdge - Vue Flow based rule parsing, execution and scheduling"
 
 [dependencies]
 aether-domain = { path = "../../crates/aether-domain" }

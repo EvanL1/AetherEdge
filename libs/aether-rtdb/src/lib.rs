@@ -1,4 +1,4 @@
-//! AetherEMS Realtime Database Abstraction
+//! AetherEdge Realtime Database Abstraction
 //!
 //! Provides a unified interface for realtime data storage,
 //! supporting multiple backends (Redis, in-memory, etc.)

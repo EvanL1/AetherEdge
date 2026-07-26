@@ -1,4 +1,4 @@
-//! `AetherEMS` basic library (basic library)
+//! `AetherEdge` basic library (basic library)
 //!
 //! Provides basic functions shared by all services, including:
 //! - Redis client

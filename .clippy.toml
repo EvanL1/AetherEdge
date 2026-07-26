@@ -1,4 +1,4 @@
-# Clippy configuration for AetherEMS
+# Clippy configuration for AetherEdge
 # Enforces code quality standards across the workspace
 #
 # Note: unwrap()/expect() restrictions are enforced by strict runtime clippy

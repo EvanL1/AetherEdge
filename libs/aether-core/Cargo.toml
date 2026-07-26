@@ -3,7 +3,7 @@ name = "aether-core"
 publish = false
 version.workspace = true
 edition = "2024"
-description = "Core types and codecs for AetherEMS - no_std compatible for embedded firmware"
+description = "Core types and codecs for AetherEdge - no_std compatible for embedded firmware"
 license.workspace = true
 
 [features]

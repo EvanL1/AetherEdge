@@ -59,61 +59,6 @@ services:
       timeout: 5s
       retries: 5
 
-  # Optional request-driven load forecasting processor. The image is produced
-  # from the existing Load-Forecasting service after installing the adapter in
-  # integrations/load-forecasting. It receives complete processing frames and
-  # deliberately has no Aether data/config/SHM mounts.
-  aether-load-forecasting-processor:
-    # Mutable local image is development-only. Production uses the explicit
-    # deploy/docker-compose.data-processing.yaml override with a required digest.
-    profiles: ["data-processing-dev"]
-    image: ${AETHER_LOAD_FORECASTING_IMAGE:-aether-load-forecasting-processor:local}
-    container_name: aether-load-forecasting-processor
-    ports:
-      - "127.0.0.1:${AETHER_LOAD_FORECASTING_PORT:-8989}:8989"
-    networks:
-      - data-processing-local
-    init: true
-    read_only: true
-    cap_drop:
-      - ALL
-    security_opt:
-      - no-new-privileges:true
-    tmpfs:
-      - /tmp:size=64m,mode=1777
-    labels:
-      - "aetherems.role=data-processor"
-      - "aetherems.description=Optional request-driven load forecasting processor"
-    environment:
-      # Bind inside the isolated container; the host publication remains loopback-only.
-      - API_HOST=0.0.0.0
-      - API_PORT=8989
-      - AETHER_LOAD_FORECASTING_REQUIRE_AUTH=${AETHER_LOAD_FORECASTING_REQUIRE_AUTH:-false}
-      - AETHER_LOAD_FORECASTING_BEARER_TOKEN=${AETHER_LOAD_FORECASTING_BEARER_TOKEN:-}
-      - AETHER_LOAD_FORECASTING_MAX_CONCURRENCY=${AETHER_LOAD_FORECASTING_MAX_CONCURRENCY:-1}
-      - AETHER_LOAD_FORECASTING_ARTIFACT_BUNDLES=${AETHER_LOAD_FORECASTING_ARTIFACT_BUNDLES:-}
-      - NO_PROXY=*
-      - no_proxy=*
-    restart: unless-stopped
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
-    healthcheck:
-      test:
-        - CMD
-        - python
-        - -c
-        - >-
-          import json, urllib.request;
-          body = json.load(urllib.request.urlopen("http://127.0.0.1:8989/v1/health", timeout=2));
-          raise SystemExit(0 if body.get("status") == "ok" else 1)
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 20s
-
   # Communication service with full hardware access (Linux production)
   aether-io:
     image: aetherems:latest
@@ -278,7 +223,6 @@ services:
       - NETWORK_CONFIG_DIR=/etc/systemd/network
       - AETHER_DATA_PROCESSING_ENABLED=${AETHER_DATA_PROCESSING_ENABLED:-false}
       - AETHER_DATA_PROCESSING_CONFIG=/app/data/config/data-processing/runtime.yaml
-      - AETHER_LOAD_FORECASTING_BEARER_TOKEN=${AETHER_LOAD_FORECASTING_BEARER_TOKEN:-}
       - NO_PROXY=*
       - no_proxy=*
     volumes:
@@ -350,12 +294,6 @@ services:
         max-size: "10m"
         max-file: "3"
     restart: unless-stopped
-
-networks:
-  # The local processor receives requests through a host-loopback published
-  # port but has no default route for outbound frame exfiltration.
-  data-processing-local:
-    internal: true
 
 volumes:
   redis-data:

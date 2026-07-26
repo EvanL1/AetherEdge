@@ -1,5 +1,5 @@
 [Unit]
-Description=AetherEMS - Redis
+Description=AetherEdge - Redis
 PartOf=aether.target
 
 [Service]

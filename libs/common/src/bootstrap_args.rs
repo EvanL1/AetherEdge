@@ -1,4 +1,4 @@
-//! Common command-line arguments for all AetherEMS services
+//! Common command-line arguments for all AetherEdge services
 //!
 //! Provides a unified argument structure that can be extended by individual services
 
@@ -7,7 +7,7 @@ use clap::Parser;
 
 /// Common service startup arguments
 ///
-/// These arguments are shared by all AetherEMS services and provide
+/// These arguments are shared by all AetherEdge services and provide
 /// standard configuration options for logging, debugging, and validation.
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "cli", derive(Parser))]

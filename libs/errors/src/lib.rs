@@ -1,4 +1,4 @@
-//! Unified error handling for AetherEMS services
+//! Unified error handling for AetherEdge services
 //!
 //! This module provides a comprehensive error system that all services can use,
 //! eliminating the need for service-specific error types.
@@ -74,7 +74,7 @@ impl ErrorInfo {
 // AetherError - Main error type
 // ============================================================================
 
-/// Main error type for all AetherEMS services
+/// Main error type for all AetherEdge services
 #[derive(Debug, Error)]
 pub enum AetherError {
     // ======================================
@@ -508,7 +508,7 @@ impl AetherErrorTrait for AetherError {
 }
 
 // ============================================================================
-// AetherEMS Error Trait - Architectural layer
+// AetherEdge Error Trait - Architectural layer
 // ============================================================================
 
 /// Error category enum - used for classification and metrics
@@ -546,9 +546,9 @@ pub enum ErrorCategory {
     Unknown,
 }
 
-/// AetherEMS error capability trait
+/// AetherEdge error capability trait
 ///
-/// Defines a unified interface that all AetherEMS service error types should implement.
+/// Defines a unified interface that all AetherEdge service error types should implement.
 /// Each service can keep its own domain-specific error type (e.g., IoError) and gain a common
 /// interface by implementing this trait.
 ///

@@ -186,11 +186,6 @@ components:
     responsibility: Opt-in production composition of SQLite history, snapshot covariates, read-only live state, audit, and HTTP processor routes
     verify:
       - cargo test -p aether-api --bin aether-api data_processing_runtime
-  load_forecasting_processor:
-    path: integrations/load-forecasting
-    responsibility: Opt-in request-driven adapter around the legacy Load-Forecasting model runtime with no reverse Aether data reads
-    verify:
-      - cd integrations/load-forecasting && uv run pytest
   energy_data_processing:
     path: packs/energy/data-processing
     responsibility: Disabled load/PV task declarations, uncommissioned binding, and cross-language v1 fixtures

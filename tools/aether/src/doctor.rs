@@ -1,4 +1,4 @@
-//! Health check and diagnostics for AetherEMS system
+//! Health check and diagnostics for AetherEdge system
 
 use anyhow::Result;
 use colored::*;
@@ -572,7 +572,7 @@ fn print_results(results: &[CheckResult], verbose: bool) {
     );
     println!(
         "{}",
-        "│          AetherEMS System Health Check                 │".bright_blue()
+        "│          AetherEdge System Health Check                 │".bright_blue()
     );
     println!(
         "{}",

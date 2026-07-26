@@ -3,7 +3,7 @@ name = "aether-sim"
 publish = false
 version.workspace = true
 edition = "2024"
-description = "Waveform generation library for AetherEMS simulation"
+description = "Waveform generation library for AetherEdge simulation"
 
 [dependencies]
 chrono = { version = "0.4", features = ["serde"] }

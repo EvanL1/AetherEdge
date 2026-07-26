@@ -1,16 +1,48 @@
 ---
 title: Getting Started
-description: Build the workspace, initialize configuration, start services, and verify health
-updated: 2026-07-22
+description: Install a safe-empty runtime, establish operator access, verify health, and choose the next commissioning step
+updated: 2026-07-26
 ---
 
 # Getting Started
 
-This guide takes you from a fresh clone to a running, uncommissioned Aether
-system: build the `aether` CLI, apply a reviewed safe-empty setup plan, start
-the services, and confirm that the runtime is healthy.
+This guide takes an operator or source developer to the same first milestone: a
+healthy, uncommissioned AetherEdge runtime with no device, rule, or domain
+solution silently enabled.
 
-## Prerequisites
+If you want a ready-made energy-management product rather than an
+industry-neutral runtime, start with
+[AetherEMS](https://github.com/EvanL1/AetherEMS). The AetherEdge golden path is:
+
+```text
+safe-empty install -> operator identity -> disabled device channel
+  -> point mapping -> read-only verification -> reviewed behavior
+  -> explicit commissioning -> audit and operation
+```
+
+See [AetherEdge User Journeys](../overview/user-journeys.md) for the operator,
+solution-builder, application, and AI variants.
+
+## Install from a release
+
+This is the normal path for a Linux edge operator. Download the matching `.run`
+package and checksum from
+[GitHub Releases](https://github.com/EvanL1/AetherEdge/releases), then verify and
+run the fresh-install package:
+
+```bash
+sha256sum -c AetherEdge-<arch>-<version>.run.sha256
+chmod +x AetherEdge-<arch>-<version>.run
+sudo ./AetherEdge-<arch>-<version>.run
+```
+
+The installer creates the six-service runtime, `aether` CLI, private bootstrap
+credentials, embedded database, and safe-empty configuration. It does not
+commission a site. After installation, continue at
+[Start and verify](#start-and-verify); do not repeat the source-checkout setup
+below.
+
+## Source checkout prerequisites
 
 - **Rust** — the toolchain is pinned to `1.90.0` by `rust-toolchain.toml`;
   rustup installs it automatically on first build. The pin also declares the
@@ -19,7 +51,10 @@ the services, and confirm that the runtime is healthy.
   composition. `aether services start` drives Docker Compose under the hood.
   Redis and PostgreSQL are not prerequisites.
 
-## Build and configure
+## Prepare a source checkout
+
+Use this path for AetherEdge development, SDK evaluation, or a manual Compose
+installation—not as the normal operator installation flow.
 
 Build the `aether` CLI:
 
@@ -179,7 +214,7 @@ reports 401. Day-to-day operation should use a dedicated account instead of
 the bootstrap admin — see the auth endpoints in the
 [HTTP API reference](../reference/http-api.md).
 
-## First look around
+## Confirm the safe-empty state
 
 The default template deliberately contains no device channel or instance, so
 these commands should initially return empty collections:
@@ -201,6 +236,11 @@ commissioning step adds and enables a channel; continue with Connect Devices.
 
 ## Next steps
 
+Your first production milestone should be a read-only acquisition path. Connect
+one disabled channel, map it, verify quality and freshness, and only then review
+rules or control.
+
+- [AetherEdge User Journeys](../overview/user-journeys.md) — the complete safe lifecycle and role-specific paths
 - [Connect Devices](connect-devices.md) — add a real channel and map its
   points to instances
 - [Writing Rules](writing-rules.md) — automate control with the rule engine

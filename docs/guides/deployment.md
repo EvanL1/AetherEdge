@@ -24,20 +24,18 @@ docker compose ps
 
 The default Compose application starts only the six Rust services, all with
 `network_mode: host`. Redis and TimescaleDB start only when their explicit
-`redis` and `postgres-storage` profiles are selected. The base file exposes the forecast sidecar only through the mutable
-`data-processing-dev` profile; production requires the explicit override shown
-below.
+`redis` and `postgres-storage` profiles are selected. The base file does not
+define or start a domain-specific data processor.
 
 AetherEdge is a headless Kernel distribution. It does not build or install a
-browser client. The EMS operator console belongs to the independent
-[AetherEMS](https://github.com/EvanL1/AetherEMS) distribution and connects
-through the authenticated application API.
+browser client. The EMS operator console, Energy Pack, and Load-Forecasting
+processor belong to the independent
+[AetherEMS](https://github.com/EvanL1/AetherEMS) distribution.
 
 | Container | Image | Role |
 |-----------|-------|------|
 | aether-redis | redis:8-alpine | Optional non-authoritative state mirror infrastructure (`redis` profile) |
 | aether-timescaledb | timescale/timescaledb:2.25.2-pg17 | Optional PostgreSQL history backend (`postgres-storage` profile) |
-| aether-load-forecasting-processor | operator-supplied, digest-pinned image | Optional request-driven processor (`data-processing` profile) |
 | aether-io | aetherems:latest | Communication service (privileged, mounts `/dev` for field buses) |
 | aether-automation | aetherems:latest | Model service and rule engine |
 | aether-history | aetherems:latest | SHM sampler with embedded SQLite history by default |
@@ -45,35 +43,11 @@ through the authenticated application API.
 | aether-uplink | aetherems:latest | MQTT cloud uplink, TLS certificates |
 | aether-alarm | aetherems:latest | Alarm rules and notifications |
 
-The production forecast profile requires an immutable image built from the
-existing Load-Forecasting service plus Aether's adapter, a commissioned
-artifact bundle, a matching bearer token, and a validated runtime YAML under
-`${AETHER_BASE_PATH}/config/data-processing/runtime.yaml`:
-
-Copy the repository's synthetic
-[`runtime.example.yaml`](../../packs/energy/data-processing/runtime.example.yaml)
-and
-[`covariates.example.json`](../../packs/energy/data-processing/covariates.example.json)
-into that deployment-owned directory, replace every logical/physical mapping,
-artifact digest, and covariate row, and validate them against the site database.
-The examples are not production values.
-
-```bash
-export AETHER_LOAD_FORECASTING_IMAGE=registry.example/load-forecasting@sha256:<digest>
-export AETHER_LOAD_FORECASTING_BEARER_TOKEN='<unique secret>'
-export AETHER_LOAD_FORECASTING_ARTIFACT_BUNDLES='<commissioned JSON array>'
-integrations/load-forecasting/deploy/validate-production-env.sh
-docker compose \
-  -f docker-compose.yml \
-  -f integrations/load-forecasting/deploy/docker-compose.data-processing.yaml \
-  --profile data-processing \
-  up -d aether-load-forecasting-processor aether-api
-```
-
-The preflight is mandatory for this documented production path. It rejects a
-non-`@sha256` image reference, weak or malformed token, out-of-range
-concurrency, and non-strict artifact-bundle JSON before Compose evaluates the
-override.
+The generic Data Processing application remains disabled by default. A
+downstream composition supplies its processor image or process, commissioned
+runtime YAML, credentials, resource limits, and network policy. See the
+[AetherEMS Load-Forecasting processor](https://github.com/EvanL1/AetherEMS/tree/main/processors/load-forecasting)
+for the energy-domain composition.
 
 Historian authority requires a separate operational check. A storage
 `PUT /hisApi/storage` saves settings but does not reconnect the active writer.
@@ -102,19 +76,11 @@ preserves required evidence. Production enablement is blocked without those
 controls; the per-route processor semaphore alone does not bound rejected-call
 audit writes.
 
-It binds to loopback and receives no Aether data-directory, configuration,
-device, history-database, or SHM mount. The application sends a complete,
-bounded `ProcessingFrame` over the processor port. See
-[`../../integrations/load-forecasting/deploy/README.md`](../../integrations/load-forecasting/deploy/README.md)
-for the standalone systemd unit and commissioning requirements.
-
-The Compose sidecar joins only the dedicated `data-processing-local` network,
-which is declared `internal: true`; together with host-loopback publication,
-this mechanically blocks container external egress and limits inbound access.
-Native/systemd deployment still requires a host firewall or equivalent egress
-policy. The examples also leave CPU, memory, and PID quotas
-deployment-specific; set measured cgroup/systemd limits from a real artifact
-benchmark so processor load cannot starve deterministic services.
+A downstream processor should bind to loopback and receive no Aether data,
+configuration, device, history-database, or SHM mount. The application sends a
+complete, bounded `ProcessingFrame` over the processor port. The downstream
+composition must also enforce egress policy and measured CPU, memory, and PID
+limits so processor load cannot starve deterministic services.
 
 The six Rust services share one `aetherems:latest` compatibility image, each
 started with its own command. The image name is retained while downstream

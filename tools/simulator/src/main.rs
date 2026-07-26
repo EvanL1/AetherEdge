@@ -1,4 +1,4 @@
-//! Modbus TCP Slave Simulator for AetherEMS CI Testing.
+//! Modbus TCP Slave Simulator for AetherEdge CI Testing.
 //!
 //! This tool simulates industrial devices (PCS, BMS, PV) as Modbus TCP slaves,
 //! generating realistic waveform data for testing io.
@@ -39,7 +39,7 @@ use state_machine::{DeviceState, StateMachine, StateMachineStore, Transition, Tr
 /// Modbus TCP/RTU Slave Simulator
 #[derive(Parser, Debug)]
 #[command(name = "simulator")]
-#[command(about = "Modbus TCP/RTU slave simulator for AetherEMS CI testing")]
+#[command(about = "Modbus TCP/RTU slave simulator for AetherEdge CI testing")]
 struct Args {
     /// Scenario configuration file path
     #[arg(short, long)]
@@ -91,7 +91,7 @@ async fn main() -> Result<()> {
         .with_thread_ids(false)
         .init();
 
-    info!("AetherEMS Modbus Simulator v{}", env!("CARGO_PKG_VERSION"));
+    info!("AetherEdge Modbus Simulator v{}", env!("CARGO_PKG_VERSION"));
     info!("Loading scenario: {:?}", args.scenario);
 
     // Load scenario configuration

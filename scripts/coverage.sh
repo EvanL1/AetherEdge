@@ -1,5 +1,5 @@
 #!/bin/bash
-# AetherEMS 覆盖率分析脚本
+# AetherEdge 覆盖率分析脚本
 # 使用 cargo-llvm-cov 生成覆盖率报告
 
 set -e
@@ -89,7 +89,7 @@ fi
 # Create coverage directory
 mkdir -p "$COVERAGE_DIR"
 
-echo -e "${GREEN}=== AetherEMS Coverage Analysis ===${NC}"
+echo -e "${GREEN}=== AetherEdge Coverage Analysis ===${NC}"
 
 # Build test arguments
 TEST_ARGS="--workspace"

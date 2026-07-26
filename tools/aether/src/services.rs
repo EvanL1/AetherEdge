@@ -1,6 +1,6 @@
 //! Service management module for Docker operations
 //!
-//! Provides functionality to manage AetherEMS services
+//! Provides functionality to manage AetherEdge services
 
 use anyhow::Result;
 use clap::Subcommand;
@@ -11,35 +11,35 @@ use std::process::Command;
 #[derive(Subcommand)]
 pub enum ServiceCommands {
     /// Start services
-    #[command(about = "Start one or more AetherEMS services")]
+    #[command(about = "Start one or more AetherEdge services")]
     Start {
         /// Service names (optional, starts all if not specified)
         services: Vec<String>,
     },
 
     /// Stop services
-    #[command(about = "Stop one or more AetherEMS services")]
+    #[command(about = "Stop one or more AetherEdge services")]
     Stop {
         /// Service names (optional, stops all if not specified)
         services: Vec<String>,
     },
 
     /// Restart services
-    #[command(about = "Restart one or more AetherEMS services")]
+    #[command(about = "Restart one or more AetherEdge services")]
     Restart {
         /// Service names (optional, restarts all if not specified)
         services: Vec<String>,
     },
 
     /// Show service status
-    #[command(about = "Display status of AetherEMS services")]
+    #[command(about = "Display status of AetherEdge services")]
     Status {
         /// Service names (optional, shows all if not specified)
         services: Vec<String>,
     },
 
     /// View service logs
-    #[command(about = "View logs for AetherEMS services")]
+    #[command(about = "View logs for AetherEdge services")]
     Logs {
         /// Service name
         service: String,

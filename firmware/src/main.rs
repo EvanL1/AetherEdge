@@ -1,4 +1,4 @@
-//! AetherEMS Firmware Prototype
+//! AetherEdge Firmware Prototype
 //!
 //! This is a minimal firmware example demonstrating how to use
 //! aether-core and aether-shm on embedded platforms.

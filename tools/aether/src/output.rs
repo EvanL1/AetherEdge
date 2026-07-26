@@ -89,7 +89,7 @@ pub fn print_value(data: &serde_json::Value, json: bool) {
 
 /// Turn a non-2xx response into an `anyhow::Error` that carries the server's own message.
 ///
-/// AetherEMS services return two different JSON error shapes:
+/// AetherEdge services return two different JSON error shapes:
 ///   typed  — io (`AppError`), automation (`AutomationError`):
 ///            `{"success":false,"error":{"code":..,"message":..,"suggestion":..}}`
 ///   inline — alarm, uplink:

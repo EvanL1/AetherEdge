@@ -39,7 +39,7 @@ The implementation map is:
 | Machine-readable contracts | [`contracts/data-processing`](../contracts/data-processing/README.md) |
 | AI-facing eval scenarios | [`evals/data-processing.yaml`](evals/data-processing.yaml) |
 | Optional HTTP adapter | [`extensions/http-data-processor`](../extensions/http-data-processor/README.md) |
-| Load-Forecasting compatibility processor | [`integrations/load-forecasting`](../integrations/load-forecasting/README.md) |
+| Downstream Load-Forecasting processor | [`EvanL1/AetherEMS`](https://github.com/EvanL1/AetherEMS/tree/main/processors/load-forecasting) |
 | AetherEMS tasks and fixtures | [`packs/energy/data-processing`](../packs/energy/data-processing/README.md) |
 
 Tool-specific configuration should be a thin adapter over these files. It must

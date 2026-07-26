@@ -1,4 +1,4 @@
-//! Unified logging module for AetherEMS services
+//! Unified logging module for AetherEdge services
 //!
 //! Provides multi-level logging support with automatic sub-logger creation
 
