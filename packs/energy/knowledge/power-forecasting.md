@@ -585,7 +585,7 @@ pass. The presence of its task YAML is not production readiness.
 - [Connect Data Processors](../guides/data-processors.md) — task declarations and processor adapters
 - [Data Processing Contracts](../reference/data-processing-contracts.md) — complete request/result and failure semantics
 - [Energy Data Processing Assets](../../packs/energy/data-processing/README.md) — disabled load/PV tasks, binding, and conformance fixtures
-- [Load-Forecasting Processor](../../integrations/load-forecasting/README.md) — implemented request-driven compatibility endpoint
+- [Load-Forecasting Processor](https://github.com/EvanL1/AetherEMS/tree/main/processors/load-forecasting) — downstream request-driven compatibility endpoint
 - [HTTP Data Processor](../../extensions/http-data-processor/README.md) — bounded Rust transport adapter
 - [Data Flow](../concepts/data-flow.md) — current SHM, history, and command paths
 - [Control Strategies](control-strategies.md) — deterministic energy control behavior

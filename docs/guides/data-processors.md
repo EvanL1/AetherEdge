@@ -256,7 +256,7 @@ validated endpoint and derives the fixed `/v1/process` and `/v1/health` routes:
 ```yaml
 processor:
   endpoint: http://127.0.0.1:8989/
-  id: load-forecasting-edge
+  id: example-forecast-processor
   version: 0.1.0
   contract: aether.data-processing.forecast.v1
   requires_artifact: true
@@ -266,7 +266,7 @@ processor:
   connect_timeout_ms: 500
   request_timeout_ms: 4500
   max_response_bytes: 4194304
-  bearer_token_env: AETHER_LOAD_FORECASTING_BEARER_TOKEN
+  bearer_token_env: AETHER_PROCESSOR_BEARER_TOKEN
 ```
 
 The generic domain/processor contract supports static features, and custom
@@ -370,9 +370,9 @@ sidecar.
 ## Request a processor directly during development
 
 The optional HTTP adapter maps `DataProcessor::process` to the versioned
-processor-facing `POST /v1/process` endpoint. The repository's
-Load-Forecasting integration implements that endpoint; it is a processor
-boundary, not an application-facing endpoint on the default Aether services.
+processor-facing `POST /v1/process` endpoint. The downstream AetherEMS
+Load-Forecasting processor implements that endpoint; it is a processor boundary,
+not an application-facing endpoint on the default Aether services.
 
 ```bash
 curl --fail-with-body \
@@ -433,7 +433,7 @@ must commission a quality-bearing source adapter before production.
 - [Data Processing Contracts](../reference/data-processing-contracts.md) — v1 wire contracts and validation rules
 - [HTTP Data Processor](../../extensions/http-data-processor/README.md) — bounded local/remote adapter and composition API
 - [AetherEMS Power Forecasting](https://github.com/EvanL1/AetherEMS/blob/main/packs/energy/knowledge/power-forecasting.md) — the first downstream task and processor
-- [Load-Forecasting Processor](../../integrations/load-forecasting/README.md) — tested `/v1/process` adapter for the existing Edge-Platform
+- [Load-Forecasting Processor](https://github.com/EvanL1/AetherEMS/tree/main/processors/load-forecasting) — downstream energy-domain `/v1/process` implementation
 - [JSON Schemas](../../contracts/data-processing/README.md) — strict v1 transport validation
 - [Data Flow](../concepts/data-flow.md) — authoritative live and historical paths
 - [System Architecture](../concepts/architecture.md) — core layers and service boundaries

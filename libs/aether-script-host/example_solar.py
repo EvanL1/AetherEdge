@@ -20,7 +20,7 @@ Output: list of standardized data point dicts.
 
 
 def transform(payload: dict) -> list[dict]:
-    """Transform solar inverter JSON into AetherEMS data points."""
+    """Transform solar inverter JSON into AetherEdge data points."""
     points = []
 
     # Per-inverter metrics

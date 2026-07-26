@@ -6,67 +6,58 @@
 [![版本](https://img.shields.io/badge/version-0.0.1-yellow.svg)](https://github.com/EvanL1/AetherEdge/releases)
 [![状态](https://img.shields.io/badge/status-beta-orange.svg)](https://github.com/EvanL1/AetherEdge/releases)
 
-**文档网站：** [docs.aetheriot.dev](https://docs.aetheriot.dev/)
+**文档：** [docs.aetheriot.dev](https://docs.aetheriot.dev/) ·
+[快速开始](docs/guides/getting-started.md) ·
+[用户旅程](docs/overview/user-journeys.md) ·
+[连接设备](docs/guides/connect-devices.md) ·
+[连接 AI](docs/guides/ai-assistants.md) · [English](README.md)
 
-[AI 原生平台](https://docs.aetheriot.dev/overview/ai-native-platform/) · [快速开始](docs/guides/getting-started.md) · [在线文档](https://docs.aetheriot.dev/) · [Agent Skill](skills/aether-iot/SKILL.md) · [MCP](docs/guides/ai-assistants.md) · [English](README.md)
+**连接物理设备、证明数据链路、投运确定性行为——而不让云、浏览器或
+AI 模型成为控制回路的一部分。**
 
-**让 AI 智能体安全、本地、确定性地运行你的物理空间。**
+AetherEdge 是面向 Linux 网关的开源、行业中立 IoT Edge Kernel、六服务
+Runtime、CLI 与 Rust SDK。SHM 是实时点状态权威；嵌入式 SQLite 保存期望状态、
+历史、审计和持久 outbox。默认发行版不需要 Redis、PostgreSQL、云服务、浏览器
+或 LLM。
 
-AetherEdge 是开源、行业中立的 Linux 网关 IoT Edge Kernel、Runtime 与 Rust SDK。它连接
-现场设备，以共享内存保存权威实时状态，在本地确定性地执行规则与告警，并保存嵌入式历史——
-不需要 Redis、不需要 PostgreSQL、不需要云服务、不需要浏览器、不需要 LLM。
+AI 是与其他客户端一样、位于类型化受治理 application boundary 后面的可替换
+客户端。设备控制默认拒绝，必须明确确认并完整审计。即使断开所有外部客户端，
+已经投运的采集、安全、规则和告警仍在 Edge 本地确定性运行。
 
-它的不同之处在于：AI 是位于类型化受治理边界之后的一等*客户端*。智能体通过 MCP 和 OpenAPI
-发现真实能力、提出变更、完成行为投运——而设备控制始终默认拒绝、要求明确确认并完整审计；
-即使没有任何 AI 接入，边缘也持续确定性地执行。
+## AetherEdge 是正确入口吗？
 
-AetherEdge 是 [AetherIoT 平台](docs/overview/platform.md)的边缘产品，与
-[AetherCloud](https://github.com/EvanL1/AetherCloud) 和
-[AetherContracts](https://github.com/EvanL1/AetherContracts)共同组成核心产品族。官方能源管理
-发行版是 [AetherEMS](https://github.com/EvanL1/AetherEMS)。
+| 你的目标 | 从这里开始 |
+|---|---|
+| 在 Linux 网关连接现场设备并运行本地行为 | **AetherEdge** |
+| 部署能源管理解决方案和操作员 Console | [**AetherEMS**](https://github.com/EvanL1/AetherEMS) |
+| 协调 Edge Fleet 或云端任务 | [**AetherCloud**](https://github.com/EvanL1/AetherCloud) |
+| 实现或验证共享协议 | [**AetherContracts**](https://github.com/EvanL1/AetherContracts) |
 
-## 五分钟体验
+AetherEdge 的直接用户是设备厂商、系统集成商、解决方案开发者、应用开发者和
+Edge 运维人员。它不会假装自己是适用于所有行业的完整终端应用。
 
-**已有运行中的 Edge 系统？** 把它作为默认只读的 MCP tools 接入你的 AI 助手：
+## 从空白主机到可用 Edge
 
-```bash
-claude mcp add aether -- aether mcp
-```
-
-然后直接告诉助手：
+产品旅程是：
 
 ```text
-检查我的 Edge Runtime，并根据它暴露的能力生成一个只读运维应用。
+安全空安装 -> 操作员身份 -> 默认禁用的设备 Channel
+  -> 物理点/逻辑点映射 -> 只读数据证明
+  -> 审核行为 -> 显式投运 -> 审计与持续运维
 ```
 
-MCP server 与经认证的 API 网关（`aether-api:6005`）通信，会话需设置
-`AETHER_ACCESS_TOKEN`。Claude 在笔记本、Edge 在服务器？一行命令依然可用：
-`claude mcp add aether -- ssh user@gateway aether mcp`，或将 `AETHER_API_URL`
-指向 HTTPS ingress——详见[连接 AI 助手](docs/guides/ai-assistants.md)。
+所有重要变更遵循：
 
-**没有硬件？** SDK 组合可在任何环境运行，不需要外部服务，也不会投运任何硬件：
-
-```bash
-cargo run -p aether-example-minimal-gateway   # 行业中立的空网关
-cargo run -p aether-example-energy-gateway    # 默认禁用的 Energy Pack 组合验证
+```text
+检查 -> 计划 -> 验证 -> 确认 -> 应用 -> 审计 -> 观察 -> 修订
 ```
 
-还可以在总线上仿真真实设备——Modbus TCP/RTU、CAN、J1939——像真实站点一样采集：
+创建配置绝不能静默启用硬件。
 
-```bash
-cargo run -p simulator -- --scenario tools/simulator/scenarios/pv_daily.yaml --port 5020
-```
+### 1. 安装安全空 Runtime
 
-完整的安全空运行时安装见[快速开始](docs/guides/getting-started.md)，通道接线见
-[连接设备](docs/guides/connect-devices.md)，助手驱动的完整安装流程见
-[Agent Quickstart](https://docs.aetheriot.dev/agent-quickstart/)。
-
-## 安装 AetherEdge
-
-在基于 Docker 的 Linux Edge 主机上，从
-[GitHub Releases](https://github.com/EvanL1/AetherEdge/releases)下载与目标架构匹配的
-`AetherEdge-<arch>-<version>.run` 及其 `.sha256` 文件，然后在目标主机上校验并运行这个仅支持
-全新部署的安装包：
+从 [GitHub Releases](https://github.com/EvanL1/AetherEdge/releases) 下载目标
+Linux 主机对应的 `.run` 安装包及校验文件，然后校验并执行仅支持全新部署的安装包：
 
 ```bash
 sha256sum -c AetherEdge-<arch>-<version>.run.sha256
@@ -74,87 +65,131 @@ chmod +x AetherEdge-<arch>-<version>.run
 sudo ./AetherEdge-<arch>-<version>.run
 ```
 
-`.run` 安装包会安装六服务 Edge Runtime 和 `aether` CLI。Release 还包含独立 CLI 压缩包，
-但它们不会安装 Runtime。源码检出或 SDK 开发见[快速开始](docs/guides/getting-started.md)；
-`cargo install --path tools/aether --locked` 也只安装 CLI。Docker 与裸机安装包契约见
-[部署指南](docs/guides/deployment.md)。AetherEdge 不是 npm 或 Bun 包；`npx` 和 `bunx`
-都不能安装它。
+安装器创建六个服务、`aether` CLI、私有 bootstrap 凭据、嵌入式数据库和空配置。
+它不会添加设备、启用规则或安装行业解决方案。
 
-## AetherEdge 提供什么
+### 2. 建立身份并证明空 Runtime
 
-- **确定性 Edge Runtime**：没有 AI 客户端时，六个隔离 Rust 服务仍持续采集、执行规则、
-  处理告警、保存历史并完成 uplink。
-- **Local-first 数据平面**：SHM 是实时点状态权威；SQLite 提供嵌入式期望状态、历史、审计和
-  持久 outbox。
-- **机器可读契约**：Runtime Manifest、OpenAPI、capability metadata、Pack Manifest、MCP
-  tools、实验性 CloudLink schema 和 Markdown 文档为 Agent 提供可验证事实。
-- **唯一应用边界**：HTTP、CLI、MCP 和生成式客户端共享受治理的 query/command，不直接写
-  SHM 或存储。
-- **Domain Pack**：行业知识、模型、mapping、规则和处理声明可以叠加在 Kernel 之上，而不
-  成为核心依赖。
+先执行本地健康门禁：
 
-## AI 原生产品方向
-
-AetherIoT 的产品方向是让用户通过对话描述想要的结果，不必在固定配置页面中编排设备编号、
-触发器、条件和动作。智能体发现类型化能力、生成受治理方案并完成行为投运；AetherEdge 在本地
-执行已经接受的行为，执行过程不依赖模型。
-
-完整的最终用户对话智能体尚未作为当前测试版交付。AetherEdge 已经提供它所需要的基础：
-运行时与 Pack 发现、面向智能体的文档、OpenAPI、MCP 工具与资源、受治理命令、带版本配置、
-审计证据和确定性本地执行。
-
-```text
-人的意图 -> 智能体方案 -> 类型化契约 -> 策略检查与必要确认
-         -> 行为投运 -> 边缘确定性执行
-         -> 观察、解释与受治理修订
+```bash
+aether doctor
 ```
 
-未来的意图、方案、仿真、有效期和持续调整能力必须通过明确的应用接口与 AetherContracts 契约
-提供。智能体不能编造设备能力、直接写入 SHM 或 SQLite、绕过确认，或者成为隐藏的第二配置
-权威。具体边界见 [AI 原生平台](https://docs.aetheriot.dev/overview/ai-native-platform/)和
-[平台状态](https://docs.aetheriot.dev/roadmap/status/)。
+健康的首次启动应当有六个健康服务和有效 SHM。使用私有 bootstrap 凭据登录后
+立即修改密码，为日常运维创建独立账号，并导出该账号的签名
+`AETHER_ACCESS_TOKEN`。然后证明系统没有隐式投运任何对象：
 
-> **Beta：** AetherEdge 是行业中立的 Kernel、Runtime 与 SDK。现有 crate、二进制、CLI 和
-> 部分兼容产物仍使用 `aether-*` / `aether` 名称。本仓库原名 `EvanL1/AetherIot`；迁移期间
-> 软件标识保持稳定，详见[迁移说明](docs/migration/aetheriot-to-aetheredge.md)。
+```bash
+aether channels list --json
+aether models instances list --json
+aether rules list --json
+```
 
-## 智能体访问如何受治理
+Channel、Instance 和 Rule 集合都应该为空。[快速开始](docs/guides/getting-started.md)
+包含完整的 bootstrap 和 Token 流程。
 
-仓库里的 Agent Skill 只是可选的开发指导，不是 AetherEdge 软件包。需要时按
-[使用 AI 构建应用](docs/guides/build-applications-with-ai.md)添加到兼容的编码助手。
+### 3. 创建一个仍然禁用的 Channel
 
-可选 Skill 提供开发方法，并按需读取在线 Markdown 文档；MCP 提供实时、结构化的系统能力。
-只有操作员显式启动写入会话时，写工具才会注册；每次写入仍必须通过服务端权限、确认、校验
-和审计边界。
+选择安装包中的 IO Runtime 已编译支持的协议。受治理的创建命令需要认证和确认，
+但只要没有显式传入 `--enabled true`，新 Channel 就保持禁用：
 
-完整客户端契约见[使用 AI 构建应用](docs/guides/build-applications-with-ai.md)，安全空运行时的
-完整安装流程见[Agent Quickstart](https://docs.aetheriot.dev/agent-quickstart/)。
+```bash
+AETHER_ACCESS_TOKEN='<signed access JWT>' aether channels create \
+  --name "PLC#1" \
+  --protocol modbus_tcp \
+  --params '{"host":"192.168.1.10","port":502}' \
+  --confirmed
+```
 
-## 对话优先，默认无头
+启用前，需要声明物理点、映射协议地址、将必要的物理点绑定到 Domain Pack
+提供的逻辑 Instance，并检查未解决的映射。完整流程见
+[连接设备](docs/guides/connect-devices.md)。
 
-AetherEdge 不交付一个固定的通用 Web Console。固定 Dashboard 无法表达所有行业 Pack，浏览器
-也不能成为第二套配置权威。AetherEdge 交付的是生成或维护专用应用所需的契约、Agent Skill 和
-开发规范。
+### 4. 先证明观测，再添加控制
 
-长期配置体验以对话为主：用户描述期望结果，智能体生成可检查、带版本的变更。重要变更仍可以
-按需生成摘要、风险说明、仿真或确认内容；这些内容只负责解释变更，不拥有配置权威。
+```text
+设备 -> aether-io -> 权威 SHM -> API 与嵌入式历史 -> 客户端
+```
 
-UI 是下游客户端和参考实现：它只消费公开 application API，可被替换，不能直接访问 SHM、
-SQLite 或内部服务。可选的 AetherEMS Console 是这种模式下的一个能源领域实现。
+检查 Channel 健康状态、时间戳、质量、新鲜度、拓扑 generation、历史样本和
+未映射点。Socket 已连接但没有新鲜数据不代表采集健康；缺失值也不等于零。
 
-## Rust SDK
+映射完成后，使用最新 Channel 查询返回的 desired-state revision 显式启用：
+
+```bash
+AETHER_ACCESS_TOKEN='<signed access JWT>' aether channels enable <CHANNEL_ID> \
+  --expected-revision <REVISION> \
+  --confirmed
+```
+
+第一个有用里程碑是一条只读数据链路。不要为了证明采集而添加物理控制命令。
+
+### 5. 添加并投运确定性行为
+
+通过下游 Domain Pack 或 application composition 添加逻辑模型、计算、告警和
+本地规则。规则草案和控制路径保持禁用，直到输入、目标、权限、失败行为和审计
+链路都完成审核。
+
+```text
+审核禁用行为 -> 验证 -> 确认 -> 启用
+  -> 检查审计证据 -> 观察物理结果
+```
+
+命令被系统接受不代表物理设备已经达到目标状态，必须独立观察实际结果。
+
+### 6. 选择可替换客户端
+
+所有客户端都通过经认证的 `aether-api:6005` 进入：
+
+| 客户端 | 用途 |
+|---|---|
+| `aether` CLI | 安装、投运、诊断和运维 |
+| HTTP/OpenAPI | 专用应用和生成式客户端 |
+| 只读 MCP | AI 辅助检查和解释 |
+| 临时写入 MCP | 一次边界明确、显式授权的维护任务 |
+| `aether-edge-sdk` | 下游解决方案或嵌入式组合 |
+| 下游 Console | AetherEMS 等行业专用操作体验 |
+
+其他五个进程 API 保留在 loopback。客户端不能代理这些端口，也不能直接写 SHM
+或 SQLite。AetherEdge 不提供通用 Web Console；UI 是可替换的 application client，
+不能成为第二个状态权威。
+
+将已有 Runtime 以默认只读模式接入 Claude：
+
+```bash
+claude mcp add aether -- aether mcp
+```
+
+为会话设置 `AETHER_ACCESS_TOKEN`。远程 Edge 应使用 SSH stdio 或 HTTPS 入口，
+不能暴露内部服务端口。详见[连接 AI 助手](docs/guides/ai-assistants.md)。
+
+## 没有现场硬件时开发
+
+运行行业中立的 SDK 组合或协议验证模拟器；二者都不会投运物理设备：
+
+```bash
+cargo run -p aether-example-minimal-gateway
+cargo run -p simulator -- \
+  --scenario tools/simulator/scenarios/modbus_protocol_verification.yaml \
+  --port 5020
+```
+
+源码检出是开发者路径，不是普通操作员的安装流程。详见
+[快速开始](docs/guides/getting-started.md)。
+
+## 构建下游解决方案
 
 ```bash
 cargo add aether-edge-sdk --features local-runtime
 ```
 
-`aether-edge-sdk`（导入名为 `aether_sdk`）是唯一受支持的 Rust 应用门面，也是唯一
-承担 SemVer 兼容承诺的包。它带入的其他 `aether-*` 包只是为满足 Cargo 的传递依赖
-解析而发布，属于实现细节，直接依赖它们不受支持。下游构建也可以改为固定到签名源码
-发行标签对应的精确 commit，并通过 SDK 的 `local-runtime` feature 选择本地 adapter。
-上文的示例组合是 SDK 冒烟测试，不是受监管的生产运行时。
+`aether-edge-sdk` 的导入名是 `aether_sdk`，它是受支持的 Rust application facade。
+下游产品在自己的仓库组合 SDK、Domain Pack 和专用应用或 Agent。领域 Processor、
+模型和 Console 不会成为 AetherEdge Kernel 的依赖。AetherEMS 是这一模式的能源领域
+参考实现。
 
-## Edge Runtime
+## Runtime 模型
 
 | 进程 | 职责 |
 |---|---|
@@ -163,7 +198,7 @@ cargo add aether-edge-sdk --features local-runtime
 | `aether-alarm` | 告警计算与生命周期 |
 | `aether-history` | 嵌入式历史与可选历史适配器 |
 | `aether-api` | 经认证的远程 application API 与 WebSocket |
-| `aether-uplink` | 通过本地持久 outbox 完成 legacy 云/MQTT 交付，并提供实验性 CloudLink 基础 |
+| `aether-uplink` | 持久 legacy Cloud/MQTT 交付和实验性 CloudLink 基础 |
 
 ```text
 设备 -> aether-io -> 权威 SHM
@@ -171,19 +206,20 @@ cargo add aether-edge-sdk --features local-runtime
                     |-> API 与嵌入式历史
                     `-> 持久 outbox -> 可选云端
 
-domain <- ports <- application <- runtime/interfaces
-             ^
-             `---- extensions
+         domain <- ports <- application <- runtime/interfaces
+                               ^
+                               `---- 可选 extensions
 ```
 
-只有 `aether-api` 是远程应用边界，其他进程 API 必须保留在 loopback。生成式客户端只能使用
-公开 application capability，不能暴露或代理这些内部端口。
+AetherEdge 当前交付面向集成商的 Runtime、application contracts、受治理命令、
+MCP 基础、Pack v1 和 SDK facade。完整的对话式意图编译、仿真、临时行为和持续
+效果评估仍是产品方向。准确交付边界见[平台状态](docs/roadmap/status.md)。
 
 ## 参与开发
 
-开发环境与验证流程见 [CONTRIBUTING.md](CONTRIBUTING.md)。面向智能体与贡献者的仓库规则见 [AGENTS.md](AGENTS.md)。
+开发环境与验证流程见 [CONTRIBUTING.md](CONTRIBUTING.md)。面向 Agent 与贡献者的
+仓库规则见 [AGENTS.md](AGENTS.md)。
 
 ## 许可证
 
-可任选 MIT 或 Apache-2.0。详见 [MIT 许可证](LICENSE-MIT)和
-[Apache 2.0 许可证](LICENSE-APACHE)。
+可任选 [MIT](LICENSE-MIT) 或 [Apache-2.0](LICENSE-APACHE) 许可证。

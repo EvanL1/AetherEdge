@@ -7,7 +7,7 @@ evidence.
 
 ## 1. Select the compatible baseline
 
-Use AetherEdge `v0.5.0`, AetherContracts `v0.1.0-alpha.3`, and an AetherCloud
+Use AetherEdge `v0.0.1`, AetherContracts `v0.1.0-alpha.3`, and an AetherCloud
 revision that consumes the same complete contract lock. Confirm the exact
 combination in the [version matrix](../compatibility/version-matrix.md).
 

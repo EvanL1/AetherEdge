@@ -5,8 +5,7 @@ Versioned beta facade for embedding the Aether AI-native IoT edge kernel.
 This is the only supported public Rust API for AetherEdge and the only package
 carrying a SemVer compatibility promise. The other `aether-*` packages it pulls
 in are published to satisfy Cargo's transitive dependency requirement; they are
-implementation detail, and depending on them directly is unsupported. See
-[ADR-0022](https://github.com/EvanL1/AetherEdge/blob/main/docs/adr/0022-crates-io-sdk-registry-release.md).
+implementation detail, and depending on them directly is unsupported.
 
 The Rust library target is imported as `aether_sdk`. `AetherBuilder` has no
 concrete infrastructure defaults. A host explicitly
@@ -32,10 +31,8 @@ cargo add aether-edge-sdk --features local-runtime
 aether-sdk = { package = "aether-edge-sdk", version = "0.0.1", features = ["local-runtime"] }
 ```
 
-To build against an exact signed release commit instead of the registry, the
-pinned-source flow from
-[ADR-0013](https://github.com/EvanL1/AetherEdge/blob/main/docs/adr/0013-single-sdk-source-release.md)
-still applies:
+To build against an exact signed release commit instead of the registry, use
+the matching release tag:
 
 ```toml
 [dependencies]

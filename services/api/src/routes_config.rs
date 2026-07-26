@@ -832,7 +832,7 @@ async fn unsigned_start_upgrade(
         "started_at": chrono::Utc::now().to_rfc3339(),
     }));
     let log_header = format!(
-        "=== AetherEMS Upgrade Log ===\nStarted at: {}\nPackage: {}\nFile size: {:.2} MB\n{}\n\n",
+        "=== AetherEdge Upgrade Log ===\nStarted at: {}\nPackage: {}\nFile size: {:.2} MB\n{}\n\n",
         chrono::Utc::now().to_rfc3339(),
         pkg_name,
         size_mb,

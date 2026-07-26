@@ -1,7 +1,7 @@
-//! Aether - Unified Management Tool for AetherEMS
+//! Aether - Unified Management Tool for AetherEdge
 //!
 //! A powerful management tool that combines configuration synchronization,
-//! service management, and operational control for all AetherEMS services.
+//! service management, and operational control for all AetherEdge services.
 
 mod alarms;
 mod channels;
@@ -42,44 +42,37 @@ use std::path::{Path, PathBuf};
 
 #[derive(Parser)]
 #[command(name = "aether")]
-#[command(about = "👑 Aether - AetherEMS Unified Management Tool")]
-#[command(long_about = "👑 Aether - AetherEMS Unified Management Tool
+#[command(about = "AetherEdge commissioning, application, and operations CLI")]
+#[command(
+    long_about = "AetherEdge commissioning, application, and operations CLI
 
-Configuration Management:
-  setup       Plan a safe first-run setup (apply requires a plan ID)
-  sync        Apply configuration offline (services stopped; confirmation required)
-  status      Show current configuration status
-  init        Initialize database schemas
-  export      Export configuration from SQLite to YAML/CSV
-  packs       Build or install data-only domain Pack artifacts
+Safe first run:
+  aether setup                              Plan a safe-empty site without writing
+  aether setup apply --plan-id <PLAN_ID>    Apply that exact unchanged plan
+  aether services start                     Start the six-service runtime
+  aether doctor                             Prove services, SQLite, config, and SHM health
 
-Service Operations:
-  channels    Manage communication channels and protocols
-  models      Manage product templates and device instances
-  rules       Manage and execute business rules
-  services    Start, stop, and manage AetherEMS services
-  logs        Log level control and log file viewer
+Prove observation before control (export AETHER_ACCESS_TOKEN first):
+  aether channels list --json               Confirm the initial channel set is empty
+  aether models instances list --json       Confirm no logical device was commissioned
+  aether rules list --json                  Confirm no rule was enabled implicitly
+  aether history latest inst:9:M 101        Read through the application boundary
 
-Examples:
-  aether setup                              # Read-only first-run plan
-  aether setup apply --plan-id <PLAN_ID>    # Apply an unchanged safe plan
-  aether sync --confirmed                   # Apply with runtime owners stopped
-  aether sync --dry-run                     # Validate without syncing
-  aether channels list                      # List all channels
-  aether models products list               # List products
-  aether rules enable 1                     # Enable a rule
-  aether packs install --artifact ./x.bundle # Verify and atomically activate a Pack
-  aether alarms list                        # List active alerts
-  aether alarms events --level 3            # High-level alert history
-  aether history latest inst:9:M 101        # Latest value of a point
-  aether history query inst:9:M 101 --from 2026-05-01T00:00:00Z
-  aether services status                    # Check service status
-  aether logs level all debug               # Switch all services to debug mode
-  aether logs list                          # List today's log files
-  aether logs view io -n 100            # View last 100 lines of io log
-  aether logs tail aether-automation --grep ERROR
+Governed commissioning:
+  AETHER_ACCESS_TOKEN=<token> aether channels create \\
+    --name PLC-1 --protocol modbus_tcp \\
+    --params '{\"host\":\"192.168.1.10\",\"port\":502}' --confirmed
+  AETHER_ACCESS_TOKEN=<token> aether channels enable <ID> \\
+    --expected-revision <REVISION> --confirmed
 
-Use 'aether <command> --help' for more information on a specific command.")]
+AI and applications:
+  aether mcp                                Start the default read-only MCP server
+  aether mcp --allow-write                  Expose writes for one bounded session
+
+Every consequential change follows inspect -> plan -> validate -> confirm ->
+apply -> audit -> observe. Creating configuration never silently enables
+hardware. Use 'aether <command> --help' for command-specific requirements."
+)]
 #[command(version)]
 struct Cli {
     #[command(subcommand)]
@@ -200,7 +193,7 @@ enum Commands {
     },
 
     /// Manage Docker services
-    #[command(about = "Start, stop, and manage AetherEMS services")]
+    #[command(about = "Start, stop, and manage AetherEdge services")]
     Services {
         #[command(subcommand)]
         command: services::ServiceCommands,
@@ -851,7 +844,7 @@ async fn status_command(detailed: bool, db_path: &Path, json: bool) -> Result<()
 
     println!();
     println!("{}", "=".repeat(50).bright_blue());
-    println!("{:^50}", "AetherEMS Configuration Status".bright_yellow());
+    println!("{:^50}", "AetherEdge Configuration Status".bright_yellow());
     println!("{}", "=".repeat(50).bright_blue());
     println!();
 
@@ -1184,5 +1177,14 @@ mod cli_tests {
     #[test]
     fn cli_definition_is_valid() {
         Cli::command().debug_assert();
+    }
+
+    #[test]
+    fn root_help_leads_with_the_safe_commissioning_journey() {
+        let help = Cli::command().render_long_help().to_string();
+        assert!(help.contains("Safe first run:"));
+        assert!(help.contains("Prove observation before control"));
+        assert!(help.contains("--expected-revision <REVISION> --confirmed"));
+        assert!(!help.contains("aether rules enable 1"));
     }
 }

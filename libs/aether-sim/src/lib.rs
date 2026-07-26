@@ -1,4 +1,4 @@
-//! Waveform generation library for AetherEMS simulation.
+//! Waveform generation library for AetherEdge simulation.
 //!
 //! This library provides various waveform generators for simulating
 //! industrial device data patterns. Used by the standalone simulator

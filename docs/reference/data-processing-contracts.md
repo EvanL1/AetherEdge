@@ -1068,7 +1068,7 @@ activating a model or dispatching a control plan.
 - [Connect Data Processors](../guides/data-processors.md) — declare a task and route a processor
 - [AetherEMS Power Forecasting](https://github.com/EvanL1/AetherEMS/blob/main/packs/energy/knowledge/power-forecasting.md) — first downstream forecast contract
 - [JSON Schemas](../../contracts/data-processing/README.md) — strict machine-readable v1 wire guards
-- [Load-Forecasting Processor](../../integrations/load-forecasting/README.md) — request-driven Edge-Platform implementation
+- [Load-Forecasting Processor](https://github.com/EvanL1/AetherEMS/tree/main/processors/load-forecasting) — downstream energy-domain implementation
 - [Data Flow](../concepts/data-flow.md) — SHM and history authority
 - [HTTP Data Processor](../../extensions/http-data-processor/README.md) — bounded optional implementation of the v1 processor transport
 - [HTTP API](http-api.md) — service-envelope conventions for Aether's application-facing APIs

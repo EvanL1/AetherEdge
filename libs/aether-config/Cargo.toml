@@ -4,7 +4,7 @@ publish = false
 version.workspace = true
 edition = "2024"
 license.workspace = true
-description = "Cross-platform configuration schema for AetherEMS services"
+description = "Cross-platform configuration schema for AetherEdge services"
 
 [lib]
 name = "aether_config"

@@ -1,4 +1,4 @@
-# AetherEMS Dockerfile for multi-architecture builds
+# AetherEdge Dockerfile for multi-architecture builds
 # Uses pre-compiled binaries from cargo-zigbuild for fast builds
 # No compilation happens in Docker - just packaging the pre-built binaries
 

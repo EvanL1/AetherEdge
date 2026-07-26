@@ -1,5 +1,5 @@
 [Unit]
-Description=AetherEMS (all services)
+Description=AetherEdge (all services)
 Wants=aether-io.service aether-automation.service aether-history.service aether-api.service aether-uplink.service aether-alarm.service
 
 [Install]

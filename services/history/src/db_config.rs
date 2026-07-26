@@ -1,6 +1,6 @@
 /// Persistent service configuration stored in the shared SQLite database.
 ///
-/// All AetherEMS services share the same SQLite file (`AETHER_DB_PATH`).
+/// All AetherEdge services share the same SQLite file (`AETHER_DB_PATH`).
 /// history adds a `history_config` table to that database for its own settings.
 ///
 /// Two separate sets of settings are stored:

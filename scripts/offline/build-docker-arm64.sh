@@ -114,9 +114,9 @@ else
     echo -e "${YELLOW}Skipping optional Redis image (set INCLUDE_REDIS=1 to include)${NC}"
 fi
 
-# Build AetherEMS services
+# Build AetherEdge services
 echo ""
-echo -e "${BLUE}[2/4] Building AetherEMS services...${NC}"
+echo -e "${BLUE}[2/4] Building AetherEdge services...${NC}"
 
 # Use the main Dockerfile
 if [[ -f "$ROOT_DIR/Dockerfile" ]]; then

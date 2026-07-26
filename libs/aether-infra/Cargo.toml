@@ -3,7 +3,7 @@ name = "aether-infra"
 publish = false
 version.workspace = true
 edition = "2024"
-description = "Infrastructure layer for AetherEMS (Redis, SQLite)"
+description = "Infrastructure layer for AetherEdge (Redis, SQLite)"
 
 [features]
 default = ["redis", "sqlite"]

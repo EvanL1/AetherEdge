@@ -24,7 +24,7 @@ release should present these as a complete product.
 
 **Implemented:** six-service runtime, SHM live-state authority, embedded local
 operation, governed commands, `aether` CLI, `aether-edge-sdk`, Pack v1, MCP and
-OpenAPI foundations, and signed `v0.5.0` source/runtime/CLI artifacts.
+OpenAPI foundations, and signed `v0.0.1` source/runtime/CLI/SDK artifacts.
 
 **Experimental:** CloudLink MQTT v1 edge foundation, application-ACK-driven
 spool, AetherContracts alpha.3 consumption, real-Broker development evidence,

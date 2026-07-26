@@ -4,7 +4,7 @@ publish = false
 version.workspace = true
 edition = "2024"
 license.workspace = true
-description = "Unified calculation library for AetherEMS - expression evaluation and built-in functions"
+description = "Unified calculation library for AetherEdge - expression evaluation and built-in functions"
 
 [dependencies]
 # Expression evaluation

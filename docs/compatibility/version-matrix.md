@@ -8,8 +8,8 @@ to production status.
 
 | AetherEdge | AetherContracts | AetherCloud | Status | Evidence |
 | --- | --- | --- | --- | --- |
-| `v0.5.0` plus the alpha.3 consumer change | `v0.1.0-alpha.3` | Unreleased alpha.3 consumer change | Experimental integration baseline | Identical complete-consumer locks, 53 exact imports, no pending imports, and 25 shared fixture outcomes |
-| `v0.5.0` legacy MQTT path | Not required for legacy wire | Existing legacy ingestion | Compatibility default | Existing product behavior; CloudLink does not silently reinterpret legacy topics |
+| `v0.0.1` with the alpha.3 consumer | `v0.1.0-alpha.3` | Current unreleased alpha.3 consumer | Experimental integration baseline | Identical complete-consumer locks, 53 exact imports, no pending imports, and 25 shared fixture outcomes |
+| `v0.0.1` legacy MQTT path | Not required for legacy wire | Existing legacy ingestion | Compatibility default | Existing product behavior; CloudLink does not silently reinterpret legacy topics |
 | Future AetherEdge release | Future production contract release | Future production CloudLink release | Planned | Requires joint authentication, signed acknowledgement, crash durability, conformance, rollback, and elapsed support-window evidence |
 
 The first row is distribution and fixture evidence. It is not production

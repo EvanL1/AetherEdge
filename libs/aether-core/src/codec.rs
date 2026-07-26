@@ -1,4 +1,4 @@
-//! Protocol codecs for AetherEMS.
+//! Protocol codecs for AetherEdge.
 //!
 //! This module contains no_std compatible encoders and decoders for:
 //! - DL/T 645-2007 protocol (Chinese smart meter standard)

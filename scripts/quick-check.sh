@@ -1,5 +1,5 @@
 #!/bin/bash
-# AetherEMS Quick Check Script
+# AetherEdge Quick Check Script
 
 set -e
 
@@ -9,7 +9,7 @@ YELLOW='\033[0;33m'
 RED='\033[0;31m'
 NC='\033[0m'
 
-echo -e "${GREEN}=== AetherEMS Quick Check ===${NC}"
+echo -e "${GREEN}=== AetherEdge Quick Check ===${NC}"
 
 # Sync git submodules (e.g. product-lib)
 echo -e "${YELLOW}Syncing git submodules...${NC}"

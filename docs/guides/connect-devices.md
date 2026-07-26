@@ -6,26 +6,27 @@ updated: 2026-07-10
 
 # Connect Devices
 
-A device attaches to Aether as a **channel** in the communication service
-(io, port 6001). A channel is one device connection: a protocol, the
-transport parameters that protocol needs, and a point table describing what
-the device exposes. Channel points then map to device **instances** — the
-logical thing-model that rules and dashboards work against (see
-[Data Model](../concepts/data-model.md)).
+A device attaches to Aether as a **channel** owned by the communication
+service. A channel is one device connection: a protocol, the transport
+parameters that protocol needs, and a point table describing what the device
+exposes. Remote clients still enter through authenticated `aether-api:6005`;
+they do not connect to the IO process port directly. Channel points then map to
+device **instances** — the logical thing-model that rules and applications work
+against (see [Data Model](../concepts/data-model.md)).
 
 ## Channels
 
-Channels are authored in `config/io/io.yaml` and loaded into SQLite
-by `aether sync`; services never read the YAML directly. A trimmed example
-from the shipped template (`config.template/io/io.yaml`), showing one
-TCP and one serial connection:
+Channels can be authored in `config/io/io.yaml` and loaded into SQLite by
+`aether sync`; services never read the YAML directly. The shipped template is
+intentionally `channels: []`. The following illustrative TCP and serial
+connections remain disabled until an operator commissions them:
 
 ```yaml
 channels:
   - id: 1
-    name: "PCS#1"
+    name: "PLC#1"
     protocol: "modbus_tcp"
-    enabled: true
+    enabled: false
     parameters:
       host: "192.168.1.10"
       port: 502
@@ -33,9 +34,9 @@ channels:
       read_timeout_ms: 3000
 
   - id: 3
-    name: "GENSET#1"
+    name: "SENSOR#1"
     protocol: "modbus_rtu"
-    enabled: true
+    enabled: false
     parameters:
       device: "/dev/ttyS4"
       baud_rate: 9600
@@ -53,12 +54,17 @@ matching (`normalize_protocol_name` in `services/io/src/utils.rs`), so
 Channels can also be created at runtime without touching YAML:
 
 ```bash
-aether channels create --name "PCS#2" --protocol modbus_tcp \
-  --params '{"host": "192.168.1.11", "port": 502}'
+AETHER_ACCESS_TOKEN='<signed access JWT>' aether channels create \
+  --name "PLC#2" --protocol modbus_tcp \
+  --params '{"host": "192.168.1.11", "port": 502}' \
+  --confirmed
 ```
 
-which calls `POST /api/channels` on io. `aether channels list`,
-`update`, `delete`, `enable`, and `disable` cover the rest of the lifecycle.
+The governed command goes through the application gateway, records audit
+evidence, and creates the channel disabled by default. `aether channels list`,
+`update`, `delete`, `enable`, and `disable` cover the rest of the lifecycle;
+state-changing commands require confirmation and revision fencing where
+applicable.
 
 Each channel carries a point table split by the four point types —
 telemetry (T, analog measurement), signal (S, digital status), control
@@ -108,23 +114,13 @@ Channel points are protocol-flavored (register 62001 on channel 2); rules
 and dashboards want model-flavored values (battery pack state of charge).
 The bridge is an instance plus routing:
 
-1. **Define the instance.** An instance binds a device to a product
-   template in `config/automation/instances.yaml`. The default distribution
-   intentionally starts empty; optional examples live under
-   `packs/energy/examples/config/automation/instances.yaml`:
-
-   ```yaml
-   instances:
-     pcs_01:
-       product_name: PCS
-       name: "PCS #1"
-       properties:
-         rated_power: 500.0
-         rated_voltage: 380.0
-   ```
-
-   The product defines which measurement points and action points the
-   instance has; the properties fill in the template's static values.
+1. **Define the instance.** An instance binds a device to a product template
+   supplied by the active Domain Pack in `config/automation/instances.yaml`.
+   The default distribution intentionally starts empty and owns no
+   industry-specific product. The product defines which measurement and action
+   points the instance has; instance properties fill in its validated static
+   values. Use a downstream solution such as AetherEMS when you need a ready
+   energy-domain model.
 
 2. **Map channel points to instance points.** Routing wires a channel point
    to an instance point: telemetry and signal points feed instance
@@ -137,8 +133,8 @@ The bridge is an instance plus routing:
      --channel-id 1 --four-remote T --channel-point-id 101
    ```
 
-   which calls `POST /api/instances/{id}/routing` on automation, or in bulk with
-   `aether routing batch`.
+   which submits the governed routing command through `aether-api`, or in bulk
+   with `aether routing batch`.
 
 3. **Run `aether sync`** if the instance or routing was authored in YAML.
    Sync validates the configuration and writes it into SQLite, where the

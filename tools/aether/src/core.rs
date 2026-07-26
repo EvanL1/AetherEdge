@@ -1,7 +1,7 @@
 //! Aether Core - Configuration management core functionality
 //!
 //! This module provides the core functionality for managing service configurations
-//! in the AetherEMS system. It supports both read-only and read-write access modes
+//! in the AetherEdge system. It supports both read-only and read-write access modes
 //! and handles the synchronization between YAML/CSV files and SQLite databases.
 
 use anyhow::{Context, Result};

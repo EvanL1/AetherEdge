@@ -1,4 +1,4 @@
-//! Shared API models for AetherEMS services
+//! Shared API models for AetherEdge services
 //!
 //! This module provides unified API request/response models and HTTP utilities
 //! to ensure consistency across all service endpoints.

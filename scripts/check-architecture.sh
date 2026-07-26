@@ -296,6 +296,43 @@ if rg -n '\b(Rtdb|RedisRtdb)\b' crates --glob '*.rs'; then
     exit 1
 fi
 
+echo "Checking AetherEdge product branding..."
+if [[ -e integrations/load-forecasting ]]; then
+    echo "ERROR: the energy-domain Load-Forecasting processor belongs in AetherEMS"
+    exit 1
+fi
+if rg -n 'AETHER_LOAD_FORECASTING_|aether-load-forecasting-processor' \
+    docker-compose.yml .env.example; then
+    echo "ERROR: the kernel distribution composes an AetherEMS Load-Forecasting implementation"
+    exit 1
+fi
+if rg -n 'AetherEMS' crates libs extensions services tools firmware \
+    --glob '*.rs' --glob '*.py' --glob 'Cargo.toml'; then
+    echo "ERROR: kernel source or package metadata uses downstream AetherEMS branding"
+    exit 1
+fi
+if rg -n 'AetherEMS' \
+    .clippy.toml .env.example Dockerfile \
+    scripts/build-installer.sh scripts/ci-e2e-test.sh scripts/ci-simulator-test.sh \
+    scripts/coverage.sh scripts/generate-e2e-config.py scripts/install.sh \
+    scripts/offline/build-docker-arm64.sh scripts/quick-check.sh \
+    scripts/systemd/aether-redis.service scripts/systemd/aether.target; then
+    echo "ERROR: AetherEdge packaging or operator output uses downstream AetherEMS branding"
+    exit 1
+fi
+
+echo "Checking operator journey surfaces..."
+if ! rg -Fq 'safe-empty install -> operator identity -> disabled device channel' README.md \
+    || ! rg -Fq 'inspect -> plan -> validate -> confirm -> apply -> audit -> observe' README.md \
+    || ! rg -Fq 'Creating configuration never silently enables hardware.' README.md; then
+    echo "ERROR: README no longer leads users through the safe commissioning journey"
+    exit 1
+fi
+if rg -n 'aether-example-energy-gateway|scenarios/pv_daily.yaml' README.md README-CN.md; then
+    echo "ERROR: the AetherEdge growth surface sends new users into an energy-domain demo"
+    exit 1
+fi
+
 # ADR-0016: the gateway borrows OpenTelemetry's data model, never its transport.
 # Telemetry leaves on the existing MQTT channel and the cloud terminates it into
 # OTLP. An SDK here would buffer in memory and drop exactly when the link is bad.

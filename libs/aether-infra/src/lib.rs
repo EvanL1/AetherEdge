@@ -1,6 +1,6 @@
 //! Aether Infrastructure Layer
 //!
-//! This library provides database infrastructure for AetherEMS:
+//! This library provides database infrastructure for AetherEdge:
 //! - Redis client with connection pooling
 //! - SQLite client with optimized settings
 //!

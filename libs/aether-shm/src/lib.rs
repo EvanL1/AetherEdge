@@ -1,6 +1,6 @@
 //! # aether-shm
 //!
-//! Platform-agnostic shared memory abstraction for AetherEMS.
+//! Platform-agnostic shared memory abstraction for AetherEdge.
 //!
 //! This crate provides reader and writer interfaces for shared memory
 //! that work on both Linux (via mmap) and embedded platforms (via raw pointers).

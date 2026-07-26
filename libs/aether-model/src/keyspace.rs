@@ -1,7 +1,7 @@
 //! Redis KeySpace Configuration
 //!
 //! This module provides the `KeySpaceConfig` struct for generating Redis keys
-//! in a consistent and type-safe manner across all AetherEMS services.
+//! in a consistent and type-safe manner across all AetherEdge services.
 
 use crate::PointType;
 use serde::{Deserialize, Serialize};

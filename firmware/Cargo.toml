@@ -3,7 +3,7 @@ name = "aether-firmware"
 publish = false
 version = "0.3.0"
 edition = "2021"
-description = "AetherEMS firmware prototype for embedded platforms"
+description = "AetherEdge firmware prototype for embedded platforms"
 license = "MIT OR Apache-2.0"
 
 # This is a standalone project, not part of the main workspace

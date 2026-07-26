@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build multi-architecture installer package for AetherEMS
+# Build multi-architecture installer package for AetherEdge
 # Usage: build-installer.sh [VERSION] [ARCH] [TARGET] [--services=...] [--io-features=...] [--enable-swagger]
 #   VERSION: Version string (default: YYYYMMDD)
 #   ARCH: arm64 | amd64 (default: arm64)
@@ -687,7 +687,7 @@ if csv_contains "$BUILD_IMAGES" "aetherems:latest"; then
         fi
         BM_OUTPUT_NAME="AetherEdge-baremetal-${ARCH}-${VERSION}${BM_VARIANT}.run"
         makeself --gzip "$BM_PKG_DIR" "$OUTPUT_DIR/$BM_OUTPUT_NAME" \
-            "AetherEMS bare-metal installer ($ARCH, $VERSION)" \
+            "AetherEdge bare-metal installer ($ARCH, $VERSION)" \
             bash ./install.sh
         verify_installer_license "$OUTPUT_DIR/$BM_OUTPUT_NAME"
 
@@ -701,7 +701,7 @@ if csv_contains "$BUILD_IMAGES" "aetherems:latest"; then
     if [[ -n "$DEV_SERVICE" ]]; then
         # Dev mode: tag as aetherems:dev-<service>, do NOT overwrite aetherems:latest
         _DEV_TAG="aetherems:dev-${DEV_SERVICE}"
-        echo -e "${BLUE}Building AetherEMS Docker image (dev tag: ${_DEV_TAG})...${NC}"
+        echo -e "${BLUE}Building AetherEdge Docker image (dev tag: ${_DEV_TAG})...${NC}"
         if docker build --platform $DOCKER_PLATFORM \
             --build-arg TARGET_TRIPLE=$TARGET \
             --build-arg RUNTIME_MANIFEST_PATH=build/installer/runtime/runtime-manifest.json \
@@ -716,7 +716,7 @@ if csv_contains "$BUILD_IMAGES" "aetherems:latest"; then
             exit 1
         fi
     else
-        echo -e "${BLUE}Building AetherEMS Docker image (all services)...${NC}"
+        echo -e "${BLUE}Building AetherEdge Docker image (all services)...${NC}"
         if docker build --platform $DOCKER_PLATFORM \
             --build-arg TARGET_TRIPLE=$TARGET \
             --build-arg RUNTIME_MANIFEST_PATH=build/installer/runtime/runtime-manifest.json \
@@ -857,7 +857,7 @@ DEV_SERVICES="${DEV_SERVICES_LIST}"
 COMPOSE_FILE="${_COMPOSE_FILE}"
 
 echo -e "\${BLUE}================================================\${NC}"
-echo -e "\${BLUE}  AetherEMS Dev Deploy: \${DEV_TAG}\${NC}"
+echo -e "\${BLUE}  AetherEdge Dev Deploy: \${DEV_TAG}\${NC}"
 echo -e "\${BLUE}================================================\${NC}"
 echo -e "Image:      \${YELLOW}\${DEV_TAG}\${NC}"
 echo -e "Containers: \${YELLOW}\${DEV_SERVICES}\${NC}"
@@ -869,7 +869,7 @@ echo -e "\${GREEN}✓ Loaded \${DEV_TAG}\${NC}"
 
 if [[ ! -f "\$COMPOSE_FILE" ]]; then
     echo -e "\${RED}Error: docker-compose.yml not found at \$COMPOSE_FILE\${NC}"
-    echo -e "\${YELLOW}Is AetherEMS fully installed on this machine?\${NC}"
+    echo -e "\${YELLOW}Is AetherEdge fully installed on this machine?\${NC}"
     exit 1
 fi
 
@@ -906,7 +906,7 @@ echo -e "  Stop: \${YELLOW}\$_COMPOSE -f \$COMPOSE_FILE stop \$DEV_SERVICES\${NC
 DEPLOY_EOF
     chmod +x "$TEMP_PKG_DIR/deploy.sh"
 
-    INSTALLER_DESC="AetherEMS DEV ${ARCH_LABEL} — ${DEV_SERVICE} ${VERSION}"
+    INSTALLER_DESC="AetherEdge DEV ${ARCH_LABEL} — ${DEV_SERVICE} ${VERSION}"
     makeself --gzip "$TEMP_PKG_DIR" "$OUTPUT_DIR/${PACKAGE_NAME}.run" \
         "$INSTALLER_DESC" \
         bash ./deploy.sh
@@ -939,9 +939,9 @@ else
     fi
 
     if [[ -n "$SELECTED_SERVICES" ]]; then
-        INSTALLER_DESC="AetherEMS ${ARCH_LABEL} Partial Update ($SELECTED_SERVICES) $VERSION"
+        INSTALLER_DESC="AetherEdge ${ARCH_LABEL} Partial Update ($SELECTED_SERVICES) $VERSION"
     else
-        INSTALLER_DESC="AetherEMS ${ARCH_LABEL} Full Installer $VERSION"
+        INSTALLER_DESC="AetherEdge ${ARCH_LABEL} Full Installer $VERSION"
     fi
 
     makeself --gzip "$TEMP_PKG_DIR" "$OUTPUT_DIR/${PACKAGE_NAME}.run" \

@@ -1,4 +1,4 @@
-//! Core domain types for AetherEMS
+//! Core domain types for AetherEdge
 //!
 //! This module contains fundamental types used across the system.
 //!

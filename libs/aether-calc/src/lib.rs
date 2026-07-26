@@ -1,4 +1,4 @@
-//! aether-calc - Unified calculation library for AetherEMS
+//! aether-calc - Unified calculation library for AetherEdge
 //!
 //! Provides formula evaluation with built-in functions for industrial calculations.
 //!

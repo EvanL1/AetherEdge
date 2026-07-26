@@ -8,7 +8,7 @@
 Swagger 受 `swagger-ui` feature 控制。构建六服务安装包时统一启用：
 
 ```bash
-./scripts/build-installer.sh v0.5.0 arm64 -s rust --enable-swagger
+./scripts/build-installer.sh v0.0.1 arm64 -s rust --enable-swagger
 ```
 
 | 服务 | Swagger UI | OpenAPI JSON |

@@ -1,6 +1,6 @@
 //! Aether Rules - Rule Engine Library
 //!
-//! A Vue Flow-based rule engine for AetherEMS providing:
+//! A Vue Flow-based rule engine for AetherEdge providing:
 //! - Rule parsing from Vue Flow JSON format
 //! - Rule execution with condition evaluation and action dispatch
 //! - Rule scheduling with interval-based triggers

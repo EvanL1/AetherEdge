@@ -1,12 +1,12 @@
 //! System requirements checking utilities
 //!
 //! Provides functions to check system resources and requirements
-//! before starting AetherEMS services
+//! before starting AetherEdge services
 
 use errors::AetherResult;
 use tracing::{debug, info, warn};
 
-/// System requirements for AetherEMS services
+/// System requirements for AetherEdge services
 #[derive(Debug, Clone)]
 pub struct SystemRequirements {
     /// Minimum CPU cores required

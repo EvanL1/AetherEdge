@@ -45,7 +45,7 @@ impl Default for DatabaseConfig {
     }
 }
 
-/// Build `SqliteConnectOptions` for a AetherEMS database path.
+/// Build `SqliteConnectOptions` for a AetherEdge database path.
 ///
 /// All pools across the system should be constructed with this so that
 /// connection-scoped pragmas (`foreign_keys=ON`, `journal_mode=WAL`,

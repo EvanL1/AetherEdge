@@ -1,63 +1,198 @@
-# Typical user journeys
+---
+title: AetherEdge User Journeys
+description: Choose the right product and follow the safe path from an empty edge runtime to a commissioned application
+updated: 2026-07-26
+---
 
-Choose the shortest path that matches your role. All write paths remain governed
-and deny by default.
+# AetherEdge User Journeys
 
-## Describe a physical-space outcome to an agent
+AetherEdge is the industry-neutral edge runtime for device manufacturers,
+system integrators, solution builders, application developers, and edge
+operators. It is not a finished vertical application or a generic Web Console.
 
-The complete end-user conversation lifecycle remains product direction. The
-available beta foundation supports a narrower, explicit workflow:
+Start by choosing the product that owns the outcome:
 
-1. Connect an agent to the documentation and the default read-only MCP surface.
-2. Ask it to inspect the runtime, active Pack, live capabilities, and current
-   state before proposing a change.
-3. Review which parts of the request map to implemented queries or governed
-   commands and which parts are still unavailable.
-4. Enable a bounded write session only for a specific task, preserve its
-   confirmation and audit evidence, and return to read-only afterward.
-5. Ask the agent to explain the observed outcome or reverse the versioned
-   change rather than editing SHM, SQLite, or internal services.
+| You want to… | Start with… |
+|---|---|
+| Connect field devices and run deterministic behavior on a Linux gateway | **AetherEdge** |
+| Deploy an energy-management solution with energy models and an operator Console | [**AetherEMS**](https://github.com/EvanL1/AetherEMS) |
+| Coordinate a fleet or cloud-side jobs | [**AetherCloud**](https://github.com/EvanL1/AetherCloud) |
+| Implement or validate a shared wire contract | [**AetherContracts**](https://github.com/EvanL1/AetherContracts) |
 
-Future releases will add typed intent/proposal contracts, simulation, temporary
-behavior with expiry, and continuous outcome evaluation. See the
-[AI-native platform](ai-native-platform.md) for that target lifecycle.
+## The AetherEdge golden path
 
-## Evaluate a local edge runtime
+The primary journey is deliberately safe and incremental:
 
-1. Open the [AetherEdge overview](../aetheredge/index.md).
-2. Start the safe-empty composition with no devices or external services.
-3. Inspect runtime health and the machine-readable manifest.
-4. Add a protocol adapter and domain Pack only when the application requires it.
+```text
+install a safe-empty runtime
+  -> establish operator identity
+  -> connect one disabled device channel
+  -> map physical points to a logical model
+  -> verify live state, quality, and history
+  -> add disabled rules, alarms, or commands
+  -> review and explicitly commission behavior
+  -> consume it through API, CLI, MCP, or a dedicated application
+  -> monitor health, audit evidence, and observed outcomes
+```
 
-## Build an agent-generated edge application
+Every consequential change follows the same lifecycle:
 
-1. Generate clients from the running AetherEdge OpenAPI contract.
-2. Start read-only and preserve quality, freshness, topology generation, and
-   revision fields.
-3. Use the authenticated application boundary; never write SHM or SQLite
-   directly.
-4. Add governed commands only with explicit permission, confirmation,
-   idempotency, and audit behavior.
+```text
+inspect -> plan -> validate -> confirm -> apply -> audit -> observe -> revise
+```
 
-## Connect an edge fleet to cloud
+Creating configuration is not the same as enabling hardware. A channel, rule,
+Pack example, or control path remains inactive until an authorized operator
+explicitly commissions it.
 
-1. Select a tested combination in the
-   [compatibility matrix](../compatibility/version-matrix.md).
-2. Verify the digest-pinned AetherContracts consumer lock in both products.
-3. Run the [Edge, Contracts, and Cloud integration task](../guides/edge-contracts-cloud.md).
-4. Keep CloudLink experimental and the legacy path available until every
-   published release gate passes.
+## 1. Install a safe-empty runtime
 
-## Implement an independent client or runtime
+A runtime operator normally starts from a signed AetherEdge release, not a
+source checkout. Verify and run the package for the target Linux host:
 
-1. Read the [AetherContracts overview](../aethercontracts/index.md).
-2. Implement the normative specification and closed Schemas.
-3. Execute the public fixtures and black-box TCK.
-4. Report conformance evidence without claiming product deployment or
-   production authentication.
+```bash
+sha256sum -c AetherEdge-<arch>-<version>.run.sha256
+chmod +x AetherEdge-<arch>-<version>.run
+sudo ./AetherEdge-<arch>-<version>.run
+```
 
-## Adopt AetherEMS
+The installer creates the six-service runtime, the `aether` CLI, embedded
+SQLite state, and a fail-safe empty configuration. It does not add a device,
+enable a rule, install a domain solution, or require Redis, PostgreSQL, a
+browser, cloud connectivity, or an LLM.
 
-Use AetherEMS when the desired outcome is an energy-management solution rather
-than a general-purpose edge platform. AetherEMS supplies energy semantics and
-workflows while the platform products keep their industry-neutral boundaries.
+Run the first health gate:
+
+```bash
+aether doctor
+```
+
+Success means the six services, SQLite, configuration, and authoritative SHM
+plane are healthy while the site remains uncommissioned. Continue with
+[Getting Started](../guides/getting-started.md) for installation and bootstrap
+identity details.
+
+## 2. Establish an operator identity
+
+Use the private bootstrap credential generated by the installer to sign in,
+change that password immediately, and create a dedicated day-to-day account.
+CLI, HTTP, MCP, and generated clients all authenticate at the same application
+gateway:
+
+```text
+aether-api:6005
+```
+
+The IO, automation, history, uplink, and alarm APIs remain on loopback. A
+client must not expose those ports or write SHM or SQLite directly.
+
+## 3. Connect the first device safely
+
+Choose a protocol compiled into the installed IO runtime, then create or import
+one channel. New channels are disabled by default. Before enabling one:
+
+1. validate transport and protocol parameters;
+2. declare its telemetry, status, control, and adjustment points;
+3. map protocol addresses to those physical points;
+4. map the required physical points to a logical instance;
+5. review the resulting topology and unresolved mappings;
+6. explicitly enable the channel.
+
+Start with a virtual channel or protocol simulator when hardware is not yet
+available. Follow [Connect Devices](../guides/connect-devices.md) for the
+channel and routing workflow.
+
+## 4. Verify the read-only data path
+
+Prove observation before adding control:
+
+```text
+device -> aether-io -> authoritative SHM -> API and embedded history -> client
+```
+
+Check channel health, timestamps, quality, freshness, topology generation,
+historical samples, and unmapped points. A connected transport without fresh
+data is not a healthy acquisition path, and a missing value must not be treated
+as zero.
+
+This read-only milestone is the first useful deployment: applications and
+agents can inspect real state without receiving write authority.
+
+## 5. Add deterministic behavior
+
+A solution builder can now add logical models, calculations, alarms, and local
+rules through a Domain Pack or an application composition. Draft behavior stays
+disabled until its inputs, target points, permissions, failure behavior, and
+audit path have been reviewed.
+
+AetherEdge executes accepted behavior locally and deterministically. Removing
+the UI, disconnecting the cloud, or stopping an AI client must not stop an
+already commissioned acquisition or safety loop.
+
+For a ready-made energy model and workflow, use AetherEMS rather than adding
+energy-specific code to AetherEdge.
+
+## 6. Choose a client surface
+
+All replaceable clients consume the same governed application boundary:
+
+| Client | Best for |
+|---|---|
+| `aether` CLI | Installation, commissioning, diagnostics, and operations |
+| HTTP/OpenAPI | Dedicated applications and generated clients |
+| Read-only MCP | AI-assisted inspection, explanation, and application generation |
+| Write-enabled MCP session | A bounded, explicitly authorized maintenance task |
+| `aether-edge-sdk` | Building a downstream solution or embedded composition |
+| Downstream Console | A domain-specific operator experience, such as AetherEMS |
+
+AetherEdge intentionally ships no universal browser Console. A downstream UI
+is a replaceable API client and never becomes a second state authority.
+
+## 7. Add AI without making it the control loop
+
+The current beta supports a bounded assistant workflow:
+
+1. connect the default read-only MCP server;
+2. inspect the runtime manifest, active Packs, live capability catalog, state,
+   quality, and revisions;
+3. ask the assistant to produce an explicit proposed change;
+4. have a human review unavailable capabilities, risk, and expected effects;
+5. enable write tools only for the specific maintenance session;
+6. preserve confirmation, request IDs, receipts, and audit evidence;
+7. inspect the observed result and return the assistant to read-only mode.
+
+The complete conversational intent compiler, historical simulation, temporary
+behavior expiry, and continuous outcome evaluation are product direction, not
+features delivered by the current beta. See
+[Connect AI Assistants](../guides/ai-assistants.md) and the
+[platform status](../roadmap/status.md).
+
+## 8. Operate and extend
+
+Operators monitor service health, SHM writer freshness, channel connectivity,
+history, alarms, audit records, outbox delivery, disk use, and configuration
+revisions. Optional stores, cloud links, and data processors are selected by a
+composition root; none becomes a prerequisite or live-state authority.
+
+Solution builders keep domain assets in their own repository:
+
+```text
+aether-edge-sdk + Domain Pack + dedicated application/agent
+```
+
+They test against public application contracts and never copy AetherEdge
+implementation crates into the downstream product. AetherEMS is the reference
+energy-domain example of this ownership model.
+
+## Current delivery boundary
+
+Implemented today: the safe-empty six-service runtime, SHM live-state
+authority, embedded history, device protocols, deterministic rules and alarms,
+CLI, OpenAPI, governed commands, audit evidence, MCP foundations, Pack v1, and
+the SDK facade.
+
+Experimental or planned capabilities must remain visibly labeled. In
+particular, CloudLink is experimental and the complete conversation-first
+end-user experience is not yet shipped. A current user should expect an
+integrator-grade runtime with governed AI access—not a finished no-code
+vertical application.

@@ -4,7 +4,7 @@ publish = false
 version.workspace = true
 edition = "2024"
 license.workspace = true
-description = "Unified error handling for AetherEMS services"
+description = "Unified error handling for AetherEdge services"
 
 [dependencies]
 # Error handling

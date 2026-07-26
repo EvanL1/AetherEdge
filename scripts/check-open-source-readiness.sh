@@ -76,8 +76,6 @@ generate_validation_credential() {
 
 readonly COMPOSE_VALIDATION_JWT_SECRET="$(generate_validation_credential)"
 readonly COMPOSE_VALIDATION_UPLINK_TOKEN="$(generate_validation_credential)"
-readonly COMPOSE_VALIDATION_PROCESSOR_IMAGE="example.invalid/aether-load-forecasting@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-readonly COMPOSE_VALIDATION_PROCESSOR_BUNDLES='[{"kind":"model","family":"site-load","version":"v3","expected_digest":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","files":{"model":"/opt/load-forecasting/model.onnx"}}]'
 
 failures=0
 
@@ -260,19 +258,6 @@ while IFS= read -r workflow; do
     fi
 done < <(rg -l 'docker compose' .github/workflows --glob '*.yml' --glob '*.yaml' || true)
 
-if ! AETHER_LOAD_FORECASTING_IMAGE="$COMPOSE_VALIDATION_PROCESSOR_IMAGE" \
-    AETHER_LOAD_FORECASTING_BEARER_TOKEN="$COMPOSE_VALIDATION_UPLINK_TOKEN" \
-    AETHER_LOAD_FORECASTING_ARTIFACT_BUNDLES="$COMPOSE_VALIDATION_PROCESSOR_BUNDLES" \
-    integrations/load-forecasting/deploy/validate-production-env.sh >/dev/null; then
-    fail "the Load-Forecasting production environment validator rejected a valid fixture"
-fi
-if AETHER_LOAD_FORECASTING_IMAGE="aether-load-forecasting:latest" \
-    AETHER_LOAD_FORECASTING_BEARER_TOKEN="$COMPOSE_VALIDATION_UPLINK_TOKEN" \
-    AETHER_LOAD_FORECASTING_ARTIFACT_BUNDLES="$COMPOSE_VALIDATION_PROCESSOR_BUNDLES" \
-    integrations/load-forecasting/deploy/validate-production-env.sh >/dev/null 2>&1; then
-    fail "the Load-Forecasting production validator accepted a mutable image reference"
-fi
-
 if ! command -v docker >/dev/null 2>&1 || ! docker compose version >/dev/null 2>&1; then
     fail "docker with Compose support is required to validate docker-compose.yml"
 else
@@ -289,7 +274,7 @@ else
     ); then
         fail "default docker-compose.yml failed with a valid JWT test key"
     fi
-    for service in aether-redis timescaledb aether-load-forecasting-processor; do
+    for service in aether-redis timescaledb; do
         if rg -q "^${service}$" <<<"$default_services"; then
             fail "$service is enabled in the default Compose runtime"
         fi
@@ -317,36 +302,6 @@ else
     fi
     if ! rg -q '^timescaledb$' <<<"$postgres_services"; then
         fail "the optional PostgreSQL history profile is missing"
-    fi
-
-    data_processing_dev_services=""
-    if ! data_processing_dev_services=$(
-        JWT_SECRET_KEY="$COMPOSE_VALIDATION_JWT_SECRET" \
-            AETHER_UPLINK_CONTROL_TOKEN="$COMPOSE_VALIDATION_UPLINK_TOKEN" \
-            docker compose -f docker-compose.yml --profile data-processing-dev config --services
-    ); then
-        fail "the optional development data-processing profile is invalid"
-    fi
-    if ! rg -q '^aether-load-forecasting-processor$' <<<"$data_processing_dev_services"; then
-        fail "the optional development data-processing profile is missing"
-    fi
-
-    data_processing_services=""
-    if ! data_processing_services=$(
-        JWT_SECRET_KEY="$COMPOSE_VALIDATION_JWT_SECRET" \
-            AETHER_UPLINK_CONTROL_TOKEN="$COMPOSE_VALIDATION_UPLINK_TOKEN" \
-            AETHER_LOAD_FORECASTING_IMAGE="$COMPOSE_VALIDATION_PROCESSOR_IMAGE" \
-            AETHER_LOAD_FORECASTING_BEARER_TOKEN="readiness-check-only-token" \
-            AETHER_LOAD_FORECASTING_ARTIFACT_BUNDLES="$COMPOSE_VALIDATION_PROCESSOR_BUNDLES" \
-            docker compose \
-                -f docker-compose.yml \
-                -f integrations/load-forecasting/deploy/docker-compose.data-processing.yaml \
-                --profile data-processing config --services
-    ); then
-        fail "the optional production data-processing profile is invalid"
-    fi
-    if ! rg -q '^aether-load-forecasting-processor$' <<<"$data_processing_services"; then
-        fail "the optional production data-processing profile is missing"
     fi
 fi
 

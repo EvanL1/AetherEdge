@@ -1,4 +1,4 @@
-//! Interactive TUI dashboard for real-time AetherEMS monitoring
+//! Interactive TUI dashboard for real-time AetherEdge monitoring
 //!
 //! `aether top` — hierarchical navigation across all services:
 //! ←→ switch view (Channels / Instances / Rules) | ↑↓ navigate | Enter drill | Esc back
