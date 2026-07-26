@@ -13,12 +13,12 @@ cli = ["dep:clap", "dep:reqwest"]
 dependency = ["dep:reqwest"]
 axum = ["dep:axum"]
 openapi = ["dep:utoipa"]
-schema = ["dep:schemars"]
+schema = ["dep:schemars", "aether-core/schema"]
 
 [dependencies]
 errors = { path = "../errors", default-features = false }
 aether-infra = { path = "../aether-infra", default-features = false }
-aether-model = { path = "../aether-model" }
+aether-core = { path = "../aether-core", features = ["serde"] }
 aether-schema-macro = { path = "../aether-schema-macro" }
 tokio = { workspace = true, features = ["full"] }
 tokio-util = { workspace = true }

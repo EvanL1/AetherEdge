@@ -27,7 +27,6 @@ dependencies = [
  "aether-config",
  "aether-dataplane",
  "aether-domain",
- "aether-model",
  "aether-pack",
  "aether-routing",
  "aether-rules",
@@ -89,7 +88,6 @@ dependencies = [
  "tower",
  "tracing",
  "utoipa",
- "utoipa-swagger-ui",
 ]
 
 [[package]]
@@ -171,7 +169,6 @@ dependencies = [
  "aether-calc",
  "aether-config",
  "aether-domain",
- "aether-model",
  "aether-pack",
  "aether-ports",
  "aether-rules",
@@ -201,7 +198,6 @@ dependencies = [
  "tower",
  "tracing",
  "utoipa",
- "utoipa-swagger-ui",
  "uuid",
 ]
 
@@ -379,7 +375,6 @@ dependencies = [
  "url",
  "urlencoding",
  "utoipa",
- "utoipa-swagger-ui",
 ]
 
 [[package]]
@@ -437,7 +432,6 @@ dependencies = [
 name = "aether-infra"
 version = "0.0.1"
 dependencies = [
- "aether-model",
  "anyhow",
  "bb8",
  "bb8-redis",
@@ -488,11 +482,11 @@ dependencies = [
  "aether-cloudlink",
  "aether-cloudlink-mqtt",
  "aether-config",
+ "aether-core",
  "aether-dataplane",
  "aether-domain",
  "aether-home-assistant-bridge",
  "aether-integration-control",
- "aether-model",
  "aether-ports",
  "aether-routing",
  "aether-runtime-catalog",
@@ -535,27 +529,11 @@ dependencies = [
  "tower",
  "tracing",
  "utoipa",
- "utoipa-swagger-ui",
  "uuid",
  "voltage_iec104",
  "voltage_j1939",
  "voltage_modbus",
  "zeroize",
-]
-
-[[package]]
-name = "aether-model"
-version = "0.0.1"
-dependencies = [
- "aether-core",
- "anyhow",
- "schemars 0.8.22",
- "serde",
- "serde_json",
- "sqlx",
- "tempfile",
- "thiserror 2.0.18",
- "tracing",
 ]
 
 [[package]]
@@ -607,8 +585,8 @@ dependencies = [
 name = "aether-routing"
 version = "0.0.1"
 dependencies = [
+ "aether-core",
  "aether-domain",
- "aether-model",
  "anyhow",
  "arc-swap",
  "itoa",
@@ -620,33 +598,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "aether-rtdb"
-version = "0.0.1"
-dependencies = [
- "aether-infra",
- "aether-model",
- "anyhow",
- "bytes",
- "dashmap 6.2.1",
- "itoa",
- "parking_lot",
- "regex",
- "ryu",
- "serial_test",
- "thiserror 2.0.18",
- "tokio",
- "tracing",
- "workspace-hack",
-]
-
-[[package]]
 name = "aether-rules"
 version = "0.0.1"
 dependencies = [
  "aether-calc",
  "aether-dataplane",
  "aether-domain",
- "aether-model",
  "aether-ports",
  "aether-shm-bridge",
  "anyhow",
@@ -689,16 +646,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.118",
-]
-
-[[package]]
-name = "aether-shm"
-version = "0.0.1"
-dependencies = [
- "aether-core",
- "memmap2",
- "tempfile",
- "workspace-hack",
 ]
 
 [[package]]
@@ -803,7 +750,6 @@ dependencies = [
  "tower-http",
  "tracing",
  "utoipa",
- "utoipa-swagger-ui",
 ]
 
 [[package]]
@@ -1543,8 +1489,8 @@ dependencies = [
 name = "common"
 version = "0.0.1"
 dependencies = [
+ "aether-core",
  "aether-infra",
- "aether-model",
  "aether-schema-macro",
  "anyhow",
  "axum",
@@ -4555,31 +4501,6 @@ dependencies = [
  "ryu",
  "serde",
  "unsafe-libyaml",
-]
-
-[[package]]
-name = "serial_test"
-version = "3.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "699f4197115b8a7e7ff19c9a315a4bd6fffec26cc4626ef45ecaea389e081c6d"
-dependencies = [
- "futures-executor",
- "futures-util",
- "log",
- "once_cell",
- "parking_lot",
- "serial_test_derive",
-]
-
-[[package]]
-name = "serial_test_derive"
-version = "3.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "94e153fc76e1c6a068703d6d29c508a0b15c061c4b7e43da59cc097bc342673c"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.118",
 ]
 
 [[package]]

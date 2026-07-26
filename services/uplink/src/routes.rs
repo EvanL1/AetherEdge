@@ -10,13 +10,11 @@ use axum::{
 };
 use serde_json::{Value, json};
 use tracing::error;
-#[cfg(feature = "swagger-ui")]
+#[cfg(feature = "openapi")]
 use utoipa::OpenApi;
-#[cfg(feature = "swagger-ui")]
-use utoipa_swagger_ui::{Config, SwaggerUi};
 
 use crate::db_config;
-#[cfg(feature = "swagger-ui")]
+#[cfg(feature = "openapi")]
 use crate::models::SystemMetrics;
 use crate::models::{AlarmBroadcastRequest, CertUploadForm, NetConfig};
 use crate::mqtt::do_inst_sync;
@@ -52,25 +50,22 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/admin/logs/view", get(common::admin_api::view_log_file))
         .with_state(state);
 
-    #[cfg(feature = "swagger-ui")]
-    let api = api.merge(
-        SwaggerUi::new("/docs")
-            .url("/openapi.json", ApiDoc::openapi())
-            .config(
-                Config::default()
-                    .default_model_rendering("model")
-                    .default_models_expand_depth(1),
-            ),
-    );
+    #[cfg(feature = "openapi")]
+    let api = api.route("/openapi.json", get(openapi_document));
 
     api
 }
 
 // ============================================================================
-// OpenAPI document (only consumed when swagger-ui feature is enabled)
+// Service-local OpenAPI document consumed by the gateway-owned Swagger UI.
 // ============================================================================
 
-#[cfg(feature = "swagger-ui")]
+#[cfg(feature = "openapi")]
+async fn openapi_document() -> Json<utoipa::openapi::OpenApi> {
+    Json(ApiDoc::openapi())
+}
+
+#[cfg(feature = "openapi")]
 #[derive(OpenApi)]
 #[openapi(
     paths(
@@ -118,7 +113,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
 )]
 pub struct ApiDoc;
 
-#[cfg(all(test, feature = "swagger-ui"))]
+#[cfg(all(test, feature = "openapi"))]
 mod openapi_tests {
     use super::*;
 

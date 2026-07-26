@@ -1,7 +1,6 @@
 //! Detects whether this host is running AetherEdge via Docker Compose or
 //! systemd, so `aether services`/`aether doctor` can speak the right
-//! backend without a user-facing flag. See
-//! docs/superpowers/specs/2026-07-10-baremetal-install-design.md.
+//! backend without a user-facing flag. See the current deployment guide.
 
 use anyhow::{Result, bail};
 use std::path::Path;

@@ -21,7 +21,7 @@ use aether_automation::instance_configuration::{
 };
 use aether_automation::{AutomationError, InstanceManager, ProductLoader};
 use aether_domain::TimestampMs;
-use aether_model::product_lib::ProductLibrary;
+use aether_pack::ProductLibrary;
 use aether_ports::{
     AuditSink, CommandDispatcher, DeviceCommandSink, PortError, PortErrorKind, PortResult,
 };

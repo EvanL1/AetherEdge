@@ -9,7 +9,7 @@ use axum::{
 };
 use std::sync::Arc;
 
-#[cfg(feature = "swagger-ui")]
+#[cfg(feature = "openapi")]
 use utoipa::OpenApi;
 
 use crate::app_state::AppState;
@@ -51,8 +51,8 @@ use crate::api::property_handlers::{delete_property, upsert_property};
 
 use common::admin_api::{get_log_level, list_log_files, set_log_level, view_log_file};
 
-// OpenAPI documentation - only compiled when swagger-ui feature is enabled
-#[cfg(feature = "swagger-ui")]
+// Service-local OpenAPI document consumed by the gateway-owned Swagger UI.
+#[cfg(feature = "openapi")]
 #[derive(OpenApi)]
 #[openapi(
     paths(
@@ -141,10 +141,10 @@ use common::admin_api::{get_log_level, list_log_files, set_log_level, view_log_f
 )]
 pub struct AutomationApiDoc;
 
-#[cfg(feature = "swagger-ui")]
+#[cfg(feature = "openapi")]
 struct SecurityAddon;
 
-#[cfg(feature = "swagger-ui")]
+#[cfg(feature = "openapi")]
 impl utoipa::Modify for SecurityAddon {
     fn modify(&self, openapi: &mut utoipa::openapi::OpenApi) {
         if let Some(components) = openapi.components.as_mut() {
@@ -171,6 +171,12 @@ impl utoipa::Modify for SecurityAddon {
             );
         }
     }
+}
+
+/// Returns the complete automation and rule-engine OpenAPI document.
+#[cfg(feature = "openapi")]
+pub fn openapi_document() -> utoipa::openapi::OpenApi {
+    AutomationApiDoc::openapi().nest("", crate::rule_routes::RuleApiDoc::openapi())
 }
 
 /// Create all API routes for the Model Service
@@ -267,7 +273,7 @@ pub fn create_routes(state: Arc<AppState>) -> Router {
         .with_state(state)
 }
 
-#[cfg(all(test, feature = "swagger-ui"))]
+#[cfg(all(test, feature = "openapi"))]
 mod openapi_tests {
     use super::*;
     use crate::rule_routes::RuleApiDoc;

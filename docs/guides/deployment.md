@@ -140,8 +140,8 @@ install script:
   extension variants as `-s rust,redis`, `-s rust,timescaledb`, or
   `-s rust,redis,timescaledb`. The default package contains only the Rust
   edge-runtime image; external-store images must be selected explicitly.
-- `--enable-swagger` — compile the Rust services with their feature-gated
-  Swagger UI enabled
+- `--enable-swagger` — compile the single `aether-api` gateway Swagger UI;
+  it presents the service-owned OpenAPI documents through fixed gateway paths
 - `--io-features` — replace the default `aether-io` feature set with one
   explicit comma-separated selection. The builder rejects unknown features,
   expands required dependencies once, and uses that same normalized set for
@@ -151,7 +151,7 @@ install script:
 # Full installer for an ARM64 edge device
 ./scripts/build-installer.sh
 
-# All Rust services only, with Swagger UI
+# All Rust services only, with the gateway Swagger UI
 ./scripts/build-installer.sh v1.2.0 arm64 -s rust --enable-swagger
 
 # Docker installer with the local read-only Home Assistant bridge

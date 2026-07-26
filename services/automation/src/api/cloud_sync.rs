@@ -36,7 +36,7 @@ pub struct InstanceTopology {
 /// Returns all instances with their topology (parent_id) and properties.
 /// Used for edge → cloud synchronization.
 ///
-#[cfg_attr(feature = "swagger-ui", utoipa::path(
+#[cfg_attr(feature = "openapi", utoipa::path(
     get,
     path = "/api/instances/export",
     tag = "instances",

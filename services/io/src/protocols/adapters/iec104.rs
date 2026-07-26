@@ -59,7 +59,7 @@ use crate::protocols::core::traits::{
     PollResult, Protocol, ProtocolCapabilities, ProtocolClient, WriteResult,
 };
 use crate::protocols::gateway::ChannelRuntime;
-use aether_model::PointType;
+use aether_core::PointType;
 
 /// IEC 104 channel configuration.
 #[derive(Debug, Clone)]

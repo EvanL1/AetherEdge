@@ -14,6 +14,7 @@ pub use aether_infra::redis;
 pub use aether_infra::sqlite;
 
 pub mod service_config;
+pub mod service_ports;
 
 // Common modules
 pub mod admin_api;
@@ -57,6 +58,7 @@ pub use service_config::{
     LOCALHOST_HOST,
     LogRotationConfig,
     LoggingConfig,
+    PointRole,
     PointType,
     ReloadResult,
     ReloadableService,
@@ -98,9 +100,6 @@ pub use api_types::{
 // Re-export AppError when axum feature is enabled
 #[cfg(feature = "axum")]
 pub use api_types::AppError;
-
-// Re-export PointRole from aether-model (canonical location)
-pub use aether_model::PointRole;
 
 // Startup dependency checker
 #[cfg(feature = "dependency")]

@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use aether_application::{MANAGE_INSTANCE_CAPABILITY, RequestContext, SafetyPolicy};
-use aether_model::validate_instance_name;
+use aether_domain::InstanceName;
 use aether_ports::{AuditOutcome, AuditRecord, AuditSink, PortError};
 use sqlx::Sqlite;
 
@@ -914,7 +914,8 @@ fn validate_expected_revision(
 }
 
 fn validate_name(name: &str) -> Result<(), AutomationError> {
-    validate_instance_name(name)
+    InstanceName::try_from(name)
+        .map(|_| ())
         .map_err(|error| AutomationError::InvalidData(format!("invalid instance name: {error}")))
 }
 

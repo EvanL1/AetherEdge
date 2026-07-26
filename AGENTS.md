@@ -40,10 +40,11 @@ firmware/     separately targeted embedded workspace
 The unified documentation site source and deployment live in
 [`EvanL1/AetherDocs`](https://github.com/EvanL1/AetherDocs).
 
-Historical migration plans under `docs/plans/` and `docs/superpowers/` are
-evidence of earlier decisions, not current architecture instructions. Current
-authority is this file, accepted ADRs, the runtime manifest, OpenAPI, and the
-active Pack manifests.
+Historical plans and scratch design material must stay outside GitHub. Preserve
+accepted decisions in ADRs instead.
+
+Current authority is this file, accepted ADRs, the runtime manifest, OpenAPI,
+and the active Pack manifests.
 
 ## Architecture Boundaries
 
@@ -57,6 +58,9 @@ domain <- ports <- application <- runtime/interfaces
 
 - Core crates under `crates/` must not depend on Redis, PostgreSQL, SQLx web
   frameworks, or concrete protocol implementations.
+- `aether-domain` owns all industry-neutral business semantics. The retired
+  `aether-model` compatibility crate must not be restored; wire, storage,
+  protocol, and Pack DTOs stay in their owning adapters or contract crates.
 - Traits describe domain capabilities, never vendor command sets. Prefer
   `HistorySink` or `StateMirror` over a generic database/RTDB abstraction.
 - Extensions under `extensions/` may implement core ports. Core crates must
@@ -88,8 +92,8 @@ domain <- ports <- application <- runtime/interfaces
   documentation site; internal Markdown uses GitHub; machine resources use
   Raw GitHub.
 - `llms.txt` is generated from that catalog and must cover every catalog entry
-  exactly once. Core task routes come first; ADRs, crates, extensions, plans,
-  and other deep context remain discoverable under `Optional`.
+  exactly once. Core task routes come first; ADRs, crates, extensions, and
+  other deep context remain discoverable under `Optional`.
 - Update both generated files with
   `node scripts/build-agent-docs.mjs --write`; never edit them by hand.
 - `ai/safety-policy.yaml` remains the capability-risk authority. Document

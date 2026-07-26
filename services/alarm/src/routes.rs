@@ -13,13 +13,11 @@ use axum::{
 use chrono::TimeZone;
 use serde_json::{Value, json};
 use tracing::error;
-#[cfg(feature = "swagger-ui")]
+#[cfg(feature = "openapi")]
 use utoipa::OpenApi;
-#[cfg(feature = "swagger-ui")]
-use utoipa_swagger_ui::{Config, SwaggerUi};
 
 use crate::db::{self};
-#[cfg(feature = "swagger-ui")]
+#[cfg(feature = "openapi")]
 use crate::models::AlertEvent;
 use crate::models::{
     AlertQueryParams, AlertResolutionData, AlertRule, ApiResponse, CompletionAuditData,
@@ -67,25 +65,22 @@ pub fn create_routes(state: Arc<AppState>) -> Router {
         .route("/api/admin/logs/view", get(common::admin_api::view_log_file))
         .with_state(state);
 
-    #[cfg(feature = "swagger-ui")]
-    let api = api.merge(
-        SwaggerUi::new("/docs")
-            .url("/openapi.json", ApiDoc::openapi())
-            .config(
-                Config::default()
-                    .default_model_rendering("model")
-                    .default_models_expand_depth(1),
-            ),
-    );
+    #[cfg(feature = "openapi")]
+    let api = api.route("/openapi.json", get(openapi_document));
 
     api
 }
 
 // ============================================================================
-// OpenAPI document (only consumed when swagger-ui feature is enabled)
+// Service-local OpenAPI document consumed by the gateway-owned Swagger UI.
 // ============================================================================
 
-#[cfg(feature = "swagger-ui")]
+#[cfg(feature = "openapi")]
+async fn openapi_document() -> Json<utoipa::openapi::OpenApi> {
+    Json(ApiDoc::openapi())
+}
+
+#[cfg(feature = "openapi")]
 #[derive(OpenApi)]
 #[openapi(
     paths(
@@ -152,10 +147,10 @@ pub fn create_routes(state: Arc<AppState>) -> Router {
 )]
 pub struct ApiDoc;
 
-#[cfg(feature = "swagger-ui")]
+#[cfg(feature = "openapi")]
 struct SecurityAddon;
 
-#[cfg(feature = "swagger-ui")]
+#[cfg(feature = "openapi")]
 impl utoipa::Modify for SecurityAddon {
     fn modify(&self, openapi: &mut utoipa::openapi::OpenApi) {
         if let Some(components) = openapi.components.as_mut() {
@@ -173,7 +168,7 @@ impl utoipa::Modify for SecurityAddon {
     }
 }
 
-#[cfg(all(test, feature = "swagger-ui"))]
+#[cfg(all(test, feature = "openapi"))]
 mod openapi_tests {
     use super::*;
 

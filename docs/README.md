@@ -41,10 +41,10 @@ MQTT 边端基础、application ACK 与 legacy 迁移边界。
 - [连接 AI 助手](./guides/ai-assistants.md) — MCP 接入与写操作门槛
 - [旧版 API 汇编](./API_REFERENCE.md) — 仅供迁移查阅，不是当前契约
 
-Swagger UI 是可选构建能力。安装包使用 `--enable-swagger` 后，六个服务都在
-`/docs` 提供 UI、在 `/openapi.json` 提供规范；只有 `aether-api:6005` 可以作为
-远程管理入口，其余服务端口必须保留在主机 loopback。Gateway 的 Swagger 路由
-本身不经过 JWT middleware，只应在受信的投运网络中启用。
+Swagger UI 是可选构建能力。安装包使用 `--enable-swagger` 后，只有
+`aether-api:6005/docs` 提供一个聚合文档选择器；五个内部服务仍只在 loopback 提供
+`/openapi.json` 源规范。Gateway 将规范重写到固定的认证命名空间，且其 Swagger
+路由本身不经过 JWT middleware，只应在受信的投运网络中启用。
 
 ## 可选 Data Processing
 

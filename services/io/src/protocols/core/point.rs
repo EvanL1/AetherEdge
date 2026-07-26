@@ -1,6 +1,6 @@
 //! Point configuration with protocol-specific addresses and SCADA categorization.
 
-use aether_model::PointType;
+use aether_core::PointType;
 use serde::{Deserialize, Serialize};
 
 use crate::protocols::core::error::GatewayError;

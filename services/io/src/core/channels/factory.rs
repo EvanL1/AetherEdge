@@ -250,7 +250,7 @@ pub fn create_aether_485_channel(
     params: &std::collections::HashMap<String, serde_json::Value>,
     runtime_config: &crate::core::config::RuntimeChannelConfig,
 ) -> Box<dyn ChannelRuntime> {
-    use aether_model::PointType;
+    use aether_core::PointType;
     use std::time::Duration;
 
     let device = params

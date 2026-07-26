@@ -106,7 +106,7 @@ struct SetLogLevelRequest {
 
 /// Get service port by name
 fn get_service_port(service: &str) -> Result<u16> {
-    aether_model::service_ports::default_port_for(&service.to_lowercase()).ok_or_else(|| {
+    common::service_ports::default_port_for(&service.to_lowercase()).ok_or_else(|| {
         anyhow::anyhow!(
             "Unknown service: {}. Use 'aether-io', 'aether-automation', or 'all'",
             service
@@ -183,7 +183,7 @@ fn encode_query(s: &str) -> String {
 /// Uses aether-io (port 6001) as the default endpoint since all services
 /// share the same /app/logs/ directory.
 fn admin_logs_url(host: &str) -> String {
-    let port = aether_model::service_ports::default_port_for("aether-io").unwrap_or(6001);
+    let port = common::service_ports::default_port_for("aether-io").unwrap_or(6001);
     format!("http://{host}:{port}/api/admin/logs")
 }
 

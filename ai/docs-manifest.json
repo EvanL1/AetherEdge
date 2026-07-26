@@ -26,7 +26,7 @@
       "implementation_status": "implemented",
       "production_readiness": "not-applicable",
       "context_sensitivity": "internal",
-      "updated": "2026-07-22",
+      "updated": "2026-07-26",
       "priority": "core",
       "media_type": "text/markdown",
       "capability_refs": [],
@@ -54,7 +54,7 @@
       "implementation_status": "implemented",
       "production_readiness": "not-applicable",
       "context_sensitivity": "public",
-      "updated": "2026-07-16",
+      "updated": "2026-07-26",
       "priority": "core",
       "media_type": "text/markdown",
       "capability_refs": [],
@@ -812,7 +812,7 @@
       "implementation_status": "partial",
       "production_readiness": "not-applicable",
       "context_sensitivity": "public",
-      "updated": "2026-07-16",
+      "updated": "2026-07-26",
       "priority": "optional",
       "media_type": "text/markdown",
       "capability_refs": [],
@@ -1008,7 +1008,7 @@
       "implementation_status": "partial",
       "production_readiness": "not-applicable",
       "context_sensitivity": "public",
-      "updated": "2026-07-24",
+      "updated": "2026-07-26",
       "priority": "core",
       "media_type": "text/markdown",
       "capability_refs": [],
@@ -1036,7 +1036,7 @@
       "implementation_status": "partial",
       "production_readiness": "not-applicable",
       "context_sensitivity": "public",
-      "updated": "2026-07-25",
+      "updated": "2026-07-26",
       "priority": "core",
       "media_type": "text/markdown",
       "capability_refs": [],
@@ -1232,7 +1232,7 @@
       "implementation_status": "partial",
       "production_readiness": "not-applicable",
       "context_sensitivity": "internal",
-      "updated": "2026-07-14",
+      "updated": "2026-07-26",
       "priority": "optional",
       "media_type": "text/markdown",
       "capability_refs": [],
@@ -1344,7 +1344,7 @@
       "implementation_status": "partial",
       "production_readiness": "not-applicable",
       "context_sensitivity": "internal",
-      "updated": "2026-07-14",
+      "updated": "2026-07-26",
       "priority": "optional",
       "media_type": "text/markdown",
       "capability_refs": [],
@@ -1662,6 +1662,34 @@
       "verification": []
     },
     {
+      "id": "edge-docs-adr-0023-canonical-domain-model",
+      "path": "docs/adr/0023-canonical-domain-model.md",
+      "canonical_url": "https://github.com/EvanL1/AetherEdge/blob/main/docs/adr/0023-canonical-domain-model.md",
+      "title": "ADR-0023: Make aether-domain the canonical business-model owner",
+      "description": "Accepted and implemented on 2026-07-26.",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "decision",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "inspect-edge-implementation"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "not-applicable",
+      "context_sensitivity": "internal",
+      "updated": "2026-07-26",
+      "priority": "optional",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
       "id": "edge-docs-aethercloud-index",
       "path": "docs/aethercloud/index.md",
       "canonical_url": "https://docs.aetheriot.dev/aethercloud.md",
@@ -1876,7 +1904,7 @@
       "implementation_status": "partial",
       "production_readiness": "not-applicable",
       "context_sensitivity": "public",
-      "updated": "2026-07-16",
+      "updated": "2026-07-26",
       "priority": "core",
       "media_type": "text/markdown",
       "capability_refs": [],
@@ -1932,7 +1960,7 @@
       "implementation_status": "partial",
       "production_readiness": "not-applicable",
       "context_sensitivity": "public",
-      "updated": "2026-07-14",
+      "updated": "2026-07-26",
       "priority": "core",
       "media_type": "text/markdown",
       "capability_refs": [],
@@ -2532,7 +2560,7 @@
       "implementation_status": "partial",
       "production_readiness": "experimental",
       "context_sensitivity": "public",
-      "updated": "2026-07-24",
+      "updated": "2026-07-26",
       "priority": "core",
       "media_type": "text/markdown",
       "capability_refs": [
@@ -2712,258 +2740,6 @@
       "context_sensitivity": "public",
       "updated": "2026-07-26",
       "priority": "core",
-      "media_type": "text/markdown",
-      "capability_refs": [],
-      "preconditions": [],
-      "recovery_route": null,
-      "human_escalation": null,
-      "verification": []
-    },
-    {
-      "id": "edge-docs-plans-2026-03-06-simulator-overhaul",
-      "path": "docs/plans/2026-03-06-simulator-overhaul.md",
-      "canonical_url": "https://github.com/EvanL1/AetherEdge/blob/main/docs/plans/2026-03-06-simulator-overhaul.md",
-      "title": "Simulator Overhaul: State Machine + CAN/J1939 + HTTP Monitor",
-      "description": "For Claude: REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.",
-      "locale": "en",
-      "translation_of": null,
-      "document_role": "reference",
-      "agent_profiles": [
-        "coding-agent",
-        "operator-agent"
-      ],
-      "intents": [
-        "inspect-edge-implementation"
-      ],
-      "implementation_status": "planned",
-      "production_readiness": "not-applicable",
-      "context_sensitivity": "internal",
-      "updated": "2026-07-11",
-      "priority": "optional",
-      "media_type": "text/markdown",
-      "capability_refs": [],
-      "preconditions": [],
-      "recovery_route": null,
-      "human_escalation": null,
-      "verification": []
-    },
-    {
-      "id": "edge-docs-plans-2026-03-11-shm-hardening",
-      "path": "docs/plans/2026-03-11-shm-hardening.md",
-      "canonical_url": "https://github.com/EvanL1/AetherEdge/blob/main/docs/plans/2026-03-11-shm-hardening.md",
-      "title": "SHM Hardening Implementation Plan",
-      "description": "For Claude: REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.",
-      "locale": "en",
-      "translation_of": null,
-      "document_role": "reference",
-      "agent_profiles": [
-        "coding-agent",
-        "operator-agent"
-      ],
-      "intents": [
-        "inspect-edge-implementation"
-      ],
-      "implementation_status": "planned",
-      "production_readiness": "not-applicable",
-      "context_sensitivity": "internal",
-      "updated": "2026-07-11",
-      "priority": "optional",
-      "media_type": "text/markdown",
-      "capability_refs": [],
-      "preconditions": [],
-      "recovery_route": null,
-      "human_escalation": null,
-      "verification": []
-    },
-    {
-      "id": "edge-docs-plans-2026-03-12-seqlock-zero-cost",
-      "path": "docs/plans/2026-03-12-seqlock-zero-cost.md",
-      "canonical_url": "https://github.com/EvanL1/AetherEdge/blob/main/docs/plans/2026-03-12-seqlock-zero-cost.md",
-      "title": "Seqlock Zero-Cost Optimization Plan",
-      "description": "For Claude: REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.",
-      "locale": "en",
-      "translation_of": null,
-      "document_role": "reference",
-      "agent_profiles": [
-        "coding-agent",
-        "operator-agent"
-      ],
-      "intents": [
-        "inspect-edge-implementation"
-      ],
-      "implementation_status": "planned",
-      "production_readiness": "not-applicable",
-      "context_sensitivity": "internal",
-      "updated": "2026-07-11",
-      "priority": "optional",
-      "media_type": "text/markdown",
-      "capability_refs": [],
-      "preconditions": [],
-      "recovery_route": null,
-      "human_escalation": null,
-      "verification": []
-    },
-    {
-      "id": "edge-docs-plans-2026-05-15-inst-online-control-guard",
-      "path": "docs/plans/2026-05-15-inst-online-control-guard.md",
-      "canonical_url": "https://github.com/EvanL1/AetherEdge/blob/main/docs/plans/2026-05-15-inst-online-control-guard.md",
-      "title": "Inst Online Control Guard",
-      "description": "Keep the existing four-remote model and instance data layout unchanged:",
-      "locale": "en",
-      "translation_of": null,
-      "document_role": "reference",
-      "agent_profiles": [
-        "coding-agent",
-        "operator-agent"
-      ],
-      "intents": [
-        "inspect-edge-implementation"
-      ],
-      "implementation_status": "planned",
-      "production_readiness": "not-applicable",
-      "context_sensitivity": "internal",
-      "updated": "2026-07-11",
-      "priority": "optional",
-      "media_type": "text/markdown",
-      "capability_refs": [],
-      "preconditions": [],
-      "recovery_route": null,
-      "human_escalation": null,
-      "verification": []
-    },
-    {
-      "id": "edge-docs-plans-2026-05-21-onchange-trigger",
-      "path": "docs/plans/2026-05-21-onchange-trigger.md",
-      "canonical_url": "https://github.com/EvanL1/AetherEdge/blob/main/docs/plans/2026-05-21-onchange-trigger.md",
-      "title": "On-change trigger design",
-      "description": "Historical design for event-driven rule scheduling retained as optional implementation context.",
-      "locale": "en",
-      "translation_of": null,
-      "document_role": "reference",
-      "agent_profiles": [
-        "coding-agent",
-        "operator-agent"
-      ],
-      "intents": [
-        "inspect-edge-implementation"
-      ],
-      "implementation_status": "planned",
-      "production_readiness": "not-applicable",
-      "context_sensitivity": "internal",
-      "updated": "2026-07-11",
-      "priority": "optional",
-      "media_type": "text/markdown",
-      "capability_refs": [],
-      "preconditions": [],
-      "recovery_route": null,
-      "human_escalation": null,
-      "verification": []
-    },
-    {
-      "id": "edge-docs-plans-2026-05-24-redis-removal-strategy",
-      "path": "docs/plans/2026-05-24-redis-removal-strategy.md",
-      "canonical_url": "https://github.com/EvanL1/AetherEdge/blob/main/docs/plans/2026-05-24-redis-removal-strategy.md",
-      "title": "Redis removal strategy",
-      "description": "Historical migration plan for removing Redis from the industry-neutral Edge runtime.",
-      "locale": "en",
-      "translation_of": null,
-      "document_role": "reference",
-      "agent_profiles": [
-        "coding-agent",
-        "operator-agent"
-      ],
-      "intents": [
-        "inspect-edge-implementation"
-      ],
-      "implementation_status": "planned",
-      "production_readiness": "not-applicable",
-      "context_sensitivity": "internal",
-      "updated": "2026-07-11",
-      "priority": "optional",
-      "media_type": "text/markdown",
-      "capability_refs": [],
-      "preconditions": [],
-      "recovery_route": null,
-      "human_escalation": null,
-      "verification": []
-    },
-    {
-      "id": "edge-docs-plans-2026-05-28-point-watch-design",
-      "path": "docs/plans/2026-05-28-point-watch-design.md",
-      "canonical_url": "https://github.com/EvanL1/AetherEdge/blob/main/docs/plans/2026-05-28-point-watch-design.md",
-      "title": "PointWatch design",
-      "description": "Historical PointWatch design record retained as optional implementation context.",
-      "locale": "en",
-      "translation_of": null,
-      "document_role": "reference",
-      "agent_profiles": [
-        "coding-agent",
-        "operator-agent"
-      ],
-      "intents": [
-        "inspect-edge-implementation"
-      ],
-      "implementation_status": "planned",
-      "production_readiness": "not-applicable",
-      "context_sensitivity": "internal",
-      "updated": "2026-07-11",
-      "priority": "optional",
-      "media_type": "text/markdown",
-      "capability_refs": [],
-      "preconditions": [],
-      "recovery_route": null,
-      "human_escalation": null,
-      "verification": []
-    },
-    {
-      "id": "edge-docs-plans-2026-07-11-aether-data-processing",
-      "path": "docs/plans/2026-07-11-aether-data-processing.md",
-      "canonical_url": "https://github.com/EvanL1/AetherEdge/blob/main/docs/plans/2026-07-11-aether-data-processing.md",
-      "title": "Aether Data Processing Implementation Plan",
-      "description": "Status: Implemented v1 baseline; production site commissioning and shadow cutover remain blocked on the gates below Recorded: 2026-07-11 Reconciled: 2026-07-11",
-      "locale": "en",
-      "translation_of": null,
-      "document_role": "reference",
-      "agent_profiles": [
-        "coding-agent",
-        "operator-agent"
-      ],
-      "intents": [
-        "inspect-edge-implementation"
-      ],
-      "implementation_status": "planned",
-      "production_readiness": "not-applicable",
-      "context_sensitivity": "internal",
-      "updated": "2026-07-12",
-      "priority": "optional",
-      "media_type": "text/markdown",
-      "capability_refs": [],
-      "preconditions": [],
-      "recovery_route": null,
-      "human_escalation": null,
-      "verification": []
-    },
-    {
-      "id": "edge-docs-plans-2026-07-11-oceanclaw-nex-env-iot-safety-lab",
-      "path": "docs/plans/2026-07-11-oceanclaw-nex-env-iot-safety-lab.md",
-      "canonical_url": "https://github.com/EvanL1/AetherEdge/blob/main/docs/plans/2026-07-11-oceanclaw-nex-env-iot-safety-lab.md",
-      "title": "OceanClaw + nex-env IoT Safety Lab",
-      "description": "Status: Proposal / Backlog — not scheduled Recorded: 2026-07-11",
-      "locale": "en",
-      "translation_of": null,
-      "document_role": "reference",
-      "agent_profiles": [
-        "coding-agent",
-        "operator-agent"
-      ],
-      "intents": [
-        "inspect-edge-implementation"
-      ],
-      "implementation_status": "planned",
-      "production_readiness": "not-applicable",
-      "context_sensitivity": "internal",
-      "updated": "2026-07-11",
-      "priority": "optional",
       "media_type": "text/markdown",
       "capability_refs": [],
       "preconditions": [],
@@ -3233,7 +3009,7 @@
       "implementation_status": "partial",
       "production_readiness": "not-applicable",
       "context_sensitivity": "public",
-      "updated": "2026-07-16",
+      "updated": "2026-07-26",
       "priority": "core",
       "media_type": "text/markdown",
       "capability_refs": [],
@@ -3340,202 +3116,6 @@
       "context_sensitivity": "public",
       "updated": "2026-07-12",
       "priority": "core",
-      "media_type": "text/markdown",
-      "capability_refs": [],
-      "preconditions": [],
-      "recovery_route": null,
-      "human_escalation": null,
-      "verification": []
-    },
-    {
-      "id": "edge-docs-superpowers-plans-2026-07-09-cli-web-parity",
-      "path": "docs/superpowers/plans/2026-07-09-cli-web-parity.md",
-      "canonical_url": "https://github.com/EvanL1/AetherEdge/blob/main/docs/superpowers/plans/2026-07-09-cli-web-parity.md",
-      "title": "Historical CLI and Web parity plan",
-      "description": "Superseded pre-split console plan; do not use it as current application-boundary authority.",
-      "locale": "en",
-      "translation_of": null,
-      "document_role": "reference",
-      "agent_profiles": [
-        "coding-agent",
-        "operator-agent"
-      ],
-      "intents": [
-        "inspect-edge-implementation"
-      ],
-      "implementation_status": "planned",
-      "production_readiness": "not-applicable",
-      "context_sensitivity": "internal",
-      "updated": "2026-07-14",
-      "priority": "optional",
-      "media_type": "text/markdown",
-      "capability_refs": [],
-      "preconditions": [],
-      "recovery_route": null,
-      "human_escalation": null,
-      "verification": []
-    },
-    {
-      "id": "edge-docs-superpowers-plans-2026-07-10-ai-native-docs",
-      "path": "docs/superpowers/plans/2026-07-10-ai-native-docs.md",
-      "canonical_url": "https://github.com/EvanL1/AetherEdge/blob/main/docs/superpowers/plans/2026-07-10-ai-native-docs.md",
-      "title": "AI-Native Docs Corpus Implementation Plan",
-      "description": "Historical migration plan — do not execute. Its EMS positioning, embedded energy knowledge, Redis paths, and bundled frontend assumptions have been superseded by the AetherIot/AetherEMS repository boundary and ADR-0012.",
-      "locale": "en",
-      "translation_of": null,
-      "document_role": "reference",
-      "agent_profiles": [
-        "coding-agent",
-        "operator-agent"
-      ],
-      "intents": [
-        "inspect-edge-implementation"
-      ],
-      "implementation_status": "planned",
-      "production_readiness": "not-applicable",
-      "context_sensitivity": "internal",
-      "updated": "2026-07-14",
-      "priority": "optional",
-      "media_type": "text/markdown",
-      "capability_refs": [],
-      "preconditions": [],
-      "recovery_route": null,
-      "human_escalation": null,
-      "verification": []
-    },
-    {
-      "id": "edge-docs-superpowers-plans-2026-07-10-baremetal-install",
-      "path": "docs/superpowers/plans/2026-07-10-baremetal-install.md",
-      "canonical_url": "https://github.com/EvanL1/AetherEdge/blob/main/docs/superpowers/plans/2026-07-10-baremetal-install.md",
-      "title": "Bare-Metal Linux Install (No Docker) Implementation Plan",
-      "description": "Historical migration plan — do not execute. The bundled Redis/nginx/Vue distribution described here is not the AetherIot default. Use ADR-0006, ADR-0007, and the current deployment guide instead.",
-      "locale": "en",
-      "translation_of": null,
-      "document_role": "reference",
-      "agent_profiles": [
-        "coding-agent",
-        "operator-agent"
-      ],
-      "intents": [
-        "inspect-edge-implementation"
-      ],
-      "implementation_status": "planned",
-      "production_readiness": "not-applicable",
-      "context_sensitivity": "internal",
-      "updated": "2026-07-14",
-      "priority": "optional",
-      "media_type": "text/markdown",
-      "capability_refs": [],
-      "preconditions": [],
-      "recovery_route": null,
-      "human_escalation": null,
-      "verification": []
-    },
-    {
-      "id": "edge-docs-superpowers-specs-2026-07-09-cli-web-parity-design",
-      "path": "docs/superpowers/specs/2026-07-09-cli-web-parity-design.md",
-      "canonical_url": "https://github.com/EvanL1/AetherEdge/blob/main/docs/superpowers/specs/2026-07-09-cli-web-parity-design.md",
-      "title": "Historical CLI and Web parity design",
-      "description": "Superseded pre-split console design retained for migration history.",
-      "locale": "en",
-      "translation_of": null,
-      "document_role": "reference",
-      "agent_profiles": [
-        "coding-agent",
-        "operator-agent"
-      ],
-      "intents": [
-        "inspect-edge-implementation"
-      ],
-      "implementation_status": "partial",
-      "production_readiness": "not-applicable",
-      "context_sensitivity": "internal",
-      "updated": "2026-07-14",
-      "priority": "optional",
-      "media_type": "text/markdown",
-      "capability_refs": [],
-      "preconditions": [],
-      "recovery_route": null,
-      "human_escalation": null,
-      "verification": []
-    },
-    {
-      "id": "edge-docs-superpowers-specs-2026-07-10-ai-native-docs-design",
-      "path": "docs/superpowers/specs/2026-07-10-ai-native-docs-design.md",
-      "canonical_url": "https://github.com/EvanL1/AetherEdge/blob/main/docs/superpowers/specs/2026-07-10-ai-native-docs-design.md",
-      "title": "Historical AI-native documentation design",
-      "description": "Superseded pre-split documentation design retained for migration history.",
-      "locale": "en",
-      "translation_of": null,
-      "document_role": "reference",
-      "agent_profiles": [
-        "coding-agent",
-        "operator-agent"
-      ],
-      "intents": [
-        "inspect-edge-implementation"
-      ],
-      "implementation_status": "partial",
-      "production_readiness": "not-applicable",
-      "context_sensitivity": "internal",
-      "updated": "2026-07-14",
-      "priority": "optional",
-      "media_type": "text/markdown",
-      "capability_refs": [],
-      "preconditions": [],
-      "recovery_route": null,
-      "human_escalation": null,
-      "verification": []
-    },
-    {
-      "id": "edge-docs-superpowers-specs-2026-07-10-baremetal-install-design",
-      "path": "docs/superpowers/specs/2026-07-10-baremetal-install-design.md",
-      "canonical_url": "https://github.com/EvanL1/AetherEdge/blob/main/docs/superpowers/specs/2026-07-10-baremetal-install-design.md",
-      "title": "Historical bare-metal installation design",
-      "description": "Superseded design that bundled Redis, nginx, and a Web UI; current deployment guidance is authoritative.",
-      "locale": "en",
-      "translation_of": null,
-      "document_role": "reference",
-      "agent_profiles": [
-        "coding-agent",
-        "operator-agent"
-      ],
-      "intents": [
-        "inspect-edge-implementation"
-      ],
-      "implementation_status": "partial",
-      "production_readiness": "not-applicable",
-      "context_sensitivity": "internal",
-      "updated": "2026-07-14",
-      "priority": "optional",
-      "media_type": "text/markdown",
-      "capability_refs": [],
-      "preconditions": [],
-      "recovery_route": null,
-      "human_escalation": null,
-      "verification": []
-    },
-    {
-      "id": "edge-docs-superpowers-specs-2026-07-11-aether-docs-site-design",
-      "path": "docs/superpowers/specs/2026-07-11-aether-docs-site-design.md",
-      "canonical_url": "https://github.com/EvanL1/AetherEdge/blob/main/docs/superpowers/specs/2026-07-11-aether-docs-site-design.md",
-      "title": "Unified documentation site design",
-      "description": "Historical design record for Cloudflare-hosted HTML, Markdown representations, and agent indexes.",
-      "locale": "en",
-      "translation_of": null,
-      "document_role": "reference",
-      "agent_profiles": [
-        "coding-agent",
-        "operator-agent"
-      ],
-      "intents": [
-        "inspect-edge-implementation"
-      ],
-      "implementation_status": "partial",
-      "production_readiness": "not-applicable",
-      "context_sensitivity": "internal",
-      "updated": "2026-07-11",
-      "priority": "optional",
       "media_type": "text/markdown",
       "capability_refs": [],
       "preconditions": [],

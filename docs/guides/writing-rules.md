@@ -64,9 +64,10 @@ drift (see [Rule Engine](../concepts/rule-engine.md) for the invariant).
 
 automation serves the rule API (`services/automation/src/rule_routes.rs`);
 applications reach it through the authenticated gateway under
-`/api/v1/automation`. The loopback Swagger UI at
-`http://localhost:6002/docs` remains the per-operation contract source.
-Every mutation below accepts only a Bearer Admin/Engineer actor, requires
+`/api/v1/automation`. The gateway Swagger selector at
+`http://<edge-host>:6005/docs` exposes the Automation OpenAPI document; the
+loopback source remains `http://127.0.0.1:6002/openapi.json` for host-local
+contract tooling. Every mutation below accepts only a Bearer Admin/Engineer actor, requires
 `confirmed: true` plus the gateway's `x-aether-confirmed: true` header, and
 writes mandatory audit records before changing SQLite or reloading the
 scheduler.

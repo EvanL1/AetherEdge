@@ -13,7 +13,6 @@ on:
       - crates/aether-domain/**
       - crates/aether-ports/**
       - extensions/shm-bridge/**
-      - libs/aether-shm/**
       - services/history/**
       - services/io/**
       - services/uplink/**

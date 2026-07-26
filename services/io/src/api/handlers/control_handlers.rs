@@ -20,8 +20,8 @@ use crate::dto::{
 use aether_application::{
     ChannelMutationAcceptance, ChannelReconciliationAcceptance, CompletionAuditStatus,
 };
+use aether_core::PointType;
 use aether_domain::ChannelId;
-use aether_model::PointType;
 use aether_ports::{ChannelMutation, ChannelReconciliationScope, ChannelRuntimeProjection};
 use axum::{
     Extension,

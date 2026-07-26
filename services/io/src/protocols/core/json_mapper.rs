@@ -11,7 +11,7 @@
 //! - Data type conversion and linear scaling (scale * value + offset)
 //! - Optional Python script fallback for complex transformations
 
-use aether_model::PointType;
+use aether_core::PointType;
 use chrono::{DateTime, TimeZone, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json_path::JsonPath;

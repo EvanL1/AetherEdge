@@ -14,7 +14,7 @@ use crate::core::config::{
 use crate::protocols::core::point::{
     PointConfig, ProtocolAddress, TransformConfig, VirtualAddress,
 };
-use aether_model::PointType;
+use aether_core::PointType;
 
 #[cfg(feature = "modbus")]
 use crate::protocols::core::point::{ByteOrder, DataFormat, ModbusAddress};
@@ -468,7 +468,7 @@ mod tests {
 
     #[test]
     fn test_convert_to_point_configs() {
-        use aether_model::PointType;
+        use aether_core::PointType;
 
         let runtime_config = create_test_runtime_config();
         let configs = convert_to_point_configs(&runtime_config);
@@ -548,7 +548,7 @@ mod tests {
             reverse: false,
         });
 
-        use aether_model::PointType;
+        use aether_core::PointType;
 
         let configs = convert_to_modbus_point_configs(&runtime_config);
 
@@ -606,7 +606,7 @@ mod tests {
     /// Test the specific internal_id encoding for all four point types.
     #[test]
     fn test_internal_id_encoding_for_all_point_types() {
-        use aether_model::PointType;
+        use aether_core::PointType;
 
         let point_id = 1u32;
 

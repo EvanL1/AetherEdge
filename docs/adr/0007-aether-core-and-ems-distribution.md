@@ -95,8 +95,9 @@ The staged gates now stand as follows:
 
 1. **Complete:** the 13 Energy models and five knowledge pages are Pack-owned
    assets declared by `packs/energy/pack.yaml`; old JSON copies are absent.
-2. **Complete:** `aether-model` embeds no domain products. Automation reads the
-   shared `<AETHER_CONFIG_PATH>/global.yaml` `packs: [{ id, root }]` entry,
+2. **Complete:** the retired `aether-model` crate has been removed. Automation
+   reads the shared `<AETHER_CONFIG_PATH>/global.yaml`
+   `packs: [{ id, root }]` entry,
    validates every selected manifest through `aether-pack`, and then loads its
    model assets. `packs: []` yields zero products; an explicit site product
    directory remains a later, deliberate override layer.
@@ -119,8 +120,8 @@ The staged gates now stand as follows:
    discarding unresolved domain properties.
    The empty `get_builtin_*`, `get_product_names`, `get_child`,
    `product_exists`, and `builtin_only` compatibility entry points have been
-   removed from `aether-model`; in-workspace callers now construct an explicit
-   `ProductLibrary` instead of entering a hidden built-in catalog path.
+   removed; in-workspace callers now construct an explicit
+   `aether_pack::ProductLibrary` instead of entering a hidden built-in catalog path.
 5. **Complete:** every concrete runtime composition carries a closed v1
    `runtime-manifest.json` with its Aether version, target triple, services,
    exact protocol-affecting Cargo features, derived adapters, live application
@@ -161,13 +162,10 @@ The staged gates now stand as follows:
    checker validates supplied evidence identifiers; it does not create or
    query external releases, repositories, attestations, or CI runs.
 
-The short pointers under `docs/domain/` and
-`libs/aether-model/src/products/README.md` may be removed after supported
-hosted/offline routes and downstream links use Pack-owned locations. This
-documentation-pointer condition is not satisfied by the local release workflow
-alone; downstream link evidence must come from the extracted distribution
-repository. The model compatibility entry points themselves are already gone,
-but downstream compilation remains part of the external CI extraction gate.
+The short pointers under `docs/domain/` may be removed after supported
+offline routes and downstream links use Pack-owned locations. The former model
+compatibility crate and its entry points are gone, but downstream compilation
+remains part of the external CI extraction gate.
 
 ## Extraction criteria
 

@@ -10,6 +10,7 @@ use tracing::{debug, info};
 pub struct ServiceConfigLoader {
     pool: SqlitePool,
     service_name: String,
+    default_port: u16,
 }
 
 /// Generic service configuration stored in database
@@ -27,7 +28,11 @@ pub struct ServiceConfig {
 
 impl ServiceConfigLoader {
     /// Create a new service config loader
-    pub async fn new(db_path: impl AsRef<Path>, service_name: impl Into<String>) -> Result<Self> {
+    pub async fn new(
+        db_path: impl AsRef<Path>,
+        service_name: impl Into<String>,
+        default_port: u16,
+    ) -> Result<Self> {
         let db_path = db_path.as_ref();
         let service_name = service_name.into();
 
@@ -48,7 +53,11 @@ impl ServiceConfigLoader {
             service_name, db_path
         );
 
-        Ok(Self { pool, service_name })
+        Ok(Self {
+            pool,
+            service_name,
+            default_port,
+        })
     }
 
     /// Initialize database schema for service configuration
@@ -122,15 +131,11 @@ impl ServiceConfigLoader {
             config_map.insert(key, parsed_value);
         }
 
-        // Get service-specific default port
-        let default_port = aether_model::service_ports::default_port_for(&self.service_name)
-            .unwrap_or(aether_model::service_ports::IO_PORT);
-
         // Extract standard fields - only support dotted key format
         let port = config_map
             .get("service.port")  // Standard dotted format from Aether
             .and_then(|v| v.as_i64())
-            .unwrap_or(default_port as i64) as u16;
+            .unwrap_or(self.default_port as i64) as u16;
 
         let redis_url = config_map
             .get("redis.url")  // Standard dotted format from Aether
@@ -207,6 +212,7 @@ pub async fn migrate_yaml_to_db(
     yaml_path: impl AsRef<Path>,
     db_path: impl AsRef<Path>,
     service_name: &str,
+    default_port: u16,
 ) -> Result<()> {
     let yaml_path = yaml_path.as_ref();
     let db_path = db_path.as_ref();
@@ -224,7 +230,7 @@ pub async fn migrate_yaml_to_db(
     }
 
     // Connect to database
-    let loader = ServiceConfigLoader::new(db_path, service_name).await?;
+    let loader = ServiceConfigLoader::new(db_path, service_name, default_port).await?;
     loader.init_schema().await?;
 
     // Flatten and store configuration

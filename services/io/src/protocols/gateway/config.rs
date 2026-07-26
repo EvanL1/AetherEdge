@@ -2,7 +2,7 @@
 //!
 //! Defines the TOML-friendly configuration format for the gateway.
 
-use aether_model::PointType;
+use aether_core::PointType;
 use serde::{Deserialize, Serialize};
 
 use crate::protocols::core::point::TransformConfig;

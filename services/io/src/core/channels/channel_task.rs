@@ -12,6 +12,8 @@ use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU8, AtomicU64, Ordering};
 use std::time::Duration;
 use tracing::{debug, error, info, warn};
 
+use aether_core::PointType;
+
 use crate::core::channels::traits::ChannelCommand;
 use crate::core::channels::types::ProtocolCommand;
 use crate::protocols::core::logging::{ChannelLogConfig, ChannelLogHandler};
@@ -417,7 +419,7 @@ async fn handle_business_command(
             expires_at_ms,
         } => {
             if let Err(error) = ctx.command_guard.validate(
-                aether_model::PointType::Control,
+                PointType::Control,
                 point_id,
                 value,
                 timestamp,
@@ -444,7 +446,7 @@ async fn handle_business_command(
             expires_at_ms,
         } => {
             if let Err(error) = ctx.command_guard.validate(
-                aether_model::PointType::Adjustment,
+                PointType::Adjustment,
                 point_id,
                 value,
                 timestamp,
@@ -477,7 +479,7 @@ async fn handle_business_command(
             if let Some((point_id, error)) = points.iter().find_map(|(point_id, value)| {
                 ctx.command_guard
                     .validate(
-                        aether_model::PointType::Control,
+                        PointType::Control,
                         *point_id,
                         *value,
                         timestamp,
@@ -507,7 +509,7 @@ async fn handle_business_command(
             if let Some((point_id, error)) = points.iter().find_map(|(point_id, value)| {
                 ctx.command_guard
                     .validate(
-                        aether_model::PointType::Adjustment,
+                        PointType::Adjustment,
                         *point_id,
                         *value,
                         timestamp,

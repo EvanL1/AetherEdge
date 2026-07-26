@@ -312,7 +312,7 @@ pub(crate) fn governance_response(
 ///
 /// Rebuilds process-local caches from authoritative SQLite configuration.
 ///
-#[cfg_attr(feature = "swagger-ui", utoipa::path(
+#[cfg_attr(feature = "openapi", utoipa::path(
     post,
     path = "/api/instances/reload",
     responses(

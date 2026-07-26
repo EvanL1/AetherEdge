@@ -20,9 +20,6 @@ bb8-redis = { workspace = true, optional = true }
 sqlx = { workspace = true, optional = true }
 serde_yml = { workspace = true, optional = true }
 
-# Local dependencies
-aether-model = { path = "../aether-model" }
-
 # Common dependencies
 anyhow = { workspace = true }
 bytes = { workspace = true }

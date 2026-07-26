@@ -27,6 +27,13 @@ async fn update(Extension(_: Extension<ChannelManagementHttpBoundary>)) {}
 async fn set_enabled(Extension(_: Extension<ChannelManagementHttpBoundary>)) {}
 async fn delete(Extension(_: Extension<ChannelManagementHttpBoundary>)) {}
 RUST
+
+    mkdir -p \
+        "$fixture_root/services/io/src/api/handlers/point_handlers" \
+        "$fixture_root/tools/aether/src"
+    : > "$fixture_root/services/io/src/api/handlers/point_handlers/point_helpers.rs"
+    : > "$fixture_root/services/io/src/api/handlers/control_handlers.rs"
+    : > "$fixture_root/tools/aether/src/services.rs"
 }
 
 write_governed_reconciliation() {
@@ -104,6 +111,7 @@ assert_rejected "$reload_fixture" \
 
 legacy_fixture=$(create_fixture legacy_lifecycle_module)
 write_governed_handler "$legacy_fixture"
+write_governed_reconciliation "$legacy_fixture"
 cat > "$legacy_fixture/services/io/src/api/handlers/channel_management_handlers/lifecycle.rs" <<'RUST'
 async fn direct_lifecycle() {}
 RUST
@@ -124,5 +132,12 @@ async fn reload() {
 }
 RUST
 assert_rejected "$cli_reload_fixture" "tools/aether/src/services.rs"
+
+missing_source_fixture=$(create_fixture missing_boundary_source)
+write_governed_handler "$missing_source_fixture"
+write_governed_reconciliation "$missing_source_fixture"
+rm "$missing_source_fixture/services/io/src/api/handlers/point_handlers/point_helpers.rs"
+assert_rejected "$missing_source_fixture" \
+    "services/io/src/api/handlers/point_handlers/point_helpers.rs"
 
 echo "Channel-management architecture boundary tests passed"

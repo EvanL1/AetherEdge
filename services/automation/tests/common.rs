@@ -11,7 +11,7 @@ use aether_automation::instance_configuration::{
 use aether_automation::product_loader::{CreateInstanceRequest, Instance, ProductLoader};
 use aether_automation::{AutomationError, InstanceManager};
 use aether_domain::TimestampMs;
-use aether_model::product_lib::ProductLibrary;
+use aether_pack::ProductLibrary;
 use aether_ports::AuditSink;
 use anyhow::Result;
 use sqlx::SqlitePool;

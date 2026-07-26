@@ -6,16 +6,10 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
-#[cfg(feature = "swagger-ui")]
-use aether_io::api::routes::IoApiDoc;
 use axum::serve;
 use clap::Parser;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
-#[cfg(feature = "swagger-ui")]
-use utoipa::OpenApi;
-#[cfg(feature = "swagger-ui")]
-use utoipa_swagger_ui::SwaggerUi;
 
 use aether_io::core::config::DEFAULT_PORT;
 use common::service_bootstrap::ServiceInfo;
@@ -569,18 +563,8 @@ async fn main() -> AetherResult<()> {
         access_authenticator,
     );
 
-    #[cfg(feature = "swagger-ui")]
-    let app = {
-        info!("Swagger UI feature ENABLED - initializing at /docs");
-        let openapi = IoApiDoc::openapi();
-        let merged = app.merge(SwaggerUi::new("/docs").url("/openapi.json", openapi));
-        info!("Swagger UI configured successfully");
-        merged
-    };
-
-    #[cfg(not(feature = "swagger-ui"))]
-    info!("Swagger UI feature DISABLED");
-
+    // The loopback service publishes /openapi.json; only aether-api owns the
+    // externally reachable Swagger UI.
     // Note: HTTP request logging middleware is applied in create_api_routes()
 
     let socket = tokio::net::TcpSocket::new_v4()

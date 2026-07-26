@@ -2,7 +2,6 @@
 //!
 //! Loads channel configurations, point tables, and mappings from SQLite database
 
-use crate::core::config::Point;
 #[cfg(test)]
 use crate::core::config::{
     ADJUSTMENT_POINTS_TABLE, CHANNELS_TABLE, CONTROL_POINTS_TABLE, SERVICE_CONFIG_TABLE,
@@ -12,6 +11,7 @@ use crate::core::config::{
     AdjustmentPoint, AppConfig, ChannelConfig, ControlPoint, RuntimeChannelConfig, ServiceConfig,
     SignalPoint, TelemetryPoint,
 };
+use crate::core::config::{DEFAULT_PORT, Point};
 use crate::error::{IoError, Result};
 use common::DEFAULT_API_HOST;
 use common::sqlite::ServiceConfigLoader;
@@ -51,7 +51,7 @@ impl IoSqliteLoader {
         }
 
         // Create base service config loader (single connection pool)
-        let base_loader = ServiceConfigLoader::new(db_path, "aether-io")
+        let base_loader = ServiceConfigLoader::new(db_path, "aether-io", DEFAULT_PORT)
             .await
             .map_err(|e| {
                 IoError::ConfigError(format!("Failed to initialize SQLite loader: {}", e))

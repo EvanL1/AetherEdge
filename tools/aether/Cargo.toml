@@ -10,7 +10,6 @@ aether-dataplane = { path = "../../crates/aether-dataplane" }
 aether-domain = { path = "../../crates/aether-domain" }
 aether-shm-bridge = { path = "../../extensions/shm-bridge" }
 aether-routing = { path = "../../libs/aether-routing" }
-aether-model = { path = "../../libs/aether-model" }
 aether-rules = { path = "../../libs/aether-rules" }
 aether-pack = { path = "../../crates/aether-pack" }
 aether-application = { path = "../../crates/aether-application" }

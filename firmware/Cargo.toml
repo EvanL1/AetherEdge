@@ -6,13 +6,16 @@ edition = "2021"
 description = "AetherEdge firmware prototype for embedded platforms"
 license = "MIT OR Apache-2.0"
 
-# This is a standalone project, not part of the main workspace
-# It targets embedded ARM platforms, not x86_64
+# This nested workspace targets embedded ARM platforms and is intentionally
+# excluded from the Linux edge-runtime workspace.
+[workspace]
+members = ["aether-shm"]
+resolver = "3"
 
 [dependencies]
 # Core libraries (no_std compatible)
 aether-core = { path = "../libs/aether-core", default-features = false }
-aether-shm = { path = "../libs/aether-shm", default-features = false }
+aether-shm = { path = "aether-shm", default-features = false }
 
 # Embedded runtime (STM32F4 as example target)
 cortex-m = "0.7"

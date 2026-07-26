@@ -4,7 +4,7 @@
 //! acquisition owner writes batches through the typed `AcquisitionStateWriter`;
 //! optional mirrors consume SHM after the authoritative write.
 
-use aether_model::PointType;
+use aether_core::PointType;
 
 /// One engineering-value update produced by a device protocol.
 #[derive(Debug, Clone)]

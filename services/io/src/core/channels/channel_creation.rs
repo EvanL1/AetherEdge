@@ -176,7 +176,7 @@ fn gateway_point_definitions(
 ) -> Result<Vec<crate::protocols::gateway::PointDef>> {
     use crate::protocols::core::point::TransformConfig;
     use crate::protocols::gateway::PointDef;
-    use aether_model::PointType;
+    use aether_core::PointType;
 
     let capacity = runtime_config.telemetry_points.len()
         + runtime_config.signal_points.len()
@@ -886,7 +886,7 @@ impl ChannelManager {
             if let Some(addr) = parse_iec61850_point(&tp.base.protocol_mappings) {
                 point_configs.push(PointConfig {
                     id: tp.base.point_id,
-                    point_type: aether_model::PointType::Telemetry,
+                    point_type: aether_core::PointType::Telemetry,
                     name: Some(tp.base.signal_name.clone()),
                     address: ProtocolAddress::Iec61850(addr),
                     transform: TransformConfig {
@@ -910,7 +910,7 @@ impl ChannelManager {
             if let Some(addr) = parse_iec61850_point(&sp.base.protocol_mappings) {
                 point_configs.push(PointConfig {
                     id: sp.base.point_id,
-                    point_type: aether_model::PointType::Signal,
+                    point_type: aether_core::PointType::Signal,
                     name: Some(sp.base.signal_name.clone()),
                     address: ProtocolAddress::Iec61850(addr),
                     transform: TransformConfig {
@@ -927,7 +927,7 @@ impl ChannelManager {
             if let Some(addr) = parse_iec61850_point(&cp.base.protocol_mappings) {
                 point_configs.push(PointConfig {
                     id: cp.base.point_id,
-                    point_type: aether_model::PointType::Control,
+                    point_type: aether_core::PointType::Control,
                     name: Some(cp.base.signal_name.clone()),
                     address: ProtocolAddress::Iec61850(addr),
                     transform: TransformConfig {
@@ -949,7 +949,7 @@ impl ChannelManager {
             if let Some(addr) = parse_iec61850_point(&ap.base.protocol_mappings) {
                 point_configs.push(PointConfig {
                     id: ap.base.point_id,
-                    point_type: aether_model::PointType::Adjustment,
+                    point_type: aether_core::PointType::Adjustment,
                     name: Some(ap.base.signal_name.clone()),
                     address: ProtocolAddress::Iec61850(addr),
                     transform: TransformConfig {

@@ -101,6 +101,23 @@ check_channel_management_mutation_boundary() {
     local legacy_cli_reload="$source_root/tools/aether/src/services.rs"
     local violations_found=0
     local matches
+    local required_source
+
+    # These files carry the governed boundary checks. A rename must fail closed
+    # until this gate is deliberately updated; otherwise a missing path silently
+    # disables a safety assertion.
+    for required_source in \
+        "$handler" \
+        "$reload_handler" \
+        "$point_helper" \
+        "$control_handler" \
+        "$legacy_cli_reload"; do
+        if [[ ! -f "$required_source" ]]; then
+            printf '%s:%s\n' "${required_source#"$source_root"/}" \
+                "required governed-boundary source is missing"
+            violations_found=1
+        fi
+    done
 
     for removed_module in lifecycle.rs migration.rs; do
         if [[ -e "$legacy_directory/$removed_module" ]]; then
@@ -296,6 +313,46 @@ if rg -n '\b(Rtdb|RedisRtdb)\b' crates --glob '*.rs'; then
     exit 1
 fi
 
+echo "Checking canonical domain-model boundary..."
+if [[ -e libs/aether-model ]]; then
+    echo "ERROR: retired aether-model compatibility crate was restored"
+    exit 1
+fi
+if rg -n '^\s*aether-model\s*=' crates extensions libs services tools firmware \
+    --glob 'Cargo.toml'; then
+    echo "ERROR: production code depends on the retired aether-model crate"
+    exit 1
+fi
+if rg -n '\baether_model::' crates extensions libs services tools firmware \
+    --glob '*.rs'; then
+    echo "ERROR: production code imports the retired aether-model crate"
+    exit 1
+fi
+
+echo "Checking retired legacy workspace members stay retired..."
+if [[ -e libs/aether-rtdb || -e libs/aether-shm ]]; then
+    echo "ERROR: retired root-workspace legacy crate directory was restored"
+    exit 1
+fi
+if rg -n '"libs/aether-(model|rtdb|shm)"' Cargo.toml; then
+    echo "ERROR: root workspace restored a retired legacy crate member"
+    exit 1
+fi
+
+echo "Checking aether-api is the only Swagger UI owner..."
+if rg -n '^\s*utoipa-swagger-ui\s*=' services \
+    --glob 'Cargo.toml' \
+    --glob '!services/api/Cargo.toml'; then
+    echo "ERROR: an internal service restored a Swagger UI dependency"
+    exit 1
+fi
+if rg -n '\bSwaggerUi\b' services \
+    --glob '*.rs' \
+    --glob '!services/api/**'; then
+    echo "ERROR: an internal service restored a Swagger UI route"
+    exit 1
+fi
+
 echo "Checking AetherEdge product branding..."
 if [[ -e integrations/load-forecasting ]]; then
     echo "ERROR: the energy-domain Load-Forecasting processor belongs in AetherEMS"
@@ -363,21 +420,8 @@ enforce_channel_management_mutation_boundary "."
 enforce_configuration_mutation_boundaries
 
 echo "Checking channel-management safety policy..."
-ruby -ryaml -e '
-  capabilities = YAML.safe_load(File.read(ARGV.fetch(0))).fetch("capabilities")
-  expected = {
-    "kind" => "command",
-    "risk" => "high",
-    "permission" => "io.channel.manage",
-    "idempotent" => false,
-    "confirmation" => "always",
-    "audit" => "required"
-  }
-  ["io.channel.manage", "io.channel.reconcile"].each do |name|
-    policy = capabilities.fetch(name)
-    abort "#{name} safety policy drifted: #{policy.inspect}" unless policy == expected
-  end
-' ai/safety-policy.yaml
+cargo test -p aether-application --test safety_policy_contract \
+    channel_management_capabilities_remain_high_risk_and_audited
 
 echo "Checking production command transport boundary..."
 if rg -n '\b(ActionDispatch|ShmDispatch|ActionWriter|ShmNotifier)\b' \
@@ -450,7 +494,7 @@ if rg -n '\b(LegacyRoutingTables|RoutingCache|compatibility_routing|routing_cach
     exit 1
 fi
 if rg -n '\b(get_builtin_products|get_builtin_product|get_product_names|get_child_products|builtin_only)\b' \
-    libs/aether-model/src services/automation/src tools/aether/src \
+    crates/aether-pack/src services/automation/src tools/aether/src \
     --glob '*.rs'; then
     echo "ERROR: removed built-in product compatibility API was restored"
     exit 1

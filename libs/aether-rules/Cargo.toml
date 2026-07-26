@@ -10,7 +10,6 @@ description = "Rule engine library for AetherEdge - Vue Flow based rule parsing,
 aether-domain = { path = "../../crates/aether-domain" }
 aether-ports = { path = "../../crates/aether-ports" }
 aether-calc = { path = "../aether-calc" }
-aether-model = { path = "../aether-model" }
 aether-shm-bridge = { path = "../../extensions/shm-bridge" }
 
 # Async runtime

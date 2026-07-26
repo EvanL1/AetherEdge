@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use aether_model::PointType;
+use aether_core::PointType;
 use aether_routing::RoutingCache;
 use aether_shm_bridge::{
     ChannelPointManifest, PhysicalPointAddress, ShmRuntimeConfig, ShmWriterHandle,

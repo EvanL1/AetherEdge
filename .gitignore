@@ -130,6 +130,9 @@ examples/
 figment_demo/
 
 # Temporary files and documentation
+# Historical planning/scratch material is archived outside GitHub.
+/docs/plans/
+/docs/superpowers/
 services/*/docs/
 services/*/*.md
 *.md.backup

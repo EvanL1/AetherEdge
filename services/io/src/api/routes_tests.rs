@@ -24,7 +24,7 @@ use crate::api::handlers::provision_handlers::{
 #[cfg(feature = "modbus")]
 use crate::protocols::adapters::modbus_config::ModbusChannelParamsConfig;
 
-use aether_model::PointType;
+use aether_core::PointType;
 use aether_ports::{
     AuditOutcome, AuditRecord, AuditSink, ChannelDesiredStateObservation, ChannelMutation,
     ChannelMutationKind, ChannelMutationReceipt, ChannelMutator, ChannelReconciler,
@@ -66,12 +66,12 @@ impl SunSpecDiscoveryPort for RecordingSunSpecDiscovery {
         _slave_id: u8,
         _function_code: u8,
         _base_address: Option<u16>,
-    ) -> Result<(u16, Vec<aether_model::sunspec::DiscoveredModel>), String> {
+    ) -> Result<(u16, Vec<crate::protocols::sunspec::DiscoveredModel>), String> {
         self.connect_calls.fetch_add(1, Ordering::SeqCst);
         self.read_calls.fetch_add(1, Ordering::SeqCst);
         Ok((
             40_000,
-            vec![aether_model::sunspec::DiscoveredModel {
+            vec![crate::protocols::sunspec::DiscoveredModel {
                 model_id: 103,
                 length: 50,
                 start_register: 40_002,

@@ -9,6 +9,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use tracing::warn;
 
+use aether_core::PointType;
+
 use crate::protocols::core::data::DataBatch;
 use crate::protocols::core::error::{GatewayError, Result as ProtocolResult};
 use crate::protocols::core::quality::Quality;
@@ -100,10 +102,9 @@ impl ShmDataStore {
             .iter()
             .map(|point| {
                 let kind = match point.point_type {
-                    aether_model::PointType::Telemetry => PointKind::Telemetry,
-                    aether_model::PointType::Signal => PointKind::Status,
-                    aether_model::PointType::Control
-                    | aether_model::PointType::Adjustment => {
+                    PointType::Telemetry => PointKind::Telemetry,
+                    PointType::Signal => PointKind::Status,
+                    PointType::Control | PointType::Adjustment => {
                         return Err(GatewayError::invalid_data(format!(
                             "acquisition batch contains command-owned {:?} point {}",
                             point.point_type, point.id
@@ -195,8 +196,8 @@ impl ShmDataStore {
             return Ok(());
         }
         let point_type = match source.address().kind() {
-            PointKind::Telemetry => aether_model::PointType::Telemetry,
-            PointKind::Status => aether_model::PointType::Signal,
+            PointKind::Telemetry => PointType::Telemetry,
+            PointKind::Status => PointType::Signal,
             PointKind::Command | PointKind::Action => {
                 return Err(GatewayError::invalid_data(
                     "command-owned point reached acquisition C2C expansion",
@@ -211,9 +212,9 @@ impl ShmDataStore {
             return Ok(());
         };
         let target_kind = match target.point_type {
-            aether_model::PointType::Telemetry => PointKind::Telemetry,
-            aether_model::PointType::Signal => PointKind::Status,
-            aether_model::PointType::Control | aether_model::PointType::Adjustment => {
+            PointType::Telemetry => PointKind::Telemetry,
+            PointType::Signal => PointKind::Status,
+            PointType::Control | PointType::Adjustment => {
                 return Err(GatewayError::invalid_data(format!(
                     "C2C target {}:{:?}:{} is not acquisition-owned",
                     target.channel_id, target.point_type, target.point_id

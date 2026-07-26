@@ -1,6 +1,6 @@
 //! CAN protocol configuration types
 
-use aether_model::PointType;
+use aether_core::PointType;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 

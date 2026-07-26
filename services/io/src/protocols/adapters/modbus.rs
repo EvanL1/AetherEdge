@@ -19,7 +19,7 @@ use voltage_modbus::{ModbusTcpClient, TcpTransport};
 #[cfg(feature = "modbus")]
 use voltage_modbus::{ModbusRtuClient, RtuTransport};
 
-use aether_model::PointType;
+use aether_core::PointType;
 
 use crate::protocols::core::data::{DataBatch, Value};
 use crate::protocols::core::diagnostics::AtomicDiagnostics;
@@ -542,7 +542,7 @@ impl ProtocolClient for ModbusChannel {
             }
 
             if !results.is_empty() {
-                let point_summaries: Vec<(u32, aether_model::PointType, Value, _)> = results
+                let point_summaries: Vec<(u32, PointType, Value, _)> = results
                     .iter()
                     .map(|(_, dp)| (dp.id, dp.point_type, dp.value.clone(), dp.quality))
                     .collect();

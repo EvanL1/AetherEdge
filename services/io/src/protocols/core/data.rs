@@ -13,7 +13,7 @@
 //! This explicit field replaces the previous u32/4 encoding scheme where point types
 //! were encoded into the `id` field via offset arithmetic.
 
-use aether_model::PointType;
+use aether_core::PointType;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 

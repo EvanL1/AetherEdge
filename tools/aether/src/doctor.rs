@@ -141,32 +141,32 @@ struct ServiceCheck {
 const CORE_SERVICE_CHECKS: [ServiceCheck; 6] = [
     ServiceCheck {
         name: "aether-io",
-        port: aether_model::service_ports::IO_PORT,
+        port: common::service_ports::IO_PORT,
         health_path: "/health",
     },
     ServiceCheck {
         name: "aether-automation",
-        port: aether_model::service_ports::AUTOMATION_PORT,
+        port: common::service_ports::AUTOMATION_PORT,
         health_path: "/health",
     },
     ServiceCheck {
         name: "aether-history",
-        port: aether_model::service_ports::HISTORY_PORT,
+        port: common::service_ports::HISTORY_PORT,
         health_path: "/hisApi/health",
     },
     ServiceCheck {
         name: "aether-api",
-        port: aether_model::service_ports::API_PORT,
+        port: common::service_ports::API_PORT,
         health_path: "/health",
     },
     ServiceCheck {
         name: "aether-uplink",
-        port: aether_model::service_ports::UPLINK_PORT,
+        port: common::service_ports::UPLINK_PORT,
         health_path: "/netApi/health",
     },
     ServiceCheck {
         name: "aether-alarm",
-        port: aether_model::service_ports::ALARM_PORT,
+        port: common::service_ports::ALARM_PORT,
         health_path: "/health",
     },
 ];

@@ -12,7 +12,7 @@ pub use batch::{BatchRoutingResult, ChannelPointUpdate};
 pub use loader::{RoutingMaps, load_routing_maps};
 pub use routing_cache::{C2CTarget, C2MTarget, M2CTarget, RoutingCache, RoutingCacheStats};
 
-use aether_model::{ValidationConfig, validate_value};
+use aether_domain::CommandConstraints;
 use anyhow::Result;
 
 /// Maximum number of C2C forwarding hops.
@@ -34,14 +34,17 @@ pub struct RouteContext {
 
 /// Validate a model action before it enters SHM/UDS dispatch.
 pub fn validate_action_value(instance_id: u32, point_id: &str, value: f64) -> Result<f64> {
-    validate_value(value, &ValidationConfig::default()).map_err(|error| {
-        anyhow::anyhow!(
-            "M2C data validation failed for inst:{}:A:{}: {}",
-            instance_id,
-            point_id,
-            error
-        )
-    })
+    CommandConstraints::unbounded()
+        .validate_value(value)
+        .map(|()| value)
+        .map_err(|error| {
+            anyhow::anyhow!(
+                "M2C data validation failed for inst:{}:A:{}: {}",
+                instance_id,
+                point_id,
+                error
+            )
+        })
 }
 
 /// Convert a cache-resolved target into immutable dispatch metadata.
@@ -63,7 +66,7 @@ pub fn route_context_from_target(target: M2CTarget, timestamp_ms: i64) -> RouteC
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aether_model::PointType;
+    use aether_core::PointType;
 
     #[test]
     fn route_context_preserves_resolved_target() {

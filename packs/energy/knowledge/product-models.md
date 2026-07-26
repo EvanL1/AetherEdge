@@ -35,7 +35,7 @@ Two naming notes matter when consuming the Pack:
 - The four leaf models `PVInverter`, `Load_Three_Phase`, `EVChargingLoad`, and `HVACLoad` are included in the 13-model hierarchy above.
 - **The product named `PV DCDC` contains a space**, while its file is `PV_DCDC.json`. Lookups and explicit site overrides match on the JSON `name` field, not the filename, so the correct key is `"PV DCDC"`.
 
-`ProductLibrary::children(parent_name)` in `libs/aether-model/src/product_lib.rs` walks the selected hierarchy at runtime.
+`aether_pack::ProductLibrary::children(parent_name)` walks the explicitly selected hierarchy at runtime.
 
 ## Reading a product definition
 
@@ -54,7 +54,7 @@ Every product JSON has the same shape:
 - `name` — the product's unique identifier.
 - `pName` — parent product name; absent on the root (`Station`). Deserialized as `Option<String>` (`parent_name` in `BuiltinProduct`).
 - P / M / A — arrays of point definitions: **P**roperties (static configuration set per instance), **M**easurements (live telemetry), **A**ctions (writable control points).
-- Each point has `id`, `name`, `unit`, `type` (mapped to `PointDef { id: u32, name, unit, value_type }` in `product_lib.rs`; `unit` and `type` default to `""` when absent).
+- Each point has `id`, `name`, `unit`, `type` (mapped to `aether_pack::ProductPointDefinition`; `unit` and `type` default to `""` when absent).
 
 Rules to keep in mind when reading the tables below:
 
@@ -580,4 +580,4 @@ Products remain extensible without recompiling. Automation loads model directori
 
 ## SunSpec expansion
 
-For devices that speak the standard SunSpec register map (PV inverters, meters, storage), `libs/aether-model/src/sunspec/expand.rs` bridges the standard models to concrete point sets: `expand_model(model, config)` walks a `SunSpecModel`'s group tree and emits a `Vec<ExpandedPoint>` — Modbus telemetry point definitions (signal name, register address, data type, unit, scale/offset, protocol mappings) ready for SQLite insertion as channel points. `ExpandConfig` supplies the discovered model's id, start register, slave id, and function code, while `ExpandFilter` controls whether static/nameplate points, scale-factor registers (`sunssf`), and optional points are included. This turns a standard inverter or meter model into a ready-made register table feeding instances of products like PVInverter, instead of hand-authoring the Modbus mapping. See [Connect Devices](../guides/connect-devices.md) for the workflow.
+For devices that speak the standard SunSpec register map (PV inverters, meters, storage), `services/io/src/protocols/sunspec/expand.rs` bridges the standard models to concrete point sets: `expand_model(model, config)` walks a `SunSpecModel`'s group tree and emits a `Vec<ExpandedPoint>` — Modbus telemetry point definitions (signal name, register address, data type, unit, scale/offset, protocol mappings) ready for SQLite insertion as channel points. `ExpandConfig` supplies the discovered model's id, start register, slave id, and function code, while `ExpandFilter` controls whether static/nameplate points, scale-factor registers (`sunssf`), and optional points are included. This turns a standard inverter or meter model into a ready-made register table feeding instances of products like PVInverter, instead of hand-authoring the Modbus mapping. See [Connect Devices](../guides/connect-devices.md) for the workflow.

@@ -22,7 +22,7 @@ use crate::error::AutomationError;
 /// This endpoint is optimized for frontend dropdown lists and product selection interfaces.
 /// For detailed product information including measurements/actions/properties, use GET /api/products/{product_name}/points.
 ///
-#[cfg_attr(feature = "swagger-ui", utoipa::path(
+#[cfg_attr(feature = "openapi", utoipa::path(
     get,
     path = "/api/products",
     tag = "products",
@@ -73,7 +73,7 @@ pub async fn list_products(
 /// Returns detailed product information including all measurement,
 /// action, and property points.
 ///
-#[cfg_attr(feature = "swagger-ui", utoipa::path(
+#[cfg_attr(feature = "openapi", utoipa::path(
     get,
     path = "/api/products/{product_name}/points",
     tag = "products",

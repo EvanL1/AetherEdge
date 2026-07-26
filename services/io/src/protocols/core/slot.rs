@@ -20,7 +20,7 @@ use std::collections::HashMap;
 use std::sync::RwLock;
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU8, AtomicU64, Ordering};
 
-use aether_model::PointType;
+use aether_core::PointType;
 use chrono::{DateTime, Utc};
 use tracing::warn;
 

@@ -70,7 +70,7 @@ use crate::protocols::core::traits::{
     WriteResult,
 };
 use crate::protocols::gateway::ChannelRuntime;
-use aether_model::PointType;
+use aether_core::PointType;
 
 // ============================================================================
 // GPIO Driver Trait (Extensible Driver Architecture)

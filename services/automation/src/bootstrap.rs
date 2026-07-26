@@ -68,16 +68,17 @@ pub async fn load_configuration(service_info: &ServiceInfo) -> Result<Automation
     }
 
     info!("Loading config: {}", db_path);
-    let service_config = ServiceConfigLoader::new(&db_path, "aether-automation")
-        .await
-        .map_err(|e| {
-            AutomationError::ConfigError(format!("Failed to initialize config loader: {}", e))
-        })?
-        .load_config()
-        .await
-        .map_err(|e| {
-            AutomationError::ConfigError(format!("Failed to load configuration: {}", e))
-        })?;
+    let service_config =
+        ServiceConfigLoader::new(&db_path, "aether-automation", service_info.default_port)
+            .await
+            .map_err(|e| {
+                AutomationError::ConfigError(format!("Failed to initialize config loader: {}", e))
+            })?
+            .load_config()
+            .await
+            .map_err(|e| {
+                AutomationError::ConfigError(format!("Failed to load configuration: {}", e))
+            })?;
 
     // Convert ServiceConfig to AutomationConfig (following Rules pattern)
     let api_host = std::env::var("API_HOST")
@@ -165,8 +166,8 @@ async fn setup_sqlite() -> Result<SqlitePool> {
 pub fn load_product_library(
     active_packs: &ActivePackSet,
     site_products: Option<&std::path::Path>,
-) -> Result<aether_model::product_lib::ProductLibrary> {
-    use aether_model::product_lib::ProductLibrary;
+) -> Result<aether_pack::ProductLibrary> {
+    use aether_pack::ProductLibrary;
     use std::collections::{BTreeMap, BTreeSet};
 
     let mut directories = Vec::new();
@@ -244,7 +245,7 @@ pub fn load_product_library(
 /// longer supplied by the active Pack/site library.
 pub async fn validate_instance_product_references(
     sqlite_pool: &SqlitePool,
-    library: &aether_model::product_lib::ProductLibrary,
+    library: &aether_pack::ProductLibrary,
 ) -> Result<()> {
     let referenced = sqlx::query_scalar::<_, String>(
         "SELECT DISTINCT product_name FROM instances ORDER BY product_name",

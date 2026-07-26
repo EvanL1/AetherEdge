@@ -18,7 +18,7 @@ use crate::app_state::AppState;
 /// Performs actual connectivity checks on dependencies.
 /// Returns 503 if any critical dependency is unhealthy.
 ///
-#[cfg_attr(feature = "swagger-ui", utoipa::path(
+#[cfg_attr(feature = "openapi", utoipa::path(
     get,
     path = "/health",
     responses(

@@ -126,46 +126,6 @@ const englishMetadataOverrides = {
     description:
       'Pre-split operational notes retained as optional history and not a current runbook or architecture authority.',
   },
-  'docs/plans/2026-05-21-onchange-trigger.md': {
-    title: 'On-change trigger design',
-    description:
-      'Historical design for event-driven rule scheduling retained as optional implementation context.',
-  },
-  'docs/plans/2026-05-24-redis-removal-strategy.md': {
-    title: 'Redis removal strategy',
-    description:
-      'Historical migration plan for removing Redis from the industry-neutral Edge runtime.',
-  },
-  'docs/plans/2026-05-28-point-watch-design.md': {
-    title: 'PointWatch design',
-    description:
-      'Historical PointWatch design record retained as optional implementation context.',
-  },
-  'docs/superpowers/plans/2026-07-09-cli-web-parity.md': {
-    title: 'Historical CLI and Web parity plan',
-    description:
-      'Superseded pre-split console plan; do not use it as current application-boundary authority.',
-  },
-  'docs/superpowers/specs/2026-07-09-cli-web-parity-design.md': {
-    title: 'Historical CLI and Web parity design',
-    description:
-      'Superseded pre-split console design retained for migration history.',
-  },
-  'docs/superpowers/specs/2026-07-10-ai-native-docs-design.md': {
-    title: 'Historical AI-native documentation design',
-    description:
-      'Superseded pre-split documentation design retained for migration history.',
-  },
-  'docs/superpowers/specs/2026-07-10-baremetal-install-design.md': {
-    title: 'Historical bare-metal installation design',
-    description:
-      'Superseded design that bundled Redis, nginx, and a Web UI; current deployment guidance is authoritative.',
-  },
-  'docs/superpowers/specs/2026-07-11-aether-docs-site-design.md': {
-    title: 'Unified documentation site design',
-    description:
-      'Historical design record for Cloudflare-hosted HTML, Markdown representations, and agent indexes.',
-  },
   'docs/websocket-rule-monitor-api.md': {
     title: 'Legacy rule-monitor WebSocket API',
     description:
@@ -484,8 +444,6 @@ function isOptionalPath(relativePath) {
     relativePath.startsWith('contracts/') ||
     relativePath.startsWith('docs/adr/') ||
     relativePath.startsWith('docs/domain/') ||
-    relativePath.startsWith('docs/plans/') ||
-    relativePath.startsWith('docs/superpowers/') ||
     relativePath === 'docs/operations-log.md'
   );
 }
@@ -576,8 +534,6 @@ function agentProfilesFor(section) {
 }
 
 function implementationStatusFor(relativePath, classification) {
-  if (relativePath.startsWith('docs/plans/')) return 'planned';
-  if (relativePath.startsWith('docs/superpowers/plans/')) return 'planned';
   if (classification.documentRole === 'safety' && relativePath === 'AGENTS.md') {
     return 'implemented';
   }
@@ -603,9 +559,7 @@ function contextSensitivityFor(relativePath) {
     relativePath === 'AGENTS.md' ||
     relativePath.startsWith('ai/') ||
     relativePath.startsWith('skills/') ||
-    relativePath.startsWith('docs/adr/') ||
-    relativePath.startsWith('docs/plans/') ||
-    relativePath.startsWith('docs/superpowers/')
+    relativePath.startsWith('docs/adr/')
   ) {
     return 'internal';
   }

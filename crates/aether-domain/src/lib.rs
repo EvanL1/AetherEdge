@@ -29,7 +29,8 @@ pub use data_processing::{
 };
 pub use error::DomainError;
 pub use identity::{
-    AlarmRuleId, AlertId, ChannelId, CommandId, InstanceId, PointId, RuleId, TimestampMs,
+    AlarmRuleId, AlertId, ChannelId, CommandId, InstanceId, InstanceName, InstanceNameError,
+    PointId, RuleId, TimestampMs,
 };
 pub use integration::{
     AreaId, AreaRecord, DeviceId, DeviceRecord, EntityId, EntityPointDescriptor, EntityRecord,

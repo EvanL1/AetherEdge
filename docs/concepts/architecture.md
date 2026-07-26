@@ -45,9 +45,8 @@ mounts a Redis socket or waits for an external database.
 
 ## Services
 
-Default ports are defined once in
-`libs/aether-model/src/service_ports.rs` and used as fallbacks when
-configuration does not override them.
+Default deployment ports are defined in `libs/common/src/service_ports.rs` and
+used as tooling fallbacks when runtime configuration does not override them.
 
 | Service | Port | Role |
 |---------|------|------|

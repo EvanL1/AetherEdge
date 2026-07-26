@@ -51,10 +51,12 @@ arc-swap = "1.7"
 
 # OpenAPI / Swagger UI
 utoipa = { workspace = true }
-utoipa-swagger-ui = { workspace = true, optional = true }
 
 [features]
-swagger-ui = ["utoipa-swagger-ui", "common/openapi"]
+default = ["openapi"]
+openapi = ["common/openapi"]
+# Deprecated build-compatibility alias; Swagger UI is gateway-only.
+swagger-ui = ["openapi"]
 
 [dev-dependencies]
 tempfile = { workspace = true }

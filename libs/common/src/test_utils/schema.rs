@@ -673,7 +673,7 @@ pub async fn install_logical_routing_integrity_triggers(pool: &SqlitePool) -> Re
 /// current value as a JSON-encoded string (any JSON type is accepted —
 /// number, string, bool, null, object, array). `property_id` references the
 /// PropertyTemplate declared by the instance's product (a compile-time
-/// constant in the `aether-model` crate, so no foreign key is possible —
+/// selected Pack product catalog, so no foreign key is possible —
 /// handlers validate the id against the template).
 pub const INSTANCE_PROPERTIES_TABLE: &str = r#"
     CREATE TABLE IF NOT EXISTS instance_properties (

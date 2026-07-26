@@ -5,6 +5,13 @@
 //! example state, and asset-directory confinement. It does not install,
 //! commission, or execute a pack.
 
+mod models;
+
+pub use models::{
+    ProductDefinition, ProductLibrary, ProductLibraryError, ProductPointDefinition,
+    validate_product_directory,
+};
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Component, Path, PathBuf};
 

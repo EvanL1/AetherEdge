@@ -19,6 +19,7 @@ common = { path = "../../libs/common", default-features = false, features = ["sq
 errors = { path = "../../libs/errors", default-features = false, features = ["axum-support"] }
 aether-config = { path = "../../libs/aether-config", features = ["openapi"] }
 aether-application = { path = "../../crates/aether-application" }
+aether-core = { path = "../../libs/aether-core", features = ["serde"] }
 aether-auth-jwt = { path = "../../extensions/auth-jwt" }
 aether-cloudlink = { path = "../../crates/aether-cloudlink", optional = true }
 aether-cloudlink-mqtt = { path = "../../extensions/cloudlink-mqtt", optional = true }
@@ -26,7 +27,6 @@ aether-domain = { path = "../../crates/aether-domain" }
 aether-home-assistant-bridge = { path = "../../extensions/home-assistant-bridge", optional = true }
 aether-integration-control = { path = "../../crates/aether-integration-control", optional = true }
 aether-ports = { path = "../../crates/aether-ports" }
-aether-model = { path = "../../libs/aether-model" }
 aether-routing = { path = "../../libs/aether-routing" }
 aether-runtime-catalog = { path = "../../libs/aether-runtime-catalog", optional = true }
 aether-shm-bridge = { path = "../../extensions/shm-bridge" }
@@ -72,7 +72,6 @@ anyhow = { workspace = true }
 # Web framework
 axum = { workspace = true }
 utoipa = { workspace = true }
-utoipa-swagger-ui = { workspace = true, optional = true }
 tower = { workspace = true }
 
 # Data structures
@@ -128,8 +127,9 @@ zigbee = []  # Zigbee protocol via TCP gateway (Raw ZCL, ZNP, EZSP)
 matter = []  # Matter smart home protocol (UDP transport, self-implemented framing)
 iec61850 = []  # IEC 61850 MMS protocol (TCP/ISO transport, pure Rust implementation)
 tracing-support = []
-swagger-ui = ["utoipa-swagger-ui"]
 openapi = []
+# Deprecated build-compatibility alias; Swagger UI is gateway-only.
+swagger-ui = ["openapi"]
 integration = []
 home-assistant = ["integration", "dep:aether-home-assistant-bridge"]
 home-assistant-cloudlink = [

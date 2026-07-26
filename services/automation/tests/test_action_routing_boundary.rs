@@ -15,7 +15,7 @@ use aether_automation::infra::application_control::{
 use aether_automation::infra::measurement_routing::SqliteMeasurementRoutingMutator;
 use aether_automation::{InstanceManager, ProductLoader};
 use aether_domain::{ChannelCommandAddress, ChannelId, InstanceId, PointId, PointKind};
-use aether_model::product_lib::ProductLibrary;
+use aether_pack::ProductLibrary;
 use aether_ports::{
     ActionRoute, ActionRouteKey, ActionRoutingMutation, AuditSink, AutomationActionRoutingMutator,
     AutomationMeasurementRoutingMutator, CommandDispatcher, DeviceCommandSink,

@@ -544,7 +544,7 @@ pub async fn get_instance_points(
 /// recurse. Returns each child's full instance row. For deep
 /// hierarchies (Facility → ProcessLine → Pump → Motor) call this repeatedly
 /// or use a separate tree-walk endpoint.
-#[cfg_attr(feature = "swagger-ui", utoipa::path(
+#[cfg_attr(feature = "openapi", utoipa::path(
     get,
     path = "/api/instances/{id}/children",
     params(("id" = u32, Path, description = "Parent instance ID")),
@@ -579,7 +579,7 @@ pub async fn get_instance_children(
 /// Returns a flat list of topology nodes ordered for tree reconstruction:
 /// root nodes first, then children in parent_id order.
 ///
-#[cfg_attr(feature = "swagger-ui", utoipa::path(
+#[cfg_attr(feature = "openapi", utoipa::path(
     get,
     path = "/api/topology",
     responses(

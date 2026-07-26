@@ -8,9 +8,9 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
+use aether_core::PointType;
 use aether_io::core::channels::ShmCommandListener;
 use aether_io::core::channels::types::ChannelCommand;
-use aether_model::PointType;
 use aether_shm_bridge::DeviceCommandFrame;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::mpsc;
@@ -287,7 +287,7 @@ async fn test_listener_dedup_same_sequence() {
 }
 
 /// Send a notification carrying a NaN value.
-/// The validate_value filter must reject it; no command should be dispatched.
+/// The domain command-value policy must reject it; no command should be dispatched.
 #[tokio::test]
 async fn test_listener_rejects_nan_value() {
     let (_dir, uds_path) = temp_uds_path();

@@ -12,6 +12,7 @@ rules are defined in:
 - [ADR-0011: Governed channel desired state](docs/adr/0011-governed-channel-desired-state.md)
 - [ADR-0017: Experimental CloudLink MQTT edge foundation](docs/adr/0017-experimental-cloudlink-mqtt-edge-foundation.md)
 - [ADR-0018: Pinned AetherContracts consumption](docs/adr/0018-pinned-aethercontracts-consumption.md)
+- [ADR-0023: Canonical domain-model owner](docs/adr/0023-canonical-domain-model.md)
 - [Target repository layout](docs/architecture/target-layout.md)
 - [AI invariants](ai/invariants.md)
 - [Capability safety policy](ai/safety-policy.yaml)
@@ -54,6 +55,10 @@ plane, and typed SHM port adapters. In particular:
   `aether-cloudlink-mqtt` is a user-broker-neutral MQTT v3.1.1/QoS 1 extension.
   Legacy MQTT remains the runtime default while public AetherContracts alpha.3
   is experimental and production credential and durable-store gates remain open.
+- `aether-domain` is the sole business-semantics owner. The former
+  `aether-model` compatibility crate has been removed: Pack product contracts
+  live in `aether-pack`, SunSpec material lives in the IO protocol adapter,
+  and `aether-core` retains wire-codec and SHM ABI representations.
 - Domain models and knowledge are absent by default. Automation and MCP load
   them only from manifest-validated Packs explicitly selected by
   `<AETHER_CONFIG_PATH>/global.yaml`; `packs: []` is the safe empty kernel.

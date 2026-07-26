@@ -22,7 +22,7 @@ use serde_json::json;
 use sqlx::SqlitePool;
 use std::sync::Arc;
 use tracing::{debug, error, info};
-#[cfg(feature = "swagger-ui")]
+#[cfg(feature = "openapi")]
 use utoipa::OpenApi;
 
 /// Rule Engine state shared across handlers
@@ -107,7 +107,7 @@ pub fn create_rule_routes<S: StateStore + 'static>(state: Arc<RuleEngineState<S>
 // OpenAPI Documentation
 // ============================================================================
 
-#[cfg(feature = "swagger-ui")]
+#[cfg(feature = "openapi")]
 #[derive(OpenApi)]
 #[openapi(
     paths(list_rules, create_rule, get_rule, update_rule, delete_rule, enable_rule, disable_rule, execute_rule_now, get_rule_variables, scheduler_status, scheduler_reload),
@@ -141,23 +141,23 @@ pub struct RuleApiDoc;
 ///
 /// Represents a data point reference within a rule, identifying an instance and point.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-#[cfg_attr(feature = "swagger-ui", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct RuleVariableSchema {
     /// Variable name (e.g., "X1", "Y1")
-    #[cfg_attr(feature = "swagger-ui", schema(example = "X1"))]
+    #[cfg_attr(feature = "openapi", schema(example = "X1"))]
     pub name: String,
 
     /// Device instance ID
-    #[cfg_attr(feature = "swagger-ui", schema(example = 1))]
+    #[cfg_attr(feature = "openapi", schema(example = 1))]
     pub instance: u32,
 
     /// Point type: "measurement" or "action"
     #[serde(rename = "pointType")]
-    #[cfg_attr(feature = "swagger-ui", schema(example = "measurement"))]
+    #[cfg_attr(feature = "openapi", schema(example = "measurement"))]
     pub point_type: String,
 
     /// Point ID within the device
-    #[cfg_attr(feature = "swagger-ui", schema(example = 9))]
+    #[cfg_attr(feature = "openapi", schema(example = 9))]
     pub point: u32,
 }
 
@@ -165,7 +165,7 @@ pub struct RuleVariableSchema {
 ///
 /// Defines the time window for delta calculation.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-#[cfg_attr(feature = "swagger-ui", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub enum PeriodType {
     /// Daily period (resets at midnight local time)
     #[serde(rename = "daily")]
@@ -190,11 +190,11 @@ pub enum PeriodType {
 /// - **Daily Production**: Input from a total unit counter (ID 9), output to a daily counter (ID 101)
 /// - **Monthly Runtime**: Track accumulated machine runtime for maintenance
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-#[cfg_attr(feature = "swagger-ui", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct PeriodDeltaNodeSchema {
     /// Node type identifier (always "action-periodDelta")
     #[serde(rename = "type")]
-    #[cfg_attr(feature = "swagger-ui", schema(example = "action-periodDelta"))]
+    #[cfg_attr(feature = "openapi", schema(example = "action-periodDelta"))]
     pub node_type: String,
 
     /// Input variable - source cumulative value (e.g., total unit count)
@@ -204,11 +204,11 @@ pub struct PeriodDeltaNodeSchema {
     pub output: RuleVariableSchema,
 
     /// Period type: daily, weekly, monthly, or quarterly
-    #[cfg_attr(feature = "swagger-ui", schema(example = "daily"))]
+    #[cfg_attr(feature = "openapi", schema(example = "daily"))]
     pub period: String,
 
     /// Output wires to next node(s)
-    #[cfg_attr(feature = "swagger-ui", schema(value_type = Object, example = json!({"default": ["next-node-id"]})))]
+    #[cfg_attr(feature = "openapi", schema(value_type = Object, example = json!({"default": ["next-node-id"]})))]
     pub wires: serde_json::Value,
 }
 
@@ -217,19 +217,19 @@ pub struct PeriodDeltaNodeSchema {
 /// This is the full structure as stored in flow_json for the Vue Flow editor.
 /// Contains position, display properties, and the nested config.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-#[cfg_attr(feature = "swagger-ui", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct VueFlowPeriodDeltaNode {
     /// Unique node ID
-    #[cfg_attr(feature = "swagger-ui", schema(example = "period-delta-1"))]
+    #[cfg_attr(feature = "openapi", schema(example = "period-delta-1"))]
     pub id: String,
 
     /// Node type (use "custom" for custom nodes)
     #[serde(rename = "type")]
-    #[cfg_attr(feature = "swagger-ui", schema(example = "custom"))]
+    #[cfg_attr(feature = "openapi", schema(example = "custom"))]
     pub node_type: String,
 
     /// Node position on canvas
-    #[cfg_attr(feature = "swagger-ui", schema(value_type = Object, example = json!({"x": 150, "y": 100})))]
+    #[cfg_attr(feature = "openapi", schema(value_type = Object, example = json!({"x": 150, "y": 100})))]
     pub position: serde_json::Value,
 
     /// Node data containing the PeriodDelta configuration
@@ -240,15 +240,15 @@ pub struct VueFlowPeriodDeltaNode {
 ///
 /// Contains the internal type identifier and configuration.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-#[cfg_attr(feature = "swagger-ui", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct VueFlowPeriodDeltaNodeData {
     /// Internal node type (must be "action-periodDelta")
     #[serde(rename = "type")]
-    #[cfg_attr(feature = "swagger-ui", schema(example = "action-periodDelta"))]
+    #[cfg_attr(feature = "openapi", schema(example = "action-periodDelta"))]
     pub data_type: String,
 
     /// Display label for the node
-    #[cfg_attr(feature = "swagger-ui", schema(example = "Daily Production"))]
+    #[cfg_attr(feature = "openapi", schema(example = "Daily Production"))]
     pub label: Option<String>,
 
     /// Node configuration
@@ -266,7 +266,7 @@ pub struct VueFlowPeriodDeltaNodeData {
 /// | 9 (Total Units) | 103 (Weekly Units) | weekly |
 /// | 10 (Runtime Hours) | 102 (Daily Runtime) | daily |
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-#[cfg_attr(feature = "swagger-ui", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct PeriodDeltaConfigSchema {
     /// Input variable (cumulative source, e.g., total production counter)
     pub input: RuleVariableSchema,
@@ -275,11 +275,11 @@ pub struct PeriodDeltaConfigSchema {
     pub output: RuleVariableSchema,
 
     /// Period: "daily" | "weekly" | "monthly" | "quarterly"
-    #[cfg_attr(feature = "swagger-ui", schema(example = "daily"))]
+    #[cfg_attr(feature = "openapi", schema(example = "daily"))]
     pub period: String,
 
     /// Wires to next nodes
-    #[cfg_attr(feature = "swagger-ui", schema(value_type = Object, example = json!({"default": ["next-node-id"]})))]
+    #[cfg_attr(feature = "openapi", schema(value_type = Object, example = json!({"default": ["next-node-id"]})))]
     pub wires: serde_json::Value,
 }
 
@@ -289,7 +289,7 @@ pub struct PeriodDeltaConfigSchema {
 
 /// Rule list query parameters (pagination)
 #[derive(Debug, serde::Deserialize)]
-#[cfg_attr(feature = "swagger-ui", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct RuleListQuery {
     /// Page number (starting from 1)
     #[serde(default = "default_page")]
@@ -309,18 +309,15 @@ fn default_page_size() -> usize {
 
 /// Request DTO for creating a new rule (empty shell, ID auto-generated)
 #[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
-#[cfg_attr(feature = "swagger-ui", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct CreateRuleRequest {
     /// Rule name (required)
-    #[cfg_attr(
-        feature = "swagger-ui",
-        schema(example = "High Temperature Protection")
-    )]
+    #[cfg_attr(feature = "openapi", schema(example = "High Temperature Protection"))]
     pub name: String,
 
     /// Rule description (optional)
     #[cfg_attr(
-        feature = "swagger-ui",
+        feature = "openapi",
         schema(example = "Stop the machine when temperature exceeds its safe limit")
     )]
     pub description: Option<String>,
@@ -336,33 +333,33 @@ pub struct CreateRuleRequest {
 
 /// Request DTO for updating an existing rule (all fields optional, partial update)
 #[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
-#[cfg_attr(feature = "swagger-ui", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct UpdateRuleRequest {
     /// Rule name (optional)
     #[cfg_attr(
-        feature = "swagger-ui",
+        feature = "openapi",
         schema(example = "High Temperature Protection v2")
     )]
     pub name: Option<String>,
 
     /// Rule description (optional)
-    #[cfg_attr(feature = "swagger-ui", schema(example = "Updated protection logic"))]
+    #[cfg_attr(feature = "openapi", schema(example = "Updated protection logic"))]
     pub description: Option<String>,
 
     /// Whether the rule is enabled (optional)
-    #[cfg_attr(feature = "swagger-ui", schema(example = true))]
+    #[cfg_attr(feature = "openapi", schema(example = true))]
     pub enabled: Option<bool>,
 
     /// Execution priority (optional)
-    #[cfg_attr(feature = "swagger-ui", schema(example = 20))]
+    #[cfg_attr(feature = "openapi", schema(example = 20))]
     pub priority: Option<u32>,
 
     /// Cooldown period in milliseconds (optional)
-    #[cfg_attr(feature = "swagger-ui", schema(example = 10000))]
+    #[cfg_attr(feature = "openapi", schema(example = 10000))]
     pub cooldown_ms: Option<u64>,
 
     /// Vue Flow complete data (nodes, edges, viewport)
-    #[cfg_attr(feature = "swagger-ui", schema(value_type = Option<Object>))]
+    #[cfg_attr(feature = "openapi", schema(value_type = Option<Object>))]
     pub flow_json: Option<serde_json::Value>,
 
     /// Trigger configuration (optional). Replaces legacy `cooldown_ms`-based
@@ -372,7 +369,7 @@ pub struct UpdateRuleRequest {
     /// - `{"type":"interval","interval_ms":1000}` — periodic execution
     /// - `{"type":"on_change","point_refs":[{"instance":1,"point_type":"measurement","point":0}],"time_deadband_ms":200,"value_deadband":null}`
     ///   — event-sampling execution gated by time/value deadbands
-    #[cfg_attr(feature = "swagger-ui", schema(value_type = Option<Object>))]
+    #[cfg_attr(feature = "openapi", schema(value_type = Option<Object>))]
     pub trigger_config: Option<serde_json::Value>,
 
     /// Current automation-rules revision. Omission uses the staged browser
@@ -387,7 +384,7 @@ pub struct UpdateRuleRequest {
 /// Explicit confirmation envelope for rule enable/disable/delete/reload.
 #[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields)]
-#[cfg_attr(feature = "swagger-ui", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct RuleMutationRequest {
     /// Current automation-rules revision. Omission uses the staged browser
     /// compatibility shim and does not protect the user's prior read.
@@ -400,7 +397,7 @@ pub struct RuleMutationRequest {
 /// Explicit confirmation envelope for manual rule execution.
 #[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields)]
-#[cfg_attr(feature = "swagger-ui", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct ExecuteRuleRequest {
     /// Must be true because a rule may dispatch one or more device commands.
     pub confirmed: bool,
@@ -412,7 +409,7 @@ pub struct ExecuteRuleRequest {
 /// execution topology used by the scheduler) and `flow_json` (Vue Flow
 /// layout used by the frontend editor). No pagination — rule count is
 /// typically small. Use `/api/rules/{id}` for a single rule.
-#[cfg_attr(feature = "swagger-ui", utoipa::path(
+#[cfg_attr(feature = "openapi", utoipa::path(
     get,
     path = "/api/rules",
     params(
@@ -477,7 +474,7 @@ pub async fn list_rules<S: StateStore + 'static>(
 ///
 /// Creates rule metadata. ID is auto-generated (sequential: 1, 2, 3...).
 /// The execution topology (flow_json) is updated later via PUT endpoint.
-#[cfg_attr(feature = "swagger-ui", utoipa::path(
+#[cfg_attr(feature = "openapi", utoipa::path(
     post,
     path = "/api/rules",
     request_body(
@@ -535,7 +532,7 @@ pub async fn create_rule<S: StateStore + 'static>(
 /// Same shape as the entries in `GET /api/rules` but a single object.
 /// Returns 404 when the id doesn't exist. Frontend rule-editor opens
 /// this to populate the canvas before edit.
-#[cfg_attr(feature = "swagger-ui", utoipa::path(
+#[cfg_attr(feature = "openapi", utoipa::path(
     get,
     path = "/api/rules/{id}",
     params(("id" = i64, Path, description = "Rule identifier")),
@@ -560,7 +557,7 @@ pub async fn get_rule<S: StateStore + 'static>(
 /// Update rule metadata
 ///
 /// Updates rule metadata. Only provided fields are updated (partial update).
-#[cfg_attr(feature = "swagger-ui", utoipa::path(
+#[cfg_attr(feature = "openapi", utoipa::path(
     put,
     path = "/api/rules/{id}",
     params(
@@ -638,7 +635,7 @@ pub async fn update_rule<S: StateStore + 'static>(
 ///
 /// Stops the scheduler from invoking this rule on the next tick, then removes
 /// the row from the local `rules` table.
-#[cfg_attr(feature = "swagger-ui", utoipa::path(
+#[cfg_attr(feature = "openapi", utoipa::path(
     delete,
     path = "/api/rules/{id}",
     params(
@@ -700,7 +697,7 @@ pub async fn delete_rule<S: StateStore + 'static>(
 /// in-memory enabled set. The rule's next evaluation lands within
 /// `tick_ms` (default 100ms). Convenience over PUT with `{"enabled":
 /// true}`. Returns 404 if the rule id doesn't exist.
-#[cfg_attr(feature = "swagger-ui", utoipa::path(
+#[cfg_attr(feature = "openapi", utoipa::path(
     post,
     path = "/api/rules/{id}/enable",
     params(
@@ -762,7 +759,7 @@ pub async fn enable_rule<S: StateStore + 'static>(
 /// enabling later picks up the same flow. Currently-running invocations
 /// finish; subsequent ticks skip it. Use this to safely pause control
 /// rules during maintenance without losing their definition.
-#[cfg_attr(feature = "swagger-ui", utoipa::path(
+#[cfg_attr(feature = "openapi", utoipa::path(
     post,
     path = "/api/rules/{id}/disable",
     params(
@@ -978,7 +975,7 @@ fn rule_mutation_error(error: aether_application::ApplicationError) -> Automatio
 /// Execute rule immediately (manual trigger)
 ///
 /// Manually triggers a commissioned rule through the shared application API.
-#[cfg_attr(feature = "swagger-ui", utoipa::path(
+#[cfg_attr(feature = "openapi", utoipa::path(
     post,
     path = "/api/rules/{id}/execute",
     params(
@@ -1065,7 +1062,7 @@ pub async fn execute_rule_now<S: StateStore + 'static>(
 /// (ms), last tick timestamp, max concurrency. Used by the operations
 /// console to diagnose "rules aren't firing" — `running=false` or
 /// `last_tick` stale by N×interval flags a hung scheduler.
-#[cfg_attr(feature = "swagger-ui", utoipa::path(
+#[cfg_attr(feature = "openapi", utoipa::path(
     get,
     path = "/api/scheduler/status",
     responses(
@@ -1092,7 +1089,7 @@ pub async fn scheduler_status<S: StateStore + 'static>(
 /// this endpoint forces an immediate reload, useful after bulk import
 /// or `aether sync` so admins don't wait. Doesn't restart in-flight
 /// invocations, just refreshes the enabled set the next tick will use.
-#[cfg_attr(feature = "swagger-ui", utoipa::path(
+#[cfg_attr(feature = "openapi", utoipa::path(
     post,
     path = "/api/scheduler/reload",
     request_body(
@@ -1146,7 +1143,7 @@ pub async fn scheduler_reload<S: StateStore + 'static>(
 ///
 /// Returns all variable definitions from a rule's nodes, which can be used
 /// for WebSocket monitoring to display real-time variable values.
-#[cfg_attr(feature = "swagger-ui", utoipa::path(
+#[cfg_attr(feature = "openapi", utoipa::path(
     get,
     path = "/api/rules/{id}/variables",
     params(("id" = i64, Path, description = "Rule identifier")),

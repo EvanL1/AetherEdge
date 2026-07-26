@@ -63,11 +63,11 @@ pub enum RoutingType {
     Action,
 }
 
-/// API-layer subset of `aether_model::PointType` (M/A only).
+/// API-layer model-point direction (M/A only).
 ///
 /// Used in RoutingRequest to explicitly specify whether the point_id
 /// refers to a measurement point or an action point.
-/// Unlike the full `aether_model::PointType` which includes T/S/C/A,
+/// Unlike the device/protocol `aether_core::PointType` representation (T/S/C/A),
 /// automation only routes Measurement and Action points.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub enum PointType {

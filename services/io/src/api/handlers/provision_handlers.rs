@@ -16,8 +16,6 @@ use crate::dto::{AppError, AutoReloadQuery, SuccessResponse};
 use crate::point_topology::{
     PointDefinitionMutation, PointKind, PointTopologyMutation, PointTopologyMutationResult,
 };
-#[cfg(feature = "modbus")]
-use aether_model::sunspec::{ExpandConfig, ExpandFilter, expand_model, load_model, model_exists};
 use axum::{
     Extension,
     extract::{Path, Query, State},
@@ -31,7 +29,10 @@ use utoipa::ToSchema;
 #[cfg(feature = "modbus")]
 use crate::protocols::adapters::modbus_config::ModbusChannelParamsConfig;
 #[cfg(feature = "modbus")]
-use crate::protocols::sunspec::{connect_modbus, discover_models};
+use crate::protocols::sunspec::{
+    DiscoveredModel, ExpandConfig, ExpandFilter, connect_modbus, discover_models, expand_model,
+    load_model, model_exists,
+};
 #[cfg(feature = "modbus")]
 use crate::utils::{is_modbus_family, normalize_protocol_name};
 
@@ -40,9 +41,6 @@ use crate::utils::normalize_protocol_name;
 
 #[cfg(feature = "modbus")]
 use std::sync::Arc;
-
-#[cfg(feature = "modbus")]
-use aether_model::sunspec::DiscoveredModel;
 
 /// Device-I/O seam for SunSpec discovery.
 #[cfg(feature = "modbus")]

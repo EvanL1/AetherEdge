@@ -129,7 +129,6 @@ cargo test --workspace
 # 运行特定包的测试
 cargo test -p aether-io
 cargo test -p aether-automation
-cargo test -p aether-rtdb
 
 # 运行一个实际存在的集成测试目标
 cargo test -p aether-example-minimal-gateway --test composition_contract
@@ -167,12 +166,9 @@ AetherEdge/
 │   ├── uplink/         # 网络服务 (MQTT, Rust)
 │   └── alarm/       # 告警管理 (Rust)
 │
-├── libs/                    # 12 个共享 Rust 库
-│   ├── aether-core/       # 核心类型与编解码器（no_std）
-│   ├── aether-model/      # 数据模型、产品定义
+├── libs/                    # 共享 Rust 库
+│   ├── aether-core/       # 线协议类型与编解码器（no_std）
 │   ├── aether-routing/    # 数据流路由
-│   ├── aether-rtdb/       # 遗留可选镜像抽象（非实时权威面）
-│   ├── aether-shm/        # 共享内存读写器
 │   ├── aether-infra/      # 遗留基础设施辅助层（SQLite 与可选外部存储）
 │   ├── aether-calc/       # 表达式求值引擎
 │   ├── aether-rules/      # 规则引擎
@@ -185,7 +181,7 @@ AetherEdge/
 │   ├── aether/            # CLI 配置与服务管理工具
 │   └── simulator/          # Modbus TCP/RTU 从站模拟器
 │
-├── firmware/                # 嵌入式固件原型（ARM/STM32）
+├── firmware/                # 独立嵌入式 workspace（含 aether-shm，ARM/STM32）
 │
 ├── data/                    # Compose 对齐的站点根目录
 │   ├── config/              # setup 激活的 fail-safe 配置

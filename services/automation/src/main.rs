@@ -7,10 +7,6 @@ use std::{net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
 
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
-#[cfg(feature = "swagger-ui")]
-use utoipa::OpenApi;
-#[cfg(feature = "swagger-ui")]
-use utoipa_swagger_ui::SwaggerUi;
 
 // aether-automation imports
 use aether_automation::infra::{
@@ -18,8 +14,6 @@ use aether_automation::infra::{
     rule_live_state::ShmRuleLiveState,
     runtime_topology::{AutomationTopologyHandle, PointWatchReadiness},
 };
-#[cfg(feature = "swagger-ui")]
-use aether_automation::rule_routes::RuleApiDoc;
 use aether_automation::{
     AutomationError, DEFAULT_TICK_MS, Result, RuleScheduler, bootstrap, routes,
     rule_routes::{RuleEngineState, create_rule_routes},
@@ -30,6 +24,11 @@ use aether_shm_bridge::{
     PointWatchEvent, PointWatchEventListener, SubscriptionBitmap, automation_bitmap_path_from_shm,
     channel_health_path_from_shm, default_shm_path, point_watch_socket_from_shm,
 };
+
+#[cfg(feature = "openapi")]
+async fn openapi_document() -> axum::Json<utoipa::openapi::OpenApi> {
+    axum::Json(routes::openapi_document())
+}
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -43,21 +42,9 @@ async fn main() -> Result<()> {
     // Create application state with all initialized components
     let state = bootstrap::create_app_state(&service_info).await?;
 
-    // Create API routes using the routes module
+    // Create API routes using the routes module. The gateway is the only
+    // process that serves Swagger UI; this loopback service publishes its spec.
     let app = routes::create_routes(Arc::clone(&state));
-
-    #[cfg(feature = "swagger-ui")]
-    let app = {
-        info!("Swagger UI feature ENABLED - initializing at /docs");
-        // Merge AutomationApiDoc with RuleApiDoc for complete OpenAPI documentation
-        let openapi = routes::AutomationApiDoc::openapi().nest("", RuleApiDoc::openapi());
-        let merged = app.merge(SwaggerUi::new("/docs").url("/openapi.json", openapi));
-        info!("Swagger UI configured successfully (including Rule Engine API)");
-        merged
-    };
-
-    #[cfg(not(feature = "swagger-ui"))]
-    info!("Swagger UI feature DISABLED");
 
     // ============================================================================
     // Initialize Rule Engine (integrated on port 6002)
@@ -637,6 +624,8 @@ async fn main() -> Result<()> {
 
     // Merge rule routes into the main app (both on port 6002)
     let app = app.merge(rule_routes);
+    #[cfg(feature = "openapi")]
+    let app = app.route("/openapi.json", axum::routing::get(openapi_document));
 
     // Start HTTP service (model API + rule engine - port 6002)
     let addr: SocketAddr = format!("{}:{}", state.config.api.host, state.config.api.port)

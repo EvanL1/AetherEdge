@@ -16,7 +16,7 @@
 //! - C2M/C2C: `(channel_id, point_type, point_id)`
 //! - M2C: `(instance_id, point_type, point_id)`
 
-use aether_model::PointType;
+use aether_core::PointType;
 use arc_swap::ArcSwap;
 use rustc_hash::FxHashMap;
 use std::collections::HashMap;
@@ -402,8 +402,8 @@ impl RoutingCache {
     ///
     /// ## Example
     /// ```rust
+    /// use aether_core::PointType;
     /// use aether_routing::RoutingCache;
-    /// use aether_model::PointType;
     /// use std::collections::HashMap;
     ///
     /// let mut c2m = HashMap::new();
@@ -452,8 +452,8 @@ impl RoutingCache {
     ///
     /// ## Example
     /// ```rust
+    /// use aether_core::PointType;
     /// use aether_routing::RoutingCache;
-    /// use aether_model::PointType;
     /// use std::collections::HashMap;
     ///
     /// let mut m2c = HashMap::new();
@@ -491,8 +491,8 @@ impl RoutingCache {
     ///
     /// ## Example
     /// ```rust
+    /// use aether_core::PointType;
     /// use aether_routing::RoutingCache;
-    /// use aether_model::PointType;
     /// use std::collections::HashMap;
     ///
     /// let mut c2c = HashMap::new();

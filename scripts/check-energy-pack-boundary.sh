@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-readonly LEGACY_MODELS="libs/aether-model/src/products"
+readonly RETIRED_MODEL_CRATE="libs/aether-model"
 readonly PACK_MODELS="packs/energy/models"
 readonly PACK_KNOWLEDGE="packs/energy/knowledge"
 readonly ENERGY_HOMEPAGE_PRESET="packs/energy/examples/config/api/calculated_points.sql"
@@ -13,11 +13,8 @@ fail() {
     exit 1
 }
 
-if legacy_model=$(find "$LEGACY_MODELS" -maxdepth 1 -type f -name '*.json' -print -quit); then
-    if [[ -n "$legacy_model" ]]; then
-        fail "energy model remains outside the pack: $legacy_model"
-    fi
-fi
+[[ ! -e "$RETIRED_MODEL_CRATE" ]] \
+    || fail "retired aether-model compatibility crate was restored"
 
 model_count=$(find "$PACK_MODELS" -maxdepth 1 -type f -name '*.json' | wc -l | tr -d ' ')
 [[ "$model_count" == 13 ]] || fail "energy pack must own exactly 13 model JSON files"
@@ -49,14 +46,12 @@ if rg -n \
     . \
     --glob '!target/**' \
     --glob '!.git/**' \
-    --glob '!scripts/check-energy-pack-boundary.sh' \
-    --glob '!docs/plans/**' \
-    --glob '!docs/superpowers/**'; then
+    --glob '!scripts/check-energy-pack-boundary.sh'; then
     fail "an executable or build-time reference still resolves a legacy energy asset path"
 fi
 
 if rg -n 'include(_str)?!\([^)]*packs/energy|product_includes\.rs' \
-    libs/aether-model tools/aether --glob '*.rs'; then
+    crates libs services tools --glob '*.rs'; then
     fail "kernel/model or CLI source still compiles Energy Pack assets into a binary"
 fi
 
@@ -72,8 +67,6 @@ fi
 if rg -n 'aether://docs/domain/' README.md docs tools services libs examples packs \
     --glob '!node_modules/**' \
     --glob '!dist/**' \
-    --glob '!docs/plans/**' \
-    --glob '!docs/superpowers/**' \
     --glob '!docs/specs/**'; then
     fail "current documentation or tests still publish the pre-Pack MCP URI namespace"
 fi

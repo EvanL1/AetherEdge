@@ -226,7 +226,7 @@ pub fn decode_point(point: &CanPoint, frame_data: &[u8]) -> Result<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aether_model::PointType;
+    use aether_core::PointType;
 
     // =========================================================================
     // Helper functions

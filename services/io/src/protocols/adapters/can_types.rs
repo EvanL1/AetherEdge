@@ -3,7 +3,7 @@
 //! This module contains CAN-related types that don't depend on hardware.
 //! Separated from the main CAN module to allow testing on non-Linux platforms.
 
-use aether_model::PointType;
+use aether_core::PointType;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 

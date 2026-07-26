@@ -39,13 +39,25 @@ impl ServiceName {
         }
     }
 
-    fn base_url(self, config: &GatewayConfig) -> &str {
+    pub(crate) fn base_url(self, config: &GatewayConfig) -> &str {
         match self {
             Self::Io => &config.io_service_url,
             Self::Automation => &config.automation_service_url,
             Self::History => &config.history_service_url,
             Self::Uplink => &config.uplink_service_url,
             Self::Alarm => &config.alarm_service_url,
+        }
+    }
+
+    #[cfg(feature = "swagger-ui")]
+    pub(crate) fn from_openapi_name(name: &str) -> Option<Self> {
+        match name {
+            "io" => Some(Self::Io),
+            "automation" => Some(Self::Automation),
+            "history" => Some(Self::History),
+            "uplink" => Some(Self::Uplink),
+            "alarm" => Some(Self::Alarm),
+            _ => None,
         }
     }
 

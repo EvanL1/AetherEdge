@@ -17,10 +17,10 @@ use tracing::{debug, info, warn};
 use super::data::{DataBatch, DataPoint, Value};
 use super::error::{GatewayError, Result};
 use super::quality::Quality;
-use aether_model::PointType;
+use aether_core::PointType;
 
 /// Path to the Python host script relative to the project root.
-const HOST_SCRIPT: &str = "libs/aether-script-host/main.py";
+const HOST_SCRIPT: &str = "services/io/assets/script-host/main.py";
 
 // ============================================================================
 // Protocol types (JSON-Lines)

@@ -52,9 +52,9 @@ command, power setpoint).
 
 ## Point types
 
-Channel-side points use the four-type classification defined by `PointType`
-in `libs/aether-core/src/types.rs` (re-exported through `aether-model`). The
-enum documentation calls this the standard IEC "Four Remote" classification;
+Channel-side protocol and storage DTOs use the four-type classification defined
+by `PointType` in `libs/aether-core/src/types.rs`. The enum documentation calls
+this the standard IEC "Four Remote" classification;
 each variant carries a serde alias for the Chinese-standard code (YC/YX/YK/YT).
 
 | Type | Name | Signal kind | Direction | Write owner |
@@ -74,8 +74,8 @@ batches through `ShmAcquisitionStateWriter`. Automation submits typed C/A
 commands through `ShmDeviceCommandSink`; it cannot obtain the acquisition
 writer, and the sink rejects non-command point kinds before touching SHM.
 
-On the instance side, the four channel types collapse into two roles, defined
-by `PointRole` in `libs/aether-model/src/types.rs`:
+On serialized instance DTOs, the four channel types collapse into two roles,
+defined by `PointRole` in `libs/common/src/service_config.rs`:
 
 - `M` (Measurement) — data flows device → model
 - `A` (Action) — data flows model → device

@@ -14,7 +14,8 @@
 //! Replaced the former ShmCommandPoller (polling-based) with lower latency (~1-2ms vs 10-20ms avg)
 //! and event-triggered CPU usage instead of continuous polling.
 
-use aether_model::{PointType, ValidationConfig, validate_value};
+use aether_core::PointType;
+use aether_domain::CommandConstraints;
 use aether_shm_bridge::{DEFAULT_COMMAND_UDS_PATH, DeviceCommandFrame};
 use dashmap::DashMap;
 use dashmap::mapref::entry::Entry;
@@ -288,9 +289,8 @@ impl ShmCommandListener {
         let timestamp = notif.timestamp_ms();
 
         // Validate value before sending to device (prevents NaN/Infinity from reaching hardware)
-        let config = ValidationConfig::default();
-        let value = match validate_value(value, &config) {
-            Ok(v) => v,
+        let value = match CommandConstraints::unbounded().validate_value(value) {
+            Ok(()) => value,
             Err(e) => {
                 warn!(
                     "ShmListener: invalid value for ch{}:{:?}:{}: {} - command discarded",

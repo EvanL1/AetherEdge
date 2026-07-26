@@ -285,10 +285,10 @@ enum Commands {
 /// (ADR-0021); the CLI data plane never addresses internal service ports.
 pub(crate) fn api_base_url(host: Option<&str>) -> String {
     if let Some(h) = host {
-        return format!("http://{h}:{}", aether_model::service_ports::API_PORT);
+        return format!("http://{h}:{}", common::service_ports::API_PORT);
     }
     std::env::var("AETHER_API_URL")
-        .unwrap_or_else(|_| format!("http://localhost:{}", aether_model::service_ports::API_PORT))
+        .unwrap_or_else(|_| format!("http://localhost:{}", common::service_ports::API_PORT))
 }
 
 const BANNER: &str = "\
@@ -639,11 +639,8 @@ async fn sync_command(
 async fn ensure_configuration_owners_stopped() -> Result<()> {
     let mut running = Vec::new();
     for (service, port) in [
-        ("aether-io", aether_model::service_ports::IO_PORT),
-        (
-            "aether-automation",
-            aether_model::service_ports::AUTOMATION_PORT,
-        ),
+        ("aether-io", common::service_ports::IO_PORT),
+        ("aether-automation", common::service_ports::AUTOMATION_PORT),
     ] {
         let address = std::net::SocketAddr::from(([127, 0, 0, 1], port));
         if tokio::time::timeout(

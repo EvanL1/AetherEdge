@@ -522,9 +522,7 @@ impl ConfigExporter {
                 "service_name" => config.service.name = value,
                 "api_host" => config.api.host = value,
                 "service.port" | "api_port" | "port" => {
-                    config.api.port = value
-                        .parse()
-                        .unwrap_or(aether_model::service_ports::IO_PORT)
+                    config.api.port = value.parse().unwrap_or(common::service_ports::IO_PORT)
                 },
                 _ => {},
             }
@@ -677,7 +675,7 @@ impl ConfigExporter {
                 "service.port" | "api_port" | "port" => {
                     config.api.port = value
                         .parse()
-                        .unwrap_or(aether_model::service_ports::AUTOMATION_PORT)
+                        .unwrap_or(common::service_ports::AUTOMATION_PORT)
                 },
                 // execution_interval and batch_size are deprecated
                 "execution_interval" | "batch_size" => {},

@@ -14,7 +14,7 @@ use aether_automation::infra::application_control::{
 };
 use aether_automation::infra::measurement_routing::SqliteMeasurementRoutingMutator;
 use aether_automation::{InstanceManager, ProductLoader};
-use aether_model::product_lib::ProductLibrary;
+use aether_pack::ProductLibrary;
 use aether_ports::{AuditSink, CommandDispatcher, DeviceCommandSink};
 use aether_shm_bridge::ShmDeviceCommandSink;
 use axum::body::Body;

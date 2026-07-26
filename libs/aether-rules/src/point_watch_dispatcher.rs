@@ -205,7 +205,7 @@ impl PointWatchDispatcher {
             };
 
             for pref in point_refs {
-                // Map PointKind → aether_model::PointType
+                // Map PointKind to the stable T/S wire code.
                 // Note: OnChange rules subscribe to Measurement (T) or Action (A) points.
                 // For bitmap purposes we track the channel-side point type.
                 let lookup_point_id = pref.point;

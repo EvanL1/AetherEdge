@@ -14,8 +14,7 @@ use crate::types::{
 };
 use crate::{RuleActionCommand, RuleActionCommandFacade};
 use aether_calc::{CalcEngine, MemoryStateStore, StateStore};
-use aether_domain::{InstanceId, PointId};
-use aether_model::{ValidationConfig, validate_value};
+use aether_domain::{CommandConstraints, InstanceId, PointId};
 use serde::Serialize;
 use std::borrow::Cow;
 use std::collections::HashMap;
@@ -45,15 +44,14 @@ fn validate_write_target(
     default_point_type: &'static str,
     context: &str,
 ) -> std::result::Result<(u32, u32, f64, &'static str), ActionResult> {
-    let config = ValidationConfig::default();
     let pt = point_type_to_static(variable.point_type.as_deref(), default_point_type);
 
     // Reject NaN/Inf/out-of-range — never silently coerce to 0.0. The old
     // sanitize_value path turned a malformed compute result into a real
     // SCADA write of 0, which is the exact failure mode this skill is
     // sealing across the codebase. Caller treats Err as "skip this action".
-    let value = match validate_value(raw_value, &config) {
-        Ok(v) => v,
+    let value = match CommandConstraints::unbounded().validate_value(raw_value) {
+        Ok(()) => raw_value,
         Err(e) => {
             tracing::warn!(
                 "{} skipped: value {} failed validation ({}) (variable '{}')",

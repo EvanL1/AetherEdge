@@ -27,6 +27,33 @@ struct CapabilityPolicy {
 }
 
 #[test]
+fn channel_management_capabilities_remain_high_risk_and_audited() {
+    let policy: SafetyPolicyDocument =
+        serde_yml::from_str(include_str!("../../../ai/safety-policy.yaml"))
+            .expect("safety policy is valid YAML");
+
+    for capability in ["io.channel.manage", "io.channel.reconcile"] {
+        let declared = policy
+            .capabilities
+            .get(capability)
+            .unwrap_or_else(|| panic!("{capability} is missing from safety-policy.yaml"));
+        assert_eq!(declared.kind, "command", "{capability} kind");
+        assert_eq!(declared.risk, "high", "{capability} risk");
+        assert_eq!(
+            declared.permission, "io.channel.manage",
+            "{capability} permission"
+        );
+        assert!(!declared.idempotent, "{capability} idempotency");
+        assert_eq!(declared.confirmation, "always", "{capability} confirmation");
+        assert_eq!(
+            declared.audit.as_deref().unwrap_or(&policy.defaults.audit),
+            "required",
+            "{capability} audit policy"
+        );
+    }
+}
+
+#[test]
 fn machine_readable_safety_policy_matches_the_rust_capability_catalog() {
     let policy: SafetyPolicyDocument =
         serde_yml::from_str(include_str!("../../../ai/safety-policy.yaml"))

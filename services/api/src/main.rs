@@ -24,10 +24,10 @@ use serde::Deserialize;
 use tokio_util::sync::CancellationToken;
 use tower_http::cors::{Any, CorsLayer};
 use tracing::info;
-#[cfg(feature = "swagger-ui")]
+#[cfg(feature = "openapi")]
 use utoipa::OpenApi;
 #[cfg(feature = "swagger-ui")]
-use utoipa_swagger_ui::{Config, SwaggerUi};
+use utoipa_swagger_ui::{Config, SwaggerUi, Url};
 
 mod auth;
 mod config;
@@ -36,6 +36,8 @@ mod db;
 mod live_values;
 mod middleware_auth;
 mod models;
+#[cfg(feature = "swagger-ui")]
+mod openapi_gateway;
 mod routes_auth;
 mod routes_broadcast;
 mod routes_config;
@@ -50,7 +52,7 @@ mod ws;
 
 use crate::config::GatewayConfig;
 use crate::live_values::{build_gateway_value_source, run_gateway_topology_refresh};
-#[cfg(feature = "swagger-ui")]
+#[cfg(feature = "openapi")]
 use crate::routes_data_processing::DataProcessingApiDoc;
 use crate::state::AppState;
 use crate::ws::WsHub;
@@ -117,7 +119,7 @@ where
 // ApiDoc / SecurityAddon are compiled only with the Swagger UI so shared
 // admin annotations can remain opt-in through `common/openapi`.
 
-#[cfg(feature = "swagger-ui")]
+#[cfg(feature = "openapi")]
 #[derive(OpenApi)]
 #[openapi(
     paths(
@@ -210,14 +212,14 @@ where
     info(
         title = "Aether API Gateway",
         version = env!("CARGO_PKG_VERSION"),
-        description = "Authenticated remote-management API and WebSocket gateway. Protected operations require a Bearer JWT; use the service-local APIs only for intra-host communication. When compiled in, /docs and /openapi.json are public and must only be exposed on a trusted commissioning network."
+        description = "Authenticated remote-management API and WebSocket gateway. Protected operations require a Bearer JWT; use the service-local APIs only for intra-host communication. When compiled in, /docs and gateway-proxied /openapi/*.json are public and must only be exposed on a trusted commissioning network."
     )
 )]
 struct ApiDoc;
 
-#[cfg(feature = "swagger-ui")]
+#[cfg(feature = "openapi")]
 struct SecurityAddon;
-#[cfg(feature = "swagger-ui")]
+#[cfg(feature = "openapi")]
 impl utoipa::Modify for SecurityAddon {
     fn modify(&self, openapi: &mut utoipa::openapi::OpenApi) {
         if let Some(components) = openapi.components.as_mut() {
@@ -332,10 +334,23 @@ fn commissioned_data_processing_router(state: &AppState) -> Option<Router<Arc<Ap
         .map(|_| routes_data_processing::router())
 }
 
-fn build_router(state: Arc<AppState>) -> Router {
-    #[cfg(feature = "swagger-ui")]
-    let include_data_processing = state.data_processing.is_some();
+#[cfg(feature = "swagger-ui")]
+fn gateway_openapi(state: &AppState) -> utoipa::openapi::OpenApi {
+    if state.data_processing.is_some() {
+        ApiDoc::openapi().nest("", DataProcessingApiDoc::openapi())
+    } else {
+        ApiDoc::openapi()
+    }
+}
 
+#[cfg(feature = "swagger-ui")]
+async fn gateway_openapi_document(
+    State(state): State<Arc<AppState>>,
+) -> axum::Json<utoipa::openapi::OpenApi> {
+    axum::Json(gateway_openapi(&state))
+}
+
+fn build_router(state: Arc<AppState>) -> Router {
     let auth_routes = Router::new()
         .route("/register", post(routes_auth::register))
         .route("/login", post(routes_auth::login))
@@ -435,33 +450,35 @@ fn build_router(state: Arc<AppState>) -> Router {
             )),
         )
         .nest("/api/v1", api_v1)
-        .nest("/api/admin", admin_routes)
-        .with_state(state)
+        .nest("/api/admin", admin_routes);
+
+    #[cfg(feature = "swagger-ui")]
+    let app = {
+        let app = app
+            .route("/openapi/gateway.json", get(gateway_openapi_document))
+            .route("/openapi/{service}", get(openapi_gateway::service_openapi));
+        app.merge(
+            SwaggerUi::new("/docs").config(
+                Config::new([
+                    Url::with_primary("Aether API Gateway", "/openapi/gateway.json", true),
+                    Url::new("Aether I/O", "/openapi/io.json"),
+                    Url::new("Aether Automation", "/openapi/automation.json"),
+                    Url::new("Aether History", "/openapi/history.json"),
+                    Url::new("Aether Uplink", "/openapi/uplink.json"),
+                    Url::new("Aether Alarm", "/openapi/alarm.json"),
+                ])
+                .default_model_rendering("model")
+                .default_models_expand_depth(1),
+            ),
+        )
+    };
+
+    app.with_state(state)
         .layer(DefaultBodyLimit::max(1024 * 1024))
         .layer(axum::middleware::from_fn(
             common::logging::http_request_logger,
         ))
-        .layer(cors);
-
-    #[cfg(feature = "swagger-ui")]
-    let app = {
-        let openapi = if include_data_processing {
-            ApiDoc::openapi().nest("", DataProcessingApiDoc::openapi())
-        } else {
-            ApiDoc::openapi()
-        };
-        app.merge(
-            SwaggerUi::new("/docs")
-                .url("/openapi.json", openapi)
-                .config(
-                    Config::default()
-                        .default_model_rendering("model")
-                        .default_models_expand_depth(1),
-                ),
-        )
-    };
-
-    app
+        .layer(cors)
 }
 
 // ── Main ──────────────────────────────────────────────────────────────────────
@@ -780,7 +797,7 @@ mod service_gateway_route_tests {
     }
 }
 
-#[cfg(all(test, feature = "swagger-ui"))]
+#[cfg(all(test, feature = "openapi"))]
 mod openapi_tests {
     use super::*;
 

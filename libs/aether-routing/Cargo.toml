@@ -12,7 +12,7 @@ sqlx = { workspace = true }
 itoa = { workspace = true }
 rustc-hash = { workspace = true } # Fast FxHashMap for small integer keys
 arc-swap = "1.7"  # Lock-free atomic pointer swap for RoutingCache
-aether-model = { path = "../aether-model" }
+aether-core = { path = "../aether-core" }
 aether-domain = { path = "../../crates/aether-domain" }
 
 [dev-dependencies]

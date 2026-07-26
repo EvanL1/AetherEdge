@@ -139,6 +139,22 @@ jobs:
           command -v cargo-hakari || cargo install cargo-hakari --locked
           cargo hakari verify
 
+  firmware-check:
+    name: Firmware Workspace Check
+    runs-on: ubuntu-latest
+    needs: quality-check
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Setup Rust environment
+        uses: ./.github/actions/setup-rust-env
+
+      - name: Check the firmware-only shared-memory workspace
+        run: |
+          rustup target add thumbv7em-none-eabihf
+          cargo check --manifest-path firmware/Cargo.toml --target thumbv7em-none-eabihf
+
   # Job 2: Unit Tests (no Redis instance needed)
   unit-tests:
     name: Unit Tests

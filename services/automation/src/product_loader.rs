@@ -3,7 +3,7 @@
 //! Product queries use an explicitly assembled runtime [`ProductLibrary`]. The
 //! default loader is empty and never selects a domain Pack implicitly.
 
-use aether_model::product_lib::{BuiltinProduct, PointDef, ProductLibrary};
+use aether_pack::{ProductDefinition, ProductLibrary, ProductPointDefinition};
 use anyhow::{Context, Result};
 use common::test_utils::schema::INSTANCES_TABLE;
 use sqlx::SqlitePool;
@@ -15,7 +15,7 @@ pub use crate::config::{
     ActionPoint, CreateInstanceRequest, Instance, MeasurementPoint, Product, ProductHierarchy,
     PropertyTemplate,
 };
-pub use aether_model::PointRole;
+pub use common::PointRole;
 
 /// Product loader that provides access to products
 ///
@@ -73,7 +73,7 @@ impl ProductLoader {
             .library
             .get(product_name)
             .context(format!("Product not found: {}", product_name))?;
-        Ok(convert_builtin_to_product(builtin))
+        Ok(convert_product_definition(builtin))
     }
 
     /// Get all products
@@ -81,7 +81,7 @@ impl ProductLoader {
         self.library
             .all()
             .iter()
-            .map(convert_builtin_to_product)
+            .map(convert_product_definition)
             .collect()
     }
 
@@ -137,8 +137,8 @@ pub(crate) fn test_energy_product_loader(pool: SqlitePool) -> ProductLoader {
 
 // ============ Type Conversion Functions ============
 
-/// Convert BuiltinProduct to Product
-fn convert_builtin_to_product(builtin: &BuiltinProduct) -> Product {
+/// Convert one validated Pack product definition to the service DTO.
+fn convert_product_definition(builtin: &ProductDefinition) -> Product {
     Product {
         product_name: builtin.name.clone(),
         parent_name: builtin.parent_name.clone(),
@@ -160,7 +160,7 @@ fn convert_builtin_to_product(builtin: &BuiltinProduct) -> Product {
     }
 }
 
-fn convert_point_to_measurement(point: &PointDef) -> MeasurementPoint {
+fn convert_point_to_measurement(point: &ProductPointDefinition) -> MeasurementPoint {
     MeasurementPoint {
         measurement_id: point.id,
         name: point.name.clone(),
@@ -169,11 +169,11 @@ fn convert_point_to_measurement(point: &PointDef) -> MeasurementPoint {
         } else {
             Some(point.unit.clone())
         },
-        description: None, // BuiltinProduct doesn't have description
+        description: None, // Pack product point definitions do not carry descriptions yet.
     }
 }
 
-fn convert_point_to_action(point: &PointDef) -> ActionPoint {
+fn convert_point_to_action(point: &ProductPointDefinition) -> ActionPoint {
     ActionPoint {
         action_id: point.id,
         name: point.name.clone(),
@@ -186,7 +186,7 @@ fn convert_point_to_action(point: &PointDef) -> ActionPoint {
     }
 }
 
-fn convert_point_to_property(point: &PointDef) -> PropertyTemplate {
+fn convert_point_to_property(point: &ProductPointDefinition) -> PropertyTemplate {
     PropertyTemplate {
         property_id: point.id as i32,
         name: point.name.clone(),

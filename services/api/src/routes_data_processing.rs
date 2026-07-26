@@ -26,7 +26,7 @@ use axum::{
     routing::{get, post},
 };
 use serde::{Deserialize, Serialize};
-#[cfg(feature = "swagger-ui")]
+#[cfg(feature = "openapi")]
 use utoipa::OpenApi;
 use uuid::Uuid;
 
@@ -51,7 +51,7 @@ pub(crate) fn router() -> Router<Arc<AppState>> {
         )
 }
 
-#[cfg(feature = "swagger-ui")]
+#[cfg(feature = "openapi")]
 #[derive(OpenApi)]
 #[openapi(
     paths(list_tasks, processor_health, process),
@@ -80,13 +80,13 @@ pub(crate) fn router() -> Router<Arc<AppState>> {
 pub(crate) struct DataProcessingApiDoc;
 
 #[derive(Debug, Serialize)]
-#[cfg_attr(feature = "swagger-ui", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 struct ErrorEnvelope {
     error: ErrorDetail,
 }
 
 #[derive(Debug, Serialize)]
-#[cfg_attr(feature = "swagger-ui", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 struct ErrorDetail {
     code: &'static str,
     message: &'static str,
@@ -253,14 +253,14 @@ impl IntoResponse for ApiError {
 }
 
 #[derive(Debug, Serialize)]
-#[cfg_attr(feature = "swagger-ui", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 struct IdentityResponse {
     id: String,
     revision: u32,
 }
 
 #[derive(Debug, Serialize)]
-#[cfg_attr(feature = "swagger-ui", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 struct FeatureResponse {
     name: String,
     role: &'static str,
@@ -275,7 +275,7 @@ struct FeatureResponse {
 }
 
 #[derive(Debug, Serialize)]
-#[cfg_attr(feature = "swagger-ui", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 struct TargetResponse {
     name: String,
     unit: String,
@@ -283,7 +283,7 @@ struct TargetResponse {
 }
 
 #[derive(Debug, Serialize)]
-#[cfg_attr(feature = "swagger-ui", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 struct FallbackResponse {
     strategy: String,
     version: String,
@@ -292,7 +292,7 @@ struct FallbackResponse {
 }
 
 #[derive(Debug, Serialize)]
-#[cfg_attr(feature = "swagger-ui", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 struct ForecastPolicyResponse {
     target: TargetResponse,
     cadence_ms: u64,
@@ -314,7 +314,7 @@ struct ForecastPolicyResponse {
 }
 
 #[derive(Debug, Serialize)]
-#[cfg_attr(feature = "swagger-ui", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 struct HistoryFeaturePolicyResponse {
     feature: String,
     aggregation: &'static str,
@@ -322,7 +322,7 @@ struct HistoryFeaturePolicyResponse {
 }
 
 #[derive(Debug, Serialize)]
-#[cfg_attr(feature = "swagger-ui", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 struct ArtifactResponse {
     kind: String,
     family: String,
@@ -333,7 +333,7 @@ struct ArtifactResponse {
 }
 
 #[derive(Debug, Serialize)]
-#[cfg_attr(feature = "swagger-ui", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 struct TaskResponse {
     task: IdentityResponse,
     binding: IdentityResponse,
@@ -482,28 +482,28 @@ const fn duplicate_policy_name(value: HistoryDuplicatePolicy) -> &'static str {
 }
 
 #[derive(Debug, Serialize)]
-#[cfg_attr(feature = "swagger-ui", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 struct TasksResponse {
     schema: &'static str,
     tasks: Vec<TaskResponse>,
 }
 
 #[derive(Debug, Serialize)]
-#[cfg_attr(feature = "swagger-ui", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 struct ProcessorHealthResponse {
     processor_id: String,
     health: &'static str,
 }
 
 #[derive(Debug, Serialize)]
-#[cfg_attr(feature = "swagger-ui", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 struct ProcessorsHealthResponse {
     schema: &'static str,
     processors: Vec<ProcessorHealthResponse>,
 }
 
 #[derive(Debug, Deserialize)]
-#[cfg_attr(feature = "swagger-ui", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[serde(deny_unknown_fields)]
 struct ProcessRequestBody {
     task_id: String,
@@ -515,7 +515,7 @@ struct ProcessRequestBody {
 }
 
 #[derive(Debug, Deserialize)]
-#[cfg_attr(feature = "swagger-ui", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 enum ProcessOptionsBody {
     Forecast {
@@ -571,7 +571,7 @@ impl ProcessRequestBody {
     }
 }
 
-#[cfg_attr(feature = "swagger-ui", utoipa::path(
+#[cfg_attr(feature = "openapi", utoipa::path(
     get,
     path = "/api/v1/data-processing/tasks",
     params(
@@ -601,7 +601,7 @@ async fn list_tasks(
     }))
 }
 
-#[cfg_attr(feature = "swagger-ui", utoipa::path(
+#[cfg_attr(feature = "openapi", utoipa::path(
     get,
     path = "/api/v1/data-processing/processors/health",
     params(
@@ -641,7 +641,7 @@ async fn processor_health(
     }))
 }
 
-#[cfg_attr(feature = "swagger-ui", utoipa::path(
+#[cfg_attr(feature = "openapi", utoipa::path(
     post,
     path = "/api/v1/data-processing/process",
     params(

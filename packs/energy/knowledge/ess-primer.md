@@ -85,7 +85,7 @@ A product is a type; an instance is a device. Creating an instance from the `Bat
 
 **Field protocols.** io speaks 14 protocols: Modbus TCP/RTU, IEC 60870-5-104, IEC 61850 (MMS), OPC UA, MQTT, HTTP, DL/T 645, CAN/J1939, GPIO, BLE, Zigbee, Matter, Aether-485, and Virtual. Which of these are compiled into a given binary is controlled by Cargo feature flags on io.
 
-**SunSpec.** The `aether-model` crate embeds SunSpec model definitions at compile time and exposes them through its `sunspec` module: `load_model(model_id)` parses an embedded model, `list_model_ids()` enumerates what is available, and `model_exists(model_id)` checks for one. `expand_model` walks a model's group tree and produces Modbus-ready point definitions (`ExpandedPoint` with signal name, register address, data type, unit, scale, and offset), so a SunSpec-compliant inverter or meter can be mapped to channel points without hand-writing a register table. An `ExpandFilter` controls whether static/nameplate points, scale-factor registers, and optional points are included.
+**SunSpec.** The IO SunSpec protocol adapter embeds model definitions at compile time and exposes `load_model(model_id)`, `list_model_ids()`, and `model_exists(model_id)`. `expand_model` walks a model's group tree and produces Modbus-ready point definitions (`ExpandedPoint` with signal name, register address, data type, unit, scale, and offset), so a SunSpec-compliant inverter or meter can be mapped to channel points without hand-writing a register table. An `ExpandFilter` controls whether static/nameplate points, scale-factor registers, and optional points are included.
 
 ## Where to go next
 

@@ -1,8 +1,9 @@
 use aether_domain::{
     AcquiredPointSample, AlarmComparator, AlarmRuleDefinition, AlarmRuleTarget, AlarmSeverity,
     AlertId, ChannelCommandAddress, ChannelId, ChannelPointAddress, CommandConstraints, CommandId,
-    ControlCommand, DomainError, InstanceId, PhysicalDeviceCommand, PointAddress, PointId,
-    PointKind, PointQuality, PointSample, TimestampMs,
+    ControlCommand, DomainError, InstanceId, InstanceName, InstanceNameError,
+    PhysicalDeviceCommand, PointAddress, PointId, PointKind, PointQuality, PointSample,
+    TimestampMs,
 };
 
 #[test]
@@ -15,6 +16,27 @@ fn identifiers_remain_distinct_and_round_trip_their_raw_values() {
     assert_eq!(point_id.get(), 7);
     assert_eq!(command_id.get(), 99);
     assert_eq!(AlertId::new(11).get(), 11);
+}
+
+#[test]
+fn instance_names_preserve_the_legacy_safe_identifier_contract() {
+    let name = InstanceName::try_from("PCS-01.A").expect("valid instance name");
+    assert_eq!(name.as_str(), "PCS-01.A");
+    assert_eq!(name.to_string(), "PCS-01.A");
+
+    assert_eq!(InstanceName::try_from(""), Err(InstanceNameError::Empty));
+    assert_eq!(
+        InstanceName::try_from("a".repeat(65).as_str()),
+        Err(InstanceNameError::TooLong { length: 65 })
+    );
+    assert_eq!(
+        InstanceName::try_from("unsafe/path"),
+        Err(InstanceNameError::ForbiddenCharacter('/'))
+    );
+    assert_eq!(
+        InstanceName::try_from("unsafe\nname"),
+        Err(InstanceNameError::ControlCharacter)
+    );
 }
 
 #[test]
@@ -272,6 +294,26 @@ fn control_commands_reject_non_finite_values_and_invalid_deadlines() {
     )
     .expect_err("a command must have a future deadline");
     assert_eq!(invalid_window, DomainError::InvalidCommandWindow);
+}
+
+#[test]
+fn unbounded_command_constraints_keep_the_device_boundary_finite() {
+    let constraints = CommandConstraints::unbounded();
+
+    assert_eq!(constraints.validate_value(-0.0), Ok(()));
+    assert_eq!(constraints.validate_value(f64::MAX), Ok(()));
+    assert_eq!(
+        constraints.validate_value(f64::NAN),
+        Err(DomainError::NonFiniteCommandValue)
+    );
+    assert_eq!(
+        constraints.validate_value(f64::INFINITY),
+        Err(DomainError::NonFiniteCommandValue)
+    );
+    assert_eq!(
+        constraints.validate_value(f64::NEG_INFINITY),
+        Err(DomainError::NonFiniteCommandValue)
+    );
 }
 
 #[test]

@@ -14,8 +14,8 @@ use std::fmt;
 use std::path::Path;
 use std::str::FromStr;
 
-// Re-export PointType from aether-model and alias as FourRemote for compatibility
-pub use aether_model::PointType;
+// Re-export the firmware/protocol representation type for wire compatibility.
+pub use aether_core::PointType;
 
 #[cfg(feature = "schema")]
 use schemars::JsonSchema;
@@ -870,8 +870,52 @@ impl LogRotationConfig {
 // Shared enum types
 // ============================================================================
 
-// Re-export PointRole from aether-model for backward compatibility
-pub use aether_model::PointRole;
+/// Logical model-point direction used by CSV, SQLite, and HTTP DTOs.
+///
+/// This is a serialization-boundary type. Device-side T/S/C/A representation
+/// remains [`PointType`], while business command/acquisition invariants live in
+/// `aether-domain`.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
+#[repr(u8)]
+pub enum PointRole {
+    /// Measurement point: data flows from device to instance model.
+    #[serde(rename = "M")]
+    #[default]
+    Measurement = 0,
+    /// Action point: data flows from instance model to device.
+    #[serde(rename = "A")]
+    Action = 1,
+}
+
+impl PointRole {
+    /// Returns the stable SQLite/CSV representation.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Measurement => "M",
+            Self::Action => "A",
+        }
+    }
+}
+
+impl FromStr for PointRole {
+    type Err = String;
+
+    fn from_str(value: &str) -> std::result::Result<Self, Self::Err> {
+        match value.to_ascii_uppercase().as_str() {
+            "M" | "MEASUREMENT" => Ok(Self::Measurement),
+            "A" | "ACTION" => Ok(Self::Action),
+            _ => Err(format!("Unknown point role: {value}")),
+        }
+    }
+}
+
+impl fmt::Display for PointRole {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
 
 /// Instance status enumeration
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Hash)]

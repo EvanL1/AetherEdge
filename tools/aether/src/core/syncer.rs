@@ -600,7 +600,7 @@ impl ConfigSyncer {
         // Validate external product JSON files if directory exists
         let products_dir = config_dir.join("products");
         if products_dir.is_dir() {
-            let product_errors = aether_model::product_lib::validate_product_dir(&products_dir);
+            let product_errors = aether_pack::validate_product_directory(&products_dir);
             for (filename, error) in &product_errors {
                 stats.errors.push(SyncError {
                     item: format!("products/{}", filename),
@@ -609,7 +609,7 @@ impl ConfigSyncer {
             }
             if product_errors.is_empty() {
                 // Load once to verify the explicit site-library contract.
-                match aether_model::product_lib::ProductLibrary::load(Some(&products_dir)) {
+                match aether_pack::ProductLibrary::load(Some(&products_dir)) {
                     Ok(lib) => {
                         info!("Products: {} (explicit site library)", lib.len());
                     },

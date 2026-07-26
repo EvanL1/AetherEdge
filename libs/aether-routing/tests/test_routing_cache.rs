@@ -7,7 +7,7 @@
 
 #![allow(clippy::disallowed_methods)]
 
-use aether_model::PointType;
+use aether_core::PointType;
 use aether_routing::RoutingCache;
 use std::collections::HashMap;
 use std::sync::Arc;

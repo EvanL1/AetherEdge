@@ -576,7 +576,7 @@ mod tests {
     use super::*;
     use crate::protocols::adapters::zigbee_config::ZigbeeParamsConfig;
     use crate::protocols::core::point::{ProtocolAddress, TransformConfig};
-    use aether_model::PointType;
+    use aether_core::PointType;
 
     fn make_test_point(id: u32, ieee: u64, ep: u8, cluster: u16, attr: u16) -> PointConfig {
         PointConfig {

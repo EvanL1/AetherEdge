@@ -19,7 +19,7 @@
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
-use aether_model::PointType;
+use aether_core::PointType;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};

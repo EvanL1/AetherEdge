@@ -27,7 +27,6 @@ aether-runtime-catalog = { path = "../../libs/aether-runtime-catalog" }
 aether-domain = { path = "../../crates/aether-domain" }
 aether-ports = { path = "../../crates/aether-ports" }
 aether-store-local = { path = "../../extensions/store-local", features = ["sqlite-audit", "sqlite-topology"] }
-aether-model = { path = "../../libs/aether-model" }
 aether-shm-bridge = { path = "../../extensions/shm-bridge" }
 aether-rules = { path = "../../libs/aether-rules" }
 aether-calc = { path = "../../libs/aether-calc" }
@@ -45,7 +44,6 @@ async-trait = { workspace = true }
 uuid = { workspace = true }
 axum = { workspace = true }
 utoipa = { workspace = true }
-utoipa-swagger-ui = { workspace = true, optional = true }
 tokio-util = { workspace = true }
 sqlx = { workspace = true }
 # cron removed - not currently used
@@ -62,9 +60,12 @@ http-body-util = "0.1"
 jsonwebtoken = "9"
 
 [features]
-default = ["sqlite"]
+default = ["sqlite", "openapi"]
 sqlite = []
-swagger-ui = ["utoipa-swagger-ui", "common/openapi"]  # Opt-in Swagger UI documentation
+# Service-local OpenAPI is consumed by the gateway-owned Swagger UI.
+openapi = ["common/openapi"]
+# Deprecated build-compatibility alias; Swagger UI is gateway-only.
+swagger-ui = ["openapi"]
 
 [lints]
 workspace = true

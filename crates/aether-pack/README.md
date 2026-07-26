@@ -46,6 +46,12 @@ The configured identity must match `pack.yaml`. Every selected manifest is
 validated for Aether compatibility, capabilities, protocols, commissioning,
 and asset confinement before its models or knowledge become visible.
 
+`ProductLibrary` loads product JSON only from the validated Pack model
+directories and an explicitly selected site override directory. It rejects
+symlinks, non-regular or oversized files, path escapes, malformed JSON, and
+duplicate product identities with typed `ProductLibraryError` values. No
+product catalog is embedded in the kernel.
+
 Pack-owned `mappings`, `rules`, `evaluations`, and `data_processing` tasks are
 formal indexed asset categories. Each directory contains `index.yaml` using
 `aether.pack.asset-index.v1`; manifest capability IDs, index IDs, and actual

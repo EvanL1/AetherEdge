@@ -44,8 +44,8 @@
 #![no_std]
 #![no_main]
 
-use panic_halt as _;
 use cortex_m_rt::entry;
+use panic_halt as _;
 
 use aether_core::codec::dl645::{decode_response, Dl645Frame};
 use aether_core::{PointType, Quality};
@@ -152,10 +152,10 @@ fn process_dl645_frame(shm: &mut RawPtrShm, frame: &Dl645Frame) {
     // Map data identifier to slot index
     // In real implementation, this would use a configuration table
     let slot_index = match frame.data_id.bytes {
-        [0x00, 0x01, 0x00, 0x00] => 0,  // Total active energy
-        [0x02, 0x01, 0x01, 0x00] => 1,  // A-phase voltage
-        [0x02, 0x02, 0x01, 0x00] => 2,  // A-phase current
-        _ => return, // Unknown data identifier
+        [0x00, 0x01, 0x00, 0x00] => 0, // Total active energy
+        [0x02, 0x01, 0x01, 0x00] => 1, // A-phase voltage
+        [0x02, 0x02, 0x01, 0x00] => 2, // A-phase current
+        _ => return,                   // Unknown data identifier
     };
 
     // Parse the value based on data identifier

@@ -298,4 +298,4 @@ services:
 volumes:
   redis-data:
   redis-socket: # Shared Unix socket volume for better performance
-  # Note: aether-shm now uses host /dev/shm bind mount for external access
+  # The authoritative dataplane uses the host /dev/shm bind mount for local access

@@ -54,11 +54,6 @@ flags:
       - libs/aether-core/
     carryforward: true
 
-  aether-rtdb:
-    paths:
-      - libs/aether-rtdb/
-    carryforward: true
-
   aether-routing:
     paths:
       - libs/aether-routing/

@@ -1,6 +1,6 @@
 //! Pure-infra constants, path resolution, and time helpers.
 //!
-//! These items have no dependency on `aether-model` (`PointType`) or any
+//! These items have no dependency on protocol `PointType` or any
 //! other business concept — they speak only in terms of files, paths, and
 //! wall-clock time.
 

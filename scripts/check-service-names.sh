@@ -22,8 +22,6 @@ for legacy_name in "${legacy_names[@]}"; do
       -g '!.git/**' \
       -g '!target/**' \
       -g '!apps/**' \
-      -g '!docs/plans/**' \
-      -g '!docs/superpowers/**' \
       | rg --ignore-case --fixed-strings "/${legacy_name}"; then
     echo "retired service name remains in a path: ${legacy_name}" >&2
     failed=1
@@ -33,8 +31,6 @@ for legacy_name in "${legacy_names[@]}"; do
       -g '!.git/**' \
       -g '!target/**' \
       -g '!apps/**' \
-      -g '!docs/plans/**' \
-      -g '!docs/superpowers/**' \
       .; then
     echo "retired service name remains in file content: ${legacy_name}" >&2
     failed=1

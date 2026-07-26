@@ -1,0 +1,20 @@
+[package]
+name = "aether-shm"
+publish = false
+version = "0.3.0"
+edition = "2024"
+description = "Firmware-only shared-memory abstraction for AetherEdge"
+license = "MIT OR Apache-2.0"
+
+[features]
+default = ["std"]
+std = ["aether-core/std", "memmap2"]
+
+[dependencies]
+aether-core = { path = "../../libs/aether-core", default-features = false }
+
+# std-only dependencies
+memmap2 = { version = "0.9.11", optional = true }
+
+[dev-dependencies]
+tempfile = "3.8"

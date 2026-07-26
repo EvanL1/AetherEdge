@@ -9,6 +9,7 @@ readonly AGENT_INSTRUCTIONS="$ROOT_DIR/AGENTS.md"
 readonly PULL_REQUEST_TEMPLATE="$ROOT_DIR/.github/PULL_REQUEST_TEMPLATE.md"
 readonly CODE_CHECK_WORKFLOW="$ROOT_DIR/.github/workflows/rust-check.yml"
 readonly TOPOLOGY_SOAK_WORKFLOW="$ROOT_DIR/.github/workflows/topology-soak.yml"
+readonly ARCHITECTURE_CHECK="$ROOT_DIR/scripts/check-architecture.sh"
 
 fail() {
     echo "FAIL: $*" >&2
@@ -30,6 +31,18 @@ assert_not_contains() {
     if rg --fixed-strings --quiet -- "$forbidden" "$file"; then
         fail "$file retains obsolete CI policy: $forbidden"
     fi
+}
+
+assert_job_needs_quality_check() {
+    local job=$1
+
+    awk -v job="$job" '
+        $0 == "  " job ":" { in_job = 1; next }
+        in_job && /^  [A-Za-z0-9_-]+:$/ { exit }
+        in_job && $0 == "    needs: quality-check" { found = 1 }
+        END { exit !(in_job && found) }
+    ' "$CODE_CHECK_WORKFLOW" \
+        || fail "$job must run directly after quality-check"
 }
 
 echo "Checking local verification is risk-proportional..."
@@ -57,13 +70,14 @@ assert_contains "$CODE_CHECK_WORKFLOW" './scripts/check-architecture.sh'
 assert_contains "$CODE_CHECK_WORKFLOW" \
     'cargo clippy --workspace --all-targets --all-features -- -D warnings'
 assert_contains "$CODE_CHECK_WORKFLOW" 'cargo nextest run --workspace --lib --bins'
-ruby -ryaml -e '
-    jobs = YAML.load_file(ARGV.fetch(0)).fetch("jobs")
-    %w[unit-tests coverage-report config-validation].each do |job|
-      abort "#{job} must run directly after quality-check" unless jobs.fetch(job).fetch("needs") == "quality-check"
-    end
-  ' "$CODE_CHECK_WORKFLOW" \
-    || fail "independent Code Check jobs must run in parallel after Quality Check"
+assert_contains "$CODE_CHECK_WORKFLOW" \
+    'cargo check --manifest-path firmware/Cargo.toml --target thumbv7em-none-eabihf'
+assert_not_contains "$ARCHITECTURE_CHECK" 'ruby -r'
+assert_contains "$ARCHITECTURE_CHECK" \
+    'channel_management_capabilities_remain_high_risk_and_audited'
+for job in unit-tests coverage-report config-validation; do
+    assert_job_needs_quality_check "$job"
+done
 
 echo "Checking topology soak is path-scoped but remains scheduled and dispatchable..."
 assert_contains "$TOPOLOGY_SOAK_WORKFLOW" 'workflow_dispatch:'
@@ -73,7 +87,6 @@ for required_path in \
     'crates/aether-dataplane/**' \
     'crates/aether-ports/**' \
     'extensions/shm-bridge/**' \
-    'libs/aether-shm/**' \
     'services/history/**' \
     'services/io/**' \
     'services/uplink/**'; do

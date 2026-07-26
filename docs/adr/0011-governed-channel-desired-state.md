@@ -167,7 +167,7 @@ it does not move live-state authority into SQLite.
 cargo test -p aether-ports --test channel_management_contract
 cargo test -p aether-application --test channel_management_application
 cargo test -p aether-io --test channel_mutator_contract
-cargo test -p aether-io --features swagger-ui --lib --bins openapi
+cargo test -p aether-io --features openapi --lib --bins openapi
 cargo test -p aether --bin aether channels
 cargo test -p aether --bin aether mcp::tests
 ./scripts/check-openapi-contracts.sh

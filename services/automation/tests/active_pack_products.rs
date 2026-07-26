@@ -222,8 +222,7 @@ async fn existing_instance_with_an_inactive_product_fails_startup_validation() {
     .execute(&pool)
     .await
     .expect("existing instance");
-    let library =
-        aether_model::product_lib::ProductLibrary::load(None).expect("empty product library");
+    let library = aether_pack::ProductLibrary::load(None).expect("empty product library");
 
     let error = validate_instance_product_references(&pool, &library)
         .await
@@ -240,8 +239,7 @@ async fn empty_site_accepts_an_empty_product_library() {
     common::test_utils::schema::init_automation_schema(&pool)
         .await
         .expect("automation schema");
-    let library =
-        aether_model::product_lib::ProductLibrary::load(None).expect("empty product library");
+    let library = aether_pack::ProductLibrary::load(None).expect("empty product library");
 
     validate_instance_product_references(&pool, &library)
         .await

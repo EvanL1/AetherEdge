@@ -6,7 +6,7 @@
 #   TARGET: Rust target triple (default based on ARCH)
 #   --services: Comma-separated list of services to include (optional, default: Rust core)
 #   --io-features: Exact comma-separated aether-io feature selection (optional)
-#   --enable-swagger: Enable Swagger UI for feature-gated Rust services
+#   --enable-swagger: Enable the single gateway Swagger UI
 #
 # Service names: aether-io, aether-automation, aether-history, aether-api,
 # aether-uplink, aether-alarm, redis, timescaledb (canonical
@@ -575,21 +575,10 @@ if csv_contains "$BUILD_IMAGES" "aetherems:latest"; then
         CARGO_FEATURES=$(add_csv_item "$CARGO_FEATURES" "$feature")
     done
     if [[ "$ENABLE_SWAGGER" == "1" ]]; then
-        # Explicitly enable Swagger UI where it is feature-gated.
-        for feature in \
-            aether-io/swagger-ui \
-            aether-automation/swagger-ui \
-            aether-api/swagger-ui \
-            aether-alarm/swagger-ui \
-            aether-history/swagger-ui \
-            aether-uplink/swagger-ui; do
-            CARGO_FEATURES=$(add_csv_item "$CARGO_FEATURES" "$feature")
-            if [[ "$feature" == aether-io/* ]]; then
-                IO_BUILD_FEATURES=$(add_csv_item "$IO_BUILD_FEATURES" "$feature")
-            else
-                OTHER_CARGO_FEATURES=$(add_csv_item "$OTHER_CARGO_FEATURES" "$feature")
-            fi
-        done
+        # Only the authenticated remote gateway owns Swagger UI. It presents
+        # the six service contracts through fixed gateway-proxied documents.
+        CARGO_FEATURES=$(add_csv_item "$CARGO_FEATURES" "aether-api/swagger-ui")
+        OTHER_CARGO_FEATURES=$(add_csv_item "$OTHER_CARGO_FEATURES" "aether-api/swagger-ui")
     fi
     if csv_contains "$BUILD_IMAGES" "timescale/timescaledb:2.25.2-pg17"; then
         CARGO_FEATURES=$(add_csv_item \
@@ -669,7 +658,7 @@ if csv_contains "$BUILD_IMAGES" "aetherems:latest"; then
             rm -f "$BM_PKG_DIR/systemd/aether-redis.service"
         fi
         cp scripts/install-baremetal.sh "$BM_PKG_DIR/install.sh"
-        cp libs/aether-script-host/main.py "$BM_PKG_DIR/script-host/main.py"
+        cp services/io/assets/script-host/main.py "$BM_PKG_DIR/script-host/main.py"
         cp "$LICENSE_MIT_FILE" "$BM_PKG_DIR/LICENSE-MIT"
         cp "$LICENSE_APACHE_FILE" "$BM_PKG_DIR/LICENSE-APACHE"
         cp "$NOTICE_FILE" "$BM_PKG_DIR/NOTICE"

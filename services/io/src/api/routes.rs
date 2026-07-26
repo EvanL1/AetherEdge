@@ -304,6 +304,11 @@ impl utoipa::Modify for SecurityAddon {
     }
 }
 
+#[cfg(feature = "openapi")]
+async fn openapi_document() -> axum::Json<utoipa::openapi::OpenApi> {
+    axum::Json(IoApiDoc::openapi())
+}
+
 /// Create the API router over authoritative SHM and SQLite configuration.
 pub fn create_api_routes(
     channel_manager: Arc<ChannelManager>,
@@ -514,6 +519,8 @@ fn create_api_routes_with_boundary(
         .route("/api/network/apply", post(apply_network_changes))
         .layer(axum::Extension(channel_management))
         .layer(axum::Extension(point_topology));
+    #[cfg(feature = "openapi")]
+    let router = router.route("/openapi.json", get(openapi_document));
     #[cfg(feature = "modbus")]
     let router = router.layer(axum::Extension(SunSpecDiscoveryBoundary::production()));
     router

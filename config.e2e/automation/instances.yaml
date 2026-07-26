@@ -1,5 +1,5 @@
 # E2E Test Instances Configuration
-# These instances map to products defined in libs/aether-model/src/products/
+# These instances map to the explicitly selected Energy Pack model fixtures.
 
 instances:
   - instance_id: 1

@@ -68,7 +68,10 @@ utoipa = { workspace = true }
 utoipa-swagger-ui = { workspace = true, optional = true }
 
 [features]
-swagger-ui = ["utoipa-swagger-ui", "common/openapi"]
+default = ["openapi"]
+openapi = ["common/openapi"]
+# The only deployed Swagger UI; it presents gateway-proxied service specs.
+swagger-ui = ["openapi", "dep:utoipa-swagger-ui"]
 
 [dev-dependencies]
 tempfile = { workspace = true }

@@ -4,8 +4,8 @@
 
 use crate::api::routes::AppState;
 use crate::dto::{AppError, SuccessResponse};
+use aether_core::PointType;
 use aether_domain::PointKind;
-use aether_model::PointType;
 use aether_shm_bridge::PhysicalPointAddress;
 use axum::{
     extract::{Path, Query, State},

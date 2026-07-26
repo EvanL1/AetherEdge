@@ -55,7 +55,7 @@ impl PointRef {
     }
 }
 
-/// Point kind discriminator (mirrors aether-model's PointType but kept local
+/// Point kind discriminator (mirrors the T/S/C/A wire representation but stays local
 /// to avoid adding a cross-crate dependency for serialization only).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]

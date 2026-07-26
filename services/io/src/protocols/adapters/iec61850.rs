@@ -32,7 +32,7 @@ pub mod transport;
 use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
-use aether_model::PointType;
+use aether_core::PointType;
 use async_trait::async_trait;
 use chrono::{DateTime, TimeZone, Utc};
 use serde::{Deserialize, Serialize};
