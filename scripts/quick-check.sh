@@ -42,6 +42,9 @@ echo -e "${GREEN}No mod.rs files found${NC}"
 echo -e "${YELLOW}Checking architecture boundaries...${NC}"
 ./scripts/check-architecture.sh
 
+echo -e "${YELLOW}Checking distribution contracts...${NC}"
+./scripts/check-distribution-contracts.sh
+
 # Check compilation
 echo -e "${YELLOW}Checking compilation...${NC}"
 cargo check --workspace

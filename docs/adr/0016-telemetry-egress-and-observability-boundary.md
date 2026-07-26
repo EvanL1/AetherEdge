@@ -127,8 +127,9 @@ mode, and would pull a gRPC stack into an ARM gateway binary.
   observed while it was offline.
 - The gateway takes on no new dependency and no binary growth. Telemetry reuses
   the SHM health reader that uplink already constructs and the outbox it already
-  drains. `scripts/check-architecture.sh` fails the build on an `opentelemetry`
-  dependency, so clause 2 is enforced rather than merely asserted.
+  drains. The Cargo-metadata architecture contract fails the build on any
+  `opentelemetry` package edge, so clause 2 is enforced rather than merely
+  asserted.
 - A consumer of the `telemetry` topic is stateless. This is bought entirely by
   clauses 4 and 5, and is the reason the OTel data model was worth borrowing.
 - **A failed observation is never published as an observation.** A health-plane

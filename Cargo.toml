@@ -63,7 +63,8 @@ members = [
     "services/uplink",
     "services/io",
     "services/automation",
-    # CLI tools
+    # Repository tooling and CLI tools
+    "tools/aether-architecture-tests",
     "tools/aether",
     "tools/simulator",
 ]

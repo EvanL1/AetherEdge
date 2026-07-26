@@ -143,6 +143,8 @@ check first, and stop once the changed behavior is covered:
 - Cross-crate architecture, dependency direction, composition roots, or live
   state authority: run the affected package tests and
   `./scripts/check-architecture.sh`.
+- Distribution, installer, Compose, runtime-manifest, or Pack layout changes:
+  run `./scripts/check-distribution-contracts.sh`.
 - External-service tests remain opt-in and must be explicitly marked.
 
 Full-workspace verification is owned by pull-request CI. Do not run the full
@@ -153,6 +155,7 @@ cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace --lib --bins
 ./scripts/check-architecture.sh
+./scripts/check-distribution-contracts.sh
 ```
 
 Run that full suite locally only when the user explicitly requests it, when

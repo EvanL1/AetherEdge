@@ -2,7 +2,6 @@
 
 set -euo pipefail
 
-readonly CORE_MANIFEST_PATTERN='^(redis|sqlx|bb8|bb8-redis|axum|reqwest|rumqttc|aether-http-data-processor|aether-http-history-query|aether-sqlite-history-query|workspace-hack)[[:space:]]*='
 readonly DEFAULT_GRAPH_PATTERN='^(redis|sqlx|sqlx-core|sqlx-postgres|bb8|bb8-redis|workspace-hack) v'
 readonly PERIPHERAL_GRAPH_PATTERN='^(redis|sqlx-postgres|tokio-postgres|postgres-types|postgres-protocol|bb8|bb8-redis|workspace-hack) v'
 readonly ACTION_ROUTING_MUTATION_SQL_PATTERN='(?i)(?:r#{0,8})?"[[:space:]]*(?:INSERT(?:[[:space:]]+OR[[:space:]]+[A-Z_]+)?[[:space:]]+INTO|REPLACE[[:space:]]+INTO|UPDATE|DELETE[[:space:]]+FROM)[[:space:]]+action_routing\b'
@@ -301,55 +300,12 @@ while IFS= read -r adr_path; do
     fi
 done < <(find docs/adr -maxdepth 1 -type f -name '[0-9][0-9][0-9][0-9]-*.md' -print | sort)
 
-echo "Checking core manifests for infrastructure dependencies..."
-if rg -n "$CORE_MANIFEST_PATTERN" crates --glob 'Cargo.toml'; then
-    echo "ERROR: core crates contain a forbidden infrastructure dependency"
-    exit 1
-fi
+echo "Checking Cargo metadata architecture contracts..."
+cargo test -p aether-architecture-tests --test workspace_boundaries
 
 echo "Checking core source for legacy RTDB coupling..."
 if rg -n '\b(Rtdb|RedisRtdb)\b' crates --glob '*.rs'; then
     echo "ERROR: core crates reference the legacy Redis-shaped RTDB abstraction"
-    exit 1
-fi
-
-echo "Checking canonical domain-model boundary..."
-if [[ -e libs/aether-model ]]; then
-    echo "ERROR: retired aether-model compatibility crate was restored"
-    exit 1
-fi
-if rg -n '^\s*aether-model\s*=' crates extensions libs services tools firmware \
-    --glob 'Cargo.toml'; then
-    echo "ERROR: production code depends on the retired aether-model crate"
-    exit 1
-fi
-if rg -n '\baether_model::' crates extensions libs services tools firmware \
-    --glob '*.rs'; then
-    echo "ERROR: production code imports the retired aether-model crate"
-    exit 1
-fi
-
-echo "Checking retired legacy workspace members stay retired..."
-if [[ -e libs/aether-rtdb || -e libs/aether-shm ]]; then
-    echo "ERROR: retired root-workspace legacy crate directory was restored"
-    exit 1
-fi
-if rg -n '"libs/aether-(model|rtdb|shm)"' Cargo.toml; then
-    echo "ERROR: root workspace restored a retired legacy crate member"
-    exit 1
-fi
-
-echo "Checking aether-api is the only Swagger UI owner..."
-if rg -n '^\s*utoipa-swagger-ui\s*=' services \
-    --glob 'Cargo.toml' \
-    --glob '!services/api/Cargo.toml'; then
-    echo "ERROR: an internal service restored a Swagger UI dependency"
-    exit 1
-fi
-if rg -n '\bSwaggerUi\b' services \
-    --glob '*.rs' \
-    --glob '!services/api/**'; then
-    echo "ERROR: an internal service restored a Swagger UI route"
     exit 1
 fi
 
@@ -390,15 +346,6 @@ if rg -n 'aether-example-energy-gateway|scenarios/pv_daily.yaml' README.md READM
     exit 1
 fi
 
-# ADR-0016: the gateway borrows OpenTelemetry's data model, never its transport.
-# Telemetry leaves on the existing MQTT channel and the cloud terminates it into
-# OTLP. An SDK here would buffer in memory and drop exactly when the link is bad.
-echo "Checking the gateway does not depend on an OpenTelemetry SDK..."
-if rg -n '^\s*opentelemetry' crates services extensions libs tools --glob 'Cargo.toml'; then
-    echo "ERROR: an OpenTelemetry dependency violates ADR-0016; the edge does not speak OTLP"
-    exit 1
-fi
-
 echo "Checking acquisition-writer authority..."
 if rg -n '\bAcquisitionStateWriter\b' \
     services/api services/automation services/alarm services/history services/uplink tools \
@@ -427,7 +374,6 @@ echo "Checking production command transport boundary..."
 if rg -n '\b(ActionDispatch|ShmDispatch|ActionWriter|ShmNotifier)\b' \
     crates extensions services libs tools \
     --glob '*.rs' \
-    --glob '!libs/aether-rtdb-shm/**' \
     --glob '!**/tests/**' \
     --glob '!**/*_tests.rs' \
     --glob '!**/benches/**'; then
@@ -435,26 +381,7 @@ if rg -n '\b(ActionDispatch|ShmDispatch|ActionWriter|ShmNotifier)\b' \
     exit 1
 fi
 
-echo "Checking extracted SHM boundary..."
-if rg -n 'aether-rtdb-shm' extensions/shm-bridge/Cargo.toml; then
-    echo "ERROR: SHM bridge depends on the legacy aggregation crate"
-    exit 1
-fi
-if [[ -e libs/aether-rtdb-shm ]]; then
-    echo "ERROR: retired aether-rtdb-shm aggregation crate was restored"
-    exit 1
-fi
-if rg -n 'aether-rtdb-shm' Cargo.toml .guppy/hakari.toml; then
-    echo "ERROR: workspace metadata still references the retired aether-rtdb-shm crate"
-    exit 1
-fi
-if rg -n '(aether-routing|aether_routing|RoutingCache)' \
-    libs/aether-rules/Cargo.toml libs/aether-rules/src libs/aether-rules/tests \
-    --glob '*.rs' --glob 'Cargo.toml'; then
-    echo "ERROR: aether-rules restored the independently mutable legacy routing cache"
-    exit 1
-fi
-
+echo "Checking extracted SHM distribution boundary..."
 if git check-ignore -q examples/minimal-gateway/Cargo.toml; then
     echo "ERROR: minimal gateway example is ignored by git"
     exit 1
@@ -539,28 +466,6 @@ if rg -n "$DEFAULT_GRAPH_PATTERN" "$dependency_tree"; then
     exit 1
 fi
 
-# `--edges normal` is intentional: every shipped service and CLI graph must be
-# independent of the deleted aggregation crate.
-echo "Checking production graphs for the legacy SHM aggregate..."
-if rg -n 'aether[_-]rtdb[_-]shm' \
-    services/io/src services/automation/src services/alarm/src services/api/src \
-    services/history/src services/uplink/src libs/aether-rules/src tools/aether/src \
-    --glob '*.rs' \
-    --glob '!**/*tests.rs' \
-    --glob '!**/test_utils.rs'; then
-    echo "ERROR: production source still imports the legacy SHM aggregate"
-    exit 1
-fi
-for package in \
-    aether-io aether-automation aether-alarm aether-api aether-history aether-uplink \
-    aether-rules aether; do
-    cargo tree -p "$package" --edges normal --prefix none > "$dependency_tree"
-    if rg -n '^aether-rtdb-shm v' "$dependency_tree"; then
-        echo "ERROR: $package production graph still includes aether-rtdb-shm"
-        exit 1
-    fi
-done
-
 echo "Checking kernel/distribution composition boundary..."
 if [[ -e apps || -e scripts/systemd/aether-apps.service ]]; then
     echo "ERROR: the headless Kernel repository restored an EMS Console owner"
@@ -577,29 +482,6 @@ if rg -n 'aether-apps|apps/(dist|nginx)|FRONTEND_INCLUDED|INCLUDE_FRONTEND|INCLU
     echo "ERROR: the Kernel distribution still owns EMS Console integration"
     exit 1
 fi
-cargo tree -p aether-example-minimal-gateway --edges normal --prefix none > "$dependency_tree"
-if rg -ni '(aether-example-energy-gateway|packs?/energy|aether-ems)' "$dependency_tree"; then
-    echo "ERROR: the industry-neutral gateway depends on the energy distribution"
-    exit 1
-fi
-cargo tree -p aether-example-energy-gateway --edges normal --prefix none > "$dependency_tree"
-if ! rg -q '^aether-edge-sdk v' "$dependency_tree"; then
-    echo "ERROR: the energy distribution does not compose the Aether SDK"
-    exit 1
-fi
-
-echo "Checking data-processing adapter direction..."
-cargo tree -p aether-data-processing --edges normal --prefix none > "$dependency_tree"
-if rg -q '^aether-http-data-processor v' "$dependency_tree"; then
-    echo "ERROR: the transport-neutral data-processing codec depends on the HTTP adapter"
-    exit 1
-fi
-cargo tree -p aether-http-data-processor --edges normal --prefix none > "$dependency_tree"
-if ! rg -q '^aether-data-processing v' "$dependency_tree"; then
-    echo "ERROR: the HTTP processor adapter does not compose the shared wire codec"
-    exit 1
-fi
-
 echo "Checking isolated peripheral service graphs..."
 for service in aether-alarm aether-api aether-history aether-uplink; do
     cargo tree -p "$service" --edges normal --prefix none > "$dependency_tree"
@@ -608,17 +490,6 @@ for service in aether-alarm aether-api aether-history aether-uplink; do
         exit 1
     fi
 done
-
-echo "Checking canonical service names..."
-./scripts/check-service-names.sh
-
-echo "Checking SHM-only core runtime..."
-./scripts/check-shm-only-runtime.sh
-
-./scripts/check-safe-default-config.sh
-./scripts/check-runtime-manifest.sh
-./scripts/check-energy-pack-boundary.sh
-./scripts/test-installer-layout.sh
 
 echo "Checking fresh-checkout path contract..."
 if rg -n 'LEGACY_INSTALL_ROOT' tools/aether/src/install_context.rs; then

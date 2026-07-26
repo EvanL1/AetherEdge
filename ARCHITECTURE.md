@@ -31,7 +31,7 @@ plane, and typed SHM port adapters. In particular:
   represent only T/S writes; automation command transport can represent only
   C/A writes and returns success only after the local SHM + UDS command plane
   accepts the frame. Neither writer port is exposed to HTTP, CLI, MCP, or AI
-  clients. The legacy aggregate is test-only in the default service and CLI
+  clients. The retired legacy aggregate is absent from the service and CLI
   graphs.
 - `FileOutbox` provides bounded legacy store-and-forward with crash recovery.
   The experimental `CloudLinkSpool` is separate: it preserves stream
@@ -167,8 +167,12 @@ runtime/composition ---+          extensions
 ```
 
 Only a composition root may depend on both application code and concrete
-extensions. CI checks the core manifests for forbidden infrastructure
-dependencies.
+extensions. Executable package-edge contracts live in
+`tools/aether-architecture-tests`; they consume Cargo metadata rather than
+matching dependency text or source-file paths. `scripts/check-architecture.sh`
+invokes those Rust tests and retains only source-level checks that do not yet
+have a compile-time contract. Deployment, installer, runtime-manifest, and Pack
+layout checks run separately through `scripts/check-distribution-contracts.sh`.
 
 The concrete extraction and local-outbox decisions are recorded in
 [ADR-0002](docs/adr/0002-dataplane-and-local-outbox.md).

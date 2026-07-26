@@ -37,8 +37,8 @@ ABI primitives used by firmware. It is not a second business-model authority.
 2. `aether-core` retains firmware-oriented codec, layout, and representation
    concerns. It must not become a new home for service/business entities.
 3. `aether-model` is retired and removed. No production crate may restore a
-   dependency or import; the architecture gate enforces both the absent path
-   and absent references.
+   dependency or import. Cargo-metadata architecture tests enforce the absent
+   package, path, and dependency; normal Rust compilation rejects stale imports.
 4. Compatibility adapters remain narrow and convert explicitly between stable
    storage/protocol values and domain values; no blanket type aliases or
    implicit semantic conversions are permitted.

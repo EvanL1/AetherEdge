@@ -119,6 +119,9 @@ jobs:
       - name: Check Architecture Boundaries
         run: ./scripts/check-architecture.sh
 
+      - name: Check Distribution Contracts
+        run: ./scripts/check-distribution-contracts.sh
+
       - name: Check Swagger and OpenAPI Contracts
         run: ./scripts/check-openapi-contracts.sh
 

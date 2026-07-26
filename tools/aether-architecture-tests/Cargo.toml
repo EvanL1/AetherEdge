@@ -1,0 +1,16 @@
+[package]
+name = "aether-architecture-tests"
+version.workspace = true
+edition = "2024"
+rust-version = "1.90"
+publish = false
+license.workspace = true
+repository.workspace = true
+description = "Executable repository architecture contracts for AetherEdge"
+
+[dev-dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[lints]
+workspace = true

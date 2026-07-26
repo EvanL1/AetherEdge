@@ -10,6 +10,7 @@ readonly PULL_REQUEST_TEMPLATE="$ROOT_DIR/.github/PULL_REQUEST_TEMPLATE.md"
 readonly CODE_CHECK_WORKFLOW="$ROOT_DIR/.github/workflows/rust-check.yml"
 readonly TOPOLOGY_SOAK_WORKFLOW="$ROOT_DIR/.github/workflows/topology-soak.yml"
 readonly ARCHITECTURE_CHECK="$ROOT_DIR/scripts/check-architecture.sh"
+readonly DISTRIBUTION_CHECK="$ROOT_DIR/scripts/check-distribution-contracts.sh"
 
 fail() {
     echo "FAIL: $*" >&2
@@ -67,14 +68,22 @@ assert_contains "$CODE_CHECK_WORKFLOW" 'cancel-in-progress: ${{ github.event_nam
 assert_contains "$CODE_CHECK_WORKFLOW" './scripts/test-ci-verification-policy.sh'
 assert_contains "$CODE_CHECK_WORKFLOW" 'cargo fmt --all -- --check'
 assert_contains "$CODE_CHECK_WORKFLOW" './scripts/check-architecture.sh'
+assert_contains "$CODE_CHECK_WORKFLOW" './scripts/check-distribution-contracts.sh'
 assert_contains "$CODE_CHECK_WORKFLOW" \
     'cargo clippy --workspace --all-targets --all-features -- -D warnings'
 assert_contains "$CODE_CHECK_WORKFLOW" 'cargo nextest run --workspace --lib --bins'
 assert_contains "$CODE_CHECK_WORKFLOW" \
     'cargo check --manifest-path firmware/Cargo.toml --target thumbv7em-none-eabihf'
 assert_not_contains "$ARCHITECTURE_CHECK" 'ruby -r'
+assert_not_contains "$ARCHITECTURE_CHECK" 'python3 '
+assert_not_contains "$ARCHITECTURE_CHECK" 'docker compose'
+assert_not_contains "$ARCHITECTURE_CHECK" 'test-installer-layout.sh'
+assert_contains "$ARCHITECTURE_CHECK" \
+    'cargo test -p aether-architecture-tests --test workspace_boundaries'
 assert_contains "$ARCHITECTURE_CHECK" \
     'channel_management_capabilities_remain_high_risk_and_audited'
+assert_contains "$DISTRIBUTION_CHECK" './scripts/check-shm-only-runtime.sh'
+assert_contains "$DISTRIBUTION_CHECK" './scripts/test-installer-layout.sh'
 for job in unit-tests coverage-report config-validation; do
     assert_job_needs_quality_check "$job"
 done

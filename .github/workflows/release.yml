@@ -60,6 +60,7 @@ jobs:
           ./scripts/check-extraction-readiness.sh --local-only
           cargo fmt --all -- --check
           ./scripts/check-architecture.sh
+          ./scripts/check-distribution-contracts.sh
           ./scripts/check-open-source-readiness.sh
           cargo clippy --workspace -- -D warnings
           cargo clippy --workspace --lib --bins -- -D clippy::unwrap_used -D clippy::expect_used
