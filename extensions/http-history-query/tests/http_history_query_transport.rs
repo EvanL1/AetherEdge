@@ -166,13 +166,9 @@ async fn a_slow_history_service_is_reported_as_a_timeout() {
 async fn a_response_over_the_configured_limit_is_refused_before_it_is_parsed() {
     let server = MockServer::start().await;
     mount_json(&server, 200, one_point_body()).await;
-    let adapter = HttpHistoryQuery::new(config_with_limits(
-        &server,
-        vec![stored_route()],
-        2_000,
-        16,
-    ))
-    .expect("a 16-byte response budget is a valid configuration");
+    let adapter =
+        HttpHistoryQuery::new(config_with_limits(&server, vec![stored_route()], 2_000, 16))
+            .expect("a 16-byte response budget is a valid configuration");
 
     match adapter.query(window(vec![load_feature()], 2)).await {
         Ok(_) => panic!("an oversized response must not produce a segment"),

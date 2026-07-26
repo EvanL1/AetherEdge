@@ -151,7 +151,9 @@ async fn provenance_reports_the_semantic_ref_and_never_the_storage_coordinates()
         Some("energy.site.load.active_power")
     );
     for source in sourced.provenance() {
-        let reference = source.source_ref().expect("every feature declares a source");
+        let reference = source
+            .source_ref()
+            .expect("every feature declares a source");
         assert!(
             !reference.contains("inst:") && !reference.contains(':'),
             "storage coordinates must not reach a processor, found {reference}"

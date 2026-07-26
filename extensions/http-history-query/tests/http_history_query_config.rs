@@ -29,10 +29,7 @@ fn config(
     HttpHistoryQueryConfig::new(endpoint, routes, timeout_ms, max_response_bytes)
 }
 
-fn assert_invalid(
-    result: Result<HttpHistoryQueryConfig, aether_ports::PortError>,
-    context: &str,
-) {
+fn assert_invalid(result: Result<HttpHistoryQueryConfig, aether_ports::PortError>, context: &str) {
     match result {
         Ok(_) => panic!("{context} must not produce a usable configuration"),
         Err(error) => assert_eq!(
@@ -107,7 +104,13 @@ fn empty_control_and_non_semantic_route_fields_are_rejected() {
             "a whitespace feature",
         ),
         ("load", "", "1", "energy.site.load", "an empty series key"),
-        ("load", "inst:1:M", "", "energy.site.load", "an empty point id"),
+        (
+            "load",
+            "inst:1:M",
+            "",
+            "energy.site.load",
+            "an empty point id",
+        ),
         (
             "lo\u{0}ad",
             "inst:1:M",
@@ -232,7 +235,10 @@ fn only_loopback_http_endpoints_on_the_batch_path_are_accepted() {
         ),
         ("not-a-url".to_string(), "an unparsable endpoint"),
     ] {
-        assert_invalid(config(&candidate, vec![stored_route()], 1_000, 4_096), context);
+        assert_invalid(
+            config(&candidate, vec![stored_route()], 1_000, 4_096),
+            context,
+        );
     }
 }
 
@@ -266,7 +272,13 @@ fn ipv6_loopback_is_a_valid_history_endpoint() {
 fn timeout_and_response_limits_are_inclusive_at_their_boundaries() {
     for timeout_ms in [1, MAX_TIMEOUT_MS] {
         assert!(
-            config(&endpoint("127.0.0.1"), vec![stored_route()], timeout_ms, 4_096).is_ok(),
+            config(
+                &endpoint("127.0.0.1"),
+                vec![stored_route()],
+                timeout_ms,
+                4_096
+            )
+            .is_ok(),
             "{timeout_ms}ms is inside the accepted timeout range"
         );
     }
