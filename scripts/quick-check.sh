@@ -79,8 +79,10 @@ echo -e "${YELLOW}Running unit tests...${NC}"
 "${TEST_RUNNER[@]}"
 "${TEST_RUNNER[@]}" \
     -p aether-shm-bridge \
-    -p aether-redis-bridge \
-    -p aether-postgres-history \
+    -p aether-sqlite-topology \
+    -p aether-cloudlink-mqtt \
+    -p aether-http-data-processor \
+    -p aether-sqlite-history-query \
     -p aether-example-minimal-gateway \
     -p aether-example-energy-gateway
 "${TEST_RUNNER[@]}" --workspace --lib --bins

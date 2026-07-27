@@ -21,7 +21,7 @@
   aware, and audited.
 - [ ] Deterministic acquisition and safety behavior does not depend on an AI client.
 - [ ] Energy- or vendor-specific behavior stays in an optional pack or
-  extension where applicable.
+  downstream integration where applicable.
 - [ ] Not applicable items are explained below rather than silently ignored.
 
 <!-- Explain non-applicable items and intentional boundary changes. -->

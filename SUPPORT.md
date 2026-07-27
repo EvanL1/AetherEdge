@@ -27,7 +27,7 @@ For technical help, provide only non-sensitive information:
 - Aether version or commit;
 - operating system, architecture, and deployment method;
 - whether this is the default SHM-only runtime or an explicitly enabled
-  Redis/PostgreSQL extension;
+  external storage integration;
 - affected crate, service, protocol, CLI command, or MCP tool;
 - minimal configuration and reproduction steps;
 - expected and actual behavior;
@@ -41,7 +41,7 @@ identifiers, full memory images, or details that could enable a vulnerability.
 The default supported architecture uses SHM as the sole authority for live
 point state and requires no external database. Questions about a custom Redis
 mirror, PostgreSQL history sink, field protocol, platform integration, or
-industry pack should identify that extension explicitly.
+industry pack should identify that downstream integration explicitly.
 
 Maintainers and community members may suggest diagnostics, documentation, or
 patches, but they cannot validate the physical safety of a deployment. Device

@@ -23,7 +23,7 @@ body:
         - aether-api
         - aether-uplink
         - CLI or MCP interface
-        - Optional extension or industry pack
+        - Downstream integration or industry pack
         - Documentation or examples
         - Other
     validations:

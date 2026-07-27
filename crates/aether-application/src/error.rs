@@ -76,8 +76,8 @@ pub enum ApplicationError {
     /// is represented by `AcceptedOutcome`, never by this retryable failure.
     #[error("mandatory audit unavailable: {0}")]
     AuditUnavailable(PortError),
-    /// An extension port failed while executing the use case.
-    #[error("extension failure: {0}")]
+    /// A required port failed while executing the use case.
+    #[error("port failure: {0}")]
     Port(PortError),
 }
 

@@ -8,7 +8,9 @@ readonly ROOT_DIR
 readonly AGENT_INSTRUCTIONS="$ROOT_DIR/AGENTS.md"
 readonly PULL_REQUEST_TEMPLATE="$ROOT_DIR/.github/PULL_REQUEST_TEMPLATE.md"
 readonly CODE_CHECK_WORKFLOW="$ROOT_DIR/.github/workflows/rust-check.yml"
+readonly RELEASE_WORKFLOW="$ROOT_DIR/.github/workflows/release.yml"
 readonly TOPOLOGY_SOAK_WORKFLOW="$ROOT_DIR/.github/workflows/topology-soak.yml"
+readonly QUICK_CHECK="$ROOT_DIR/scripts/quick-check.sh"
 readonly ARCHITECTURE_CHECK="$ROOT_DIR/scripts/check-architecture.sh"
 readonly DISTRIBUTION_CHECK="$ROOT_DIR/scripts/check-distribution-contracts.sh"
 
@@ -77,6 +79,16 @@ assert_contains "$CODE_CHECK_WORKFLOW" \
     'cargo nextest run --workspace --lib --bins --tests'
 assert_contains "$CODE_CHECK_WORKFLOW" \
     'cargo check --manifest-path firmware/Cargo.toml --target thumbv7em-none-eabihf'
+for retired_package in \
+    aether-redis-bridge \
+    aether-postgres-history \
+    aether-http-history-query \
+    aether-home-assistant-bridge \
+    aether-sunspec; do
+    assert_not_contains "$CODE_CHECK_WORKFLOW" "$retired_package"
+    assert_not_contains "$RELEASE_WORKFLOW" "$retired_package"
+    assert_not_contains "$QUICK_CHECK" "$retired_package"
+done
 assert_not_contains "$ARCHITECTURE_CHECK" 'ruby -r'
 assert_not_contains "$ARCHITECTURE_CHECK" 'python3 '
 assert_not_contains "$ARCHITECTURE_CHECK" 'docker compose'

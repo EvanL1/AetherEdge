@@ -148,7 +148,7 @@ async fn bounded_memory_outbox_is_fifo_and_acknowledges_by_id() {
 }
 
 #[tokio::test]
-async fn local_adapters_pass_the_public_extension_conformance_suite() {
+async fn local_adapters_pass_the_public_adapter_conformance_suite() {
     let state = MemoryLiveState::new();
     assert_live_state_round_trip(&state, &state, sample(7, 70.0), sample(8, 80.0))
         .await

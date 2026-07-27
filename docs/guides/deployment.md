@@ -102,11 +102,12 @@ Two mount classes matter for the runtime:
   stale file entry.
 - **Optional external stores** — no core service mounts a Redis socket, exports
   `REDIS_URL`, or waits for Redis. `docker compose --profile redis up -d`
-  starts mirror infrastructure for a host that explicitly wires
-  `aether-redis-bridge`. PostgreSQL history remains opt-in through
-  `--profile postgres-storage` and a PostgreSQL-enabled history build. Set a
-  unique non-empty `TIMESCALEDB_PASSWORD` before selecting that profile; the
-  packaged extension installer generates one without printing it.
+  starts compatibility infrastructure only; AetherEdge ships no Redis mirror
+  adapter, so any consumer belongs to a downstream composition. PostgreSQL
+  history remains opt-in through `--profile postgres-storage` and a
+  PostgreSQL-enabled history build. Set a unique non-empty
+  `TIMESCALEDB_PASSWORD` before selecting that profile; the packaged installer
+  generates one without printing it.
 
 All Rust containers read the shared configuration SQLite database from
 `${AETHER_BASE_PATH:-./data}/aether.db` (mounted at `/app/data/aether.db`)
@@ -204,7 +205,7 @@ limited to characters that round-trip safely through Docker Compose `.env`.
 
 An `AETHER_TIMESCALE_DATA_PATH` outside the site root and Docker's optional
 `redis-data` named volume are external-service storage. They must also be empty
-for a fresh deployment. Reusing or migrating an extension store is outside the
+for a fresh deployment. Reusing or migrating an external store is outside the
 installer's supported workflow.
 
 The installer generates

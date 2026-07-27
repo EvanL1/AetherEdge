@@ -22,8 +22,9 @@ reports a configurable health result, consumes queued `ProcessingResult` or
 tests can therefore prove both the exact frame sent to a processor and the
 result/error path without a model runtime or network service.
 
-Extension tests call the conformance helpers against concrete adapters so
-capability semantics remain consistent across local and external boundaries.
+Downstream adapter tests call the conformance helpers against concrete
+implementations so capability semantics remain consistent across local and
+external boundaries.
 
 ```bash
 cargo test -p aether-testkit

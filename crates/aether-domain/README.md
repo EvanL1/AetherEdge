@@ -12,8 +12,9 @@ The crate remains `no_std`; owned processing frames use `alloc` collections.
 It has no async runtime, database, network, service, model framework, or
 hardware dependency.
 
-Use it when implementing an Aether host, extension, protocol adapter, or
-firmware component that needs to exchange stable edge-domain values.
+Use it when implementing an Aether host, downstream integration, protocol
+adapter, or firmware component that needs to exchange stable edge-domain
+values.
 
 ```bash
 cargo test -p aether-domain

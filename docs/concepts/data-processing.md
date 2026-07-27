@@ -135,8 +135,9 @@ The capability is a vertical slice through Aether's existing layers:
 - The application layer resolves task bindings, assembles and validates a
   `ProcessingFrame`, invokes a processor, validates its result, and applies
   authorization, egress, deadline, and audit policy.
-- Extensions adapt those ports to a local algorithm, an HTTP model sidecar, a
-  remote service, weather data, or an optional derived-data store.
+- Service-private and downstream adapters implement those ports for a local
+  algorithm, an HTTP model sidecar, a remote service, weather data, or an
+  optional derived-data store.
 - Industry packs declare task semantics and feature roles. Site commissioning
   binds those roles to concrete instances and points.
 - Composition roots choose concrete adapters and decide whether processing
