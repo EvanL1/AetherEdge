@@ -77,9 +77,9 @@ domain <- ports <- application <- services/interfaces
   acquisition/data-plane owner receives `LiveStateWriter`.
 - AI, CLI, and HTTP interfaces use the same command/query application API.
   They must not write SHM or storage directly.
-- The production `aether-io` runtime is Rust-only and contains only the
-  distribution-owned Modbus, MQTT, HTTP, raw CAN, GPIO, IEC 61850, and
-  Aether-485 adapters. It must not load scripts, launch
+- The production `aether-io` runtime is Rust-only and contains only explicitly
+  composed, distribution-owned Modbus, MQTT, HTTP, raw CAN, GPIO, IEC 61850,
+  and Aether-485 adapters. It must not load scripts, launch
   subprocesses, provide an in-process simulation protocol, or manage host
   networking. Python and protocol simulators are limited to tooling outside
   `services/`.
