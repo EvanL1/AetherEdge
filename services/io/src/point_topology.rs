@@ -1071,8 +1071,6 @@ pub(crate) fn validate_protocol_mapping(
             }
             Ok(())
         },
-        "iec104" => validate_iec104_mapping(values, point_id),
-        "opcua" => validate_opcua_mapping(values, point_id),
         "mqtt" | "http" => validate_json_payload_mapping(values, point_id),
         other => Err(invalid_mapping(
             point_id,
@@ -1179,52 +1177,6 @@ fn validate_can_layout(
         {
             return Err(invalid_mapping(point_id, "unsupported CAN data_type"));
         }
-    }
-    Ok(())
-}
-
-fn validate_iec104_mapping(
-    values: &serde_json::Map<String, serde_json::Value>,
-    point_id: u32,
-) -> Result<(), PortError> {
-    if let Some(address) = values.get("address") {
-        if address
-            .as_str()
-            .is_some_and(|value| !value.trim().is_empty())
-        {
-            return Ok(());
-        }
-        return Err(invalid_mapping(
-            point_id,
-            "address must be a nonblank string",
-        ));
-    }
-    if required_u64(values, point_id, "ioa")? > u32::MAX.into() {
-        return Err(invalid_mapping(point_id, "ioa must be a u32"));
-    }
-    if values
-        .get("type_id")
-        .is_some_and(|value| value.as_u64().is_none_or(|value| value > u8::MAX.into()))
-    {
-        return Err(invalid_mapping(point_id, "type_id must be a u8"));
-    }
-    Ok(())
-}
-
-fn validate_opcua_mapping(
-    values: &serde_json::Map<String, serde_json::Value>,
-    point_id: u32,
-) -> Result<(), PortError> {
-    if values.get("address").is_some() {
-        required_nonblank_string(values, point_id, "address")?;
-    } else {
-        required_nonblank_string(values, point_id, "node_id")?;
-    }
-    if values
-        .get("namespace_index")
-        .is_some_and(|value| value.as_u64().is_none_or(|value| value > u16::MAX.into()))
-    {
-        return Err(invalid_mapping(point_id, "namespace_index must be a u16"));
     }
     Ok(())
 }

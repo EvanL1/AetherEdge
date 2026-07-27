@@ -115,136 +115,6 @@ fn command_guard(config: &RuntimeChannelConfig) -> Result<CommandGuard> {
     CommandGuard::from_runtime(config).map_err(|error| IoError::config(error.to_string()))
 }
 
-#[cfg(any(feature = "iec104", feature = "opcua"))]
-fn protocol_point_address(protocol: &str, mapping: Option<&str>) -> Result<String> {
-    let mapping = mapping
-        .ok_or_else(|| IoError::config(format!("{protocol} point is missing protocol_mappings")))?;
-    let value: serde_json::Value = serde_json::from_str(mapping)
-        .map_err(|error| IoError::config(format!("invalid {protocol} point mapping: {error}")))?;
-
-    if let Some(address) = value.as_str().or_else(|| value.get("address")?.as_str()) {
-        return Ok(address.to_string());
-    }
-
-    match protocol {
-        "iec104" => {
-            let ioa = value
-                .get("ioa")
-                .and_then(serde_json::Value::as_u64)
-                .ok_or_else(|| {
-                    IoError::config("IEC 104 point mapping requires 'address' or numeric 'ioa'")
-                })?;
-            let ioa = u32::try_from(ioa)
-                .map_err(|_| IoError::config("IEC 104 point 'ioa' exceeds u32"))?;
-            match value.get("type_id").and_then(serde_json::Value::as_u64) {
-                Some(type_id) => {
-                    let type_id = u8::try_from(type_id)
-                        .map_err(|_| IoError::config("IEC 104 point 'type_id' exceeds u8"))?;
-                    Ok(format!("{ioa}:{type_id}"))
-                },
-                None => Ok(ioa.to_string()),
-            }
-        },
-        "opcua" => {
-            let node_id = value
-                .get("node_id")
-                .and_then(serde_json::Value::as_str)
-                .ok_or_else(|| {
-                    IoError::config("OPC UA point mapping requires 'address' or 'node_id'")
-                })?;
-            if node_id.starts_with("ns=") {
-                return Ok(node_id.to_string());
-            }
-            let namespace = value
-                .get("namespace_index")
-                .and_then(serde_json::Value::as_u64)
-                .unwrap_or(0);
-            let namespace = u16::try_from(namespace)
-                .map_err(|_| IoError::config("OPC UA 'namespace_index' exceeds u16"))?;
-            Ok(format!("ns={namespace};{node_id}"))
-        },
-        _ => Err(IoError::config(format!(
-            "unsupported event protocol mapping: {protocol}"
-        ))),
-    }
-}
-
-#[cfg(any(feature = "iec104", feature = "opcua"))]
-fn gateway_point_definitions(
-    runtime_config: &RuntimeChannelConfig,
-    protocol: &str,
-) -> Result<Vec<crate::protocols::gateway::PointDef>> {
-    use crate::protocols::core::point::TransformConfig;
-    use crate::protocols::gateway::PointDef;
-    use aether_core::PointType;
-
-    let capacity = runtime_config.telemetry_points.len()
-        + runtime_config.signal_points.len()
-        + runtime_config.control_points.len()
-        + runtime_config.adjustment_points.len();
-    let mut definitions = Vec::with_capacity(capacity);
-    let mut add = |point: &crate::core::config::Point,
-                   point_type: PointType,
-                   transform: TransformConfig|
-     -> Result<()> {
-        definitions.push(PointDef {
-            id: point.point_id,
-            point_type,
-            name: point.signal_name.clone(),
-            address: protocol_point_address(protocol, point.protocol_mappings.as_deref())?,
-            transform,
-            enabled: true,
-        });
-        Ok(())
-    };
-
-    for point in &runtime_config.telemetry_points {
-        add(
-            &point.base,
-            PointType::Telemetry,
-            TransformConfig {
-                scale: point.scale,
-                offset: point.offset,
-                reverse: point.reverse,
-                ..Default::default()
-            },
-        )?;
-    }
-    for point in &runtime_config.signal_points {
-        add(
-            &point.base,
-            PointType::Signal,
-            TransformConfig {
-                reverse: point.reverse,
-                ..Default::default()
-            },
-        )?;
-    }
-    for point in &runtime_config.control_points {
-        add(
-            &point.base,
-            PointType::Control,
-            TransformConfig {
-                reverse: point.reverse,
-                ..Default::default()
-            },
-        )?;
-    }
-    for point in &runtime_config.adjustment_points {
-        add(
-            &point.base,
-            PointType::Adjustment,
-            TransformConfig {
-                scale: point.scale,
-                offset: point.offset,
-                ..Default::default()
-            },
-        )?;
-    }
-
-    Ok(definitions)
-}
-
 #[cfg(feature = "modbus")]
 use crate::core::channels::converters::convert_to_modbus_point_configs;
 #[cfg(feature = "modbus")]
@@ -411,39 +281,6 @@ impl ChannelManager {
                 self.create_aether_485_channel_impl(channel_id, runtime_config, base_config)
                     .await
             },
-            #[cfg(feature = "iec104")]
-            "iec104" => {
-                self.create_gateway_adapter_channel_impl(
-                    channel_id,
-                    runtime_config,
-                    base_config,
-                    "iec104",
-                    100,
-                )
-                .await
-            },
-            #[cfg(feature = "opcua")]
-            "opcua" => {
-                self.create_gateway_adapter_channel_impl(
-                    channel_id,
-                    runtime_config,
-                    base_config,
-                    "opcua",
-                    1_000,
-                )
-                .await
-            },
-            #[cfg(feature = "dl645")]
-            "dl645" => {
-                self.create_gateway_adapter_channel_impl(
-                    channel_id,
-                    runtime_config,
-                    base_config,
-                    "dl645",
-                    1_000,
-                )
-                .await
-            },
             #[cfg(feature = "iec61850")]
             "iec61850" => {
                 self.create_iec61850_channel_impl(channel_id, runtime_config, base_config)
@@ -460,12 +297,6 @@ impl ChannelManager {
                 supported.push("can");
                 #[cfg(feature = "aether_485")]
                 supported.push("aether_485");
-                #[cfg(feature = "iec104")]
-                supported.push("iec104");
-                #[cfg(feature = "opcua")]
-                supported.push("opcua");
-                #[cfg(feature = "dl645")]
-                supported.push("dl645");
                 #[cfg(feature = "iec61850")]
                 supported.push("iec61850");
 
@@ -507,64 +338,6 @@ impl ChannelManager {
 
         // 4. Register in active channel index for O(1) iteration
         self.active_channel_ids.insert(channel_id);
-    }
-
-    /// Create an optional protocol adapter through the shared gateway factory.
-    #[cfg(any(feature = "iec104", feature = "opcua", feature = "dl645"))]
-    async fn create_gateway_adapter_channel_impl(
-        &self,
-        channel_id: u32,
-        runtime_config: &Arc<RuntimeChannelConfig>,
-        base_config: Arc<ChannelConfig>,
-        protocol_name: &str,
-        default_poll_interval_ms: u64,
-    ) -> Result<ChannelEntry> {
-        use crate::protocols::gateway::{ChannelConfig as GatewayChannelConfig, ChannelModeConfig};
-
-        debug!("Ch{} creating {} channel", channel_id, protocol_name);
-
-        #[cfg(any(feature = "iec104", feature = "opcua"))]
-        let points = if matches!(protocol_name, "iec104" | "opcua") {
-            gateway_point_definitions(runtime_config, protocol_name)?
-        } else {
-            Vec::new()
-        };
-        #[cfg(not(any(feature = "iec104", feature = "opcua")))]
-        let points = Vec::new();
-
-        let poll_interval_ms = poll_interval_ms(&base_config.parameters, default_poll_interval_ms)?;
-        let factory_config = GatewayChannelConfig {
-            id: channel_id,
-            name: runtime_config.name().to_string(),
-            protocol: protocol_name.to_string(),
-            enabled: base_config.is_enabled(),
-            mode: if matches!(protocol_name, "iec104" | "opcua") {
-                ChannelModeConfig::Event
-            } else {
-                ChannelModeConfig::Polling
-            },
-            poll_interval_ms: Some(poll_interval_ms),
-            parameters: serde_json::to_value(&base_config.parameters)?,
-            points,
-        };
-
-        let mut protocol = crate::protocols::gateway::factory::create_channel(&factory_config)?;
-        let log_handler = Self::configure_channel_logging(
-            &mut protocol,
-            channel_id,
-            runtime_config.name(),
-            &base_config.logging,
-        );
-
-        ChannelEntry::new(
-            protocol,
-            self.create_data_store(),
-            base_config,
-            protocol_name.to_string(),
-            poll_interval_ms,
-            log_handler,
-            command_guard(runtime_config)?,
-        )
     }
 
     /// Create Modbus TCP channel entry.
@@ -987,8 +760,6 @@ mod tests {
     use std::collections::HashMap;
     use std::sync::Arc;
 
-    #[cfg(any(feature = "iec104", feature = "opcua"))]
-    use super::protocol_point_address;
     use super::{poll_interval_ms, timing_parameter, validate_channel_config_for_runtime};
     #[cfg(feature = "modbus")]
     use super::{required_string_parameter, required_u16_parameter, required_u32_parameter};
@@ -1125,26 +896,5 @@ mod tests {
             .unwrap(),
             u32::MAX
         );
-    }
-
-    #[cfg(feature = "iec104")]
-    #[test]
-    fn structured_iec104_mapping_becomes_gateway_address() {
-        let address =
-            protocol_point_address("iec104", Some(r#"{"ioa":1001,"type_id":13}"#)).unwrap();
-
-        assert_eq!(address, "1001:13");
-    }
-
-    #[cfg(feature = "opcua")]
-    #[test]
-    fn structured_opcua_mapping_becomes_gateway_address() {
-        let address = protocol_point_address(
-            "opcua",
-            Some(r#"{"namespace_index":2,"node_id":"s=Temperature"}"#),
-        )
-        .unwrap();
-
-        assert_eq!(address, "ns=2;s=Temperature");
     }
 }

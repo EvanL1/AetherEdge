@@ -18,8 +18,6 @@ mod can_sender;
 mod coils;
 mod devices;
 mod http_api;
-#[cfg(all(target_os = "linux", feature = "j1939"))]
-mod j1939_sender;
 mod rtu_server;
 mod scenarios;
 mod server;
@@ -169,25 +167,6 @@ async fn main() -> Result<()> {
             tokio::spawn(async move {
                 if let Err(e) = can_sender::run_can_sender(&iface, interval, sm_clone, uid).await {
                     tracing::error!("CAN sender error (unit {}): {}", uid, e);
-                }
-            });
-        }
-    }
-
-    // Start J1939 senders (Linux + j1939 feature)
-    #[cfg(all(target_os = "linux", feature = "j1939"))]
-    for device in &scenario.devices {
-        if let Some(ref j1939_cfg) = device.j1939 {
-            let sm_clone = Arc::clone(&sm_store);
-            let iface = j1939_cfg.interface.clone();
-            let interval = j1939_cfg.interval_ms;
-            let sa = j1939_cfg.source_address;
-            let uid = device.unit_id;
-            tokio::spawn(async move {
-                if let Err(e) =
-                    j1939_sender::run_j1939_sender(&iface, interval, sa, sm_clone, uid).await
-                {
-                    tracing::error!("J1939 sender error (unit {}): {}", uid, e);
                 }
             });
         }

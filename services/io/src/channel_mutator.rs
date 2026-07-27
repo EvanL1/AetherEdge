@@ -1112,12 +1112,6 @@ fn validate_runtime_config(config: &ChannelConfig) -> PortResult<()> {
         "can" => true,
         #[cfg(feature = "aether_485")]
         "aether_485" => true,
-        #[cfg(feature = "iec104")]
-        "iec104" => true,
-        #[cfg(feature = "opcua")]
-        "opcua" => true,
-        #[cfg(feature = "dl645")]
-        "dl645" => true,
         #[cfg(feature = "iec61850")]
         "iec61850" => true,
         _ => false,

@@ -6,18 +6,11 @@ fn compiled_io_protocol_features() -> Vec<&'static str> {
     let mut features = Vec::new();
     for (enabled, feature) in [
         (cfg!(feature = "modbus"), "modbus"),
-        (cfg!(feature = "iec104"), "iec104"),
-        (cfg!(feature = "opcua"), "opcua"),
         (cfg!(feature = "can"), "can"),
-        (cfg!(feature = "j1939"), "j1939"),
         (cfg!(feature = "gpio"), "gpio"),
-        (cfg!(feature = "dl645"), "dl645"),
         (cfg!(feature = "aether_485"), "aether_485"),
         (cfg!(feature = "mqtt"), "mqtt"),
         (cfg!(feature = "http"), "http"),
-        (cfg!(feature = "ble"), "ble"),
-        (cfg!(feature = "zigbee"), "zigbee"),
-        (cfg!(feature = "matter"), "matter"),
         (cfg!(feature = "iec61850"), "iec61850"),
     ] {
         if enabled {
@@ -54,11 +47,19 @@ fn manifest_protocols_match_the_io_binary_feature_set() {
 
     assert_eq!(protocols.contains("mqtt"), cfg!(feature = "mqtt"));
     assert_eq!(protocols.contains("http"), cfg!(feature = "http"));
-    assert_eq!(protocols.contains("iec104"), cfg!(feature = "iec104"));
-    assert!(!protocols.contains("sunspec_tcp"));
-    assert!(!protocols.contains("sunspec_rtu"));
-    assert_eq!(protocols.contains("opcua"), cfg!(feature = "opcua"));
-    assert_eq!(protocols.contains("dl645"), cfg!(feature = "dl645"));
+    for retired in [
+        "ble",
+        "dl645",
+        "iec104",
+        "j1939",
+        "matter",
+        "opcua",
+        "sunspec_rtu",
+        "sunspec_tcp",
+        "zigbee",
+    ] {
+        assert!(!protocols.contains(retired), "advertised retired {retired}");
+    }
     assert_eq!(
         protocols.contains("aether_485"),
         cfg!(feature = "aether_485")

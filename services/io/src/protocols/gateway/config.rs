@@ -88,7 +88,7 @@ pub struct ChannelConfig {
     /// Channel display name.
     pub name: String,
 
-    /// Protocol type selected by the composition (for example `modbus` or `opcua`).
+    /// Protocol type selected by the composition (for example `modbus` or `iec61850`).
     pub protocol: String,
 
     /// Whether this channel is enabled.
@@ -122,7 +122,7 @@ pub enum ChannelModeConfig {
     /// Polling mode (default for most protocols).
     #[default]
     Polling,
-    /// Event-driven mode (for IEC104, OPC UA, CAN).
+    /// Event-driven mode (for MQTT and CAN).
     Event,
     /// Hybrid mode (both polling and events).
     Hybrid,
@@ -132,7 +132,7 @@ pub enum ChannelModeConfig {
 ///
 /// The `address` field uses a protocol-specific shorthand format:
 /// - Modbus: "slave_id:register" (e.g., "1:100")
-/// - IEC104: "ioa" (e.g., "1001")
+/// - IEC 61850: "domain/item"
 /// - OPC UA: "ns=N;i=ID" or "ns=N;s=Name" (e.g., "ns=2;i=1234")
 /// - CAN: "can_id:byte_offset:bit_pos:bit_len" (e.g., "0x100:0:0:16")
 /// - GPIO: "pin_number" (e.g., "17")

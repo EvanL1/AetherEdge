@@ -141,7 +141,7 @@ Create a communication channel through the authenticated, explicitly confirmed, 
 | `id` | integer/null | no | Explicit channel ID; omit to auto-assign |
 | `name` | string | yes | Channel name |
 | `parameters` | - | yes | Protocol-specific connection parameters (shape depends on `protocol`) |
-| `protocol` | string | yes | Protocol identifier, e.g. "modbus", "iec104" |
+| `protocol` | string | yes | Protocol identifier, e.g. `modbus_tcp`, `mqtt` |
 
 ### `channels_delete` (**WRITE**)
 

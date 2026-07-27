@@ -28,6 +28,8 @@ const RETIRED_ROOT_PATHS: &[&str] = &[
     "libs/common/src/warning_monitor.rs",
     "services/io/assets/script-host",
     "services/io/src/api/handlers/network_handlers.rs",
+    "services/io/src/protocols/adapters/can/j1939.rs",
+    "services/io/src/protocols/adapters/can/j1939",
     "services/io/src/protocols/adapters/virtual_channel.rs",
     "services/io/src/protocols/core/script_runner.rs",
     "services/io/src/protocols/sunspec/expand.rs",
@@ -36,6 +38,9 @@ const RETIRED_ROOT_PATHS: &[&str] = &[
     "services/io/src/protocols/sunspec/types.rs",
 ];
 const RETIRED_EXTERNAL_RUST_DEPENDENCIES: &[&str] = &["bb8", "bb8-redis", "redis"];
+const RETIRED_IO_PROTOCOLS: &[&str] = &[
+    "ble", "dl645", "iec104", "j1939", "matter", "opcua", "zigbee",
+];
 const CORE_INFRASTRUCTURE_DEPENDENCIES: &[&str] = &[
     "aether-http-data-processor",
     "aether-http-history-query",
@@ -399,7 +404,7 @@ fn retired_workspace_crates_stay_retired() {
 }
 
 #[test]
-fn production_io_is_rust_only_and_in_tree_sunspec_is_retired() {
+fn production_io_is_rust_only_and_unshipped_protocols_stay_retired() {
     let workspace = workspace();
     let io = workspace.package("aether-io");
     let member_names = workspace
@@ -420,6 +425,26 @@ fn production_io_is_rust_only_and_in_tree_sunspec_is_retired() {
         !workspace.root().join("extensions/sunspec").exists(),
         "the retired in-tree SunSpec catalog was restored"
     );
+
+    for protocol in RETIRED_IO_PROTOCOLS {
+        assert!(
+            !io.features.contains_key(*protocol),
+            "standard aether-io restored retired feature {protocol}"
+        );
+        assert!(
+            !workspace
+                .root()
+                .join(format!("services/io/src/protocols/adapters/{protocol}.rs"))
+                .exists(),
+            "standard aether-io restored retired adapter {protocol}"
+        );
+    }
+    for dependency in ["async-opcua", "btleplug", "voltage_iec104", "voltage_j1939"] {
+        assert!(
+            production_dependencies(io).all(|candidate| candidate.name != dependency),
+            "standard aether-io restored retired dependency {dependency}"
+        );
+    }
 
     let python_files = files_with_extension(&workspace.root().join("services/io"), "py");
     assert!(

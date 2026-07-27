@@ -20,7 +20,7 @@ OpenClaw 是一个以 Gateway 为中心的 AI Agent 架构，AetherEMS 是一个
 │                             │                                       │
 │  ┌─────────────────────┐    │    ┌─────────────────────────────┐   │
 │  │  Channel 适配层      │    │    │  协议适配层                   │   │
-│  │  Telegram/WhatsApp   │ ←──→   │  Modbus/IEC104/OPC-UA       │   │
+│  │  Telegram/WhatsApp   │ ←──→   │  Modbus/MQTT/IEC 61850      │   │
 │  │  Discord/飞书/Slack   │    │    │  MQTT/HTTP/CAN/GPIO         │   │
 │  └──────────┬──────────┘    │    └──────────────┬──────────────┘   │
 │             ↓                │                   ↓                   │
@@ -58,10 +58,10 @@ OpenClaw 是一个以 Gateway 为中心的 AI Agent 架构，AetherEMS 是一个
 
 | 维度 | OpenClaw | AetherEMS |
 |------|----------|------------|
-| **输入源** | Telegram, WhatsApp, Discord, 飞书, Slack 等 10+ 平台 | Modbus, IEC104, OPC-UA, MQTT, HTTP, CAN, GPIO, DL645 等 10+ 协议 |
+| **输入源** | Telegram, WhatsApp, Discord, 飞书, Slack 等 10+ 平台 | Modbus、MQTT、HTTP、CAN、GPIO、IEC 61850、Aether-485 |
 | **统一格式** | 标准消息结构（跨平台上下文保持） | `DataBatch` / `DataPoint`（统一点值表示） |
 | **扩展方式** | 适配器插件 | `ProtocolClient` trait 实现 |
-| **核心价值** | WhatsApp → Slack 对话上下文不丢 | Modbus → IEC104 数据格式一致 |
+| **核心价值** | WhatsApp → Slack 对话上下文不丢 | Modbus → MQTT 数据格式一致 |
 
 **代码对比**：
 

@@ -44,21 +44,14 @@ pub const DEFAULT_IO_PROTOCOL_FEATURES: [&str; 5] =
 /// Compatibility alias for release tooling.
 pub const SHIPPED_IO_PROTOCOL_FEATURES: [&str; 5] = DEFAULT_IO_PROTOCOL_FEATURES;
 
-const KNOWN_IO_PROTOCOL_FEATURES: [&str; 14] = [
+const KNOWN_IO_PROTOCOL_FEATURES: [&str; 7] = [
     "aether_485",
-    "ble",
     "can",
-    "dl645",
     "gpio",
     "http",
-    "iec104",
     "iec61850",
-    "j1939",
-    "matter",
     "modbus",
     "mqtt",
-    "opcua",
-    "zigbee",
 ];
 
 /// Returns the `aether-io` default protocol feature set.
@@ -824,9 +817,6 @@ fn canonical_io_features(features: Vec<String>) -> Result<Vec<String>, RuntimeMa
             });
         }
     }
-    if resolved.contains("j1939") {
-        resolved.insert("can".to_string());
-    }
     Ok(resolved.into_iter().collect())
 }
 
@@ -860,18 +850,11 @@ fn derive_protocols(features: &[String], target_os: &str) -> Vec<String> {
             "modbus" => {
                 protocols.extend(["modbus_rtu".to_string(), "modbus_tcp".to_string()]);
             },
-            "iec104" => insert(&mut protocols, "iec104"),
-            "opcua" => insert(&mut protocols, "opcua"),
             "can" if target_os == "linux" => insert(&mut protocols, "can"),
-            "j1939" if target_os == "linux" => insert(&mut protocols, "j1939"),
             "gpio" if target_os == "linux" => insert(&mut protocols, "di_do"),
-            "dl645" => insert(&mut protocols, "dl645"),
             "aether_485" => insert(&mut protocols, "aether_485"),
             "mqtt" => insert(&mut protocols, "mqtt"),
             "http" => insert(&mut protocols, "http"),
-            "ble" => insert(&mut protocols, "ble"),
-            "zigbee" => insert(&mut protocols, "zigbee"),
-            "matter" => insert(&mut protocols, "matter"),
             "iec61850" => insert(&mut protocols, "iec61850"),
             _ => {},
         }

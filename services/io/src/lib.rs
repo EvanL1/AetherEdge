@@ -47,15 +47,8 @@ pub mod store;
 // Re-export the authoritative live-state writer.
 pub use store::ShmDataStore;
 
-// Protocol implementations are in crate::protocols:
-// - modbus_tcp/rtu: protocols::ModbusChannel (TCP and RTU modes)
-// - iec104: protocols::Iec104Channel
-// - opcua: protocols::OpcuaChannel
-// - mqtt: protocols::MqttChannel
-// - http: protocols::HttpChannel
-// - dl645: protocols::Dl645Channel
-// - can/j1939: protocols::CanChannel
-// - gpio: protocols::GpioChannel
+// Protocol implementations are in crate::protocols. The standard composition
+// selects Modbus TCP/RTU, MQTT, HTTP, CAN, GPIO, IEC 61850, and Aether-485.
 
 pub mod runtime {
     //! Runtime Orchestration Layer

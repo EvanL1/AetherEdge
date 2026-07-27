@@ -72,194 +72,13 @@ impl PointConfig {
 #[serde(tag = "protocol", content = "params")]
 pub enum ProtocolAddress {
     Modbus(ModbusAddress),
-    Iec104(Iec104Address),
-    OpcUa(OpcUaAddress),
     #[cfg(feature = "gpio")]
     Gpio(GpioAddress),
     #[cfg(feature = "can")]
     Can(CanAddress),
     Generic(String),
-    #[cfg(feature = "dl645")]
-    Dl645(Dl645Address),
-    #[cfg(feature = "ble")]
-    Ble(BleAddress),
-    #[cfg(feature = "zigbee")]
-    Zigbee(ZigbeeAddress),
-    #[cfg(feature = "matter")]
-    Matter(MatterAddress),
     #[cfg(feature = "iec61850")]
     Iec61850(Iec61850Address),
-}
-
-/// DL/T 645-2007 point address (DI code only).
-///
-/// The DI code (Data Identifier) specifies which data item to read from the meter.
-/// The meter address is configured at the channel level, not per-point.
-///
-/// # Format
-///
-/// Supports hexadecimal format with optional "0x" prefix:
-/// - `"0x02010100"` - Phase A voltage
-/// - `"02010100"` - same as above, without prefix
-///
-/// # Example
-///
-/// ```ignore
-/// // Create address for A-phase voltage
-/// let addr = Dl645Address::new(0x02010100);
-///
-/// // Parse from string
-/// let addr = Dl645Address::parse("0x02010100")?;
-/// ```
-#[cfg(feature = "dl645")]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Dl645Address {
-    /// DI code (Data Identifier, 4 bytes).
-    /// Standard codes defined in DL/T 645-2007.
-    pub di_code: u32,
-}
-
-#[cfg(feature = "dl645")]
-impl Dl645Address {
-    /// Create a new DL/T 645 address from DI code.
-    #[must_use]
-    pub fn new(di_code: u32) -> Self {
-        Self { di_code }
-    }
-
-    /// Parse from hexadecimal string (with or without "0x" prefix).
-    ///
-    /// # Examples
-    ///
-    /// - `"0x02010100"` → di_code = 0x02010100
-    /// - `"02010100"` → di_code = 0x02010100
-    /// - `"00010000"` → di_code = 0x00010000 (total positive active energy)
-    pub fn parse(s: &str) -> Result<Self, GatewayError> {
-        let s = s.trim();
-
-        // Remove optional "0x" or "0X" prefix
-        let hex_str = s
-            .strip_prefix("0x")
-            .or_else(|| s.strip_prefix("0X"))
-            .unwrap_or(s);
-
-        // Validate: must be 8 hex characters
-        if hex_str.len() != 8 {
-            return Err(GatewayError::Config(format!(
-                "Invalid DL/T 645 DI code: '{}'. Expected 8 hex characters (e.g., '02010100').",
-                s
-            )));
-        }
-
-        if !hex_str.chars().all(|c| c.is_ascii_hexdigit()) {
-            return Err(GatewayError::Config(format!(
-                "Invalid DL/T 645 DI code: '{}'. Must contain only hex digits.",
-                s
-            )));
-        }
-
-        let di_code = u32::from_str_radix(hex_str, 16)
-            .map_err(|_| GatewayError::Config(format!("Failed to parse DI code: '{}'", s)))?;
-
-        Ok(Self::new(di_code))
-    }
-
-    /// Get the DI code as a hex string (8 uppercase characters).
-    #[must_use]
-    pub fn to_hex_string(&self) -> String {
-        format!("{:08X}", self.di_code)
-    }
-}
-
-/// BLE GATT address: service UUID + characteristic UUID.
-///
-/// Identifies a specific GATT characteristic on a BLE peripheral.
-/// The peripheral device address is configured at the channel level.
-///
-/// # Address Format
-///
-/// UUIDs support both short (16-bit) and full (128-bit) formats:
-/// - Short: `"180f"` expands to `"0000180f-0000-1000-8000-00805f9b34fb"`
-/// - Full: `"12345678-1234-1234-1234-123456789abc"`
-#[cfg(feature = "ble")]
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BleAddress {
-    /// GATT Service UUID (short or full format)
-    pub service_uuid: String,
-    /// GATT Characteristic UUID (short or full format)
-    pub characteristic_uuid: String,
-    /// Value data format for parsing raw bytes
-    #[serde(default)]
-    pub data_format: DataFormat,
-    /// Whether to subscribe via Notify (otherwise poll-read)
-    #[serde(default)]
-    pub notify: bool,
-}
-
-/// Zigbee device address for ZCL attribute identification.
-///
-/// Uniquely identifies a data point on a Zigbee device by combining the device's
-/// IEEE address with the ZCL endpoint, cluster, and attribute IDs.
-///
-/// # Example
-///
-/// ```ignore
-/// let addr = ZigbeeAddress {
-///     ieee_address: 0x00124B0018ED1234,
-///     endpoint: 1,
-///     cluster_id: 0x0402,    // Temperature Measurement
-///     attribute_id: 0x0000,  // MeasuredValue
-/// };
-/// ```
-#[cfg(feature = "zigbee")]
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct ZigbeeAddress {
-    /// Device IEEE address (64-bit).
-    pub ieee_address: u64,
-    /// Zigbee endpoint (1-254).
-    pub endpoint: u8,
-    /// ZCL Cluster ID.
-    pub cluster_id: u16,
-    /// ZCL Attribute ID.
-    pub attribute_id: u16,
-}
-
-/// Matter attribute address (endpoint/cluster/attribute path).
-///
-/// Identifies a specific attribute on a Matter device using the
-/// Matter data model hierarchy: Endpoint -> Cluster -> Attribute.
-///
-/// # Format
-///
-/// Address string: `"endpoint/cluster_id/attribute_id"`
-/// Supports hex (0x prefix) and decimal for cluster and attribute IDs.
-///
-/// # Examples
-///
-/// - `"1/0x0006/0x0000"` - On/Off attribute on endpoint 1
-/// - `"1/0x0402/0x0000"` - Temperature measurement
-/// - `"1/6/0"` - On/Off in decimal
-#[cfg(feature = "matter")]
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct MatterAddress {
-    /// Matter Endpoint (0-65535)
-    pub endpoint: u16,
-    /// Cluster ID (e.g., 0x0006 = On/Off, 0x0402 = Temperature)
-    pub cluster_id: u32,
-    /// Attribute ID within the cluster
-    pub attribute_id: u32,
-}
-
-#[cfg(feature = "matter")]
-impl MatterAddress {
-    /// Create a new Matter address.
-    pub fn new(endpoint: u16, cluster_id: u32, attribute_id: u32) -> Self {
-        Self {
-            endpoint,
-            cluster_id,
-            attribute_id,
-        }
-    }
 }
 
 /// IEC 61850 MMS variable address.
@@ -387,7 +206,7 @@ impl GpioAddress {
     }
 }
 
-/// CAN bus address for raw CAN and J1939 protocols.
+/// CAN bus address for raw CAN frames.
 ///
 /// Supports bit-level extraction from CAN frame data.
 /// Format string: "can_id:byte_offset:bit_position:bit_length"
@@ -526,41 +345,6 @@ impl ModbusAddress {
 
     pub fn register_count(&self) -> u16 {
         self.format.register_count()
-    }
-}
-
-/// IEC 60870-5-104 address.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Iec104Address {
-    pub ioa: u32,
-    pub type_id: u8,
-    pub common_address: u16,
-}
-
-impl Iec104Address {
-    pub fn new(ioa: u32, type_id: u8, common_address: u16) -> Self {
-        Self {
-            ioa,
-            type_id,
-            common_address,
-        }
-    }
-}
-
-/// OPC UA address.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct OpcUaAddress {
-    pub node_id: String,
-    #[serde(default)]
-    pub namespace_index: u16,
-}
-
-impl OpcUaAddress {
-    pub fn new(node_id: impl Into<String>, namespace_index: u16) -> Self {
-        Self {
-            node_id: node_id.into(),
-            namespace_index,
-        }
     }
 }
 

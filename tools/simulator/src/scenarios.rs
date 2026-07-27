@@ -46,10 +46,6 @@ pub struct DeviceConfig {
     /// CAN LYNK sender configuration (Linux only)
     #[serde(default)]
     pub can_lynk: Option<CanLynkConfig>,
-
-    /// J1939 sender configuration (Linux only)
-    #[serde(default)]
-    pub j1939: Option<J1939SenderConfig>,
 }
 
 /// Coil configuration for initial state.
@@ -242,19 +238,6 @@ fn default_initial_state() -> String {
 pub struct CanLynkConfig {
     /// vcan interface name (e.g., "vcan0")
     pub interface: String,
-    /// Send interval in milliseconds
-    #[serde(default = "default_can_interval")]
-    pub interval_ms: u64,
-}
-
-/// J1939 sender configuration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct J1939SenderConfig {
-    /// vcan interface name
-    pub interface: String,
-    /// ECU source address (default 0x00)
-    #[serde(default)]
-    pub source_address: u8,
     /// Send interval in milliseconds
     #[serde(default = "default_can_interval")]
     pub interval_ms: u64,

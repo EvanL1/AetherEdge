@@ -8,7 +8,7 @@
 //! - Devices publish JSON payloads to topics
 //! - io subscribes to topics and extracts data points via JSONPath
 //!
-//! Unlike Modbus/IEC104, MQTT itself doesn't define the data format.
+//! Unlike register protocols, MQTT itself doesn't define the payload format.
 //! Each vendor has their own JSON schema. The JSONPath mapping layer
 //! enables configuration-driven device integration.
 //!

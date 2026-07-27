@@ -74,18 +74,6 @@ pub enum GatewayError {
     #[error("Modbus error: {0}")]
     Modbus(String),
 
-    /// IEC 104 protocol error
-    #[error("IEC 104 error: {0}")]
-    Iec104(String),
-
-    /// DNP3 protocol error
-    #[error("DNP3 error: {0}")]
-    Dnp3(String),
-
-    /// OPC UA protocol error
-    #[error("OPC UA error: {0}")]
-    OpcUa(String),
-
     // === Internal Errors ===
     /// Internal error (bug)
     #[error("Internal error: {0}")]

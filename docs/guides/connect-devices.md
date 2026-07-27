@@ -74,26 +74,24 @@ CSV tables next to the channel YAML and picked up by `aether sync`.
 
 ## Protocol availability
 
-io speaks 14 protocols, but most are behind compile-time Cargo features
-(`services/io/Cargo.toml`), so a given binary usually contains only a
-subset. The default feature set compiles Modbus, GPIO, Aether-485,
-IEC 61850, and CAN.
+AetherEdge owns the seven protocol features used by its maintained runtime
+compositions. The default Cargo feature set compiles Modbus, GPIO, Aether-485,
+IEC 61850, and CAN; the AetherEMS-compatible distribution additionally selects
+MQTT and HTTP.
 
 | Protocol | Compiled by default | Platform notes |
 |----------|--------------------:|----------------|
-| Modbus TCP/RTU (`modbus`) | yes | |
-| IEC 60870-5-104 (`iec104`) | no | |
-| IEC 61850 MMS (`iec61850`) | yes | |
-| OPC UA (`opcua`) | no | Optional feature; currently restricted to anonymous `SecurityPolicy::None` sessions. |
-| MQTT (`mqtt`) | no | event-driven JSON payloads; enabling pulls in `json-mapping` |
-| HTTP (`http`) | no | polling and webhook modes; enabling pulls in `json-mapping` |
-| DL/T 645-2007 (`dl645`) | no | smart meters over serial or TCP |
-| CAN (`can`) / J1939 (`j1939`) | CAN yes, J1939 no | Linux only; `j1939` implies `can` |
+| Modbus TCP/RTU (`modbus`) | yes | Golden simulator E2E protocol |
+| IEC 61850 MMS (`iec61850`) | yes | TCP/MMS implementation |
+| MQTT (`mqtt`) | no | Event-driven JSON payloads; implies `json-mapping` |
+| HTTP (`http`) | no | Polling and webhook modes; implies `json-mapping` |
+| CAN (`can`) | yes | Linux only |
 | GPIO (`gpio`) | yes | Linux only |
-| BLE GATT (`ble`) | no | |
-| Zigbee (`zigbee`) | no | via TCP gateway |
-| Matter (`matter`) | no | |
-| Aether-485 (`aether_485`) | yes | private RS-485 protocol |
+| Aether-485 (`aether_485`) | yes | Private RS-485 protocol |
+
+BLE, DL/T 645, IEC 60870-5-104, J1939, Matter, OPC UA, and Zigbee are not
+kernel capabilities. A configuration naming one of them fails as unavailable;
+it is never silently translated to another adapter.
 
 Two protocols are additionally OS-gated in the channel factory
 (`services/io/src/protocols/gateway/factory.rs`): CAN and GPIO are

@@ -203,9 +203,6 @@ impl From<crate::protocols::GatewayError> for IoError {
                 IoError::ProtocolError(format!("Invalid response: {}", msg))
             },
             GatewayError::Modbus(msg) => IoError::ProtocolError(format!("Modbus: {}", msg)),
-            GatewayError::Iec104(msg) => IoError::ProtocolError(format!("IEC 104: {}", msg)),
-            GatewayError::Dnp3(msg) => IoError::ProtocolError(format!("DNP3: {}", msg)),
-            GatewayError::OpcUa(msg) => IoError::ProtocolError(format!("OPC UA: {}", msg)),
 
             // Data errors
             GatewayError::InvalidData(msg) => IoError::DataError(msg),

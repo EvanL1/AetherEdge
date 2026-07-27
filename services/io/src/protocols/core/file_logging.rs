@@ -303,29 +303,6 @@ impl ChannelFileLogHandler {
                 info.push(']');
                 format!("modbus {}", info)
             },
-            PacketMetadata::Iec104 {
-                asdu_type,
-                cause_of_tx,
-                common_addr,
-            } => {
-                format!(
-                    "iec104 [type={} cot={} ca={}]",
-                    asdu_type, cause_of_tx, common_addr
-                )
-            },
-            PacketMetadata::J1939 {
-                pgn,
-                source,
-                destination,
-            } => {
-                format!("j1939 [pgn={} src={} dst={}]", pgn, source, destination)
-            },
-            PacketMetadata::OpcUa {
-                message_type,
-                request_id,
-            } => {
-                format!("opcua [msg={} req={}]", message_type, request_id)
-            },
             PacketMetadata::Gpio => "gpio".to_string(),
             PacketMetadata::Other { protocol } => protocol.clone(),
         };

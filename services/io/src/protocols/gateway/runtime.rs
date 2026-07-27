@@ -14,7 +14,7 @@ use crate::protocols::core::traits::{ConnectionState, DataEventReceiver, Diagnos
 /// Object-safe wrapper for protocol channels.
 ///
 /// This trait provides a unified interface for managing different protocol
-/// channels (Modbus, IEC104, OPC UA, etc.) in the gateway runtime.
+/// channels (Modbus, MQTT, IEC 61850, etc.) in the gateway runtime.
 ///
 /// # Design Rationale
 ///
@@ -31,7 +31,7 @@ pub trait ChannelRuntime: Send + Sync {
     /// Channel display name.
     fn name(&self) -> &str;
 
-    /// Protocol name (e.g., "modbus", "iec104", "opcua").
+    /// Protocol name (e.g., "modbus", "mqtt", "iec61850").
     fn protocol(&self) -> &str;
 
     /// Whether this channel is event-driven (vs polling).

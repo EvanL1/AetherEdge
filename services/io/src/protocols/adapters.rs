@@ -29,20 +29,11 @@ pub mod command_batcher;
 #[cfg(all(test, feature = "modbus"))]
 pub mod modbus_mock;
 
-#[cfg(feature = "iec104")]
-pub mod iec104;
-
-#[cfg(feature = "opcua")]
-pub mod opcua;
-
 #[cfg(all(feature = "can", target_os = "linux"))]
 pub mod can;
 
 #[cfg(all(feature = "gpio", target_os = "linux"))]
 pub mod gpio;
-
-#[cfg(feature = "dl645")]
-pub mod dl645;
 
 #[cfg(feature = "aether_485")]
 pub mod aether_485;
@@ -52,27 +43,6 @@ pub mod mqtt;
 
 #[cfg(feature = "http")]
 pub mod http;
-
-#[cfg(feature = "ble")]
-pub mod ble;
-
-#[cfg(feature = "ble")]
-pub mod ble_config;
-
-#[cfg(feature = "zigbee")]
-pub mod zigbee;
-
-#[cfg(feature = "zigbee")]
-pub mod zigbee_config;
-
-#[cfg(feature = "zigbee")]
-pub mod zigbee_codec;
-
-#[cfg(feature = "matter")]
-pub mod matter;
-
-#[cfg(feature = "matter")]
-pub mod matter_config;
 
 #[cfg(feature = "iec61850")]
 pub mod iec61850;

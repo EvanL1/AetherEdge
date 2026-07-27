@@ -214,36 +214,6 @@ fn build_registry() -> ProtocolRegistry {
         });
     }
 
-    // Register IEC 104 protocol
-    #[cfg(feature = "iec104")]
-    {
-        use crate::protocols::adapters::iec104::Iec104Channel;
-        let iec104_meta = Iec104Channel::metadata();
-        registry.register(ProtocolMetadata {
-            name: "iec104",
-            display_name: "IEC 60870-5-104",
-            description: "IEC 104 telecontrol protocol over TCP/IP",
-            protocol_type: "iec104",
-            drivers: vec![iec104_meta],
-            supports_points: true,
-        });
-    }
-
-    // Register OPC UA protocol
-    #[cfg(feature = "opcua")]
-    {
-        use crate::protocols::adapters::opcua::OpcUaChannel;
-        let opcua_meta = OpcUaChannel::metadata();
-        registry.register(ProtocolMetadata {
-            name: "opcua",
-            display_name: "OPC UA",
-            description: "OPC UA client for industrial automation",
-            protocol_type: "opcua",
-            drivers: vec![opcua_meta],
-            supports_points: true,
-        });
-    }
-
     // Register CAN protocol (Linux only)
     #[cfg(all(feature = "can", target_os = "linux"))]
     {
@@ -255,51 +225,6 @@ fn build_registry() -> ProtocolRegistry {
             description: "Controller Area Network (CAN) bus protocol",
             protocol_type: "can",
             drivers: vec![can_meta],
-            supports_points: true,
-        });
-    }
-
-    // Register BLE protocol
-    #[cfg(feature = "ble")]
-    {
-        use crate::protocols::adapters::ble::BleChannel;
-        let ble_meta = BleChannel::metadata();
-        registry.register(ProtocolMetadata {
-            name: "ble",
-            display_name: "BLE GATT",
-            description: "Bluetooth Low Energy GATT client",
-            protocol_type: "ble",
-            drivers: vec![ble_meta],
-            supports_points: true,
-        });
-    }
-
-    // Register Zigbee protocol
-    #[cfg(feature = "zigbee")]
-    {
-        use crate::protocols::adapters::zigbee::ZigbeeChannel;
-        let zigbee_meta = ZigbeeChannel::metadata();
-        registry.register(ProtocolMetadata {
-            name: "zigbee",
-            display_name: "Zigbee",
-            description: "Zigbee protocol via TCP-connected coordinator gateway",
-            protocol_type: "zigbee",
-            drivers: vec![zigbee_meta],
-            supports_points: true,
-        });
-    }
-
-    // Register Matter protocol
-    #[cfg(feature = "matter")]
-    {
-        use crate::protocols::adapters::matter::MatterChannel;
-        let matter_meta = MatterChannel::metadata();
-        registry.register(ProtocolMetadata {
-            name: "matter",
-            display_name: "Matter",
-            description: "Matter smart home protocol over UDP",
-            protocol_type: "matter",
-            drivers: vec![matter_meta],
             supports_points: true,
         });
     }
@@ -322,15 +247,7 @@ mod tests {
     #[test]
     fn test_registry_creation() {
         let registry = get_protocol_registry();
-        if cfg!(any(
-            feature = "modbus",
-            feature = "iec104",
-            feature = "opcua",
-            feature = "ble",
-            feature = "zigbee",
-            feature = "matter",
-            feature = "iec61850"
-        )) {
+        if cfg!(any(feature = "modbus", feature = "can", feature = "gpio")) {
             assert!(!registry.protocols().is_empty());
         } else {
             assert!(registry.protocols().is_empty());

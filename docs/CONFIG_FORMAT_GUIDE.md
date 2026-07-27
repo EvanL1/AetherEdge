@@ -93,14 +93,12 @@ channels:
 |------|------|---------|
 | `modbus_tcp` | Modbus TCP | `host`, `port` |
 | `modbus_rtu` | Modbus RTU（串口） | `device`, `baud_rate`, `parity` |
-| `iec104` | IEC 60870-5-104 | `host`, `port` |
-| `opcua` | OPC UA（当前仅匿名、无消息安全模式） | `endpoint_url` |
 | `di_do` | GPIO 数字 I/O | `driver`, `gpio_base_path` |
-| `dl645` | DL/T 645-2007 电表 | `device`, `baud_rate`, `address` |
 | `mqtt` | MQTT 发布/订阅 | `broker` |
 | `http` | HTTP 轮询/Webhook | `url`（轮询）或 `listen_path`（Webhook） |
-| `can` | CAN 总线 | `device` |
-| `j1939` | J1939 车载网络（基于 CAN） | `device`, `pgn_list` |
+| `can` | 原始 CAN 总线 | `device` |
+| `iec61850` | IEC 61850 MMS | `address` |
+| `aether_485` | Aether 私有 RS-485 | `device`, `baud_rate` |
 
 #### MQTT 协议连接配置
 

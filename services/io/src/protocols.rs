@@ -7,7 +7,7 @@
 //! - MQTT
 //! - HTTP
 //! - DL/T 645-2007
-//! - CAN/J1939
+//! - CAN
 //! - GPIO
 //!
 //! ## Design Principles

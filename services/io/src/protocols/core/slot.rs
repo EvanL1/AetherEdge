@@ -13,7 +13,7 @@
 //! # Available Stores
 //!
 //! - [`AtomicBoolStore`]: Lock-free boolean storage for GPIO DO states
-//! - [`SlotStore`]: Single-writer store for CAN/J1939 cached data
+//! - [`SlotStore`]: Single-writer store for cached CAN data
 //! - [`ShardedSlotStore`]: Multi-writer store for event-driven adapters
 
 use std::collections::HashMap;
@@ -203,7 +203,7 @@ impl Default for DataSlot {
 
 /// Vec-based storage with O(1) index lookup.
 ///
-/// Designed for single-writer scenarios like CAN/J1939 data caching.
+/// Designed for single-writer scenarios like CAN data caching.
 /// All point IDs must be known at construction time.
 ///
 /// # Performance

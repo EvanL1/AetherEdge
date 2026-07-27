@@ -60,20 +60,6 @@ pub enum PacketMetadata {
         #[serde(skip_serializing_if = "Option::is_none")]
         quantity: Option<u16>,
     },
-    Iec104 {
-        asdu_type: u8,
-        cause_of_tx: u8,
-        common_addr: u16,
-    },
-    OpcUa {
-        message_type: String,
-        request_id: u32,
-    },
-    J1939 {
-        pgn: u32,
-        source: u8,
-        destination: u8,
-    },
     Gpio,
     Other {
         protocol: String,
@@ -92,14 +78,6 @@ impl PacketMetadata {
         }
     }
 
-    pub fn iec104(asdu_type: u8, cause_of_tx: u8, common_addr: u16) -> Self {
-        Self::Iec104 {
-            asdu_type,
-            cause_of_tx,
-            common_addr,
-        }
-    }
-
     pub fn protocol_name(&self) -> &str {
         match self {
             Self::Modbus { transport, .. } => match transport {
@@ -107,9 +85,6 @@ impl PacketMetadata {
                 ModbusTransportType::Rtu => "modbus-rtu",
                 ModbusTransportType::Ascii => "modbus-ascii",
             },
-            Self::Iec104 { .. } => "iec104",
-            Self::OpcUa { .. } => "opcua",
-            Self::J1939 { .. } => "j1939",
             Self::Gpio => "gpio",
             Self::Other { protocol } => protocol,
         }
@@ -771,9 +746,6 @@ mod tests {
     fn test_packet_metadata() {
         let meta = PacketMetadata::modbus_tcp(1, 0x03);
         assert_eq!(meta.protocol_name(), "modbus-tcp");
-
-        let meta = PacketMetadata::iec104(36, 3, 1);
-        assert_eq!(meta.protocol_name(), "iec104");
     }
 
     #[test]

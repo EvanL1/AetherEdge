@@ -721,7 +721,7 @@ pub async fn search_channels(
             example = json!({
                 "list": [
                     {"id": 1, "name": "PLC#1", "protocol": "modbus_tcp"},
-                    {"id": 2, "name": "HVAC#1", "protocol": "iec104"}
+                    {"id": 2, "name": "PLC#2", "protocol": "modbus_tcp"}
                 ]
             })
         )
