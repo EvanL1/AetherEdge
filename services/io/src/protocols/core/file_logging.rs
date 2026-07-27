@@ -427,7 +427,6 @@ impl ChannelFileLogHandler {
             ChannelLogEvent::StateChanged { .. } => level == FileLogLevel::Debug,
             ChannelLogEvent::ReconnectAttempt { .. } => level == FileLogLevel::Debug,
             ChannelLogEvent::ReconnectSuccess { .. } => level == FileLogLevel::Debug,
-            ChannelLogEvent::ReadOperation { .. } => level == FileLogLevel::Debug,
         }
     }
 
@@ -577,11 +576,6 @@ impl ChannelLogHandler for ChannelFileLogHandler {
                     "[RECONNECT] SUCCESS after {} attempts ({}ms)",
                     total_attempts, total_duration_ms
                 )
-            },
-
-            ChannelLogEvent::ReadOperation { .. } => {
-                // Skip detailed read operations in file log
-                return;
             },
 
             ChannelLogEvent::PointValues {

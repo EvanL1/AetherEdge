@@ -9,15 +9,10 @@
 //! ├── ProtocolCapabilities  // metadata: name, modes, version
 //! └── Protocol              // connection_state, diagnostics
 //!
-//! Layer 2: Core Operations (single responsibility)
-//! ├── ProtocolClient        // connect, disconnect, poll_once, write_*
-//! └── EventDrivenProtocol   // event_stream (broadcast)
-//!
-//! Layer 3: Optional Extensions
-//! └── ProtocolServer        // listen, stop, connected_clients
+//! Layer 2: Core Operations
+//! └── ProtocolClient        // connect, disconnect, poll_once, write_*
 //! ```
 
-use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
 use std::future::Future;
@@ -110,35 +105,6 @@ impl std::fmt::Display for ConnectionState {
         write!(f, "{}", s)
     }
 }
-
-/// Request for reading data points.
-///
-/// Simple request type for protocol-layer reads. The application layer
-/// is responsible for any SCADA-level filtering (by type, etc.).
-#[derive(Debug, Clone, Default)]
-pub struct ReadRequest {
-    /// Point IDs to read (None = all configured points)
-    pub point_ids: Option<Vec<u32>>,
-}
-
-impl ReadRequest {
-    /// Create a request for all configured points.
-    pub fn all() -> Self {
-        Self { point_ids: None }
-    }
-}
-
-/// Response from reading data points.
-#[derive(Debug, Clone)]
-pub struct ReadResponse {
-    /// The data batch containing all read points.
-    pub data: DataBatch,
-
-    /// Number of points that failed to read.
-    pub failed_count: usize,
-}
-
-// ReadResponse constructors are added as needed by protocol adapters.
 
 /// A control command to write.
 #[derive(Debug, Clone)]
@@ -304,29 +270,6 @@ impl PointFailure {
     }
 }
 
-/// Polling configuration.
-#[derive(Debug, Clone)]
-pub struct PollingConfig {
-    /// Polling interval in milliseconds.
-    pub interval_ms: u64,
-
-    /// Point IDs to poll (None = all configured points).
-    pub point_ids: Option<Vec<u32>>,
-
-    /// Whether to continue on individual point errors.
-    pub continue_on_error: bool,
-}
-
-impl Default for PollingConfig {
-    fn default() -> Self {
-        Self {
-            interval_ms: 1000,
-            point_ids: None,
-            continue_on_error: true,
-        }
-    }
-}
-
 /// Protocol diagnostics information.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Diagnostics {
@@ -451,18 +394,6 @@ pub trait ProtocolClient: Protocol {
     ) -> impl Future<Output = Result<WriteResult>> + Send;
 }
 
-/// Server protocol trait - passive connection acceptance.
-pub trait ProtocolServer: Protocol {
-    /// Start listening on the specified address.
-    fn listen(&mut self, addr: &str) -> impl Future<Output = Result<()>> + Send;
-
-    /// Stop listening and close all connections.
-    fn stop(&mut self) -> impl Future<Output = Result<()>> + Send;
-
-    /// Get number of connected clients.
-    fn connected_clients(&self) -> usize;
-}
-
 /// Data event for event-driven protocols.
 ///
 /// Note: `DataUpdate` uses `Arc<DataBatch>` to avoid deep cloning on broadcast.
@@ -487,65 +418,6 @@ pub type DataEventReceiver = broadcast::Receiver<DataEvent>;
 
 /// Event sender type (broadcast supports multiple subscribers).
 pub type DataEventSender = broadcast::Sender<DataEvent>;
-
-/// Event handler trait.
-///
-/// This trait uses `async_trait` because it needs to be object-safe for `dyn DataEventHandler`.
-/// Uses `Arc<DataBatch>` to enable zero-copy sharing between event_tx and handler.
-#[async_trait]
-pub trait DataEventHandler: Send + Sync {
-    /// Handle data update event (Arc for zero-copy sharing).
-    async fn on_data_update(&self, batch: Arc<DataBatch>);
-
-    /// Handle connection state change.
-    async fn on_connection_changed(&self, state: ConnectionState);
-
-    /// Handle error event.
-    async fn on_error(&self, error: &str);
-}
-
-/// Event-driven protocol extension trait.
-///
-/// Protocols implementing this trait can push data events to subscribers
-/// instead of (or in addition to) being polled.
-pub trait EventDrivenProtocol: Protocol {
-    /// Subscribe to data events.
-    ///
-    /// Returns a broadcast receiver that will receive all events from this protocol.
-    /// Multiple subscribers can call this method and each will receive all events.
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// let mut rx = protocol.subscribe();
-    /// tokio::spawn(async move {
-    ///     while let Ok(event) = rx.recv().await {
-    ///         match event {
-    ///             DataEvent::DataUpdate(batch) => { /* handle data */ }
-    ///             DataEvent::ConnectionChanged(state) => { /* handle state change */ }
-    ///             _ => {}
-    ///         }
-    ///     }
-    /// });
-    /// ```
-    fn subscribe(&self) -> DataEventReceiver;
-
-    /// Set event handler for callback-style event processing.
-    ///
-    /// This is an alternative to `subscribe()` for protocols that prefer
-    /// callback-based event handling.
-    fn set_event_handler(&mut self, handler: Arc<dyn DataEventHandler>);
-
-    /// Start receiving events from the device/server.
-    ///
-    /// For IEC 104, this triggers STARTDT. For OPC UA, this activates subscriptions.
-    fn start(&mut self) -> impl Future<Output = Result<()>> + Send;
-
-    /// Stop receiving events.
-    ///
-    /// For IEC 104, this triggers STOPDT. For OPC UA, this deactivates subscriptions.
-    fn stop(&mut self) -> impl Future<Output = Result<()>> + Send;
-}
 
 #[cfg(test)]
 mod tests {

@@ -18,9 +18,9 @@ use crate::protocols::core::traits::{ConnectionState, DataEventReceiver, Diagnos
 ///
 /// # Design Rationale
 ///
-/// The core protocol traits (`ProtocolClient`, `EventDrivenProtocol`) use
-/// `impl Future` return types which are not object-safe. This wrapper uses
-/// `async_trait` to enable dynamic dispatch via `Box<dyn ChannelRuntime>`.
+/// Protocol channels are selected from persisted configuration and coexist in
+/// one manager. `async_trait` keeps that heterogeneous runtime boundary
+/// object-safe for `Box<dyn ChannelRuntime>`.
 #[async_trait]
 pub trait ChannelRuntime: Send + Sync {
     // === Identity ===

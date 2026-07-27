@@ -21,8 +21,8 @@ use async_trait::async_trait;
 
 use crate::protocols::core::traits::{
     AdjustmentCommand, CommunicationMode, ConnectionState, ControlCommand, DataEvent,
-    DataEventHandler, DataEventReceiver, DataEventSender, Diagnostics, EventDrivenProtocol,
-    PollResult, Protocol, ProtocolCapabilities, ProtocolClient, WriteResult,
+    DataEventReceiver, DataEventSender, Diagnostics, PollResult, Protocol, ProtocolCapabilities,
+    ProtocolClient, WriteResult,
 };
 use crate::protocols::gateway::ChannelRuntime;
 
@@ -59,7 +59,6 @@ pub struct CanClient {
 
     // Event channel (broadcast for multiple subscribers)
     event_tx: DataEventSender,
-    event_handler: Option<Arc<dyn DataEventHandler>>,
 
     // CAN frame cache
     frame_cache: Arc<RwLock<CanFrameCache>>,
@@ -90,7 +89,6 @@ impl CanClient {
             receive_handle: None,
             read_handle: None,
             event_tx,
-            event_handler: None,
             frame_cache: Arc::new(RwLock::new(CanFrameCache::new())),
             point_manager: Arc::new(point_manager),
             // Start with empty SlotStore, will be rebuilt in start_events()
@@ -289,7 +287,6 @@ impl CanClient {
         let error_count = Arc::clone(&self.error_count);
         let last_error = Arc::clone(&self.last_error);
         let event_tx = self.event_tx.clone();
-        let event_handler = self.event_handler.clone();
         let read_interval = self.config.data_read_interval_ms;
 
         let handle = tokio::spawn(async move {
@@ -363,22 +360,11 @@ impl CanClient {
                                 batch.len()
                             );
 
-                            // Send event (broadcast is sync, not async)
-                            // Arc wrap for zero-copy sharing between event_tx and handler
+                            // Broadcast uses `Arc` so multiple runtime consumers can
+                            // observe one batch without cloning its point values.
                             #[cfg(feature = "tracing-support")]
                             tracing::debug!("Sending DataUpdate event via event_tx");
-                            let batch_arc = Arc::new(batch);
-                            let _ = event_tx.send(DataEvent::DataUpdate(Arc::clone(&batch_arc)));
-
-                            // Call handler (no lock held — safe to .await)
-                            if let Some(ref handler) = event_handler {
-                                #[cfg(feature = "tracing-support")]
-                                tracing::debug!("Calling on_data_update handler");
-                                handler.on_data_update(batch_arc).await;
-                            } else {
-                                #[cfg(feature = "tracing-support")]
-                                tracing::warn!("No event_handler available");
-                            }
+                            let _ = event_tx.send(DataEvent::DataUpdate(Arc::new(batch)));
                         }
                     },
                     Err(e) => {
@@ -523,33 +509,6 @@ impl ProtocolClient for CanClient {
     }
 }
 
-impl EventDrivenProtocol for CanClient {
-    fn subscribe(&self) -> DataEventReceiver {
-        // Broadcast channel supports multiple subscribers
-        self.event_tx.subscribe()
-    }
-
-    fn set_event_handler(&mut self, handler: Arc<dyn DataEventHandler>) {
-        self.event_handler = Some(handler);
-    }
-
-    async fn start(&mut self) -> Result<()> {
-        // CAN client starts automatically on connect
-        Ok(())
-    }
-
-    async fn stop(&mut self) -> Result<()> {
-        // Stop receive and read tasks
-        if let Some(handle) = self.receive_handle.take() {
-            handle.abort();
-        }
-        if let Some(handle) = self.read_handle.take() {
-            handle.abort();
-        }
-        Ok(())
-    }
-}
-
 // ============================================================================
 // HasMetadata Implementation
 // ============================================================================
@@ -666,15 +625,22 @@ impl ChannelRuntime for CanClient {
     }
 
     fn subscribe(&self) -> Option<DataEventReceiver> {
-        Some(<Self as EventDrivenProtocol>::subscribe(self))
+        Some(self.event_tx.subscribe())
     }
 
     async fn start_events(&mut self) -> Result<()> {
-        <Self as EventDrivenProtocol>::start(self).await
+        // CAN receive tasks start as part of `connect`.
+        Ok(())
     }
 
     async fn stop_events(&mut self) -> Result<()> {
-        <Self as EventDrivenProtocol>::stop(self).await
+        if let Some(handle) = self.receive_handle.take() {
+            handle.abort();
+        }
+        if let Some(handle) = self.read_handle.take() {
+            handle.abort();
+        }
+        Ok(())
     }
 
     async fn diagnostics(&self) -> Result<Diagnostics> {

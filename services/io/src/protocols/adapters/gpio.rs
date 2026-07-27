@@ -37,8 +37,8 @@
 //! let mut gpio = GpioChannel::new(config);
 //! gpio.connect().await?;
 //!
-//! // Read DI
-//! let response = gpio.read(ReadRequest::all()).await?;
+//! // Read configured inputs once.
+//! let result = gpio.poll_once().await;
 //!
 //! // Control DO
 //! gpio.write_control(&[ControlCommand::latching(101, true)]).await?;

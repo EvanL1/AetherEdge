@@ -505,7 +505,7 @@ fn utc_time_now() -> [u8; 8] {
 
 /// Generic Write-Request builder. `data_bytes` = the encoded Data TLV to write.
 ///
-/// **Structural difference from Read:** `ReadRequest` wraps `variableAccessSpecification`
+/// **Structural difference from MMS Read:** this request wraps `listOfVariable`
 /// in `[1] EXPLICIT`, giving the Read a visible A1 outer tag.  `WriteRequest` has **no**
 /// such wrapper — `listOfVariable [0] IMPLICIT` = A0 appears directly in the body.
 ///

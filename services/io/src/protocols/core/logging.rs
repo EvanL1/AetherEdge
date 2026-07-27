@@ -14,9 +14,7 @@ use aether_core::PointType;
 
 use crate::protocols::core::data::Value;
 use crate::protocols::core::quality::Quality;
-use crate::protocols::core::{
-    AdjustmentCommand, ConnectionState, ControlCommand, ReadRequest, ReadResponse, WriteResult,
-};
+use crate::protocols::core::{AdjustmentCommand, ConnectionState, ControlCommand, WriteResult};
 
 /// Direction of a raw packet.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -180,12 +178,6 @@ pub enum ChannelLogEvent {
         timestamp: SystemTime,
         reason: Option<String>,
     },
-    ReadOperation {
-        timestamp: SystemTime,
-        request: ReadRequest,
-        result: Result<ReadResponse, String>,
-        duration_ms: u64,
-    },
     PollCycleCompleted {
         timestamp: SystemTime,
         points_count: usize,
@@ -248,7 +240,6 @@ impl ChannelLogEvent {
         match self {
             Self::Connected { timestamp, .. } => *timestamp,
             Self::Disconnected { timestamp, .. } => *timestamp,
-            Self::ReadOperation { timestamp, .. } => *timestamp,
             Self::PollCycleCompleted { timestamp, .. } => *timestamp,
             Self::ControlWrite { timestamp, .. } => *timestamp,
             Self::AdjustmentWrite { timestamp, .. } => *timestamp,
@@ -265,7 +256,6 @@ impl ChannelLogEvent {
         match self {
             Self::Connected { .. } => "connected",
             Self::Disconnected { .. } => "disconnected",
-            Self::ReadOperation { .. } => "read_operation",
             Self::PollCycleCompleted { .. } => "poll_cycle",
             Self::ControlWrite { .. } => "control_write",
             Self::AdjustmentWrite { .. } => "adjustment_write",
@@ -285,7 +275,6 @@ impl ChannelLogEvent {
 pub enum LogEventType {
     Connected,
     Disconnected,
-    ReadOperation,
     PollCycle,
     ControlWrite,
     AdjustmentWrite,
@@ -303,7 +292,6 @@ impl LogEventType {
         [
             Connected,
             Disconnected,
-            ReadOperation,
             PollCycle,
             ControlWrite,
             AdjustmentWrite,
@@ -354,7 +342,6 @@ impl LogEventType {
 #[derive(Debug, Clone)]
 pub struct ChannelLogConfig {
     enabled_events: HashSet<LogEventType>,
-    log_successful_reads: bool,
     log_successful_writes: bool,
     poll_cycle_sample_rate: u32,
     log_raw_packets: bool,
@@ -365,7 +352,6 @@ impl Default for ChannelLogConfig {
     fn default() -> Self {
         Self {
             enabled_events: LogEventType::default_set(),
-            log_successful_reads: false,
             log_successful_writes: true,
             poll_cycle_sample_rate: 1,
             log_raw_packets: false,
@@ -382,7 +368,6 @@ impl ChannelLogConfig {
     pub fn all() -> Self {
         Self {
             enabled_events: LogEventType::all(),
-            log_successful_reads: true,
             log_successful_writes: true,
             poll_cycle_sample_rate: 1,
             log_raw_packets: true,
@@ -393,7 +378,6 @@ impl ChannelLogConfig {
     pub fn errors_only() -> Self {
         Self {
             enabled_events: LogEventType::errors_and_connections(),
-            log_successful_reads: false,
             log_successful_writes: false,
             poll_cycle_sample_rate: 0,
             log_raw_packets: false,
@@ -404,7 +388,6 @@ impl ChannelLogConfig {
     pub fn disabled() -> Self {
         Self {
             enabled_events: HashSet::new(),
-            log_successful_reads: false,
             log_successful_writes: false,
             poll_cycle_sample_rate: 0,
             log_raw_packets: false,
@@ -439,15 +422,6 @@ impl ChannelLogConfig {
         let event_type = match event {
             ChannelLogEvent::Connected { .. } => LogEventType::Connected,
             ChannelLogEvent::Disconnected { .. } => LogEventType::Disconnected,
-            ChannelLogEvent::ReadOperation { result, .. } => {
-                if !self.enabled_events.contains(&LogEventType::ReadOperation) {
-                    return false;
-                }
-                if result.is_ok() && !self.log_successful_reads {
-                    return false;
-                }
-                LogEventType::ReadOperation
-            },
             ChannelLogEvent::PollCycleCompleted { .. } => LogEventType::PollCycle,
             ChannelLogEvent::ControlWrite { result, .. } => {
                 if !self.enabled_events.contains(&LogEventType::ControlWrite) {
@@ -765,7 +739,7 @@ mod tests {
     #[test]
     fn test_log_event_type_sets() {
         let all = LogEventType::all();
-        assert_eq!(all.len(), 12); // +1 for PointValues
+        assert_eq!(all.len(), 11);
 
         let default_set = LogEventType::default_set();
         assert!(!default_set.contains(&LogEventType::PollCycle));
