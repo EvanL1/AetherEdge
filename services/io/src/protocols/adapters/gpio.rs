@@ -58,7 +58,7 @@ use crate::protocols::core::data::{DataBatch, DataPoint};
 use crate::protocols::core::diagnostics::AtomicDiagnostics;
 use crate::protocols::core::error::{GatewayError, Result};
 use crate::protocols::core::logging::{
-    ChannelLogConfig, ChannelLogHandler, ErrorContext, LogContext, LoggableProtocol,
+    ChannelLogConfig, ChannelLogHandler, ErrorContext, LogContext,
 };
 use crate::protocols::core::metadata::{DriverMetadata, ParameterMetadata, ParameterType};
 use crate::protocols::core::slot::AtomicBoolStore;
@@ -972,20 +972,6 @@ impl ProtocolCapabilities for GpioChannel {
     }
 }
 
-impl LoggableProtocol for GpioChannel {
-    fn set_log_handler(&mut self, handler: Arc<dyn ChannelLogHandler>) {
-        self.log_ctx.set_handler(handler);
-    }
-
-    fn set_log_config(&mut self, config: ChannelLogConfig) {
-        self.log_ctx.set_config(config);
-    }
-
-    fn log_config(&self) -> &ChannelLogConfig {
-        self.log_ctx.config()
-    }
-}
-
 // Helper methods for GpioChannel
 impl GpioChannel {
     /// Read all GPIO pins and return batch with failures.
@@ -1255,11 +1241,11 @@ impl ChannelRuntime for GpioChannel {
     }
 
     fn set_log_handler(&mut self, handler: Arc<dyn ChannelLogHandler>) {
-        <Self as LoggableProtocol>::set_log_handler(self, handler);
+        self.log_ctx.set_handler(handler);
     }
 
     fn set_log_config(&mut self, config: ChannelLogConfig) {
-        <Self as LoggableProtocol>::set_log_config(self, config);
+        self.log_ctx.set_config(config);
     }
 }
 

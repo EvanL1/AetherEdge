@@ -37,7 +37,7 @@ use crate::protocols::core::data::{DataBatch, DataPoint};
 use crate::protocols::core::diagnostics::AtomicDiagnostics;
 use crate::protocols::core::error::{GatewayError, Result};
 use crate::protocols::core::logging::{
-    ChannelLogConfig, ChannelLogHandler, ErrorContext, LogContext, LoggableProtocol,
+    ChannelLogConfig, ChannelLogHandler, ErrorContext, LogContext,
 };
 use crate::protocols::core::{
     AdjustmentCommand, CommunicationMode, ConnectionState, ControlCommand, Diagnostics,
@@ -494,24 +494,6 @@ impl ProtocolCapabilities for Aether485Channel {
     }
 }
 
-impl LoggableProtocol for Aether485Channel {
-    fn set_log_handler(&mut self, handler: Arc<dyn ChannelLogHandler>) {
-        if let Some(ctx) = Arc::get_mut(&mut self.log_context) {
-            ctx.set_handler(handler);
-        }
-    }
-
-    fn set_log_config(&mut self, config: ChannelLogConfig) {
-        if let Some(ctx) = Arc::get_mut(&mut self.log_context) {
-            ctx.set_config(config);
-        }
-    }
-
-    fn log_config(&self) -> &ChannelLogConfig {
-        self.log_context.config()
-    }
-}
-
 impl Protocol for Aether485Channel {
     fn connection_state(&self) -> ConnectionState {
         self.get_state()
@@ -712,11 +694,15 @@ impl ChannelRuntime for Aether485Channel {
     }
 
     fn set_log_handler(&mut self, handler: Arc<dyn ChannelLogHandler>) {
-        <Self as LoggableProtocol>::set_log_handler(self, handler);
+        if let Some(ctx) = Arc::get_mut(&mut self.log_context) {
+            ctx.set_handler(handler);
+        }
     }
 
     fn set_log_config(&mut self, config: ChannelLogConfig) {
-        <Self as LoggableProtocol>::set_log_config(self, config);
+        if let Some(ctx) = Arc::get_mut(&mut self.log_context) {
+            ctx.set_config(config);
+        }
     }
 }
 

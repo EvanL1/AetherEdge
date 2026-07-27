@@ -25,8 +25,7 @@ use crate::protocols::core::data::{DataBatch, Value};
 use crate::protocols::core::diagnostics::AtomicDiagnostics;
 use crate::protocols::core::error::{GatewayError, Result};
 use crate::protocols::core::logging::{
-    ChannelLogConfig, ChannelLogHandler, ErrorContext, LogContext, LoggableProtocol,
-    ModbusTransportType,
+    ChannelLogConfig, ChannelLogHandler, ErrorContext, LogContext, ModbusTransportType,
 };
 use crate::protocols::core::metadata::{DriverMetadata, ParameterMetadata, ParameterType};
 
@@ -348,32 +347,6 @@ impl ProtocolCapabilities for ModbusChannel {
 
     fn version(&self) -> &'static str {
         "1.0"
-    }
-}
-
-impl LoggableProtocol for ModbusChannel {
-    fn set_log_handler(&mut self, handler: Arc<dyn ChannelLogHandler>) {
-        if let Some(ctx) = Arc::get_mut(&mut self.log_context) {
-            ctx.set_handler(handler);
-        } else {
-            let mut new_ctx = (*self.log_context).clone();
-            new_ctx.set_handler(handler);
-            self.log_context = Arc::new(new_ctx);
-        }
-    }
-
-    fn set_log_config(&mut self, config: ChannelLogConfig) {
-        if let Some(ctx) = Arc::get_mut(&mut self.log_context) {
-            ctx.set_config(config);
-        } else {
-            let mut new_ctx = (*self.log_context).clone();
-            new_ctx.set_config(config);
-            self.log_context = Arc::new(new_ctx);
-        }
-    }
-
-    fn log_config(&self) -> &ChannelLogConfig {
-        self.log_context.config()
     }
 }
 
@@ -1046,11 +1019,23 @@ impl ChannelRuntime for ModbusChannel {
     }
 
     fn set_log_handler(&mut self, handler: Arc<dyn ChannelLogHandler>) {
-        <Self as LoggableProtocol>::set_log_handler(self, handler);
+        if let Some(ctx) = Arc::get_mut(&mut self.log_context) {
+            ctx.set_handler(handler);
+        } else {
+            let mut new_ctx = (*self.log_context).clone();
+            new_ctx.set_handler(handler);
+            self.log_context = Arc::new(new_ctx);
+        }
     }
 
     fn set_log_config(&mut self, config: ChannelLogConfig) {
-        <Self as LoggableProtocol>::set_log_config(self, config);
+        if let Some(ctx) = Arc::get_mut(&mut self.log_context) {
+            ctx.set_config(config);
+        } else {
+            let mut new_ctx = (*self.log_context).clone();
+            new_ctx.set_config(config);
+            self.log_context = Arc::new(new_ctx);
+        }
     }
 }
 

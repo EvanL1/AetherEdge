@@ -31,7 +31,7 @@ pub use self::core::data::{DataBatch, DataPoint, Value};
 pub use self::core::error::{GatewayError, Result};
 pub use self::core::logging::{
     ChannelLogConfig, ChannelLogEvent, ChannelLogHandler, LogContext, LogEventType,
-    LoggableProtocol, PacketDirection, PacketMetadata,
+    PacketDirection, PacketMetadata,
 };
 pub use self::core::metadata::{
     DriverMetadata, ParameterMetadata, ParameterType, ProtocolMetadata, ProtocolRegistry,
