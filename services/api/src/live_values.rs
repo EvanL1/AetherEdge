@@ -12,7 +12,7 @@ use aether_shm_bridge::{
     ChannelPointManifest, PhysicalPointAddress, PointWatchEvent, ShmClientConfig,
     ShmReadTopologyGeneration, SlotSnapshot, SlotSource,
 };
-use aether_store_local::{SqliteLiveTopologySnapshot, load_sqlite_live_topology};
+use aether_sqlite_topology::{SqliteLiveTopologySnapshot, load_sqlite_live_topology};
 use anyhow::Context;
 use arc_swap::ArcSwap;
 use async_trait::async_trait;
@@ -997,7 +997,7 @@ mod tests {
             channel_health_shm_path: health_path.to_string_lossy().into_owned(),
             ..Default::default()
         };
-        let first = aether_store_local::load_sqlite_live_topology(&pool)
+        let first = aether_sqlite_topology::load_sqlite_live_topology(&pool)
             .await
             .expect("initial topology snapshot");
         let first_epoch = 100;
@@ -1086,7 +1086,7 @@ mod tests {
                 .await
                 .expect("change desired topology");
         }
-        let second = aether_store_local::load_sqlite_live_topology(&pool)
+        let second = aether_sqlite_topology::load_sqlite_live_topology(&pool)
             .await
             .expect("replacement topology snapshot");
         let second_epoch = 102;

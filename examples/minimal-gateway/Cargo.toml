@@ -9,7 +9,7 @@ publish = false
 
 [dependencies]
 aether-sdk = { package = "aether-edge-sdk", path = "../../crates/aether-sdk" }
-aether-store-local = { path = "../../extensions/store-local" }
+aether-store-local = { path = "../../libs/aether-store-local" }
 async-trait = { workspace = true }
 tokio = { workspace = true }
 

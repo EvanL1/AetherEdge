@@ -3,7 +3,9 @@
 ## Status
 
 Accepted on 2026-07-25. Supersedes ADR-0013 clauses 3 and 7. All other
-ADR-0013 clauses remain in force.
+ADR-0013 clauses remain in force. ADR-0026 later removes in-tree integrations
+from the active workspace; previously reserved registry names remain
+historical, while the SDK-facade and dependency-closure rule remains active.
 
 ## Context
 
@@ -57,7 +59,7 @@ consumer types.
    unchanged.
 2. The registry release set is `aether-edge-sdk` and the transitive closure of
    its normal and optional dependencies, plus `aether-testkit` so that
-   extension authors can run the port conformance suites. Every other workspace
+   adapter authors can run the port conformance suites. Every other workspace
    package keeps `publish = false`.
 3. Packages in that closure other than `aether-edge-sdk` and `aether-testkit`
    are published to satisfy Cargo, are documented as implementation detail, and

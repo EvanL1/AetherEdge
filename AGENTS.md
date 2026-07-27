@@ -24,8 +24,7 @@ explicitly changes them.
 
 ```text
 crates/       domain, ports, application, SDK, Pack and testkit APIs
-libs/         shared internal libraries (core, model, shm, config, sim)
-extensions/   optional adapters chosen only by composition roots
+libs/         shared kernel implementation (SHM, local storage, config, sim)
 services/     io, automation, history, api, uplink and alarm processes
 tools/        aether CLI/MCP and the protocol simulator
 examples/     minimal generic and compatibility composition proofs
@@ -51,9 +50,9 @@ and the active Pack manifests.
 Dependency direction is one-way:
 
 ```text
-domain <- ports <- application <- runtime/interfaces
-             ^
-             +---- extensions
+domain <- ports <- application <- services/interfaces
+                              ^
+                              +---- composition-selected kernel adapters
 ```
 
 - Core crates under `crates/` must not depend on Redis, PostgreSQL, SQLx web
@@ -63,9 +62,12 @@ domain <- ports <- application <- runtime/interfaces
   protocol, and Pack DTOs stay in their owning adapters or contract crates.
 - Traits describe domain capabilities, never vendor command sets. Prefer
   `HistorySink` or `StateMirror` over a generic database/RTDB abstraction.
-- Extensions under `extensions/` may implement core ports. Core crates must
-  never depend on an extension.
-- Only composition roots may choose concrete adapters.
+- AetherEdge owns no in-tree `extensions/` layer. Optional third-party
+  integrations live in downstream repositories and consume the published SDK,
+  port, and testkit contracts.
+- Only composition roots may choose concrete adapters; non-composition
+  libraries must not bind application behavior to SHM, SQLite, HTTP, MQTT, or
+  another concrete runtime implementation.
 - SHM is the authority for live point state. An external store may mirror it,
   but must never silently become the authority.
 - Remote applications enter only through authenticated `aether-api:6005`. The
@@ -79,8 +81,12 @@ domain <- ports <- application <- runtime/interfaces
   subprocesses, provide an in-process simulation protocol, or manage host
   networking. Python and protocol simulators are limited to tooling outside
   `services/`.
-- Protocol-specific model catalogs such as SunSpec belong in default-off
-  extensions selected by a composition root, never in a core or service crate.
+- Protocol-specific model catalogs such as SunSpec stay outside this kernel.
+  A future downstream IO plugin must be pure Rust, statically composed through
+  an accepted generic contract, and unable to write SHM or bypass governed
+  commands directly.
+- CloudLink is an Aether-native protocol. Only `aether-uplink` may own its
+  transport, session, signing, spool, acknowledgement, and replay lifecycle.
 
 ## AI Safety
 
@@ -99,8 +105,8 @@ domain <- ports <- application <- runtime/interfaces
   documentation site; internal Markdown uses GitHub; machine resources use
   Raw GitHub.
 - `llms.txt` is generated from that catalog and must cover every catalog entry
-  exactly once. Core task routes come first; ADRs, crates, extensions, and
-  other deep context remain discoverable under `Optional`.
+  exactly once. Core task routes come first; ADRs, crates, libraries, service
+  adapters, and other deep context remain discoverable under `Optional`.
 - Update both generated files with
   `node scripts/build-agent-docs.mjs --write`; never edit them by hand.
 - `ai/safety-policy.yaml` remains the capability-risk authority. Document
@@ -120,7 +126,6 @@ surface and deliberately does not carry this index or a project status report.
 - [Build applications with AI](docs/guides/build-applications-with-ai.md)
 - [Connect AI assistants](docs/guides/ai-assistants.md)
 - [Connect devices](docs/guides/connect-devices.md)
-- [Connect Home Assistant](docs/guides/home-assistant.md)
 - [HTTP API and Swagger](docs/reference/http-api.md)
 - [Deployment](docs/guides/deployment.md)
 - [Platform status and roadmap](docs/roadmap/status.md)

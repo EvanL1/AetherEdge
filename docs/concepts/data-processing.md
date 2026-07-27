@@ -93,7 +93,7 @@ Every implementation must preserve these properties:
    alarms, and essential control continue when a processor or AI client is
    unavailable.
 8. **The standalone profile stays standalone.** Redis, PostgreSQL, a cloud
-   processor, and a model service remain optional extensions, not startup
+   processor and model service remain optional downstream components, not startup
    dependencies of the Aether kernel.
 
 ## Architecture boundary
@@ -141,7 +141,7 @@ The capability is a vertical slice through Aether's existing layers:
   binds those roles to concrete instances and points.
 - Composition roots choose concrete adapters and decide whether processing
   needs process isolation. Core crates never depend on an industry pack or
-  processor extension.
+  downstream processor.
 
 See [Data Processing Flow](data-processing-flow.md) for the detailed assembly,
 request, validation, and failure sequence, including which optional result

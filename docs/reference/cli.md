@@ -1093,7 +1093,7 @@ Usage: aether services refresh [OPTIONS] [SERVICES]...
 | Flag | Description |
 |------|-------------|
 | `-p, --pull` | Also pull latest images before recreating |
-| `-s, --smart` | Use smart mode (only recreate if an image changed; stateful extensions remain explicit) |
+| `-s, --smart` | Use smart mode (only recreate if an image changed; stateful optional services remain explicit) |
 
 ```bash
 aether services refresh --pull --smart

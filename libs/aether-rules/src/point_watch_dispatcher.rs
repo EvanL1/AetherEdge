@@ -13,18 +13,19 @@
 //! 2. `rebuild_from_rules` builds
 //!    `HashMap<(channel_id, point_id_on_channel), Vec<rule_id>>` without
 //!    consulting an independently mutable route cache.
-//!    It also updates `SubscriptionBitmap` slots so io starts emitting.
+//!    It returns canonical channel-point subscriptions for the service adapter
+//!    to publish through its concrete event plane.
 //! 3. Incoming `PointWatchHint`s are dispatched by `dispatch()`, which tries
 //!    a fast non-blocking `try_send` to the scheduler's event channel.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use tokio::sync::mpsc;
 use tracing::{debug, warn};
 
-use aether_shm_bridge::{ChannelPointManifest, PhysicalPointAddress, SubscriptionBitmap};
+use aether_domain::ChannelPointAddress;
 
 use crate::scheduler::TriggerConfig;
 
@@ -33,12 +34,12 @@ use crate::scheduler::TriggerConfig;
 pub struct MeasurementRouteBinding {
     instance_id: u32,
     point_id: u32,
-    target: PhysicalPointAddress,
+    target: ChannelPointAddress,
 }
 
 impl MeasurementRouteBinding {
     #[must_use]
-    pub const fn new(instance_id: u32, point_id: u32, target: PhysicalPointAddress) -> Self {
+    pub const fn new(instance_id: u32, point_id: u32, target: ChannelPointAddress) -> Self {
         Self {
             instance_id,
             point_id,
@@ -57,7 +58,7 @@ impl MeasurementRouteBinding {
     }
 
     #[must_use]
-    pub const fn target(self) -> PhysicalPointAddress {
+    pub const fn target(self) -> ChannelPointAddress {
         self.target
     }
 }
@@ -140,7 +141,7 @@ pub struct PointWatchDispatcher {
     /// (channel_id, point_id) → Vec<rule_id>
     ///
     /// `point_id` here is the **channel-level** point ID (i.e. the source key
-    /// from `ChannelPointManifest`), NOT the instance-level point ID.
+    /// from the canonical channel topology), NOT the instance-level point ID.
     /// `point_type` is intentionally absent from the key: T and S can both
     /// trigger `OnChange` rules; the per-rule deadband logic in
     /// `should_trigger_onchange` handles type disambiguation if needed.
@@ -175,20 +176,17 @@ impl PointWatchDispatcher {
     /// 2. For each enabled `OnChange` rule, iterate its `point_refs`.
     /// 3. Look up the logical measurement in the pinned typed bindings.
     /// 4. Insert `(channel_id, channel_point_id) → rule_id` into `sub_index`.
-    /// 5. Look up the SHM slot via `ChannelPointManifest::slot` and call
-    ///    `bitmap.set_watched(slot)`.
+    /// 5. Return the canonical channel points that the service composition
+    ///    must publish through its concrete event adapter.
     pub fn rebuild_from_rules(
         &mut self,
         rules: &[impl RuleSubscriptionInfo],
         measurement_routes: &[MeasurementRouteBinding],
-        manifest: &ChannelPointManifest,
-        bitmap: &SubscriptionBitmap,
-    ) {
-        bitmap.clear_all();
+    ) -> Vec<ChannelPointAddress> {
         self.sub_index.clear();
 
-        let mut instance_to_channel: HashMap<(u32, u32), Vec<PhysicalPointAddress>> =
-            HashMap::new();
+        let mut instance_to_channel: HashMap<(u32, u32), Vec<ChannelPointAddress>> = HashMap::new();
+        let mut subscriptions = HashSet::new();
         for route in measurement_routes {
             instance_to_channel
                 .entry((route.instance_id(), route.point_id()))
@@ -215,10 +213,6 @@ impl PointWatchDispatcher {
                     instance_to_channel.get(&(pref.instance, lookup_point_id))
                 {
                     for &target in channel_entries {
-                        // Only subscribe to Telemetry and Signal (T/S) — io writes those
-                        if !target.kind().is_acquisition_owned() {
-                            continue;
-                        }
                         let channel_id = target.channel_id().get();
                         let channel_point_id = target.point_id().get();
 
@@ -228,30 +222,34 @@ impl PointWatchDispatcher {
                             .or_default()
                             .push(rule.rule_id());
 
-                        // Update subscription bitmap
-                        if let Some(slot) = manifest.slot_for(target) {
-                            bitmap.set_watched(slot);
-                            debug!(
-                                "PointWatch: subscribed slot={} ch={} pt={:?} pid={} for rule={}",
-                                slot,
-                                channel_id,
-                                target.kind(),
-                                channel_point_id,
-                                rule.rule_id()
-                            );
-                        }
+                        subscriptions.insert(target);
+                        debug!(
+                            "PointWatch: selected ch={} pt={:?} pid={} for rule={}",
+                            channel_id,
+                            target.kind(),
+                            channel_point_id,
+                            rule.rule_id()
+                        );
                     }
                 }
             }
         }
 
         let sub_count = self.sub_index.len();
-        let slot_count = bitmap.subscription_count();
+        let mut subscriptions = subscriptions.into_iter().collect::<Vec<_>>();
+        subscriptions.sort_by_key(|address| {
+            (
+                address.channel_id().get(),
+                u8::from(address.kind() == aether_domain::PointKind::Status),
+                address.point_id().get(),
+            )
+        });
         tracing::info!(
-            "PointWatchDispatcher: rebuilt index — {} (ch,pt) pairs, {} bitmap slots subscribed",
+            "PointWatchDispatcher: rebuilt index — {} (ch,pt) pairs, {} physical points selected",
             sub_count,
-            slot_count
+            subscriptions.len()
         );
+        subscriptions
     }
 
     /// Dispatch an incoming transport-neutral point-change hint to the scheduler.
@@ -297,8 +295,7 @@ impl PointWatchDispatcher {
 mod tests {
     use super::*;
     use crate::scheduler::{PointKind, PointRef, TriggerConfig};
-    use aether_domain::PointKind as PhysicalPointKind;
-    use aether_shm_bridge::{ChannelPointManifest, PhysicalPointAddress, SubscriptionBitmap};
+    use aether_domain::{ChannelId, PointId, PointKind as PhysicalPointKind};
 
     /// Minimal rule for subscription tests
     struct TestRule {
@@ -319,28 +316,26 @@ mod tests {
         }
     }
 
-    fn make_bindings_and_manifest() -> (Vec<MeasurementRouteBinding>, ChannelPointManifest) {
-        let bindings = vec![
-            MeasurementRouteBinding::new(
-                5,
-                10,
-                PhysicalPointAddress::from_legacy_raw(1001, PhysicalPointKind::Telemetry, 0),
-            ),
-            MeasurementRouteBinding::new(
-                5,
-                11,
-                PhysicalPointAddress::from_legacy_raw(1001, PhysicalPointKind::Telemetry, 1),
-            ),
-        ];
-        let manifest = ChannelPointManifest::from_entries([(1001, [2, 0, 0, 0])]);
-        (bindings, manifest)
+    fn channel_point(channel_id: u32, point_id: u32) -> ChannelPointAddress {
+        ChannelPointAddress::new(
+            ChannelId::new(channel_id),
+            PhysicalPointKind::Telemetry,
+            PointId::new(point_id),
+        )
+        .expect("acquisition address")
+    }
+
+    fn make_bindings() -> Vec<MeasurementRouteBinding> {
+        vec![
+            MeasurementRouteBinding::new(5, 10, channel_point(1001, 0)),
+            MeasurementRouteBinding::new(5, 11, channel_point(1001, 1)),
+        ]
     }
 
     #[test]
     fn rebuild_subscribes_matching_ch_pt_pair() {
         let (mut disp, _rx) = PointWatchDispatcher::new();
-        let (bindings, manifest) = make_bindings_and_manifest();
-        let bm = SubscriptionBitmap::new_in_memory().unwrap();
+        let bindings = make_bindings();
 
         let rules = vec![TestRule {
             id: 7,
@@ -356,7 +351,7 @@ mod tests {
             },
         }];
 
-        disp.rebuild_from_rules(&rules, &bindings, &manifest, &bm);
+        disp.rebuild_from_rules(&rules, &bindings);
 
         // sub_index should have one entry for (ch=1001, pt=0)
         assert_eq!(disp.subscription_count(), 1);
@@ -365,8 +360,7 @@ mod tests {
     #[test]
     fn disabled_rule_not_subscribed() {
         let (mut disp, _rx) = PointWatchDispatcher::new();
-        let (bindings, manifest) = make_bindings_and_manifest();
-        let bm = SubscriptionBitmap::new_in_memory().unwrap();
+        let bindings = make_bindings();
 
         let rules = vec![TestRule {
             id: 8,
@@ -382,15 +376,14 @@ mod tests {
             },
         }];
 
-        disp.rebuild_from_rules(&rules, &bindings, &manifest, &bm);
+        disp.rebuild_from_rules(&rules, &bindings);
         assert_eq!(disp.subscription_count(), 0);
     }
 
     #[test]
     fn interval_rule_not_subscribed() {
         let (mut disp, _rx) = PointWatchDispatcher::new();
-        let (bindings, manifest) = make_bindings_and_manifest();
-        let bm = SubscriptionBitmap::new_in_memory().unwrap();
+        let bindings = make_bindings();
 
         let rules = vec![TestRule {
             id: 9,
@@ -398,15 +391,14 @@ mod tests {
             trigger: TriggerConfig::Interval { interval_ms: 1000 },
         }];
 
-        disp.rebuild_from_rules(&rules, &bindings, &manifest, &bm);
+        disp.rebuild_from_rules(&rules, &bindings);
         assert_eq!(disp.subscription_count(), 0);
     }
 
     #[test]
     fn dispatch_sends_event_to_channel() {
         let (mut disp, mut rx) = PointWatchDispatcher::new();
-        let (bindings, manifest) = make_bindings_and_manifest();
-        let bm = SubscriptionBitmap::new_in_memory().unwrap();
+        let bindings = make_bindings();
 
         let rules = vec![TestRule {
             id: 42,
@@ -422,7 +414,7 @@ mod tests {
             },
         }];
 
-        disp.rebuild_from_rules(&rules, &bindings, &manifest, &bm);
+        disp.rebuild_from_rules(&rules, &bindings);
 
         let hint = PointWatchHint::new(
             1001, 0, // channel_pt=0
@@ -441,11 +433,8 @@ mod tests {
     }
 
     #[test]
-    fn rebuild_replaces_the_complete_route_and_manifest_generation() {
+    fn rebuild_replaces_the_complete_route_generation() {
         let (mut dispatcher, mut events) = PointWatchDispatcher::new();
-        let bitmap = SubscriptionBitmap::new_in_memory().unwrap();
-        let manifest =
-            ChannelPointManifest::from_entries([(1001, [1, 0, 0, 0]), (1002, [1, 0, 0, 0])]);
         let rules = vec![TestRule {
             id: 43,
             enabled: true,
@@ -459,33 +448,16 @@ mod tests {
                 value_deadband: None,
             },
         }];
-        let old_target =
-            PhysicalPointAddress::from_legacy_raw(1001, PhysicalPointKind::Telemetry, 0);
-        let new_target =
-            PhysicalPointAddress::from_legacy_raw(1002, PhysicalPointKind::Telemetry, 0);
+        let old_target = channel_point(1001, 0);
+        let new_target = channel_point(1002, 0);
 
-        dispatcher.rebuild_from_rules(
-            &rules,
-            &[MeasurementRouteBinding::new(5, 10, old_target)],
-            &manifest,
-            &bitmap,
-        );
-        let old_slot = manifest.slot_for(old_target).expect("old route slot");
-        let new_slot = manifest.slot_for(new_target).expect("new route slot");
-        assert!(bitmap.is_watched(old_slot));
-        assert!(!bitmap.is_watched(new_slot));
+        let old_subscriptions = dispatcher
+            .rebuild_from_rules(&rules, &[MeasurementRouteBinding::new(5, 10, old_target)]);
+        assert_eq!(old_subscriptions, [old_target]);
 
-        dispatcher.rebuild_from_rules(
-            &rules,
-            &[MeasurementRouteBinding::new(5, 10, new_target)],
-            &manifest,
-            &bitmap,
-        );
-        assert!(
-            !bitmap.is_watched(old_slot),
-            "a rebuilt generation must not retain its predecessor's slot"
-        );
-        assert!(bitmap.is_watched(new_slot));
+        let new_subscriptions = dispatcher
+            .rebuild_from_rules(&rules, &[MeasurementRouteBinding::new(5, 10, new_target)]);
+        assert_eq!(new_subscriptions, [new_target]);
 
         dispatcher.dispatch(PointWatchHint::new(1001, 0, 1.0, 1.0, 1));
         assert!(

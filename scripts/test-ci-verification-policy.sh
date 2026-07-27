@@ -100,7 +100,7 @@ for required_path in \
     'crates/aether-acquisition-port/**' \
     'crates/aether-dataplane/**' \
     'crates/aether-ports/**' \
-    'extensions/shm-bridge/**' \
+    'libs/aether-shm-bridge/**' \
     'services/history/**' \
     'services/io/**' \
     'services/uplink/**'; do

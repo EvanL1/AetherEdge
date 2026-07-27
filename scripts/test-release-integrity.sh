@@ -305,13 +305,12 @@ registry_manifests=(
     crates/aether-dataplane/Cargo.toml
     crates/aether-domain/Cargo.toml
     crates/aether-integration-contract/Cargo.toml
-    crates/aether-integration-control/Cargo.toml
     crates/aether-pack/Cargo.toml
     crates/aether-ports/Cargo.toml
     crates/aether-sdk/Cargo.toml
     crates/aether-testkit/Cargo.toml
-    extensions/shm-bridge/Cargo.toml
-    extensions/store-local/Cargo.toml
+    libs/aether-shm-bridge/Cargo.toml
+    libs/aether-store-local/Cargo.toml
 )
 for manifest in "${registry_manifests[@]}"; do
     assert_file_not_contains "$ROOT_DIR/$manifest" 'publish = false'
@@ -319,12 +318,11 @@ done
 
 echo "Testing crates outside the registry release set cannot be published..."
 private_manifests=(
-    extensions/http-data-processor/Cargo.toml
-    extensions/http-history-query/Cargo.toml
-    extensions/postgres-history/Cargo.toml
-    extensions/redis-bridge/Cargo.toml
-    extensions/sqlite-history-query/Cargo.toml
+    services/api/adapters/http-data-processor/Cargo.toml
+    services/api/adapters/sqlite-history-query/Cargo.toml
+    services/uplink/adapters/cloudlink-mqtt/Cargo.toml
     libs/aether-runtime-catalog/Cargo.toml
+    libs/aether-sqlite-topology/Cargo.toml
     tools/aether/Cargo.toml
     tools/simulator/Cargo.toml
 )

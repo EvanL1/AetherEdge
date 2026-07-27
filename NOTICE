@@ -1,10 +1,5 @@
 Aether
 Copyright 2025-2026 Aether contributors
 
-This distribution includes SunSpec model definitions derived from the
-SunSpec/models project (https://github.com/sunspec/models), licensed under the
-Apache License, Version 2.0. The vendored source and its license are retained
-under extensions/sunspec/models/.
-
 The names and trademarks of third parties are the property of their respective
 owners and do not imply endorsement of Aether.

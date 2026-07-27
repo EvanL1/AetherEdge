@@ -91,7 +91,7 @@ async fn main() -> anyhow::Result<()> {
 
     // One SQLite read transaction seeds the complete service-level topology.
     // The generation remains lazy until IO has committed both SHM planes.
-    let topology_snapshot = aether_store_local::load_sqlite_live_topology(&sqlite)
+    let topology_snapshot = aether_sqlite_topology::load_sqlite_live_topology(&sqlite)
         .await
         .map_err(|error| anyhow::anyhow!("Live topology load failed: {error}"))?;
     let live_topology = Arc::new(

@@ -38,7 +38,7 @@ if [ -n "$MOD_RS_FILES" ]; then
 fi
 echo -e "${GREEN}No mod.rs files found${NC}"
 
-# Enforce the AI-native core/extension dependency boundary.
+# Enforce the AI-native kernel dependency and composition boundaries.
 echo -e "${YELLOW}Checking architecture boundaries...${NC}"
 ./scripts/check-architecture.sh
 

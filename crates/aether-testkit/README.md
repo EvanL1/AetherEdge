@@ -1,7 +1,7 @@
 # aether-testkit
 
 Reusable conformance checks and deterministic test doubles for Aether
-extension authors.
+adapter authors.
 
 The suites verify live-state round trips and ordered batch reads, FIFO and
 acknowledgement behavior for durable outboxes, bounded/provenance-preserving

@@ -77,6 +77,7 @@ dependencies = [
  "aether-domain",
  "aether-ports",
  "aether-shm-bridge",
+ "aether-sqlite-topology",
  "aether-store-local",
  "anyhow",
  "arc-swap",
@@ -110,6 +111,7 @@ dependencies = [
  "aether-ports",
  "aether-shm-bridge",
  "aether-sqlite-history-query",
+ "aether-sqlite-topology",
  "aether-store-local",
  "anyhow",
  "arc-swap",
@@ -193,6 +195,7 @@ dependencies = [
  "aether-rules",
  "aether-runtime-catalog",
  "aether-shm-bridge",
+ "aether-sqlite-topology",
  "aether-store-local",
  "anyhow",
  "arc-swap",
@@ -372,6 +375,7 @@ dependencies = [
  "aether-domain",
  "aether-ports",
  "aether-shm-bridge",
+ "aether-sqlite-topology",
  "aether-store-local",
  "anyhow",
  "arc-swap",
@@ -394,47 +398,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "aether-home-assistant-bridge"
-version = "0.0.1"
-dependencies = [
- "aether-domain",
- "aether-integration-control",
- "aether-ports",
- "aether-testkit",
- "async-trait",
- "chrono",
- "futures",
- "serde",
- "serde_json",
- "sha2",
- "tokio",
- "tokio-tungstenite",
- "url",
-]
-
-[[package]]
 name = "aether-http-data-processor"
 version = "0.0.1"
 dependencies = [
  "aether-data-processing",
  "aether-domain",
  "aether-ports",
- "async-trait",
- "chrono",
- "reqwest",
- "serde",
- "serde_json",
- "tokio",
- "wiremock",
-]
-
-[[package]]
-name = "aether-http-history-query"
-version = "0.0.1"
-dependencies = [
- "aether-domain",
- "aether-ports",
- "aether-testkit",
  "async-trait",
  "chrono",
  "reqwest",
@@ -473,55 +442,32 @@ dependencies = [
 ]
 
 [[package]]
-name = "aether-integration-control"
-version = "0.0.1"
-dependencies = [
- "aether-cloudlink",
- "aether-domain",
- "aether-ports",
- "async-trait",
- "serde",
- "serde_json",
- "serde_json_canonicalizer",
- "sha2",
- "tempfile",
- "tokio",
- "uuid",
-]
-
-[[package]]
 name = "aether-io"
 version = "0.0.1"
 dependencies = [
  "aether-application",
  "aether-auth-jwt",
- "aether-cloudlink",
- "aether-cloudlink-mqtt",
  "aether-config",
  "aether-core",
  "aether-dataplane",
  "aether-domain",
- "aether-home-assistant-bridge",
- "aether-integration-control",
  "aether-ports",
  "aether-routing",
  "aether-runtime-catalog",
  "aether-shm-bridge",
+ "aether-sqlite-topology",
  "aether-store-local",
- "aether-sunspec",
  "anyhow",
  "arc-swap",
  "async-opcua",
  "async-trait",
  "axum",
- "base64",
  "btleplug",
  "bytes",
  "chrono",
  "clap",
  "common",
  "dashmap 6.2.1",
- "ed25519-dalek",
  "errors",
  "futures",
  "hex",
@@ -541,7 +487,6 @@ dependencies = [
  "tokio",
  "tokio-gpiod",
  "tokio-serial",
- "tokio-tungstenite",
  "tokio-util",
  "tower",
  "tracing",
@@ -550,7 +495,6 @@ dependencies = [
  "voltage_iec104",
  "voltage_j1939",
  "voltage_modbus",
- "zeroize",
 ]
 
 [[package]]
@@ -577,28 +521,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "aether-postgres-history"
-version = "0.0.1"
-dependencies = [
- "aether-domain",
- "aether-ports",
- "async-trait",
- "sqlx",
-]
-
-[[package]]
-name = "aether-redis-bridge"
-version = "0.0.1"
-dependencies = [
- "aether-domain",
- "aether-ports",
- "async-trait",
- "redis",
- "serde_json",
- "tokio",
-]
-
-[[package]]
 name = "aether-routing"
 version = "0.0.1"
 dependencies = [
@@ -620,7 +542,6 @@ dependencies = [
  "aether-dataplane",
  "aether-domain",
  "aether-ports",
- "aether-shm-bridge",
  "anyhow",
  "async-trait",
  "chrono",
@@ -704,18 +625,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "aether-sqlite-topology"
+version = "0.0.1"
+dependencies = [
+ "aether-domain",
+ "aether-ports",
+ "aether-shm-bridge",
+ "rustc-hash",
+ "sqlx",
+ "tokio",
+]
+
+[[package]]
 name = "aether-store-local"
 version = "0.0.1"
 dependencies = [
  "aether-domain",
- "aether-integration-control",
  "aether-ports",
- "aether-shm-bridge",
  "aether-testkit",
  "async-trait",
  "fs2",
  "libc",
- "rustc-hash",
  "serde",
  "serde_json",
  "sha2",
@@ -723,17 +653,6 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
- "uuid",
-]
-
-[[package]]
-name = "aether-sunspec"
-version = "0.0.1"
-dependencies = [
- "serde",
- "serde_json",
- "thiserror 2.0.18",
- "tracing",
 ]
 
 [[package]]
@@ -754,6 +673,7 @@ dependencies = [
  "aether-domain",
  "aether-ports",
  "aether-shm-bridge",
+ "aether-sqlite-topology",
  "aether-store-local",
  "anyhow",
  "arc-swap",
@@ -5304,12 +5224,8 @@ checksum = "8f72a05e828585856dacd553fba484c242c46e391fb0e58917c942ee9202915c"
 dependencies = [
  "futures-util",
  "log",
- "rustls",
- "rustls-pki-types",
  "tokio",
- "tokio-rustls",
  "tungstenite",
- "webpki-roots 0.26.11",
 ]
 
 [[package]]
@@ -5480,8 +5396,6 @@ dependencies = [
  "httparse",
  "log",
  "rand 0.9.2",
- "rustls",
- "rustls-pki-types",
  "sha1",
  "thiserror 2.0.18",
 ]

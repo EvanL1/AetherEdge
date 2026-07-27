@@ -917,12 +917,12 @@ impl ChannelConfig {
 
         // Protocol-specific parameter validation
         match self.core.protocol.as_str() {
-            "modbus_tcp" | "sunspec_tcp" => {
+            "modbus_tcp" => {
                 validate_required_string_parameter(self, result, "host");
                 validate_required_integer_parameter(self, result, "port", u64::from(u16::MAX));
                 validate_optional_timing_parameter(self, result, "read_timeout_ms");
             },
-            "modbus_rtu" | "sunspec_rtu" => {
+            "modbus_rtu" => {
                 validate_required_string_parameter(self, result, "device");
                 validate_required_integer_parameter(self, result, "baud_rate", u64::from(u32::MAX));
                 validate_optional_timing_parameter(self, result, "read_timeout_ms");
@@ -1156,20 +1156,12 @@ channels:
                 serde_json::json!({"host": "edge", "port": -1}),
             ),
             (
-                "sunspec_tcp",
-                serde_json::json!({"host": "edge", "port": 65_536}),
-            ),
-            (
                 "modbus_rtu",
                 serde_json::json!({"device": false, "baud_rate": 9_600}),
             ),
             (
                 "modbus_rtu",
                 serde_json::json!({"device": "/dev/ttyUSB0", "baud_rate": -1}),
-            ),
-            (
-                "sunspec_rtu",
-                serde_json::json!({"device": "/dev/ttyUSB0", "baud_rate": 4_294_967_296_u64}),
             ),
         ] {
             assert!(
@@ -1181,16 +1173,8 @@ channels:
         for (protocol, parameters) in [
             ("modbus_tcp", serde_json::json!({"host": "edge", "port": 1})),
             (
-                "sunspec_tcp",
-                serde_json::json!({"host": "edge", "port": 65_535}),
-            ),
-            (
                 "modbus_rtu",
                 serde_json::json!({"device": "/dev/ttyUSB0", "baud_rate": 1}),
-            ),
-            (
-                "sunspec_rtu",
-                serde_json::json!({"device": "/dev/ttyUSB0", "baud_rate": 4_294_967_295_u64}),
             ),
         ] {
             assert!(

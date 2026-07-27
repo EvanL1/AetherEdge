@@ -23,11 +23,11 @@ aether-application = { version = "0.0.1", path = "../aether-application" }
 aether-domain = { version = "0.0.1", path = "../aether-domain" }
 aether-pack = { version = "0.0.1", path = "../aether-pack" }
 aether-ports = { version = "0.0.1", path = "../aether-ports" }
-aether-store-local = { version = "0.0.1", path = "../../extensions/store-local", optional = true }
+aether-store-local = { version = "0.0.1", path = "../../libs/aether-store-local", optional = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
-aether-store-local = { path = "../../extensions/store-local" }
+aether-store-local = { path = "../../libs/aether-store-local" }
 async-trait = { workspace = true }
 tokio = { workspace = true }
 

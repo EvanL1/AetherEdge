@@ -27,7 +27,6 @@ readonly REQUIRED_FILES=(
 readonly SDK_SOURCE_PACKAGES=(
     "aether-domain:crates/aether-domain"
     "aether-integration-contract:crates/aether-integration-contract"
-    "aether-integration-control:crates/aether-integration-control"
     "aether-cloudlink:crates/aether-cloudlink"
     "aether-dataplane:crates/aether-dataplane"
     "aether-ports:crates/aether-ports"
@@ -36,13 +35,10 @@ readonly SDK_SOURCE_PACKAGES=(
     "aether-data-processing:crates/aether-data-processing"
     "aether-edge-sdk:crates/aether-sdk"
     "aether-testkit:crates/aether-testkit"
-    "aether-store-local:extensions/store-local"
-    "aether-shm-bridge:extensions/shm-bridge"
-    "aether-http-data-processor:extensions/http-data-processor"
-    "aether-http-history-query:extensions/http-history-query"
-    "aether-sqlite-history-query:extensions/sqlite-history-query"
-    "aether-redis-bridge:extensions/redis-bridge"
-    "aether-postgres-history:extensions/postgres-history"
+    "aether-store-local:libs/aether-store-local"
+    "aether-shm-bridge:libs/aether-shm-bridge"
+    "aether-http-data-processor:services/api/adapters/http-data-processor"
+    "aether-sqlite-history-query:services/api/adapters/sqlite-history-query"
 )
 
 # ADR-0022: the crates.io release set is aether-edge-sdk plus the transitive
@@ -58,7 +54,6 @@ readonly REGISTRY_RELEASE_PACKAGES=(
     aether-domain
     aether-edge-sdk
     aether-integration-contract
-    aether-integration-control
     aether-pack
     aether-ports
     aether-shm-bridge
@@ -212,7 +207,7 @@ while IFS= read -r manifest; do
         fail "$package must set publish=false in $manifest"
     fi
 done < <(
-    find workspace-hack crates extensions examples libs services tools firmware \
+    find workspace-hack crates examples libs services tools firmware \
         -name Cargo.toml -type f -print | sort
 )
 
@@ -286,10 +281,10 @@ else
             AETHER_UPLINK_CONTROL_TOKEN="$COMPOSE_VALIDATION_UPLINK_TOKEN" \
             docker compose -f docker-compose.yml --profile redis config --services
     ); then
-        fail "the optional Redis extension profile is invalid"
+        fail "the optional Redis infrastructure profile is invalid"
     fi
     if ! rg -q '^aether-redis$' <<<"$redis_services"; then
-        fail "the optional Redis extension profile is missing"
+        fail "the optional Redis infrastructure profile is missing"
     fi
 
     postgres_services=""

@@ -14,7 +14,7 @@ use aether_shm_bridge::{
     ChannelPointManifest, PhysicalPointAddress, ShmClientConfig, ShmReadTopologyGeneration,
     SlotSource,
 };
-use aether_store_local::{SqliteLiveTopologySnapshot, load_sqlite_live_topology};
+use aether_sqlite_topology::{SqliteLiveTopologySnapshot, load_sqlite_live_topology};
 use anyhow::Context;
 use arc_swap::ArcSwap;
 use chrono::{DateTime, Utc};

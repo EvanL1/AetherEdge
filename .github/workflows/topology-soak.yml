@@ -13,7 +13,7 @@ on:
       - crates/aether-dataplane/**
       - crates/aether-domain/**
       - crates/aether-ports/**
-      - extensions/shm-bridge/**
+      - libs/aether-shm-bridge/**
       - services/history/**
       - services/io/**
       - services/uplink/**

@@ -2,7 +2,8 @@
 
 ## Status
 
-Accepted and implemented on 2026-07-13.
+Accepted and implemented on 2026-07-13. ADR-0026 later moved the shared
+SQLite-to-SHM composition into `aether-sqlite-topology`; authority is unchanged.
 
 ## Context
 
@@ -173,7 +174,7 @@ topology.
 ## Verification
 
 ```bash
-cargo test -p aether-store-local --features sqlite-topology --tests
+cargo test -p aether-sqlite-topology --tests
 cargo test -p aether-io --test automatic_reconciliation_contract
 cargo test -p aether-io --test channel_mutator_contract
 cargo test -p aether-io --test shm_topology_projector_contract

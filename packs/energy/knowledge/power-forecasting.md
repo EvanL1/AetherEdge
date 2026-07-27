@@ -441,7 +441,7 @@ operational items:
 - The energy pack defines disabled load and PV `DataProcessingTask` revisions
   plus an uncommissioned example binding and contract fixtures.
 - `HistoryQuery` and `CovariateSource` expose bounded logical data to the
-  application. The default history extension owns a read-only SQLite handle;
+  application. The transitional API history adapter owns a read-only SQLite handle;
   the application contract and processor see only the port.
 - Production commissioning binds observed weather through `HistoryQuery` and
   future NWP through `CovariateSource`; the zero-service example uses
@@ -586,7 +586,7 @@ pass. The presence of its task YAML is not production readiness.
 - [Data Processing Contracts](../reference/data-processing-contracts.md) — complete request/result and failure semantics
 - [Energy Data Processing Assets](../../packs/energy/data-processing/README.md) — disabled load/PV tasks, binding, and conformance fixtures
 - [Load-Forecasting Processor](https://github.com/EvanL1/AetherEMS/tree/main/processors/load-forecasting) — downstream request-driven compatibility endpoint
-- [HTTP Data Processor](../../extensions/http-data-processor/README.md) — bounded Rust transport adapter
+- [HTTP Data Processor](../../services/api/adapters/http-data-processor/README.md) — bounded Rust transport adapter
 - [Data Flow](../concepts/data-flow.md) — current SHM, history, and command paths
 - [Control Strategies](control-strategies.md) — deterministic energy control behavior
 - [Safe Operations for AI Agents](safe-operations.md) — permission and confirmation boundaries

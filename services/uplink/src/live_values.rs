@@ -11,7 +11,7 @@ use aether_ports::{ChannelHealthObservation, PortError, PortErrorKind, PortResul
 use aether_shm_bridge::{
     PhysicalPointAddress, ShmClientConfig, ShmReadTopologyGeneration, SlotSource,
 };
-use aether_store_local::{SqliteLiveTopologySnapshot, load_sqlite_live_topology};
+use aether_sqlite_topology::{SqliteLiveTopologySnapshot, load_sqlite_live_topology};
 use arc_swap::ArcSwap;
 use regex::Regex;
 use sqlx::SqlitePool;
@@ -619,7 +619,7 @@ mod tests {
             .execute(&pool)
             .await
             .expect("insert sparse physical point");
-        let snapshot = aether_store_local::load_sqlite_live_topology(&pool)
+        let snapshot = aether_sqlite_topology::load_sqlite_live_topology(&pool)
             .await
             .expect("load one authoritative snapshot");
 
@@ -646,7 +646,7 @@ mod tests {
             channel_health_shm_path: health_path.to_string_lossy().into_owned(),
             ..Default::default()
         };
-        let snapshot = aether_store_local::load_sqlite_live_topology(&pool)
+        let snapshot = aether_sqlite_topology::load_sqlite_live_topology(&pool)
             .await
             .expect("load initial snapshot");
         let points = Arc::new(snapshot.point_manifest().clone());
@@ -737,7 +737,7 @@ mod tests {
             channel_health_shm_path: health_path.to_string_lossy().into_owned(),
             ..Default::default()
         };
-        let snapshot = aether_store_local::load_sqlite_live_topology(&pool)
+        let snapshot = aether_sqlite_topology::load_sqlite_live_topology(&pool)
             .await
             .expect("load initial snapshot");
         let points = Arc::new(snapshot.point_manifest().clone());

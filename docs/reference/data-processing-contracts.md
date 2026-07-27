@@ -9,7 +9,7 @@ updated: 2026-07-11
 This reference specifies the implemented version 1 contracts for **Aether Data
 Processing**. Rust domain values and orchestration live in `aether-domain`,
 `aether-ports`, and `aether-application`; `aether-data-processing` provides the
-strict transport-neutral JSON codec, and `extensions/http-data-processor`
+strict transport-neutral JSON codec, and `services/api/adapters/http-data-processor`
 implements the optional HTTP transport.
 
 The contract encodes one architectural rule: Aether assembles a complete input
@@ -1072,5 +1072,5 @@ activating a model or dispatching a control plan.
 - [JSON Schemas](../../contracts/data-processing/README.md) — strict machine-readable v1 wire guards
 - [Load-Forecasting Processor](https://github.com/EvanL1/AetherEMS/tree/main/processors/load-forecasting) — downstream energy-domain implementation
 - [Data Flow](../concepts/data-flow.md) — SHM and history authority
-- [HTTP Data Processor](../../extensions/http-data-processor/README.md) — bounded optional implementation of the v1 processor transport
+- [HTTP Data Processor](../../services/api/adapters/http-data-processor/README.md) — bounded optional implementation of the v1 processor transport
 - [HTTP API](http-api.md) — service-envelope conventions for Aether's application-facing APIs

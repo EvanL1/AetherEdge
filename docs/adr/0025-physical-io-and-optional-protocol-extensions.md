@@ -2,7 +2,9 @@
 
 ## Status
 
-Accepted and implemented on 2026-07-26.
+Accepted and implemented on 2026-07-26. Decision 4 and its in-repository
+extension migration are superseded by ADR-0026; the remaining Rust-only,
+physical-IO, host-network, routing, and simulation decisions stay in force.
 
 ## Context
 

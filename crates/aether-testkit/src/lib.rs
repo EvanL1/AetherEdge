@@ -1,4 +1,4 @@
-//! Reusable conformance checks and deterministic test doubles for extension authors.
+//! Reusable conformance checks and deterministic test doubles for adapter authors.
 
 use std::collections::VecDeque;
 use std::sync::Mutex;

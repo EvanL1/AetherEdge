@@ -15,9 +15,10 @@ common = { path = "../../libs/common", default-features = false, features = ["sq
 aether-domain = { path = "../../crates/aether-domain" }
 aether-application = { path = "../../crates/aether-application" }
 aether-ports = { path = "../../crates/aether-ports" }
-aether-auth-jwt = { path = "../../extensions/auth-jwt" }
-aether-store-local = { path = "../../extensions/store-local", features = ["sqlite-audit", "sqlite-topology"] }
-aether-shm-bridge = { path = "../../extensions/shm-bridge" }
+aether-auth-jwt = { path = "../../libs/aether-auth-jwt" }
+aether-store-local = { path = "../../libs/aether-store-local", features = ["sqlite-audit"] }
+aether-sqlite-topology = { path = "../../libs/aether-sqlite-topology" }
+aether-shm-bridge = { path = "../../libs/aether-shm-bridge" }
 
 # Async runtime
 tokio = { workspace = true }

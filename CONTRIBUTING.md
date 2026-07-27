@@ -3,7 +3,7 @@
 Thank you for helping improve Aether. Aether is an AI-native,
 industry-neutral IoT edge kernel and SDK. Its default runtime is a set of
 independently restartable processes that share live point state through SHM;
-Redis, PostgreSQL, and other external services are optional extensions.
+Redis, PostgreSQL, and other external services are absent from the default runtime.
 
 By participating in this project, you agree to follow the
 [Code of Conduct](CODE_OF_CONDUCT.md).
@@ -25,9 +25,7 @@ By participating in this project, you agree to follow the
 Contributions must preserve these invariants:
 
 ```text
-domain <- ports <- application <- runtime/interfaces
-             ^
-             +---- extensions
+domain <- ports <- application <- services/interfaces
 ```
 
 - The default build and runtime must work on one Linux edge host without
@@ -39,8 +37,8 @@ domain <- ports <- application <- runtime/interfaces
 - Production processes remain isolated and independently restartable. Do not
   collapse them merely to avoid defining an SHM or event-plane boundary.
 - Core crates depend on capability ports, not database vendors, web
-  frameworks, or concrete device protocols. Optional integrations belong
-  under `extensions/` and core crates never depend on them.
+  frameworks, or concrete device protocols. Third-party integrations are
+  downstream projects; this kernel has no in-tree extension layer.
 - AI is outside hard real-time and safety loops. Device control is
   deny-by-default, permission checked, confirmation aware, and audited.
 - Keep energy-specific concepts in an optional pack or adapter unless they are
@@ -99,7 +97,7 @@ cargo test --workspace --lib --bins
 `cargo-nextest` is optional; `scripts/quick-check.sh` uses it when installed
 and otherwise falls back to `cargo test`. Tests requiring an external service
 must be clearly marked and kept out of the default verification path. Run an
-extension-specific suite only when your change affects that extension.
+adapter-specific suite only when your change affects that adapter.
 
 Rust code uses edition 2024. `mod.rs` files are forbidden. Runtime libraries
 and binaries return errors for recoverable failures and must not introduce

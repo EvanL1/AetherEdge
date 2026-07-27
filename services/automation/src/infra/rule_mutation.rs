@@ -26,6 +26,7 @@ pub struct SqliteRuleMutator<S: StateStore> {
     scheduler: Arc<RuleScheduler<S>>,
     topology: Option<Arc<AutomationTopologyHandle>>,
     point_watch_readiness: Option<Arc<PointWatchReadiness>>,
+    point_watch_bitmap: Option<Arc<aether_shm_bridge::SubscriptionBitmap>>,
     manifest_source: Option<aether_shm_bridge::ChannelPointManifestSource>,
 }
 
@@ -38,6 +39,7 @@ impl<S: StateStore + 'static> SqliteRuleMutator<S> {
             scheduler,
             topology: None,
             point_watch_readiness: None,
+            point_watch_bitmap: None,
             manifest_source: None,
         }
     }
@@ -48,10 +50,12 @@ impl<S: StateStore + 'static> SqliteRuleMutator<S> {
         mut self,
         topology: Arc<AutomationTopologyHandle>,
         point_watch_readiness: Arc<PointWatchReadiness>,
+        point_watch_bitmap: Option<Arc<aether_shm_bridge::SubscriptionBitmap>>,
         manifest_source: aether_shm_bridge::ChannelPointManifestSource,
     ) -> Self {
         self.topology = Some(topology);
         self.point_watch_readiness = Some(point_watch_readiness);
+        self.point_watch_bitmap = point_watch_bitmap;
         self.manifest_source = Some(manifest_source);
         self
     }
@@ -78,12 +82,14 @@ impl<S: StateStore + 'static> SqliteRuleMutator<S> {
             .await
             .map_err(scheduler_reload_error)?;
         let generation = view.generation();
-        generation.rebuild_point_watch(&self.scheduler).await;
+        let point_watch_rebuilt = generation
+            .rebuild_point_watch(&self.scheduler, self.point_watch_bitmap.as_deref())
+            .await;
         let manifest_matches = manifest_source.load().is_some_and(|manifest| {
             manifest.layout_hash() == generation.point_manifest().layout_hash()
                 && manifest.slot_count() == generation.point_manifest().slot_count()
         });
-        if manifest_matches {
+        if point_watch_rebuilt && manifest_matches {
             readiness.mark_ready(generation.sequence());
             Ok(RuleRuntimeRefresh::Refreshed)
         } else {

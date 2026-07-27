@@ -26,7 +26,7 @@ adapter.
 
 See the [normative contract reference](../../docs/reference/data-processing-contracts.md),
 [JSON Schemas](../../contracts/data-processing/README.md), and optional
-[HTTP adapter](../../extensions/http-data-processor/README.md).
+[HTTP adapter](../../services/api/adapters/http-data-processor/README.md).
 
 ```bash
 cargo test -p aether-data-processing

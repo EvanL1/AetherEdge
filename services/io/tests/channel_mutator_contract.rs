@@ -317,18 +317,6 @@ async fn governed_modbus_create_rejects_fallback_and_truncation_inputs_before_co
             true,
         ),
         protocol_definition(
-            32,
-            "sunspec_tcp",
-            BTreeMap::from([
-                (
-                    "host".to_owned(),
-                    ChannelParameterValue::String("edge".to_owned()),
-                ),
-                ("port".to_owned(), ChannelParameterValue::Integer(65_536)),
-            ]),
-            true,
-        ),
-        protocol_definition(
             33,
             "modbus_rtu",
             BTreeMap::from([
@@ -349,21 +337,6 @@ async fn governed_modbus_create_rejects_fallback_and_truncation_inputs_before_co
                     ChannelParameterValue::String("/dev/ttyUSB0".to_owned()),
                 ),
                 ("baud_rate".to_owned(), ChannelParameterValue::Integer(-1)),
-            ]),
-            true,
-        ),
-        protocol_definition(
-            35,
-            "sunspec_rtu",
-            BTreeMap::from([
-                (
-                    "device".to_owned(),
-                    ChannelParameterValue::String("/dev/ttyUSB0".to_owned()),
-                ),
-                (
-                    "baud_rate".to_owned(),
-                    ChannelParameterValue::Integer(4_294_967_296),
-                ),
             ]),
             true,
         ),

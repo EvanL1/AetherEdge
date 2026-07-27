@@ -391,18 +391,8 @@ impl ChannelManager {
                 self.create_modbus_channel_impl(channel_id, runtime_config, base_config)
                     .await
             },
-            #[cfg(feature = "sunspec")]
-            "sunspec_tcp" => {
-                self.create_modbus_channel_impl(channel_id, runtime_config, base_config)
-                    .await
-            },
             #[cfg(feature = "modbus")]
             "modbus_rtu" => {
-                self.create_modbus_rtu_channel_impl(channel_id, runtime_config, base_config)
-                    .await
-            },
-            #[cfg(feature = "sunspec")]
-            "sunspec_rtu" => {
                 self.create_modbus_rtu_channel_impl(channel_id, runtime_config, base_config)
                     .await
             },
@@ -464,8 +454,6 @@ impl ChannelManager {
                 let mut supported = Vec::new();
                 #[cfg(feature = "modbus")]
                 supported.extend(["modbus_tcp", "modbus_rtu"]);
-                #[cfg(feature = "sunspec")]
-                supported.extend(["sunspec_tcp", "sunspec_rtu"]);
                 #[cfg(all(target_os = "linux", feature = "gpio"))]
                 supported.push("gpio/di_do");
                 #[cfg(all(feature = "can", target_os = "linux"))]

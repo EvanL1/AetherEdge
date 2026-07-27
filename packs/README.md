@@ -4,9 +4,9 @@ Domain packs contain declarative models, protocol mappings, rules, knowledge,
 and AI evaluations for one industry. They cannot add Rust dependencies to the
 edge kernel.
 
-An extension adds executable capability; a pack adds domain knowledge. For
-example, a Modbus driver is an extension, while a PCS register mapping and SOC
-control rule belong to the energy pack.
+A Pack adds declarative domain knowledge and never executable capability. For
+example, a Modbus driver belongs to IO or a downstream static plugin, while a
+PCS register mapping and SOC control rule belong to an energy Pack.
 
 Official distributions may package one or more packs over a compatible Aether
 release. AetherEMS is the reference energy distribution; see

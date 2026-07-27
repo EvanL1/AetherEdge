@@ -86,5 +86,5 @@ the existing service are documented in
 [Power Forecasting](knowledge/power-forecasting.md). Installing this
 pack never starts a model or contacts a remote processor by itself. The
 opt-in implementations are the bounded
-[HTTP adapter](../../extensions/http-data-processor/README.md) and
+[HTTP adapter](../../services/api/adapters/http-data-processor/README.md) and
 [downstream Load-Forecasting processor](https://github.com/EvanL1/AetherEMS/tree/main/processors/load-forecasting).

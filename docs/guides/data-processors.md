@@ -431,7 +431,7 @@ must commission a quality-bearing source adapter before production.
 ## Related pages
 
 - [Data Processing Contracts](../reference/data-processing-contracts.md) — v1 wire contracts and validation rules
-- [HTTP Data Processor](../../extensions/http-data-processor/README.md) — bounded local/remote adapter and composition API
+- [HTTP Data Processor](../../services/api/adapters/http-data-processor/README.md) — bounded local/remote adapter and composition API
 - [AetherEMS Power Forecasting](https://github.com/EvanL1/AetherEMS/blob/main/packs/energy/knowledge/power-forecasting.md) — the first downstream task and processor
 - [Load-Forecasting Processor](https://github.com/EvanL1/AetherEMS/tree/main/processors/load-forecasting) — downstream energy-domain `/v1/process` implementation
 - [JSON Schemas](../../contracts/data-processing/README.md) — strict v1 transport validation

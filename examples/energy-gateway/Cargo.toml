@@ -21,6 +21,6 @@ thiserror = { workspace = true }
 workspace = true
 
 [dev-dependencies]
-aether-store-local = { path = "../../extensions/store-local" }
+aether-store-local = { path = "../../libs/aether-store-local" }
 tempfile = { workspace = true }
 tokio = { workspace = true }

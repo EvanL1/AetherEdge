@@ -1,4 +1,4 @@
-//! Capability-oriented ports implemented by Aether extensions.
+//! Capability-oriented ports implemented by kernel or downstream adapters.
 
 mod alarm;
 mod audit;

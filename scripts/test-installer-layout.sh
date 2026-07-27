@@ -129,7 +129,7 @@ printf 'JWT_SECRET_KEY=%064d\n' 0 > "$timescale_env"
 timescale_output=$(ensure_compose_timescaledb_password "$timescale_env")
 timescale_password=$(sed -n 's/^TIMESCALEDB_PASSWORD=//p' "$timescale_env")
 [[ ${#timescale_password} -ge 32 ]] \
-    || fail "TimescaleDB extension password was not generated strongly"
+    || fail "TimescaleDB service password was not generated strongly"
 [[ "$timescale_output" != *"$timescale_password"* ]] \
     || fail "Docker installer printed the TimescaleDB password"
 [[ "$(file_mode "$timescale_env")" == 600 ]] \
@@ -681,14 +681,14 @@ assert_contains "$BARE_METAL_INSTALLER" 'AETHER_BARE_METAL_INSTALLER_FUNCTIONS_O
         "$redis_bundle/systemd/aether-redis.service"
     chmod +x "$redis_bundle/bin/redis-server" "$redis_bundle/bin/redis-cli"
     [[ "$(detect_bundled_redis "$redis_bundle")" == true ]] \
-        || fail "a complete bare-metal Redis extension bundle was not detected"
+        || fail "a complete bare-metal Redis infrastructure bundle was not detected"
 
     partial_redis_bundle="$TEST_ROOT/bare-partial-redis-bundle"
     mkdir -p "$partial_redis_bundle/bin"
     touch "$partial_redis_bundle/bin/redis-server"
     chmod +x "$partial_redis_bundle/bin/redis-server"
     if detect_bundled_redis "$partial_redis_bundle" >/dev/null; then
-        fail "an incomplete bare-metal Redis extension bundle was accepted"
+        fail "an incomplete bare-metal Redis infrastructure bundle was accepted"
     fi
 
     non_executable_redis_bundle="$TEST_ROOT/bare-non-executable-redis-bundle"
@@ -776,7 +776,7 @@ timescale_guard_line=$(grep -nF 'if [[ -f "docker/aether-timescaledb.tar.gz" ]]'
 timescale_directory_line=$(grep -nF 'TIMESCALE_DATA_DIR=$(resolve_compose_timescale_data_directory)' "$DOCKER_INSTALLER" | head -1 | cut -d: -f1)
 [[ -n "$timescale_guard_line" && -n "$timescale_directory_line" \
     && "$timescale_guard_line" -lt "$timescale_directory_line" ]] \
-    || fail "TimescaleDB data directory creation must be guarded by the selected extension artifact"
+    || fail "TimescaleDB data directory creation must be guarded by the selected optional service artifact"
 assert_not_contains "$DOCKER_INSTALLER" '${AETHER_DATA_PATH:-/extp}/timescaledb/data'
 assert_contains "$ROOT_DIR/docker-compose.yml" '${AETHER_TIMESCALE_DATA_PATH:-./data/timescaledb/data}'
 assert_not_contains "$ROOT_DIR/docker-compose.yml" 'TIMESCALEDB_PASSWORD:-postgres'
@@ -811,7 +811,7 @@ assert_not_contains "$INSTALLER_BUILDER" 'former Python'
 assert_not_contains "$INSTALLER_BUILDER" '"py"'
 if bash "$INSTALLER_BUILDER" v0-test amd64 --services=redis \
     >/dev/null 2>&1; then
-    fail "Docker installer builder accepted an extension-only fresh package"
+    fail "Docker installer builder accepted an optional-service-only fresh package"
 fi
 for retired_python_group in py dev-py; do
     if bash "$INSTALLER_BUILDER" v0-test amd64 --services="$retired_python_group" \
@@ -847,7 +847,7 @@ rollback_body=$(awk '
     in_finish { print }
 ' "$BARE_METAL_INSTALLER")
 if grep -Fq '_INCLUDED' <<< "$rollback_body"; then
-    fail "bare-metal rollback derives previous extension state from the incoming bundle"
+    fail "bare-metal rollback derives previous optional-service state from the incoming bundle"
 fi
 grep -Fq 'for unit in aether-redis.service aether.target; do' \
     <<< "$rollback_body" \
@@ -864,65 +864,10 @@ bare_commit_line=$(grep -nF 'INSTALL_COMPLETED=true' "$BARE_METAL_INSTALLER" | t
 [[ "$bare_health_line" -lt "$bare_commit_line" ]] \
     || fail "bare-metal install commits before every expected service is healthy"
 
-echo "Testing Home Assistant Compose configuration is explicit, private, persistent, and default-off..."
-home_assistant_compose_section=$(awk '
-    /^  aether-io:/ { in_io = 1 }
-    in_io && /^  aether-automation:/ { exit }
-    in_io { print }
-' "$ROOT_DIR/docker-compose.yml")
-for disabled_switch in \
-    AETHER_HOME_ASSISTANT_ENABLED \
-    AETHER_HOME_ASSISTANT_CLOUDLINK_ENABLED \
-    AETHER_HOME_ASSISTANT_CONTROL_ENABLED; do
-    grep -Fq -- "- ${disabled_switch}=\${${disabled_switch}:-false}" \
-        <<< "$home_assistant_compose_section" \
-        || fail "$disabled_switch must be explicitly default-off in aether-io Compose"
-done
-for secret_binding in \
-    'AETHER_HOME_ASSISTANT_ACCESS_TOKEN_REF=env:AETHER_HOME_ASSISTANT_TOKEN' \
-    'AETHER_HOME_ASSISTANT_CLOUDLINK_CLOUD_PUBLIC_KEY_REF=env:AETHER_HOME_ASSISTANT_CLOUDLINK_CLOUD_PUBLIC_KEY' \
-    'AETHER_HOME_ASSISTANT_CLOUDLINK_GATEWAY_SIGNING_KEY_REF=env:AETHER_HOME_ASSISTANT_CLOUDLINK_GATEWAY_SIGNING_KEY' \
-    'AETHER_HOME_ASSISTANT_CLOUDLINK_MQTT_PASSWORD_REF=env:AETHER_HOME_ASSISTANT_CLOUDLINK_MQTT_PASSWORD_SECRET' \
-    'AETHER_HOME_ASSISTANT_CONTROL_CLOUD_PUBLIC_KEY_REF=env:AETHER_HOME_ASSISTANT_CONTROL_CLOUD_PUBLIC_KEY'; do
-    grep -Fq -- "- $secret_binding" <<< "$home_assistant_compose_section" \
-        || fail "aether-io Compose is missing fixed secret reference $secret_binding"
-done
-for secret_value in \
-    AETHER_HOME_ASSISTANT_TOKEN \
-    AETHER_HOME_ASSISTANT_CLOUDLINK_CLOUD_PUBLIC_KEY \
-    AETHER_HOME_ASSISTANT_CLOUDLINK_GATEWAY_SIGNING_KEY \
-    AETHER_HOME_ASSISTANT_CLOUDLINK_MQTT_PASSWORD_SECRET \
-    AETHER_HOME_ASSISTANT_CONTROL_CLOUD_PUBLIC_KEY; do
-    grep -Fq -- "- ${secret_value}=\${${secret_value}:-}" \
-        <<< "$home_assistant_compose_section" \
-        || fail "aether-io Compose does not explicitly pass secret value $secret_value"
-done
-if grep -Eq \
-    '^[[:space:]]*- AETHER_HOME_ASSISTANT_CONTROL_EDGE_(KEY_ID|SIGNING_KEY_REF|SIGNING_KEY)=' \
-    <<< "$home_assistant_compose_section"; then
-    fail "aether-io Compose injects a deprecated second Edge receipt key setting"
-fi
-if grep -Eq '^[[:space:]]*env_file:' <<< "$home_assistant_compose_section"; then
-    fail "aether-io Compose must not import an entire environment file"
-fi
-if grep -Eq '^[[:space:]]*- AETHER_HOME_ASSISTANT_ACCESS_TOKEN=' \
-    <<< "$home_assistant_compose_section"; then
-    fail "aether-io Compose passes the forbidden plaintext Home Assistant token setting"
-fi
-if grep -Eq '^[[:space:]]*- AETHER_HOME_ASSISTANT_CLOUDLINK_MQTT_PASSWORD=' \
-    <<< "$home_assistant_compose_section"; then
-    fail "aether-io Compose passes the forbidden plaintext MQTT password setting"
-fi
-grep -Fq -- \
-    '- AETHER_HOME_ASSISTANT_CLOUDLINK_RUNTIME_CONFIG_DIR=/app/config' \
-    <<< "$home_assistant_compose_section" \
-    || fail "CloudLink must verify the feature-exact manifest baked into /app/config"
-home_assistant_path_lines=$(grep -E \
-    'AETHER_HOME_ASSISTANT_.*PATH=' <<< "$home_assistant_compose_section")
-[[ -n "$home_assistant_path_lines" ]] \
-    || fail "aether-io Compose is missing persistent Home Assistant paths"
-if grep -Ev '=/app/data/' <<< "$home_assistant_path_lines" >/dev/null; then
-    fail "every Home Assistant Compose file/directory path must live under /app/data"
+echo "Testing extracted Home Assistant integration is absent from the kernel distribution..."
+if grep -Fq 'AETHER_HOME_ASSISTANT_' "$ROOT_DIR/docker-compose.yml" \
+    || grep -Fq 'AETHER_HOME_ASSISTANT_' "$ROOT_DIR/.env.example"; then
+    fail "kernel distribution still exposes extracted Home Assistant settings"
 fi
 assert_contains "$ROOT_DIR/scripts/systemd/aether-io.service" \
     'EnvironmentFile=/etc/aether/aether.env'

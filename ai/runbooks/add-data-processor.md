@@ -11,11 +11,11 @@
    application code.
 4. Reuse `LiveState` and `HistoryQuery`. Never give a processor
    `LiveStateWriter`, database credentials, SHM paths, or internal service URLs.
-   The default history implementation is the read-only SQLite adapter; use the
-   HTTP history adapter only for an upstream pre-aligned `last/reject` grid.
-5. Implement the smallest `DataProcessor` adapter under `extensions/` or in the
-   owning distribution. Keep HTTP, Python, ONNX, cloud, and vendor dependencies
-   out of core crates.
+   The current API composition uses a transitional read-only SQLite adapter;
+   do not add another direct database reader.
+5. Implement the smallest `DataProcessor` adapter in the owning service or a
+   downstream distribution. Keep HTTP, Python, ONNX, cloud, and vendor
+   dependencies out of core crates.
 6. Pass the `aether-testkit` data-processor conformance suite, including request
    identity, input digest, finite output, timeout, unavailable, and malformed
    result cases.

@@ -8,8 +8,6 @@ use aether_ports::{ChannelRevision, PortErrorKind};
 use axum::http::{HeaderMap, StatusCode, header};
 
 use crate::dto::{AppError, ChannelCompletionAudit, ChannelCompletionAuditState, ErrorInfo};
-#[cfg(feature = "sunspec")]
-use crate::point_topology::PointTopologyAuthorization;
 use crate::point_topology::{
     PointTopologyAcceptance, PointTopologyApplication, PointTopologyMutation,
 };
@@ -28,30 +26,6 @@ pub struct PointTopologyHttpBoundary {
 struct GovernedPointTopology {
     application: Arc<PointTopologyApplication>,
     access_authenticator: Arc<AccessTokenAuthenticator>,
-}
-
-/// One-shot invocation authorized before a handler performs external I/O.
-///
-/// Private fields prevent handlers from forging the captured application
-/// authorization or substituting request metadata after device discovery.
-#[cfg(feature = "sunspec")]
-pub(crate) struct PreauthorizedPointTopologyInvocation {
-    application: Arc<PointTopologyApplication>,
-    authorization: PointTopologyAuthorization,
-}
-
-#[cfg(feature = "sunspec")]
-impl PreauthorizedPointTopologyInvocation {
-    /// Consumes the lease and invokes the one audited/CAS-fenced command.
-    pub async fn mutate(
-        self,
-        mutation: PointTopologyMutation,
-    ) -> Result<PointTopologyAcceptance, AppError> {
-        self.application
-            .mutate_authorized(self.authorization, mutation)
-            .await
-            .map_err(application_error)
-    }
 }
 
 impl PointTopologyHttpBoundary {
@@ -91,31 +65,6 @@ impl PointTopologyHttpBoundary {
             .mutate(&context, expected_revision, mutation)
             .await
             .map_err(application_error)
-    }
-
-    /// Authenticates and authorizes one future mutation before external I/O.
-    ///
-    /// The same captured request context and revision are consumed by the
-    /// eventual application command; no credential or confirmation header is
-    /// parsed again after discovery.
-    #[cfg(feature = "sunspec")]
-    pub(crate) fn preauthorize(
-        &self,
-        headers: &HeaderMap,
-    ) -> Result<PreauthorizedPointTopologyInvocation, AppError> {
-        let governed = self.inner.as_ref().ok_or_else(|| {
-            AppError::service_unavailable("Point-topology application boundary is unavailable")
-        })?;
-        let context = request_context(governed, headers);
-        let expected_revision = expected_revision(headers)?;
-        let authorization = governed
-            .application
-            .preauthorize(&context, expected_revision)
-            .map_err(application_error)?;
-        Ok(PreauthorizedPointTopologyInvocation {
-            application: Arc::clone(&governed.application),
-            authorization,
-        })
     }
 }
 

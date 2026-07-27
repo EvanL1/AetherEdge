@@ -6,6 +6,10 @@ Accepted for an **experimental edge implementation** on 2026-07-15 and amended
 the same day for initial repository coordination. ADR-0018 supersedes the
 co-authority language with one pinned public AetherContracts authority.
 
+ADR-0026 subsequently assigns all edge CloudLink transport ownership to
+`aether-uplink` and forbids IO or an in-tree extension layer from owning a
+second broker session. The protocol and migration gates below remain in force.
+
 Both products now pin AetherContracts `v0.1.0-alpha.3` and consume the same
 complete alpha.3 adoption closure with no pending imports. This proves
 distribution integrity and fixture execution. A real Mosquitto dual-product

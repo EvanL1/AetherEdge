@@ -406,12 +406,11 @@ mod tests {
     use super::*;
     use crate::protocols::gateway::config::ChannelModeConfig;
 
-    #[test]
-    fn retired_virtual_protocol_is_rejected_explicitly() {
+    fn assert_protocol_is_unsupported(protocol: &str) {
         let config = ChannelConfig {
             id: 7,
-            name: "retired simulation channel".to_string(),
-            protocol: "virtual".to_string(),
+            name: "unavailable protocol channel".to_string(),
+            protocol: protocol.to_string(),
             enabled: false,
             mode: ChannelModeConfig::Polling,
             poll_interval_ms: None,
@@ -420,9 +419,24 @@ mod tests {
         };
 
         let error = match create_channel(&config) {
-            Ok(_) => panic!("retired virtual protocol unexpectedly created a runtime"),
+            Ok(_) => panic!("unavailable protocol unexpectedly created a runtime"),
             Err(error) => error,
         };
-        assert!(error.to_string().contains("Unsupported protocol: virtual"));
+        assert!(
+            error
+                .to_string()
+                .contains(&format!("Unsupported protocol: {protocol}"))
+        );
+    }
+
+    #[test]
+    fn retired_virtual_protocol_is_rejected_explicitly() {
+        assert_protocol_is_unsupported("virtual");
+    }
+
+    #[test]
+    fn external_sunspec_plugin_is_rejected_when_absent() {
+        assert_protocol_is_unsupported("sunspec_tcp");
+        assert_protocol_is_unsupported("sunspec_rtu");
     }
 }

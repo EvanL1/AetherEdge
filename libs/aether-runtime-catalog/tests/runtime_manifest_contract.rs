@@ -67,84 +67,37 @@ fn trimmed_manifest_does_not_advertise_uncompiled_protocols() {
 }
 
 #[test]
-fn sunspec_protocols_require_the_explicit_extension_feature() {
-    let modbus_only = linux_manifest(&["modbus"]);
-    assert!(
-        !modbus_only
-            .protocols()
-            .any(|protocol| protocol.starts_with("sunspec_"))
-    );
-
-    let enabled = linux_manifest(&["sunspec"]);
-    assert!(
-        enabled
-            .protocols()
-            .any(|protocol| protocol == "sunspec_tcp")
-    );
-    assert!(
-        enabled
-            .protocols()
-            .any(|protocol| protocol == "sunspec_rtu")
-    );
-    assert!(
-        enabled
-            .cargo_features()
-            .any(|feature| feature == "aether-io/modbus")
-    );
-    assert!(
-        enabled
-            .cargo_features()
-            .any(|feature| feature == "aether-io/sunspec")
-    );
+fn retired_in_tree_sunspec_feature_is_rejected() {
+    let error = KernelRuntimeManifest::from_io_features(
+        env!("CARGO_PKG_VERSION"),
+        "aarch64-unknown-linux-musl",
+        ["sunspec"],
+    )
+    .expect_err("SunSpec is supplied only by downstream IO compositions");
+    assert!(matches!(
+        error,
+        RuntimeManifestError::UnknownIoFeature { ref id } if id == "sunspec"
+    ));
 }
 
 #[test]
-fn integration_cloudlink_protocol_requires_its_explicit_io_feature() {
-    let home_assistant_only = linux_manifest(&["home-assistant"]);
-    assert!(
-        !home_assistant_only
-            .protocols()
-            .any(|protocol| protocol == "aether.cloudlink.integration.v1alpha1")
-    );
-
-    let enabled = linux_manifest(&["home-assistant-cloudlink"]);
-    assert!(
-        enabled
-            .protocols()
-            .any(|protocol| protocol == "aether.cloudlink.integration.v1alpha1")
-    );
-    assert!(
-        enabled
-            .cargo_features()
-            .any(|feature| feature == "aether-io/home-assistant-cloudlink")
-    );
-}
-
-#[test]
-fn integration_control_protocol_requires_its_explicit_default_off_io_feature() {
-    let read_only = linux_manifest(&["home-assistant-cloudlink"]);
-    assert!(
-        !read_only
-            .protocols()
-            .any(|protocol| protocol == "aether.cloudlink.integration-control.v1alpha1")
-    );
-
-    let enabled = linux_manifest(&["home-assistant-integration-control"]);
-    assert!(
-        enabled
-            .protocols()
-            .any(|protocol| protocol == "aether.cloudlink.integration-control.v1alpha1")
-    );
-    assert!(
-        enabled
-            .protocols()
-            .any(|protocol| protocol == "aether.cloudlink.integration.v1alpha1")
-    );
-    assert!(
-        enabled
-            .cargo_features()
-            .any(|feature| feature == "aether-io/home-assistant-integration-control")
-    );
+fn extracted_home_assistant_features_are_rejected() {
+    for feature in [
+        "home-assistant",
+        "home-assistant-cloudlink",
+        "home-assistant-integration-control",
+    ] {
+        let error = KernelRuntimeManifest::from_io_features(
+            env!("CARGO_PKG_VERSION"),
+            "aarch64-unknown-linux-musl",
+            [feature],
+        )
+        .expect_err("Home Assistant is not part of the kernel IO composition");
+        assert!(matches!(
+            error,
+            RuntimeManifestError::UnknownIoFeature { ref id } if id == feature
+        ));
+    }
 }
 
 #[test]

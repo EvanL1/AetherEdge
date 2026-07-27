@@ -251,7 +251,7 @@ ensure_compose_timescaledb_password() {
     fi
 
     persist_compose_env_value "$env_file" "TIMESCALEDB_PASSWORD" "$(generate_jwt_secret)"
-    echo "  Generated a private TimescaleDB extension password (value not printed)."
+    echo "  Generated a private TimescaleDB service password (value not printed)."
 }
 
 print_bootstrap_admin_instructions() {
@@ -1704,7 +1704,7 @@ TIMESCALE_DATA_DIR=""
 if [[ -f "docker/aether-timescaledb.tar.gz" ]]; then
     TIMESCALE_DATA_DIR=$(resolve_compose_timescale_data_directory)
     require_empty_or_absent_directory \
-        "$TIMESCALE_DATA_DIR" "TimescaleDB extension data root"
+        "$TIMESCALE_DATA_DIR" "TimescaleDB data root"
 fi
 
 # Arm rollback before capturing data or changing persistent secrets, the
@@ -1718,7 +1718,7 @@ require_empty_or_absent_directory "$DATA_DIR" "Aether data root"
 require_empty_or_absent_directory "$LOG_DIR" "Aether log root"
 if [[ -n "$TIMESCALE_DATA_DIR" ]]; then
     require_empty_or_absent_directory \
-        "$TIMESCALE_DATA_DIR" "TimescaleDB extension data root"
+        "$TIMESCALE_DATA_DIR" "TimescaleDB data root"
 fi
 snapshot_runtime_data_for_rollback
 snapshot_installed_cli_for_rollback
@@ -1855,20 +1855,20 @@ echo "Creating certificate directory for uplink..."
 $SUDO mkdir -p "$DATA_DIR/cert"
 echo -e "${GREEN}✓ Certificate directory ready: $DATA_DIR/cert${NC}"
 
-# PostgreSQL history is an extension. Do not create or chown its storage path
+# PostgreSQL history is an optional service backend. Do not create or chown its storage path
 # unless the selected installer bundle actually contains that profile image.
 if [[ -f "docker/aether-timescaledb.tar.gz" ]]; then
     [[ -n "$TIMESCALE_DATA_DIR" ]] || {
         echo "TimescaleDB storage path was not resolved during preflight" >&2
         exit 1
     }
-    echo "Creating TimescaleDB data directory for the selected postgres-storage extension..."
+    echo "Creating TimescaleDB data directory for the selected postgres-storage backend..."
     $SUDO mkdir -p "$TIMESCALE_DATA_DIR"
     validate_compose_data_directory "$TIMESCALE_DATA_DIR"
     $SUDO chown -R 70:70 "$TIMESCALE_DATA_DIR" 2>/dev/null || true
     echo -e "${GREEN}✓ TimescaleDB data directory ready: $TIMESCALE_DATA_DIR${NC}"
 else
-    echo -e "${BLUE}ℹ PostgreSQL history extension not selected; skipping TimescaleDB storage${NC}"
+    echo -e "${BLUE}ℹ PostgreSQL history backend not selected; skipping TimescaleDB storage${NC}"
 fi
 
 # Create a symlink if logs are external
@@ -2001,7 +2001,7 @@ if [[ -n "$TIMESCALE_DATA_DIR" ]]; then
     persist_compose_env_value \
         "$ENV_FILE" AETHER_TIMESCALE_DATA_PATH "$TIMESCALE_DATA_DIR"
 else
-    # Remove a stale extension-only setting without touching other secrets.
+    # Remove a stale optional-service setting without touching other secrets.
     ENV_STAGE=$($SUDO mktemp "$INSTALL_DIR/.env.new.XXXXXX")
     if ! $SUDO awk '!/^AETHER_TIMESCALE_DATA_PATH=/' "$ENV_FILE" \
         | $SUDO tee "$ENV_STAGE" >/dev/null \

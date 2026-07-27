@@ -4,8 +4,6 @@
 
 use super::*;
 use crate::dto::{AdjustmentRequest, ControlRequest};
-#[cfg(feature = "sunspec")]
-use axum::Extension;
 use axum::{
     body::Body,
     http::{Request, Response, StatusCode},
@@ -13,16 +11,7 @@ use axum::{
 use serde_json::json;
 use sqlx::SqlitePool;
 use std::collections::{BTreeMap, HashMap};
-#[cfg(feature = "sunspec")]
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
-
-#[cfg(feature = "sunspec")]
-use crate::api::handlers::provision_handlers::{
-    SunSpecDiscoveryBoundary, SunSpecDiscoveryPort, provision_channel_handler,
-};
-#[cfg(feature = "sunspec")]
-use crate::protocols::adapters::modbus_config::ModbusChannelParamsConfig;
 
 use aether_core::PointType;
 use aether_ports::{
@@ -37,48 +26,6 @@ use tower::util::ServiceExt; // for `oneshot` and `ready`
 const TEST_JWT_SECRET: &str = "0123456789abcdef0123456789abcdef";
 const ADMIN_ACCESS_TOKEN: &str = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyX2lkIjo3LCJyb2xlIjoiQWRtaW4iLCJ0eXBlIjoiYWNjZXNzIiwiaWF0IjoxNzAwMDAwMDAwLCJleHAiOjQxMDI0NDQ4MDB9.JtjQvDBo7j0bLOxwed6yC9-M9qFCloc4H2Dt0LjzF9E";
 const TEST_REQUEST_ID: &str = "018f0000-0000-7000-8000-000000000041";
-
-#[cfg(feature = "sunspec")]
-#[derive(Default)]
-struct RecordingSunSpecDiscovery {
-    connect_calls: AtomicUsize,
-    read_calls: AtomicUsize,
-}
-
-#[cfg(feature = "sunspec")]
-impl RecordingSunSpecDiscovery {
-    fn connect_calls(&self) -> usize {
-        self.connect_calls.load(Ordering::SeqCst)
-    }
-
-    fn read_calls(&self) -> usize {
-        self.read_calls.load(Ordering::SeqCst)
-    }
-}
-
-#[cfg(feature = "sunspec")]
-#[async_trait::async_trait]
-impl SunSpecDiscoveryPort for RecordingSunSpecDiscovery {
-    async fn connect_and_discover(
-        &self,
-        _params: &ModbusChannelParamsConfig,
-        _protocol: &str,
-        _slave_id: u8,
-        _function_code: u8,
-        _base_address: Option<u16>,
-    ) -> Result<(u16, Vec<aether_sunspec::DiscoveredModel>), String> {
-        self.connect_calls.fetch_add(1, Ordering::SeqCst);
-        self.read_calls.fetch_add(1, Ordering::SeqCst);
-        Ok((
-            40_000,
-            vec![aether_sunspec::DiscoveredModel {
-                model_id: 103,
-                length: 50,
-                start_register: 40_002,
-            }],
-        ))
-    }
-}
 
 /// Helper: Create in-memory SQLite pool for testing
 async fn create_test_sqlite_pool() -> sqlx::SqlitePool {
@@ -168,140 +115,6 @@ async fn create_test_api_with_pool(
         ),
         PointTopologyHttpBoundary::governed(point_topology, authenticator),
     )
-}
-
-#[cfg(feature = "sunspec")]
-async fn create_provision_test_api(
-    sqlite_pool: SqlitePool,
-    discovery: Arc<RecordingSunSpecDiscovery>,
-) -> Router {
-    let channel_manager = Arc::new(
-        ChannelManager::new(
-            crate::test_utils::create_test_shm_handle(),
-            crate::test_utils::create_test_routing_cache(),
-        )
-        .expect("provision test channel manager"),
-    );
-    let audit: Arc<dyn AuditSink> = Arc::new(aether_store_local::MemoryAuditSink::new());
-    let point_topology = Arc::new(crate::point_topology::PointTopologyApplication::new(
-        sqlite_pool.clone(),
-        audit,
-    ));
-    let authenticator = Arc::new(
-        aether_auth_jwt::AccessTokenAuthenticator::new(TEST_JWT_SECRET)
-            .expect("valid test access-token secret"),
-    );
-    let state = AppState::new(
-        channel_manager,
-        sqlite_pool,
-        Arc::new(crate::api::command_cache::CommandTxCache::new()),
-        false,
-        None,
-    );
-    Router::new()
-        .route(
-            "/api/channels/{channel_id}/provision",
-            axum::routing::post(provision_channel_handler),
-        )
-        .layer(Extension(PointTopologyHttpBoundary::governed(
-            point_topology,
-            authenticator,
-        )))
-        .layer(Extension(SunSpecDiscoveryBoundary::from_port(discovery)))
-        .with_state(state)
-}
-
-#[cfg(feature = "sunspec")]
-fn provision_request(
-    authorization: bool,
-    confirmed: bool,
-    expected_revision: Option<&str>,
-) -> Request<Body> {
-    let mut request = Request::builder()
-        .method("POST")
-        .uri("/api/channels/711/provision")
-        .header("content-type", "application/json")
-        .header("x-request-id", TEST_REQUEST_ID);
-    if authorization {
-        request = request.header("authorization", format!("Bearer {ADMIN_ACCESS_TOKEN}"));
-    }
-    if confirmed {
-        request = request.header("x-aether-confirmed", "true");
-    }
-    if let Some(expected_revision) = expected_revision {
-        request = request.header("x-aether-expected-revision", expected_revision);
-    }
-    request
-        .body(Body::from(
-            json!({
-                "strategy": "sunspec",
-                "slave_id": 1,
-                "function_code": 3,
-                "replace_existing": true
-            })
-            .to_string(),
-        ))
-        .expect("provision request")
-}
-
-#[cfg(feature = "sunspec")]
-#[tokio::test]
-async fn provision_authorization_precedes_device_io_and_stale_cas_fails_closed() {
-    let pool = create_test_sqlite_pool_with_points().await;
-    sqlx::query(
-        "INSERT INTO channels (channel_id, name, protocol, enabled, config) \
-         VALUES (711, 'SunSpec device', 'sunspec_tcp', 0, \
-                 '{\"parameters\":{\"host\":\"127.0.0.1\",\"port\":502}}')",
-    )
-    .execute(&pool)
-    .await
-    .expect("seed SunSpec channel");
-    let discovery = Arc::new(RecordingSunSpecDiscovery::default());
-    let app = create_provision_test_api(pool, Arc::clone(&discovery)).await;
-
-    let rejected = [
-        (
-            provision_request(false, true, Some("1")),
-            StatusCode::FORBIDDEN,
-        ),
-        (
-            provision_request(true, false, Some("1")),
-            StatusCode::UNPROCESSABLE_ENTITY,
-        ),
-        (provision_request(true, true, None), StatusCode::BAD_REQUEST),
-        (
-            provision_request(true, true, Some("not-a-revision")),
-            StatusCode::BAD_REQUEST,
-        ),
-        (
-            provision_request(true, true, Some("0")),
-            StatusCode::BAD_REQUEST,
-        ),
-    ];
-    for (request, expected_status) in rejected {
-        let response = app.clone().oneshot(request).await.expect("HTTP response");
-        assert_eq!(response.status(), expected_status);
-    }
-    assert_eq!(discovery.connect_calls(), 0);
-    assert_eq!(discovery.read_calls(), 0);
-
-    let response = app
-        .oneshot(provision_request(true, true, Some("2")))
-        .await
-        .expect("stale provision response");
-    let status = response.status();
-    let body = http_body_util::BodyExt::collect(response.into_body())
-        .await
-        .expect("stale provision body")
-        .to_bytes();
-    assert_eq!(
-        status,
-        StatusCode::CONFLICT,
-        "unexpected response: {}",
-        String::from_utf8_lossy(&body)
-    );
-    assert_eq!(discovery.connect_calls(), 1);
-    assert_eq!(discovery.read_calls(), 1);
 }
 
 fn channel_mutation_request(
@@ -5704,7 +5517,7 @@ mod openapi_tests {
             .sum::<usize>();
 
         assert_eq!(
-            operation_count, 55,
+            operation_count, 54,
             "HTTP operation count changed; re-audit Router/OpenAPI parity before updating this guard"
         );
     }

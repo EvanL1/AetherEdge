@@ -9,15 +9,15 @@ updated: 2026-07-11
 Aether is an AI-native industrial edge gateway built as six independently
 supervised Rust services around a shared-memory hot path. Devices are polled by
 aether-io, values land in SHM, and each real-time consumer resolves its logical
-points from SQLite and reads the segment directly. Optional extensions may
-mirror SHM into an external store, but no default service reads that mirror.
+points from SQLite and reads the segment directly. A downstream composition
+may mirror SHM into an external store, but no kernel service reads that mirror.
 Generated applications and downstream product interfaces are optional clients;
 they are not architecture boundaries of the edge kernel.
 
 ```
   Devices ─────► aether-io(:6001) ───── authoritative SHM live state
    protocols       sole T/S writer       │          │
-                         ▲               │          └─ optional Redis StateMirror
+                         ▲               │          └─ downstream read-only mirror
                          │ SHM + UDS      │
                          └──── aether-automation(:6002) (rules / C/A command owner)
                                           │
@@ -50,13 +50,12 @@ used as tooling fallbacks when runtime configuration does not override them.
 
 | Service | Port | Role |
 |---------|------|------|
-| aether-io | 6001 | Communication service — physical protocol drivers (Modbus, optional SunSpec, IEC 104, IEC 61850, OPC UA, MQTT, HTTP, DL/T 645, CAN/J1939, GPIO, BLE, Zigbee, Matter, Aether-485), channel management, sole writer of telemetry into shared memory |
+| aether-io | 6001 | Communication service — explicitly compiled physical protocol drivers (Modbus, IEC 104, IEC 61850, OPC UA, MQTT, HTTP, DL/T 645, CAN/J1939, GPIO, BLE, Zigbee, Matter, Aether-485), channel management, sole writer of telemetry into shared memory |
 | aether-automation | 6002 | Model service — product definitions, device instances, rule engine execution |
 | aether-history | 6004 | Historical data service — embedded SQLite by default; optional PostgreSQL / TimescaleDB via `postgres-storage` |
 | aether-api | 6005 | API gateway — unified REST API, WebSocket push to browsers, JWT authentication |
 | aether-uplink | 6006 | Network service — MQTT broker integration for the cloud uplink, TLS certificate management |
 | aether-alarm | 6007 | Alarm service — alarm rules, alarm events, notifications |
-| aether-redis | 6379 | Optional infrastructure for the separately built Redis `StateMirror` extension (`redis` profile) |
 | TimescaleDB | 5432 | Optional time-series database for historical data, runtime-configured through aether-history |
 
 ## Optional Data Processing application
@@ -130,9 +129,9 @@ Two properties keep the hot path safe:
   [Shared Memory](shared-memory.md).
 - **Events are hints, SHM is truth.** Event consumers always re-read the slot;
   aether-history and aether-uplink retain interval-based sampling semantics.
-- **External stores are extension-only.** All six default services start and
-  operate without Redis or PostgreSQL. A mirror or history adapter may be
-  enabled independently without becoming part of the control path.
+- **External stores stay outside the live path.** All six default services
+  start and operate without Redis or PostgreSQL. A downstream mirror cannot
+  become part of the control path.
 
 ## Startup order
 
@@ -181,9 +180,9 @@ for operator recovery.
 - **Live point values** — the shared-memory segment (`AETHER_SHM_PATH`,
   `/dev/shm` on Linux). This is the source of truth for the hot path; see
   [Shared Memory](shared-memory.md).
-- **Optional mirrors** — extensions such as `aether-redis-bridge` can observe
-  SHM and publish an eventually consistent external view. They are never a
-  source of truth and are not startup dependencies of core services.
+- **Downstream mirrors** — a custom composition may observe SHM through a
+  read-only contract and publish an eventually consistent external view. It is
+  never a source of truth or a startup dependency of kernel services.
 - **SQLite (`aether.db`)** — all configuration: channels, products,
   instances, rules, service settings. Written only by `aether sync` and the
   services' own config APIs.

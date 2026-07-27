@@ -26,20 +26,14 @@ release should present these as a complete product.
 operation, governed commands, `aether` CLI, `aether-edge-sdk`, Pack v1, MCP and
 OpenAPI foundations, and signed `v0.0.1` source/runtime/CLI/SDK artifacts.
 
-**Experimental:** CloudLink MQTT v1 edge foundation, application-ACK-driven
-spool, AetherContracts alpha.3 consumption, real-Broker development evidence,
-and the read-only Home Assistant edge bridge foundation with bounded
-registry/state synchronization, opt-in `aether-io` source composition, and
-explicit full resynchronization. The default-off Home Assistant Integration
-Control slice adds one session-bound, signed, locally authorized
-`device.power.set.v1` capability with durable idempotency, audit, and receipts;
-provider acceptance deliberately leaves physical outcome unknown.
+**Experimental:** the Uplink-owned CloudLink MQTT v1 foundation,
+application-ACK-driven spool, AetherContracts alpha.3 consumption, and
+real-Broker development evidence. Legacy MQTT remains the runtime default.
 
 **Planned or gated:** production CloudLink key lifecycle, signed ACK, complete
-joint conformance, legacy cutover, packaged Home Assistant composition, public
-integration queries, production projection/query composition, production OAuth
-and secret lifecycle, broader governed device capabilities/commands, production
-key rotation/revocation, and remaining application-boundary migration.
+joint conformance, legacy cutover, History query ownership, and remaining
+application-boundary migration. Home Assistant and SunSpec implementations are
+out-of-tree downstream work, not kernel roadmap capabilities.
 
 **CloudLink alpha.4 production blocker:** the current `session-accepted`
 message is unsigned and carries neither `challenge_id` nor `client_nonce`.

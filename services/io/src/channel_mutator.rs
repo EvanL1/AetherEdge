@@ -1106,8 +1106,6 @@ fn validate_runtime_config(config: &ChannelConfig) -> PortResult<()> {
     let supported = match protocol.as_ref() {
         #[cfg(feature = "modbus")]
         "modbus_tcp" | "modbus_rtu" => true,
-        #[cfg(feature = "sunspec")]
-        "sunspec_tcp" | "sunspec_rtu" => true,
         #[cfg(all(target_os = "linux", feature = "gpio"))]
         "gpio" | "di_do" | "dido" => true,
         #[cfg(all(target_os = "linux", feature = "can"))]

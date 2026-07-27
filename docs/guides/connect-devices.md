@@ -82,7 +82,6 @@ IEC 61850, and CAN.
 | Protocol | Compiled by default | Platform notes |
 |----------|--------------------:|----------------|
 | Modbus TCP/RTU (`modbus`) | yes | |
-| SunSpec TCP/RTU (`sunspec`) | no | Optional model catalog and provisioning extension; implies `modbus` |
 | IEC 60870-5-104 (`iec104`) | no | |
 | IEC 61850 MMS (`iec61850`) | yes | |
 | OPC UA (`opcua`) | no | Optional feature; currently restricted to anonymous `SecurityPolicy::None` sessions. |

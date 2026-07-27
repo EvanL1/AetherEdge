@@ -21,10 +21,7 @@ Implemented by this slice:
 - session/version/epoch validation;
 - Runtime Manifest and real `PointSample` business mappings;
 - memory and crash-recoverable file spools removed only by application ACK;
-- MQTT v3.1.1/QoS 1 binding for a user-selected broker;
-- a default-off `aether-io` Home Assistant composition that uses the real MQTT
-  transport, independent file spools, restart replay, and application-ACK
-  writeback after an explicit Runtime Manifest and cloud-consumer gate;
+- an Uplink-owned MQTT v3.1.1/QoS 1 binding for a user-selected broker;
 - deterministic fake-transport tests, an Edge-only Broker harness, and an
   opt-in real Mosquitto AetherEdge/AetherCloud dual harness.
 
@@ -57,15 +54,13 @@ Deprecated but retained:
 
 CloudLink v1 exposes no physical control or arbitrary RPC.
 
-## Experimental Integration extension
+## Experimental Integration protocol contract
 
-`aether.cloudlink.integration.v1alpha1` carries Integration topology snapshots
-and observation batches over CloudLink. It is experimental and disabled by
-default. Activation is Cloud-first: AetherCloud must explicitly enable a
-compatible consumer before AetherEdge enables publication, and the current
-Runtime Manifest must explicitly declare the exact extension identifier. If
-either condition is absent, the Edge rejects activation. Enabling an Integration
-source by itself does not enable Cloud publication.
+`aether.cloudlink.integration.v1alpha1` describes Integration topology
+snapshots and observation batches over CloudLink. The standard kernel has no
+runtime source composition for this contract and does not advertise it in the
+Runtime Manifest. A downstream composition must supply the source and pass a
+separate compatibility and safety review before activation.
 
 The extension has two independent durable streams and MQTT routes:
 

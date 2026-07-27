@@ -18,7 +18,7 @@ services around it see [Architecture](architecture.md); for what the values
 mean see [Data Model](data-model.md).
 
 Source of truth: `crates/aether-dataplane/` (physical header, slots, locking),
-`extensions/shm-bridge/` (typed manifests, point/health publication and
+`libs/aether-shm-bridge/` (typed manifests, point/health publication and
 self-healing readers), and `services/io/src/core/channels/shm_listener.rs`
 (the command listener). The former legacy SHM aggregation crate has been
 removed after the v4 rolling-compatibility gate passed.
@@ -74,7 +74,7 @@ ownership rule is:
   after the mirror, and sends the complete command frame to io. It cannot
   write T/S addresses.
 
-The protection is primarily typed at the extension port boundary; raw
+The protection is primarily typed at the adapter port boundary; raw
 slot-indexed writes stay inside the physical adapter. Runtime checks provide
 defense in depth for manifest membership, slot bounds, stable generation, and
 canonical-file identity.

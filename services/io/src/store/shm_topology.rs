@@ -7,7 +7,7 @@ use aether_shm_bridge::{
     ChannelHealthManifest, ChannelPointManifest, ShmChannelHealthWriterHandle, ShmWriterHandle,
     publish_topology_generation, validate_topology_publication,
 };
-use aether_store_local::load_sqlite_shm_topology;
+use aether_sqlite_topology::load_sqlite_shm_topology;
 use sqlx::SqlitePool;
 use tokio::sync::Mutex;
 

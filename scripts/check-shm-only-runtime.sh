@@ -104,10 +104,10 @@ if ! redis_services=$(
         AETHER_UPLINK_CONTROL_TOKEN="$COMPOSE_TEST_UPLINK_TOKEN" \
         docker compose --profile redis config --services
 ); then
-    echo "ERROR: optional Redis extension profile is invalid" >&2
+    echo "ERROR: optional Redis infrastructure profile is invalid" >&2
     exit 1
 fi
 if ! rg -q '^aether-redis$' <<< "$redis_services"; then
-    echo "ERROR: optional Redis extension profile is missing" >&2
+    echo "ERROR: optional Redis infrastructure profile is missing" >&2
     exit 1
 fi

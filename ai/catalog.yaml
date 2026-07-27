@@ -8,7 +8,7 @@ components:
       - cargo test -p aether-domain
   ports:
     path: crates/aether-ports
-    responsibility: Object-safe extension contracts with recovery semantics
+    responsibility: Object-safe adapter contracts with recovery semantics
     verify:
       - cargo test -p aether-ports
   dataplane:
@@ -77,14 +77,9 @@ components:
       - cargo test -p aether-cloudlink
   integration_candidate_binding:
     path: crates/aether-integration-contract
-    responsibility: Strict AetherContracts 0.1.0-alpha.4 candidate Integration v1alpha1 DTO, fixture, context, precision, and Home Assistant semantic projection boundary
+    responsibility: Strict AetherContracts 0.1.0-alpha.4 candidate Integration v1alpha1 DTO, fixture, context, precision, and caller-supplied provider-neutral projection boundary
     verify:
       - cargo test -p aether-integration-contract
-  integration_control:
-    path: crates/aether-integration-control
-    responsibility: Experimental default-off AetherContracts alpha.4 governed Integration control processor, exact target resolver, persistent job deduplication, and durable terminal receipt contract
-    verify:
-      - cargo test -p aether-integration-control
   cloudlink_integration_extension:
     path: crates/aether-cloudlink/src/integration.rs
     responsibility: Experimental disabled-by-default Cloud-first Integration topology/observation binding with separate durable streams, atomic topology, observation-boundary partitioning, a 256 KiB complete-payload limit, and no control capability
@@ -103,21 +98,10 @@ components:
     verify:
       - cargo test -p aether-cloudlink --test codec_contract aether_contracts_distribution_lock_pins_imported_bytes -- --exact
   cloudlink_mqtt_binding:
-    path: extensions/cloudlink-mqtt
-    responsibility: User-broker-neutral MQTT 3.1.1/QoS 1/TLS binding with exact per-gateway Integration data topics, session-activated default-off control offer and receipt routes, PUBACK evidence without receipt deletion, reconnect, and an opt-in shared-broker harness
+    path: services/uplink/adapters/cloudlink-mqtt
+    responsibility: Uplink-owned user-broker-neutral MQTT 3.1.1/QoS 1/TLS binding with exact per-gateway topics, PUBACK evidence without application receipt deletion, reconnect, and an opt-in shared-broker harness
     verify:
-      - cargo test -p aether-cloudlink-mqtt --features integration-control
-  home_assistant_bridge:
-    path: extensions/home-assistant-bridge
-    responsibility: Experimental default-read-only Home Assistant WebSocket projection plus a separately compiled, default-off fixed semantic power executor that accepts no arbitrary provider command
-    verify:
-      - cargo test -p aether-home-assistant-bridge --features integration-control
-  home_assistant_runtime:
-    path: services/io/src/home_assistant.rs
-    responsibility: Opt-in aether-io source composition with fail-closed settings, process-local projection, retry, complete resynchronization, and separately gated session-bound governed control with persistent audit, deduplication, and receipts
-    verify:
-      - cargo test -p aether-io --features home-assistant --test home_assistant_composition
-      - cargo test -p aether-io --features home-assistant-integration-control home_assistant_control_tests
+      - cargo test -p aether-cloudlink-mqtt
   data_processing_ai_evals:
     path: ai/evals/data-processing.yaml
     responsibility: AI-facing permission, confirmation, audit, non-idempotency, failure-isolation, and no-control scenarios backed by Rust tests
@@ -132,47 +116,37 @@ components:
     verify:
       - cargo test -p aether-testkit
   local_store:
-    path: extensions/store-local
-    responsibility: Zero-external-service state, history, audit, restart-stable integration generations, legacy outbox, application-ACK-driven CloudLink spools, and optional governed-control ledger and audit adapters
+    path: libs/aether-store-local
+    responsibility: Zero-external-service state, history, audit, restart-stable integration generations, legacy outbox, and application-ACK-driven CloudLink spools
     verify:
-      - cargo test -p aether-store-local --features integration-control
+      - cargo test -p aether-store-local
+  sqlite_topology_adapter:
+    path: libs/aether-sqlite-topology
+    responsibility: Shared service-composition adapter that validates one SQLite topology snapshot and derives coherent SHM manifests and logical routes
+    verify:
+      - cargo test -p aether-sqlite-topology
   jwt_auth_adapter:
-    path: extensions/auth-jwt
+    path: libs/aether-auth-jwt
     responsibility: Shared fail-closed access-JWT verification and server-owned application permissions for HTTP and CLI command boundaries
     verify:
       - cargo test -p aether-auth-jwt
   snapshot_covariates:
-    path: extensions/store-local/src/snapshot_covariates.rs
+    path: libs/aether-store-local/src/snapshot_covariates.rs
     responsibility: Bounded, reloadable local covariate snapshots with valid-time and issue-time provenance
     verify:
       - cargo test -p aether-store-local --test snapshot_covariate_source
   sqlite_history_query:
-    path: extensions/sqlite-history-query
-    responsibility: Default read-only SQLite HistoryQuery adapter with task-scoped interval aggregation in one snapshot
+    path: services/api/adapters/sqlite-history-query
+    responsibility: API-owned transitional read-only SQLite HistoryQuery adapter with task-scoped interval aggregation in one snapshot
     verify:
       - cargo test -p aether-sqlite-history-query
-  http_history_query:
-    path: extensions/http-history-query
-    responsibility: Optional loopback HistoryQuery adapter for an upstream pre-aligned Last/Reject cadence grid
-    verify:
-      - cargo test -p aether-http-history-query
   shm_bridge:
-    path: extensions/shm-bridge
+    path: libs/aether-shm-bridge
     responsibility: Typed channel manifest plus LiveState, acquisition-writer, and C/A command-sink adapters over the physical SHM data plane
     verify:
       - cargo test -p aether-shm-bridge
-  redis_bridge:
-    path: extensions/redis-bridge
-    responsibility: Optional external state mirror; never a source of truth
-    verify:
-      - cargo test -p aether-redis-bridge
-  postgres_history:
-    path: extensions/postgres-history
-    responsibility: Optional historical and audit persistence
-    verify:
-      - cargo test -p aether-postgres-history
   http_data_processor:
-    path: extensions/http-data-processor
+    path: services/api/adapters/http-data-processor
     responsibility: Bounded local or remote HTTP implementation of the DataProcessor port
     verify:
       - cargo test -p aether-http-data-processor
