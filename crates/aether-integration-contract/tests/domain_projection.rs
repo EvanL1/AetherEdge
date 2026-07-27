@@ -5,9 +5,64 @@ use aether_domain::{
     SnapshotDigest, TimestampMs, TopologyGeneration,
 };
 use aether_integration_contract::{
-    AETHER_CONTRACTS_RELEASE, HomeAssistantV1Alpha1Profile, IntegrationContractCodec,
+    AETHER_CONTRACTS_RELEASE, IntegrationContractCodec, IntegrationContractError,
+    IntegrationContractErrorCode, IntegrationPointKindV1Alpha1, IntegrationV1Alpha1Profile,
 };
 use serde_json::{Value, json};
+
+struct FixtureProfile;
+
+impl IntegrationV1Alpha1Profile for FixtureProfile {
+    fn integration_kind(&self) -> &str {
+        "home-assistant"
+    }
+
+    fn source_address<'a>(
+        &self,
+        entity: &'a EntityRecord,
+    ) -> Result<&'a str, IntegrationContractError> {
+        let mut aliases = entity
+            .aliases()
+            .iter()
+            .filter(|alias| alias.namespace() == "home-assistant" && alias.kind() == "entity-id");
+        let source = aliases.next().ok_or_else(|| {
+            IntegrationContractError::new(
+                IntegrationContractErrorCode::ReferenceNotFound,
+                "fixture entity has no source alias",
+            )
+        })?;
+        if aliases.next().is_some() {
+            return Err(IntegrationContractError::new(
+                IntegrationContractErrorCode::IdentityConflict,
+                "fixture entity has multiple source aliases",
+            ));
+        }
+        Ok(source.value())
+    }
+
+    fn point_kind(
+        &self,
+        entity: &EntityRecord,
+        point: &EntityPointDescriptor,
+    ) -> IntegrationPointKindV1Alpha1 {
+        let key = point.key().as_str();
+        if point.kind() == IntegrationPointKind::Event
+            || entity.kind() == "event"
+            || key == "event_type"
+        {
+            return IntegrationPointKindV1Alpha1::Event;
+        }
+        if (entity.kind() == "sensor" && key == "state")
+            || matches!(
+                key,
+                "current_temperature" | "current_humidity" | "battery_level"
+            )
+        {
+            return IntegrationPointKindV1Alpha1::Telemetry;
+        }
+        IntegrationPointKindV1Alpha1::Status
+    }
+}
 
 fn descriptor(
     key: &str,
@@ -112,9 +167,8 @@ fn topology_projection_is_closed_and_uses_semantic_point_kinds() {
     assert_eq!(AETHER_CONTRACTS_RELEASE, "0.1.0-alpha.4");
 
     let topology = topology();
-    let wire =
-        IntegrationContractCodec::topology_from_domain(&topology, &HomeAssistantV1Alpha1Profile)
-            .expect("topology projects");
+    let wire = IntegrationContractCodec::topology_from_domain(&topology, &FixtureProfile)
+        .expect("topology projects");
     let encoded = IntegrationContractCodec::encode_topology(&wire).expect("topology encodes");
     let json: Value = serde_json::from_slice(&encoded).expect("encoded topology is JSON");
 
@@ -175,9 +229,8 @@ fn observation_projection_uses_exact_lossless_wire_encodings() {
         &observations,
     )
     .expect("batch projects");
-    let wire_topology =
-        IntegrationContractCodec::topology_from_domain(&topology, &HomeAssistantV1Alpha1Profile)
-            .expect("topology projects");
+    let wire_topology = IntegrationContractCodec::topology_from_domain(&topology, &FixtureProfile)
+        .expect("topology projects");
     let encoded = IntegrationContractCodec::encode_observation_batch(&batch, &wire_topology)
         .expect("batch encodes");
     let json: Value = serde_json::from_slice(&encoded).expect("encoded batch is JSON");
@@ -240,9 +293,8 @@ fn boundary_rejects_non_contract_identifiers_and_foundation_unsafe_floats() {
         vec![],
     )
     .expect("runtime topology");
-    let error =
-        IntegrationContractCodec::topology_from_domain(&topology, &HomeAssistantV1Alpha1Profile)
-            .expect_err("wire identifier must be strict");
+    let error = IntegrationContractCodec::topology_from_domain(&topology, &FixtureProfile)
+        .expect_err("wire identifier must be strict");
     assert_eq!(error.code().as_str(), "IDENTIFIER_INVALID");
 }
 
@@ -339,9 +391,8 @@ fn every_lossless_scalar_uses_the_frozen_public_representation() {
         &observations,
     )
     .expect("batch");
-    let wire_topology =
-        IntegrationContractCodec::topology_from_domain(&topology, &HomeAssistantV1Alpha1Profile)
-            .expect("wire topology");
+    let wire_topology = IntegrationContractCodec::topology_from_domain(&topology, &FixtureProfile)
+        .expect("wire topology");
     let encoded = IntegrationContractCodec::encode_observation_batch(&batch, &wire_topology)
         .expect("encoded batch");
     let json: Value = serde_json::from_slice(&encoded).expect("JSON");

@@ -214,28 +214,6 @@ fn build_registry() -> ProtocolRegistry {
         });
     }
 
-    // SunSpec aliases and model provisioning are an explicit extension.
-    #[cfg(feature = "sunspec")]
-    {
-        use crate::protocols::adapters::modbus::ModbusChannel;
-        registry.register(ProtocolMetadata {
-            name: "sunspec_tcp",
-            display_name: "SunSpec TCP",
-            description: "SunSpec information model over Modbus TCP",
-            protocol_type: "sunspec_tcp",
-            drivers: vec![ModbusChannel::tcp_metadata()],
-            supports_points: true,
-        });
-        registry.register(ProtocolMetadata {
-            name: "sunspec_rtu",
-            display_name: "SunSpec RTU",
-            description: "SunSpec information model over Modbus RTU",
-            protocol_type: "sunspec_rtu",
-            drivers: vec![ModbusChannel::rtu_metadata()],
-            supports_points: true,
-        });
-    }
-
     // Register IEC 104 protocol
     #[cfg(feature = "iec104")]
     {

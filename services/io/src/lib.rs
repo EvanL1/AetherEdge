@@ -9,9 +9,6 @@
 pub mod automatic_reconciliation;
 pub mod channel_mutator;
 pub mod error;
-pub mod home_assistant;
-#[cfg(feature = "home-assistant-integration-control")]
-mod home_assistant_control;
 pub mod point_topology;
 pub mod protocols;
 pub mod utils;
@@ -34,7 +31,6 @@ pub mod api {
         pub mod mapping_handlers;
         pub mod point_handlers;
         pub mod protocol_handlers;
-        pub mod provision_handlers;
         pub mod template_handlers;
     }
 }

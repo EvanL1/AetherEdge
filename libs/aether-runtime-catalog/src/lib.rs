@@ -44,15 +44,12 @@ pub const DEFAULT_IO_PROTOCOL_FEATURES: [&str; 5] =
 /// Compatibility alias for release tooling.
 pub const SHIPPED_IO_PROTOCOL_FEATURES: [&str; 5] = DEFAULT_IO_PROTOCOL_FEATURES;
 
-const KNOWN_IO_PROTOCOL_FEATURES: [&str; 18] = [
+const KNOWN_IO_PROTOCOL_FEATURES: [&str; 14] = [
     "aether_485",
     "ble",
     "can",
     "dl645",
     "gpio",
-    "home-assistant",
-    "home-assistant-cloudlink",
-    "home-assistant-integration-control",
     "http",
     "iec104",
     "iec61850",
@@ -61,7 +58,6 @@ const KNOWN_IO_PROTOCOL_FEATURES: [&str; 18] = [
     "modbus",
     "mqtt",
     "opcua",
-    "sunspec",
     "zigbee",
 ];
 
@@ -831,15 +827,6 @@ fn canonical_io_features(features: Vec<String>) -> Result<Vec<String>, RuntimeMa
     if resolved.contains("j1939") {
         resolved.insert("can".to_string());
     }
-    if resolved.contains("sunspec") {
-        resolved.insert("modbus".to_string());
-    }
-    if resolved.contains("home-assistant-integration-control") {
-        resolved.insert("home-assistant-cloudlink".to_string());
-    }
-    if resolved.contains("home-assistant-cloudlink") {
-        resolved.insert("home-assistant".to_string());
-    }
     Ok(resolved.into_iter().collect())
 }
 
@@ -873,9 +860,6 @@ fn derive_protocols(features: &[String], target_os: &str) -> Vec<String> {
             "modbus" => {
                 protocols.extend(["modbus_rtu".to_string(), "modbus_tcp".to_string()]);
             },
-            "sunspec" => {
-                protocols.extend(["sunspec_rtu".to_string(), "sunspec_tcp".to_string()]);
-            },
             "iec104" => insert(&mut protocols, "iec104"),
             "opcua" => insert(&mut protocols, "opcua"),
             "can" if target_os == "linux" => insert(&mut protocols, "can"),
@@ -889,15 +873,6 @@ fn derive_protocols(features: &[String], target_os: &str) -> Vec<String> {
             "zigbee" => insert(&mut protocols, "zigbee"),
             "matter" => insert(&mut protocols, "matter"),
             "iec61850" => insert(&mut protocols, "iec61850"),
-            "home-assistant-cloudlink" => {
-                insert(&mut protocols, "aether.cloudlink.integration.v1alpha1");
-            },
-            "home-assistant-integration-control" => {
-                insert(
-                    &mut protocols,
-                    "aether.cloudlink.integration-control.v1alpha1",
-                );
-            },
             _ => {},
         }
     }
@@ -1107,18 +1082,6 @@ mod tests {
 
         assert_eq!(linux, ["can", "di_do"]);
         assert!(macos.is_empty());
-    }
-
-    #[test]
-    fn sunspec_is_explicit_and_expands_its_modbus_dependency() {
-        let features = normalize_io_protocol_features(["sunspec"]).expect("known feature");
-        assert_eq!(features, ["modbus", "sunspec"]);
-        let protocols = protocol_adapters_for_io_features(features, "x86_64-unknown-linux-gnu")
-            .expect("SunSpec composition");
-        assert_eq!(
-            protocols,
-            ["modbus_rtu", "modbus_tcp", "sunspec_rtu", "sunspec_tcp"]
-        );
     }
 
     #[test]

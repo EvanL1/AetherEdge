@@ -468,6 +468,6 @@ derived results; it does not absorb the systems on either side.
 - [Aether Data Processing](data-processing.md) — purpose, task contract, processor boundary, and non-goals
 - [Data Flow](data-flow.md) — authoritative uplink and control paths
 - [Shared Memory](shared-memory.md) — current live-state authority and writer ownership
-- [System Architecture](architecture.md) — runtime services and optional extensions
+- [System Architecture](architecture.md) — runtime services and downstream adapters
 - [Rule Engine](rule-engine.md) — deterministic scheduling and execution
 - [Safe Operations for Applications and Agents](../guides/safe-operations.md) — control safety and authorization policy

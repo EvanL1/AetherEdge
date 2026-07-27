@@ -13,7 +13,7 @@ mod wire;
 
 pub use codec::IntegrationContractCodec;
 pub use error::{IntegrationContractError, IntegrationContractErrorCode};
-pub use profile::{HomeAssistantV1Alpha1Profile, IntegrationV1Alpha1Profile};
+pub use profile::IntegrationV1Alpha1Profile;
 pub use wire::{
     EntityPointDescriptorV1Alpha1, IntegrationAreaV1Alpha1, IntegrationDeviceV1Alpha1,
     IntegrationEntityV1Alpha1, IntegrationObservationBatchV1Alpha1,

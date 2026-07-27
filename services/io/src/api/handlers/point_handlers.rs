@@ -17,8 +17,6 @@ mod point_types;
 pub use point_batch_handlers::*;
 pub use point_crud_handlers::*;
 pub use point_governance::PointTopologyHttpBoundary;
-#[cfg(feature = "sunspec")]
-pub(crate) use point_governance::PreauthorizedPointTopologyInvocation;
 pub(crate) use point_governance::completion_audit;
 pub(crate) use point_helpers::trigger_channel_reload_if_needed;
 pub(crate) use point_helpers::validate_channel_exists;

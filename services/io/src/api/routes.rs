@@ -23,8 +23,7 @@ use crate::api::{
     handlers::health::*,
     handlers::{
         channel_handlers::*, channel_management_handlers::*, control_handlers::*,
-        mapping_handlers::*, point_handlers::*, protocol_handlers::*, provision_handlers::*,
-        template_handlers::*,
+        mapping_handlers::*, point_handlers::*, protocol_handlers::*, template_handlers::*,
     },
 };
 use common::admin_api::{get_log_level, list_log_files, set_log_level, view_log_file};
@@ -148,7 +147,6 @@ pub type ProductionAppState = AppState;
         crate::api::handlers::channel_management_handlers::create_channel_handler,
         crate::api::handlers::channel_management_handlers::update_channel_handler,
         crate::api::handlers::channel_management_handlers::set_channel_enabled_handler,
-        crate::api::handlers::provision_handlers::provision_channel_handler,
         crate::api::handlers::channel_management_handlers::delete_channel_handler,
         crate::api::handlers::channel_management_handlers::reconcile_channels_handler,
         crate::api::handlers::channel_management_handlers::reconcile_channel_handler,
@@ -241,10 +239,6 @@ pub type ProductionAppState = AppState;
             crate::dto::UpdateTemplateReq,
             crate::dto::ApplyTemplateReq,
             crate::dto::TemplateListQuery,
-            // Provision schemas
-            crate::api::handlers::provision_handlers::ProvisionRequest,
-            crate::api::handlers::provision_handlers::ProvisionResult,
-            crate::api::handlers::provision_handlers::DiscoveredModelInfo,
             // Admin schemas
             common::admin_api::SetLogLevelRequest,
             common::admin_api::LogLevelResponse
@@ -478,7 +472,6 @@ fn create_api_routes_with_boundary(
                 .delete(delete_adjustment_point_handler))
         // Batch point operations endpoint (create/update/delete in single request)
         .route("/api/channels/{channel_id}/points/batch", post(batch_point_operations_handler))
-        .route("/api/channels/{channel_id}/provision", post(provision_channel_handler))
         // Unified write endpoint for all point types (T/S/C/A)
         .route("/api/channels/{channel_id}/write", post(write_channel_point))
         .route(
@@ -501,8 +494,6 @@ fn create_api_routes_with_boundary(
         .layer(axum::Extension(point_topology));
     #[cfg(feature = "openapi")]
     let router = router.route("/openapi.json", get(openapi_document));
-    #[cfg(feature = "sunspec")]
-    let router = router.layer(axum::Extension(SunSpecDiscoveryBoundary::production()));
     router
         // CRITICAL: Apply middleware BEFORE .with_state() for it to work
         .layer(axum::middleware::from_fn(common::logging::http_request_logger))

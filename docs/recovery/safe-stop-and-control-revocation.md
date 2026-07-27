@@ -18,8 +18,8 @@ the primary authority for immediate hazard control.
 1. Apply the site safety procedure or physical interlock first when people or
    equipment may be at risk.
 2. Revoke the caller permission or credential at its authority boundary.
-3. Disable the narrowest affected control surface: the Home Assistant governed
-   control feature, an action route, a rule, or a communication channel.
+3. Disable the narrowest affected control surface: a downstream integration,
+   an action route, a rule, or a communication channel.
 4. Use only the typed application command with current revision, explicit
    confirmation, and durable audit. Do not write SHM, SQLite, provider APIs, or
    protocol registers directly.

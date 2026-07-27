@@ -100,14 +100,12 @@ impl fmt::Display for ProtocolType {
 // Protocol Name Utilities
 // ============================================================================
 
-/// Returns true for Modbus and SunSpec aliases (identical point mapping format).
+/// Returns true for the built-in Modbus protocols.
 pub fn is_modbus_family(protocol: &str) -> bool {
     let p = protocol.trim();
     p.eq_ignore_ascii_case("modbus")
         || p.eq_ignore_ascii_case("modbus_tcp")
         || p.eq_ignore_ascii_case("modbus_rtu")
-        || p.eq_ignore_ascii_case("sunspec_tcp")
-        || p.eq_ignore_ascii_case("sunspec_rtu")
 }
 
 /// Normalize protocol name to standard format (lowercase underscore)
@@ -128,10 +126,6 @@ pub fn normalize_protocol_name(name: &str) -> Cow<'static, str> {
         "modbus_tcp" | "modbustcp" | "modbus tcp" => Cow::Borrowed("modbus_tcp"),
         "modbus_rtu" | "modbusrtu" | "modbus rtu" => Cow::Borrowed("modbus_rtu"),
         "modbus_ascii" | "modbusascii" | "modbus ascii" => Cow::Borrowed("modbus_ascii"),
-
-        // SunSpec (Modbus transport alias)
-        "sunspec_tcp" | "sunspectcp" | "sunspec tcp" => Cow::Borrowed("sunspec_tcp"),
-        "sunspec_rtu" | "sunspecrtu" | "sunspec rtu" => Cow::Borrowed("sunspec_rtu"),
 
         // IEC variations
         "iec104" | "iec_104" | "iec60870" | "iec_60870" | "iec60870_5_104" | "iec_60870_5_104" => {
@@ -188,11 +182,6 @@ mod tests {
         assert_eq!(normalize_protocol_name("modbus_rtu"), "modbus_rtu");
         assert_eq!(normalize_protocol_name("modbusrtu"), "modbus_rtu");
         assert_eq!(normalize_protocol_name("MODBUS-RTU"), "modbus_rtu");
-
-        assert_eq!(normalize_protocol_name("sunspec_tcp"), "sunspec_tcp");
-        assert_eq!(normalize_protocol_name("sunspectcp"), "sunspec_tcp");
-        assert_eq!(normalize_protocol_name("SUNSPEC-TCP"), "sunspec_tcp");
-        assert_eq!(normalize_protocol_name("sunspec_rtu"), "sunspec_rtu");
 
         // Test IEC variations
         assert_eq!(normalize_protocol_name("iec104"), "iec104");
@@ -283,8 +272,8 @@ mod tests {
     fn test_is_modbus_family() {
         assert!(is_modbus_family("modbus_tcp"));
         assert!(is_modbus_family("MODBUS_RTU"));
-        assert!(is_modbus_family("sunspec_tcp"));
-        assert!(is_modbus_family("sunspec_rtu"));
+        assert!(!is_modbus_family("sunspec_tcp"));
+        assert!(!is_modbus_family("sunspec_rtu"));
         assert!(!is_modbus_family("can"));
         assert!(!is_modbus_family("iec61850"));
     }

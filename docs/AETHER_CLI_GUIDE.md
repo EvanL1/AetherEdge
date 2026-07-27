@@ -414,7 +414,7 @@ aether logs get all
 
 ### rtdb - 可选 Redis 镜像操作
 
-仅用于检查显式启用的 Redis `StateMirror` 扩展。该镜像不是实时状态权威面；
+仅用于检查显式启用的 下游 Redis `StateMirror` 适配器。该镜像不是实时状态权威面；
 实时值应通过 SHM 或服务 API 读取。
 
 ```bash
@@ -450,7 +450,7 @@ aether rtdb patterns
 | `io:<ch_id>:T` | 通道遥测点 Hash |
 | `io:<ch_id>:S` | 通道信号点 Hash |
 
-具体键集合由镜像扩展配置决定，不应被核心服务用作路由或实时状态来源。
+具体键集合由下游镜像适配器配置决定，不应被核心服务用作路由或实时状态来源。
 
 ### shm - 共享内存
 

@@ -71,7 +71,9 @@ pub struct IntegrationContractError {
 }
 
 impl IntegrationContractError {
-    pub(crate) const fn new(code: IntegrationContractErrorCode, message: &'static str) -> Self {
+    /// Creates a bounded profile-mapping error without retaining provider data.
+    #[must_use]
+    pub const fn new(code: IntegrationContractErrorCode, message: &'static str) -> Self {
         Self { code, message }
     }
 

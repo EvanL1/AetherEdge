@@ -14,8 +14,9 @@ path = "src/main.rs"
 common = { path = "../../libs/common", default-features = false, features = ["sqlite", "axum"] }
 aether-domain = { path = "../../crates/aether-domain" }
 aether-ports = { path = "../../crates/aether-ports" }
-aether-shm-bridge = { path = "../../extensions/shm-bridge" }
-aether-store-local = { path = "../../extensions/store-local", features = ["sqlite-topology"] }
+aether-shm-bridge = { path = "../../libs/aether-shm-bridge" }
+aether-store-local = { path = "../../libs/aether-store-local" }
+aether-sqlite-topology = { path = "../../libs/aether-sqlite-topology" }
 
 # Async runtime
 tokio = { workspace = true }

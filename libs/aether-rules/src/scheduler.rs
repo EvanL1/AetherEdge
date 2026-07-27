@@ -247,13 +247,11 @@ pub struct RuleScheduler<S: StateStore = aether_calc::MemoryStateStore> {
     watch_rx: Option<
         tokio::sync::Mutex<tokio::sync::mpsc::Receiver<crate::point_watch_dispatcher::WatchEvent>>,
     >,
-    /// PointWatch rebuild handles. When all four are Some, `reload_rules`
-    /// rebuilds the subscription index after loading. None in test mode or
-    /// when PointWatch isn't wired in.
-    ///
+    /// PointWatch dispatcher selected by the service composition. The rule
+    /// library returns canonical subscriptions and never owns a concrete SHM
+    /// bitmap or manifest.
     pw_dispatcher:
         Option<Arc<std::sync::Mutex<crate::point_watch_dispatcher::PointWatchDispatcher>>>,
-    pw_bitmap: Option<Arc<aether_shm_bridge::SubscriptionBitmap>>,
 }
 
 impl RuleScheduler<aether_calc::MemoryStateStore> {
@@ -279,7 +277,6 @@ impl RuleScheduler<aether_calc::MemoryStateStore> {
             max_concurrency: 4,
             watch_rx: None,
             pw_dispatcher: None,
-            pw_bitmap: None,
         }
     }
 }
@@ -315,7 +312,6 @@ impl<S: StateStore + 'static> RuleScheduler<S> {
             max_concurrency: 4,
             watch_rx: None,
             pw_dispatcher: None,
-            pw_bitmap: None,
         }
     }
 
@@ -330,17 +326,13 @@ impl<S: StateStore + 'static> RuleScheduler<S> {
     pub async fn rebuild_point_watch(
         &self,
         measurement_routes: &[MeasurementRouteBinding],
-        manifest: &aether_shm_bridge::ChannelPointManifest,
-    ) -> bool {
-        let (Some(dispatcher), Some(bitmap)) = (&self.pw_dispatcher, &self.pw_bitmap) else {
-            return false;
-        };
+    ) -> Option<Vec<aether_domain::ChannelPointAddress>> {
+        let dispatcher = self.pw_dispatcher.as_ref()?;
         let rules = self.rules.read().await;
         let mut dispatcher = dispatcher
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        dispatcher.rebuild_from_rules(&rules, measurement_routes, manifest, bitmap);
-        true
+        Some(dispatcher.rebuild_from_rules(&rules, measurement_routes))
     }
 
     /// Attach a PointWatch event receiver.
@@ -354,20 +346,14 @@ impl<S: StateStore + 'static> RuleScheduler<S> {
         self.watch_rx = Some(tokio::sync::Mutex::new(rx));
     }
 
-    /// Store handles required to rebuild the PointWatch subscription index
-    /// during `reload_rules`. Must be called before wrapping in `Arc` and
-    /// before any rule reload that should reflect subscription changes.
-    ///
-    /// Without these handles, `reload_rules` only refreshes the rule cache —
-    /// the SubscriptionBitmap and dispatcher index keep their previous state,
-    /// so newly-added OnChange rules won't fire until service restart.
-    pub fn set_point_watch_rebuild_handles(
+    /// Stores the dispatcher required to rebuild the PointWatch subscription
+    /// index. The service composition remains responsible for publishing the
+    /// returned channel-point set to its concrete event adapter.
+    pub fn set_point_watch_rebuild_handle(
         &mut self,
         dispatcher: Arc<std::sync::Mutex<crate::point_watch_dispatcher::PointWatchDispatcher>>,
-        bitmap: Arc<aether_shm_bridge::SubscriptionBitmap>,
     ) {
         self.pw_dispatcher = Some(dispatcher);
-        self.pw_bitmap = Some(bitmap);
     }
 
     /// Load rules from database and initialize scheduler state

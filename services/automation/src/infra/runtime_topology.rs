@@ -5,13 +5,14 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
+use aether_domain::ChannelPointAddress;
 use aether_ports::{ChannelHealthObservation, PortError, PortErrorKind, PortResult};
 use aether_rules::{MeasurementRouteBinding, RuleScheduler};
 use aether_shm_bridge::{
     ChannelPointManifest, PhysicalPointAddress, PointWatchEvent, ShmClientConfig,
-    ShmDeviceCommandSink, ShmReadTopologyGeneration, SlotSource,
+    ShmDeviceCommandSink, ShmReadTopologyGeneration, SlotSource, SubscriptionBitmap,
 };
-use aether_store_local::{LogicalPointRoutes, SqliteLiveTopologySnapshot};
+use aether_sqlite_topology::{LogicalPointRoutes, SqliteLiveTopologySnapshot};
 use arc_swap::ArcSwap;
 use sqlx::SqlitePool;
 use tokio::sync::{Mutex, MutexGuard, OwnedMutexGuard, OwnedRwLockReadGuard, RwLock, watch};
@@ -133,29 +134,51 @@ impl AutomationTopologyGeneration {
     }
 
     /// Copies the exact logical measurement bindings pinned to this generation.
-    #[must_use]
-    pub fn measurement_route_bindings(&self) -> Vec<MeasurementRouteBinding> {
+    pub fn measurement_route_bindings(&self) -> PortResult<Vec<MeasurementRouteBinding>> {
         self.measurement_routes
             .iter()
             .map(|(&(instance_id, point_id), &target)| {
-                MeasurementRouteBinding::new(instance_id, point_id, target)
+                let target =
+                    ChannelPointAddress::new(target.channel_id(), target.kind(), target.point_id())
+                        .map_err(|_| {
+                            PortError::new(
+                                PortErrorKind::InvalidData,
+                                "measurement route targets a command-owned channel point",
+                            )
+                        })?;
+                Ok(MeasurementRouteBinding::new(instance_id, point_id, target))
             })
             .collect()
     }
 
-    /// Rebuilds PointWatch from this generation's inseparable route/manifest view.
-    ///
-    /// Keeping this operation on the immutable service generation prevents a
-    /// caller from pairing bindings copied from one logical publication with
-    /// the point manifest of another physical publication.
-    pub async fn rebuild_point_watch<S>(&self, scheduler: &RuleScheduler<S>) -> bool
+    /// Rebuilds the transport-neutral rule index and publishes its canonical
+    /// points through the service-owned SHM bitmap.
+    pub async fn rebuild_point_watch<S>(
+        &self,
+        scheduler: &RuleScheduler<S>,
+        bitmap: Option<&SubscriptionBitmap>,
+    ) -> bool
     where
         S: aether_calc::StateStore + 'static,
     {
-        let bindings = self.measurement_route_bindings();
-        scheduler
-            .rebuild_point_watch(&bindings, self.point_manifest())
-            .await
+        let (Ok(bindings), Some(bitmap)) = (self.measurement_route_bindings(), bitmap) else {
+            return false;
+        };
+        let Some(subscriptions) = scheduler.rebuild_point_watch(&bindings).await else {
+            return false;
+        };
+
+        bitmap.clear_all();
+        for address in subscriptions {
+            let physical =
+                PhysicalPointAddress::new(address.channel_id(), address.kind(), address.point_id());
+            let Some(slot) = self.point_manifest().slot_for(physical) else {
+                bitmap.clear_all();
+                return false;
+            };
+            bitmap.set_watched(slot);
+        }
+        true
     }
 
     /// Reads one logical point without mixing routing and SHM generations.
@@ -405,7 +428,7 @@ impl AutomationTopologyHandle {
     }
 
     async fn refresh_locked(&self, pool: &SqlitePool) -> PortResult<bool> {
-        let snapshot = aether_store_local::load_sqlite_live_topology(pool).await?;
+        let snapshot = aether_sqlite_topology::load_sqlite_live_topology(pool).await?;
         let parts = CandidateParts::from_snapshot(snapshot);
         let current = self.current.load_full();
         let physical_changed = !current.has_physical_layout(&parts);

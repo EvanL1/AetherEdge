@@ -27,7 +27,7 @@ body:
         - Application command or query
         - SHM data plane or event plane
         - Runtime service or interface
-        - Optional extension
+        - Downstream integration
         - Optional industry pack
         - Documentation or example
         - Unsure
@@ -62,7 +62,7 @@ body:
     id: alternatives
     attributes:
       label: Alternatives considered
-      description: Include existing ports, extensions, packs, or composition options you evaluated.
+      description: Include existing ports, downstream adapters, packs, or composition options you evaluated.
     validations:
       required: true
 
@@ -71,7 +71,7 @@ body:
     attributes:
       label: Project invariants
       options:
-        - label: The default runtime remains usable without Redis, PostgreSQL, or another external service, or this proposal is explicitly an optional extension.
+        - label: The default runtime remains usable without Redis, PostgreSQL, or another external service, or this proposal is explicitly a downstream integration.
           required: true
         - label: SHM remains the authority for live point state.
           required: true

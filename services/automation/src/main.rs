@@ -67,7 +67,7 @@ async fn main() -> Result<()> {
     let shm_path = default_shm_path();
     debug!("SHM path: {}", shm_path.display());
 
-    let topology_snapshot = aether_store_local::load_sqlite_live_topology(&sqlite_pool)
+    let topology_snapshot = aether_sqlite_topology::load_sqlite_live_topology(&sqlite_pool)
         .await
         .map_err(|error| {
             AutomationError::DispatchDegraded(format!(
@@ -409,11 +409,11 @@ async fn main() -> Result<()> {
     // across IO's canonical-file swaps.
     let pw_manifest_source = state.shm_dispatch.manifest_source();
 
-    // Wire rebuild handles into scheduler so reload_rules can refresh the
-    // SubscriptionBitmap + dispatcher index without a service restart.
-    if let (Some(disp_arc), Some(bitmap)) = (pw_dispatcher_arc.as_ref(), pw_bitmap.as_ref()) {
-        scheduler.set_point_watch_rebuild_handles(Arc::clone(disp_arc), Arc::clone(bitmap));
-        info!("PointWatch rebuild handles wired into RuleScheduler");
+    // The rule library owns only the transport-neutral dispatcher index. This
+    // service composition publishes returned points through the SHM bitmap.
+    if let (Some(disp_arc), Some(_bitmap)) = (pw_dispatcher_arc.as_ref(), pw_bitmap.as_ref()) {
+        scheduler.set_point_watch_rebuild_handle(Arc::clone(disp_arc));
+        info!("PointWatch rebuild handle wired into RuleScheduler");
     }
 
     let scheduler = Arc::new(scheduler);
@@ -435,12 +435,14 @@ async fn main() -> Result<()> {
     match scheduler.reload_rules().await {
         Ok(count) => {
             let generation = initial_subscription_view.generation();
-            generation.rebuild_point_watch(&scheduler).await;
+            let point_watch_rebuilt = generation
+                .rebuild_point_watch(&scheduler, pw_bitmap.as_deref())
+                .await;
             let manifest_matches = pw_manifest_source.load().is_some_and(|manifest| {
                 manifest.layout_hash() == generation.point_manifest().layout_hash()
                     && manifest.slot_count() == generation.point_manifest().slot_count()
             });
-            if manifest_matches {
+            if point_watch_rebuilt && manifest_matches {
                 point_watch_readiness.mark_ready(generation.sequence());
             }
             info!("Rule Engine: loaded {} rules", count);
@@ -485,6 +487,7 @@ async fn main() -> Result<()> {
         let subscription_scheduler = Arc::clone(&scheduler);
         let subscription_topology = Arc::clone(&runtime_topology);
         let subscription_manifest = pw_manifest_source.clone();
+        let subscription_bitmap = pw_bitmap.clone();
         let subscription_ready = Arc::clone(&point_watch_readiness);
         let subscription_token = shutdown_token.clone();
         tokio::spawn(async move {
@@ -500,8 +503,11 @@ async fn main() -> Result<()> {
                         match subscription_scheduler.reload_rules().await {
                             Ok(count) => {
                                 let generation = view.generation();
-                                generation
-                                    .rebuild_point_watch(&subscription_scheduler)
+                                let point_watch_rebuilt = generation
+                                    .rebuild_point_watch(
+                                        &subscription_scheduler,
+                                        subscription_bitmap.as_deref(),
+                                    )
                                     .await;
                                 let manifest_matches = subscription_manifest
                                     .load()
@@ -511,7 +517,7 @@ async fn main() -> Result<()> {
                                             && manifest.slot_count()
                                                 == generation.point_manifest().slot_count()
                                     });
-                                if manifest_matches {
+                                if point_watch_rebuilt && manifest_matches {
                                     subscription_ready.mark_ready(generation.sequence());
                                     info!(
                                         "PointWatch subscriptions refreshed for topology sequence {} ({} rules)",
@@ -604,6 +610,7 @@ async fn main() -> Result<()> {
         .with_topology_guard(
             Arc::clone(&runtime_topology),
             Arc::clone(&point_watch_readiness),
+            pw_bitmap,
             pw_manifest_source,
         ),
     );

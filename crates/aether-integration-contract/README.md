@@ -10,8 +10,8 @@ The crate is transport-neutral. It provides:
 - topology-dependent identity, reference, quality, and value-type validation;
 - lossless string encodings for `int64` and `uint64`;
 - canonical decimal and unpadded Base64url validation;
-- Aether Foundation binary64 safety semantics;
-- explicit Home Assistant source-address and semantic point-kind projection.
+- Aether Foundation binary64 safety semantics; and
+- a caller-supplied provider-neutral source-address and point-kind profile.
 
 The Edge binding deliberately applies a 16 MiB complete-message safety limit,
 which is stricter than the contract's portable field limits. The bundled tests

@@ -18,7 +18,7 @@
 #   ./build-installer.sh v1.2.0 arm64                       # Build the Rust core (ARM64, v1.2.0)
 #   ./build-installer.sh v1.2.0 arm64 -s rust               # All Rust services
 #   ./build-installer.sh v1.2.0 arm64 -s rust --enable-swagger
-#   ./build-installer.sh v1.2.0 arm64 --io-features=home-assistant
+#   ./build-installer.sh v1.2.0 arm64 --io-features=modbus,mqtt
 #   ./build-installer.sh v1.2.0 arm64 -s aether-uplink,aether-history
 
 set -euo pipefail

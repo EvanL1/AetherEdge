@@ -38,7 +38,7 @@ The implementation map is:
 | Strict v1 codec | [`crates/aether-data-processing`](../crates/aether-data-processing/README.md) |
 | Machine-readable contracts | [`contracts/data-processing`](../contracts/data-processing/README.md) |
 | AI-facing eval scenarios | [`evals/data-processing.yaml`](evals/data-processing.yaml) |
-| Optional HTTP adapter | [`extensions/http-data-processor`](../extensions/http-data-processor/README.md) |
+| API-owned HTTP adapter | [`services/api/adapters/http-data-processor`](../services/api/adapters/http-data-processor/README.md) |
 | Downstream Load-Forecasting processor | [`EvanL1/AetherEMS`](https://github.com/EvanL1/AetherEMS/tree/main/processors/load-forecasting) |
 | AetherEMS tasks and fixtures | [`packs/energy/data-processing`](../packs/energy/data-processing/README.md) |
 

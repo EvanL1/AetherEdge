@@ -10,7 +10,7 @@ use aether_shm_bridge::{
     ShmChannelHealthWriterHandle, ShmClientConfig, ShmRuntimeConfig, ShmWriterHandle,
     commit_topology_publication,
 };
-use aether_store_local::load_sqlite_shm_topology;
+use aether_sqlite_topology::load_sqlite_shm_topology;
 use sqlx::sqlite::SqlitePoolOptions;
 
 async fn pool() -> sqlx::SqlitePool {

@@ -74,7 +74,7 @@ const allowedContextSensitivity = new Set([
 const allowedPriorities = new Set(['core', 'optional']);
 
 const rootDocuments = ['AGENTS.md', 'ARCHITECTURE.md', 'README.md'];
-const documentRoots = ['ai', 'contracts', 'crates', 'docs', 'extensions', 'skills'];
+const documentRoots = ['ai', 'contracts', 'crates', 'docs', 'skills'];
 const englishMetadataOverrides = {
   'README.md': {
     title: 'AetherEdge',
@@ -175,16 +175,12 @@ const governanceMetadataOverrides = {
     human_escalation: null,
     verification: ['verify-runtime-health', 'verify-read-only-observations'],
   },
-  'docs/guides/home-assistant.md': {
+  'docs/migration/home-assistant-extraction.md': {
     capability_refs: [],
-    preconditions: [
-      'explicit-feature-opt-in',
-      'edge-local-secret-reference',
-      'live-topology-generation',
-    ],
+    preconditions: ['experimental-home-assistant-build-was-deployed'],
     recovery_route: 'docs/recovery/safe-stop-and-control-revocation.md',
-    human_escalation: 'required-for-unknown-or-unsafe-physical-outcome',
-    verification: ['verify-read-only-projection', 'verify-control-remains-default-off'],
+    human_escalation: 'required-for-in-flight-or-unknown-physical-outcome',
+    verification: ['verify-extracted-feature-is-absent', 'verify-provider-token-revoked'],
   },
   'docs/guides/safe-operations.md': {
     capability_refs: [
@@ -440,7 +436,8 @@ function extractTitleAndDescription(relativePath, content) {
 function isOptionalPath(relativePath) {
   return (
     relativePath.startsWith('crates/') ||
-    relativePath.startsWith('extensions/') ||
+    relativePath.startsWith('libs/') ||
+    /^services\/[^/]+\/adapters\//.test(relativePath) ||
     relativePath.startsWith('contracts/') ||
     relativePath.startsWith('docs/adr/') ||
     relativePath.startsWith('docs/domain/') ||

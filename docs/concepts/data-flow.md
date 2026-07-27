@@ -19,11 +19,11 @@ transport. No default service needs Redis or PostgreSQL for live data.
 1. A protocol frame arrives on a communication channel and the channel's
    protocol adapter in aether-io decodes it into point values.
 2. aether-io commits each typed T/S batch through
-   `ShmAcquisitionStateWriter` (`extensions/shm-bridge/src/acquisition_writer.rs`).
+   `ShmAcquisitionStateWriter` (`libs/aether-shm-bridge/src/acquisition_writer.rs`).
    The adapter validates the immutable manifest and writer generation before
    and after mutation; slot-indexed writes are private implementation detail.
 3. **Event path (immediate).** After every slot write, the
-   `PointWatchPublisher` (`extensions/shm-bridge/src/point_watch.rs`) checks the
+   `PointWatchPublisher` (`libs/aether-shm-bridge/src/point_watch.rs`) checks the
    independent bitmap owned by each event consumer. On a hit, a bounded queue
    sends a `PointWatchEvent` to that consumer's UDS. aether-automation,
    aether-alarm, and aether-api cannot steal or overwrite one another's subscriptions. The event
@@ -74,7 +74,7 @@ Device ──frame──► aether-io protocol adapter (decode)
 3. The offline gate reads the channel-health SHM segment. An offline channel
    rejects the write with `ChannelUnreachable` before anything is written.
 4. After value validation, `ShmDeviceCommandSink`
-   (`extensions/shm-bridge/src/command_sink.rs`) mirrors the C or A slot. The
+   (`libs/aether-shm-bridge/src/command_sink.rs`) mirrors the C or A slot. The
    writer generation and canonical path are checked before and
    after the write; a mismatch means aether-io restarted and rebuilt the segment,
    so the write is discarded and the dispatch fails rather than landing in a
@@ -168,16 +168,15 @@ dominates the physical control loop.
 
 ## Optional state mirrors
 
-External state mirrors are extensions, not participants in the control path.
-`extensions/redis-bridge` implements the `StateMirror` extension contract and
-is built and started explicitly. It may observe SHM and publish an eventually
-consistent remote view, but no default service reads from it and mirror
+A downstream state mirror is not a participant in the control path. A custom
+composition may implement the `StateMirror` port and publish an eventually
+consistent remote view, but no kernel service reads that mirror and its
 failure cannot affect acquisition, rules, alarms, history, API reads, uplink,
 or command delivery.
 
-The same boundary applies to other custom stores: consume SHM/events through
-the extension API, keep the store non-authoritative, and do not add the store
-to core service startup dependencies.
+Custom stores stay outside this repository, consume read-only state through
+published contracts, remain non-authoritative, and cannot become core service
+startup dependencies.
 
 ## Related pages
 

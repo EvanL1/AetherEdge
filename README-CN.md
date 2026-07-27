@@ -207,8 +207,8 @@ cargo add aether-edge-sdk --features local-runtime
                     `-> 持久 outbox -> 可选云端
 
          domain <- ports <- application <- runtime/interfaces
-                               ^
-                               `---- 可选 extensions
+                   ^
+                   `---- 下游静态 Rust 适配器（仓外）
 ```
 
 AetherEdge 当前交付面向集成商的 Runtime、application contracts、受治理命令、

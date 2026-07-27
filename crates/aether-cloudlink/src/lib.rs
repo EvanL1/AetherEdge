@@ -2,13 +2,12 @@
 //!
 //! The wire contract implemented here is the digest-pinned experimental public
 //! AetherContracts subset. It is not a production release or a complete
-//! conformance claim. Concrete MQTT code lives in an extension and the business
-//! protocol does not depend on broker features.
+//! conformance claim. Concrete MQTT code is owned by `aether-uplink` and the
+//! business protocol does not depend on broker features.
 
 mod codec;
 mod error;
 mod integration;
-mod integration_projection_outbox;
 mod integration_publisher;
 mod session;
 mod session_authentication;
@@ -21,7 +20,6 @@ pub use codec::{
 };
 pub use error::CloudLinkCodecError;
 pub use integration::CloudLinkIntegrationExtension;
-pub use integration_projection_outbox::CloudLinkIntegrationProjectionOutbox;
 pub use integration_publisher::{CloudLinkIntegrationPublishEvent, CloudLinkIntegrationPublisher};
 pub use session::{
     CredentialOriginModel, MessageAuthentication, ResumeCursor, SessionAccepted, SessionBinding,

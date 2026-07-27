@@ -1,6 +1,6 @@
 # aether-ports
 
-Small, object-safe capability interfaces for Aether edge extensions.
+Small, object-safe capability interfaces for kernel and downstream adapters.
 
 The crate separates authoritative live reads, device command dispatch, audit,
 history, mirroring, durable outbox, uplink publishing, I/O channel

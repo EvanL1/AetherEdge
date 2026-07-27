@@ -16,10 +16,11 @@ aether-domain = { path = "../../crates/aether-domain" }
 aether-ports = { path = "../../crates/aether-ports" }
 aether-application = { path = "../../crates/aether-application" }
 aether-data-processing = { path = "../../crates/aether-data-processing" }
-aether-shm-bridge = { path = "../../extensions/shm-bridge" }
-aether-http-data-processor = { path = "../../extensions/http-data-processor" }
-aether-sqlite-history-query = { path = "../../extensions/sqlite-history-query" }
-aether-store-local = { path = "../../extensions/store-local", features = ["sqlite-audit", "sqlite-topology"] }
+aether-shm-bridge = { path = "../../libs/aether-shm-bridge" }
+aether-http-data-processor = { path = "adapters/http-data-processor" }
+aether-sqlite-history-query = { path = "adapters/sqlite-history-query" }
+aether-store-local = { path = "../../libs/aether-store-local", features = ["sqlite-audit"] }
+aether-sqlite-topology = { path = "../../libs/aether-sqlite-topology" }
 
 # Async runtime
 tokio = { workspace = true }

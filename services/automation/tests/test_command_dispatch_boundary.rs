@@ -93,7 +93,7 @@ async fn application(
         Arc::new(ProductLoader::new(pool.clone())),
     ));
 
-    let snapshot = aether_store_local::load_sqlite_live_topology(&pool)
+    let snapshot = aether_sqlite_topology::load_sqlite_live_topology(&pool)
         .await
         .expect("coherent topology snapshot");
     let point_path = directory.path().join("live.shm");

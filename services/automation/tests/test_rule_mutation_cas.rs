@@ -3,7 +3,7 @@
 #![allow(clippy::disallowed_methods)]
 
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use aether_automation::infra::rule_mutation::SqliteRuleMutator;
 use aether_automation::infra::runtime_topology::{AutomationTopologyHandle, PointWatchReadiness};
@@ -13,10 +13,10 @@ use aether_ports::{
     AutomationRuleMutator, AutomationRulesRevision, PortErrorKind, RevisionedRuleMutation,
     RuleMutation,
 };
-use aether_rules::{MemoryRuleLiveState, RuleScheduler};
+use aether_rules::{MemoryRuleLiveState, PointWatchDispatcher, RuleScheduler};
 use aether_shm_bridge::{
     PointWatchEvent, ShmChannelHealthWriterHandle, ShmDeviceCommandSink, ShmRuntimeConfig,
-    ShmWriterHandle, commit_topology_publication,
+    ShmWriterHandle, SubscriptionBitmap, commit_topology_publication,
 };
 
 async fn rules_pool(max_connections: u32) -> (tempfile::TempDir, sqlx::SqlitePool) {
@@ -118,7 +118,7 @@ async fn point_watch_publication_failure_is_gated_and_a_later_reload_recovers() 
     .await
     .expect("point");
 
-    let snapshot = aether_store_local::load_sqlite_live_topology(&pool)
+    let snapshot = aether_sqlite_topology::load_sqlite_live_topology(&pool)
         .await
         .expect("topology snapshot");
     let shm_directory = tempfile::tempdir().expect("SHM directory");
@@ -154,10 +154,20 @@ async fn point_watch_publication_failure_is_gated_and_a_later_reload_recovers() 
     let recovery_sink = ShmDeviceCommandSink::new();
     let manifest_source = recovery_sink.manifest_source();
     let readiness = Arc::new(PointWatchReadiness::new());
-    let scheduler = scheduler(&pool);
+    let mut configured_scheduler = RuleScheduler::new(
+        Arc::new(MemoryRuleLiveState::new()),
+        pool.clone(),
+        100,
+        PathBuf::from("logs/test-rule-cas-point-watch"),
+    );
+    let (dispatcher, _events) = PointWatchDispatcher::new();
+    configured_scheduler.set_point_watch_rebuild_handle(Arc::new(Mutex::new(dispatcher)));
+    let scheduler = Arc::new(configured_scheduler);
+    let bitmap = Arc::new(SubscriptionBitmap::new_in_memory().expect("bitmap"));
     let mutator = SqliteRuleMutator::new(pool.clone(), Arc::clone(&scheduler)).with_topology_guard(
         Arc::clone(&topology),
         Arc::clone(&readiness),
+        Some(bitmap),
         manifest_source,
     );
     let point_watch_event = PointWatchEvent::new(

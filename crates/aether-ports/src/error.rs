@@ -1,4 +1,4 @@
-//! Shared failure semantics for extension ports.
+//! Shared failure semantics for capability ports.
 
 use std::error::Error;
 use std::fmt;
@@ -68,5 +68,5 @@ impl fmt::Display for PortError {
 
 impl Error for PortError {}
 
-/// Result returned by an extension port.
+/// Result returned by a capability port.
 pub type PortResult<T> = Result<T, PortError>;

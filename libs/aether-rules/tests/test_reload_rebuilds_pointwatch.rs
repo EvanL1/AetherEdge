@@ -1,20 +1,18 @@
 //! Integration test: rule reload and PointWatch publication are separate,
 //! generation-pinned operations.
 //!
-//! The host must supply the measurement bindings and manifest from one pinned
-//! service topology. The scheduler never consults an independently mutable
-//! routing cache or manifest source.
+//! The host supplies canonical measurement bindings from one pinned service
+//! topology. The scheduler never consults a concrete SHM manifest or bitmap.
 
 #![allow(clippy::disallowed_methods)]
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use aether_domain::PointKind;
+use aether_domain::{ChannelId, ChannelPointAddress, PointId, PointKind};
 use aether_rules::{
     MeasurementRouteBinding, MemoryRuleLiveState, PointWatchDispatcher, RuleScheduler,
 };
-use aether_shm_bridge::{ChannelPointManifest, PhysicalPointAddress, SubscriptionBitmap};
 use sqlx::SqlitePool;
 
 async fn setup_pool() -> SqlitePool {
@@ -74,12 +72,9 @@ fn measurement_bindings() -> Vec<MeasurementRouteBinding> {
     vec![MeasurementRouteBinding::new(
         5,
         10,
-        PhysicalPointAddress::from_legacy_raw(1001, PointKind::Telemetry, 0),
+        ChannelPointAddress::new(ChannelId::new(1001), PointKind::Telemetry, PointId::new(0))
+            .expect("acquisition address"),
     )]
-}
-
-fn make_manifest() -> ChannelPointManifest {
-    ChannelPointManifest::from_entries([(1001, [1, 0, 0, 0])])
 }
 
 #[tokio::test]
@@ -93,9 +88,7 @@ async fn pinned_topology_rebuilds_subscription_index_after_rule_reload() {
 
     let (dispatcher, _watch_rx) = PointWatchDispatcher::new();
     let dispatcher = Arc::new(Mutex::new(dispatcher));
-    let bitmap = Arc::new(SubscriptionBitmap::new_in_memory().expect("bitmap"));
-
-    scheduler.set_point_watch_rebuild_handles(Arc::clone(&dispatcher), Arc::clone(&bitmap));
+    scheduler.set_point_watch_rebuild_handle(Arc::clone(&dispatcher));
 
     // Sanity: nothing subscribed yet.
     assert_eq!(dispatcher.lock().unwrap().subscription_count(), 0);
@@ -109,8 +102,9 @@ async fn pinned_topology_rebuilds_subscription_index_after_rule_reload() {
     );
     assert!(
         scheduler
-            .rebuild_point_watch(&measurement_bindings(), &make_manifest())
+            .rebuild_point_watch(&measurement_bindings())
             .await
+            .is_some()
     );
 
     // After reload, the rule's (channel=1001, point=0) should be in sub_index.
@@ -133,9 +127,10 @@ async fn reload_rules_no_rebuild_when_handles_unset() {
     let count = scheduler.reload_rules().await.expect("reload_rules");
     assert_eq!(count, 1);
     assert!(
-        !scheduler
-            .rebuild_point_watch(&measurement_bindings(), &make_manifest())
+        scheduler
+            .rebuild_point_watch(&measurement_bindings())
             .await
+            .is_none()
     );
 }
 
@@ -151,15 +146,12 @@ async fn reload_rules_after_rule_added_picks_up_new_subscription() {
 
     let (dispatcher, _watch_rx) = PointWatchDispatcher::new();
     let dispatcher = Arc::new(Mutex::new(dispatcher));
-    let bitmap = Arc::new(SubscriptionBitmap::new_in_memory().expect("bitmap"));
-    scheduler.set_point_watch_rebuild_handles(Arc::clone(&dispatcher), Arc::clone(&bitmap));
+    scheduler.set_point_watch_rebuild_handle(Arc::clone(&dispatcher));
 
     // First reload: empty DB → no subscriptions.
     let count = scheduler.reload_rules().await.expect("reload empty");
     assert_eq!(count, 0);
-    scheduler
-        .rebuild_point_watch(&measurement_bindings(), &make_manifest())
-        .await;
+    scheduler.rebuild_point_watch(&measurement_bindings()).await;
     assert_eq!(dispatcher.lock().unwrap().subscription_count(), 0);
 
     // Admin adds a rule.
@@ -168,9 +160,7 @@ async fn reload_rules_after_rule_added_picks_up_new_subscription() {
     // Second reload: subscription index should grow.
     let count = scheduler.reload_rules().await.expect("reload after insert");
     assert_eq!(count, 1);
-    scheduler
-        .rebuild_point_watch(&measurement_bindings(), &make_manifest())
-        .await;
+    scheduler.rebuild_point_watch(&measurement_bindings()).await;
     assert_eq!(
         dispatcher.lock().unwrap().subscription_count(),
         1,

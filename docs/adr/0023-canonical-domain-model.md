@@ -2,7 +2,8 @@
 
 ## Status
 
-Accepted and implemented on 2026-07-26.
+Accepted and implemented on 2026-07-26. ADR-0026 supersedes references to an
+in-repository SunSpec adapter; canonical domain ownership remains unchanged.
 
 ## Context
 

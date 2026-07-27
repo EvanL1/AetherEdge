@@ -225,8 +225,8 @@ Devices -> aether-io -> authoritative SHM
                          `-> durable outbox -> optional cloud
 
               domain <- ports <- application <- runtime/interfaces
-                                    ^
-                                    `---- optional extensions
+                        ^
+                        `---- downstream static Rust adapters (out of tree)
 ```
 
 AetherEdge currently delivers the integrator-grade runtime, application

@@ -31,7 +31,7 @@ Include, when available:
 - a concise impact assessment and the trust boundary crossed;
 - reproducible steps or a minimal proof of concept;
 - whether device control, credentials, SHM integrity, authentication,
-  authorization, protocol parsing, or an optional extension is involved;
+  authorization, protocol parsing, or a downstream integration is involved;
 - suggested mitigations or a patch, if you have one;
 - any disclosure constraints already known to you.
 
@@ -60,8 +60,8 @@ Changes must preserve Aether's baseline controls:
 - AI clients are not part of deterministic hard real-time or safety loops.
 - SHM is the authority for live state; mirrors and history stores cannot
   silently take over that role.
-- External databases and network services are opt-in extensions, not default
-  runtime requirements.
+- External databases and network services are explicit optional integrations,
+  not default runtime requirements.
 - Secrets and credentials must not be committed, logged, embedded in test
   fixtures, or placed in issue reports.
 

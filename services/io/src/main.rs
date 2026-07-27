@@ -103,7 +103,7 @@ async fn main() -> AetherResult<()> {
     let shutdown_token = CancellationToken::new();
 
     let (initial_point_manifest, initial_health_manifest) =
-        aether_store_local::load_sqlite_shm_topology(&sqlite_pool)
+        aether_sqlite_topology::load_sqlite_shm_topology(&sqlite_pool)
             .await
             .map_err(|error| {
                 IoError::config(format!(
@@ -579,18 +579,6 @@ async fn main() -> AetherResult<()> {
         .listen(1024)
         .map_err(|e| IoError::ConnectionError(format!("Failed to listen: {}", e)))?;
 
-    let home_assistant_runtime =
-        match aether_io::home_assistant::start_home_assistant_integration(shutdown_token.clone()) {
-            Ok(runtime) => runtime,
-            Err(error) => {
-                error!(
-                    error = %error,
-                    "Home Assistant integration was rejected; core aether-io runtime remains active"
-                );
-                None
-            },
-        };
-
     info!("API server listening on http://{}", addr);
     info!("Health check: http://{}/health", addr);
 
@@ -623,13 +611,6 @@ async fn main() -> AetherResult<()> {
         server_handle,
     )
     .await;
-
-    if let Some(runtime) = home_assistant_runtime {
-        match runtime.shutdown().await {
-            Ok(()) => info!("Home Assistant integration task stopped"),
-            Err(error) => error!("Home Assistant integration shutdown failed: {error}"),
-        }
-    }
 
     match tokio::time::timeout(Duration::from_secs(2), automatic_reconciliation_handle).await {
         Ok(Ok(())) => info!("Automatic IO reconciliation task stopped"),

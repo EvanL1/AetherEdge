@@ -29,7 +29,7 @@ zeroize = { workspace = true }
 
 [dev-dependencies]
 aether-runtime-catalog = { path = "../../libs/aether-runtime-catalog" }
-aether-store-local = { path = "../../extensions/store-local" }
+aether-store-local = { path = "../../libs/aether-store-local" }
 aether-testkit = { path = "../aether-testkit" }
 tempfile = { workspace = true }
 tokio = { workspace = true }

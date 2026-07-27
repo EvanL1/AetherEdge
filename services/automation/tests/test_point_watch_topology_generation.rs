@@ -49,7 +49,7 @@ async fn topology_pool() -> sqlx::SqlitePool {
 #[tokio::test]
 async fn rebuild_uses_the_route_and_manifest_of_one_pinned_service_generation() {
     let pool = topology_pool().await;
-    let snapshot = aether_store_local::load_sqlite_live_topology(&pool)
+    let snapshot = aether_sqlite_topology::load_sqlite_live_topology(&pool)
         .await
         .expect("initial topology");
     let topology = AutomationTopologyHandle::new_lazy(
@@ -69,11 +69,15 @@ async fn rebuild_uses_the_route_and_manifest_of_one_pinned_service_generation() 
     let (dispatcher, mut events) = PointWatchDispatcher::new();
     let dispatcher = Arc::new(Mutex::new(dispatcher));
     let bitmap = Arc::new(SubscriptionBitmap::new_in_memory().expect("bitmap"));
-    scheduler.set_point_watch_rebuild_handles(Arc::clone(&dispatcher), Arc::clone(&bitmap));
+    scheduler.set_point_watch_rebuild_handle(Arc::clone(&dispatcher));
     scheduler.reload_rules().await.expect("rule reload");
 
     let original = topology.load();
-    assert!(original.rebuild_point_watch(&scheduler).await);
+    assert!(
+        original
+            .rebuild_point_watch(&scheduler, Some(bitmap.as_ref()))
+            .await
+    );
     dispatcher
         .lock()
         .expect("dispatcher")
@@ -96,7 +100,11 @@ async fn rebuild_uses_the_route_and_manifest_of_one_pinned_service_generation() 
 
     // A retained generation remains internally coherent even after the handle
     // publishes its replacement: it rebuilds the old route with the old view.
-    assert!(original.rebuild_point_watch(&scheduler).await);
+    assert!(
+        original
+            .rebuild_point_watch(&scheduler, Some(bitmap.as_ref()))
+            .await
+    );
     dispatcher
         .lock()
         .expect("dispatcher")
@@ -113,7 +121,11 @@ async fn rebuild_uses_the_route_and_manifest_of_one_pinned_service_generation() 
 
     // Publishing the replacement generation clears the old subscription and
     // installs only the replacement binding; no RoutingCache head is read.
-    assert!(replacement.rebuild_point_watch(&scheduler).await);
+    assert!(
+        replacement
+            .rebuild_point_watch(&scheduler, Some(bitmap.as_ref()))
+            .await
+    );
     dispatcher
         .lock()
         .expect("dispatcher")

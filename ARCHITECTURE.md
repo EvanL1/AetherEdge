@@ -15,6 +15,7 @@ rules are defined in:
 - [ADR-0023: Canonical domain-model owner](docs/adr/0023-canonical-domain-model.md)
 - [ADR-0024: Typed architecture contracts](docs/adr/0024-typed-architecture-contracts.md)
 - [ADR-0025: Physical IO and optional protocol extensions](docs/adr/0025-physical-io-and-optional-protocol-extensions.md)
+- [ADR-0026: Minimal kernel and out-of-tree integrations](docs/adr/0026-minimal-kernel-and-out-of-tree-integrations.md)
 - [Target repository layout](docs/architecture/target-layout.md)
 - [AI invariants](ai/invariants.md)
 - [Capability safety policy](ai/safety-policy.yaml)
@@ -46,8 +47,9 @@ plane, and typed SHM port adapters. In particular:
   create/update/delete/enable/disable cross the same confirmed, audited
   `io.channel.manage` application boundary from HTTP, CLI, and MCP. SHM remains
   authoritative for live point values.
-- Redis and PostgreSQL implementations are optional integrations rather than
-  prerequisites of the peripheral service data paths.
+- Redis is absent from the kernel composition. PostgreSQL is not a default
+  dependency; the History service retains an explicitly selected migration
+  backend while its extraction decision remains separate.
 - `aether-alarm`, `aether-api`, `aether-history`, and `aether-uplink` discover logical points from
   SQLite and read current values directly from SHM. `aether-alarm` and
   `aether-api` also own isolated PointWatch bitmaps and UDS listeners.
@@ -55,14 +57,15 @@ plane, and typed SHM port adapters. In particular:
   enabled with the `postgres-storage` feature. `aether-uplink` retains its durable
   local outbox before MQTT.
 - `aether-cloudlink` implements the transport-neutral experimental candidate
-  codec and truthful Runtime Manifest/`PointSample` mapping.
-  `aether-cloudlink-mqtt` is a user-broker-neutral MQTT v3.1.1/QoS 1 extension.
-  Legacy MQTT remains the runtime default while public AetherContracts alpha.3
-  is experimental and production credential and durable-store gates remain open.
+  codec and truthful Runtime Manifest/`PointSample` mapping. The
+  user-broker-neutral MQTT v3.1.1/QoS 1 binding is owned below
+  `services/uplink`; it is not an extension and IO cannot select it. Legacy
+  MQTT remains the runtime default while public AetherContracts alpha.3 is
+  experimental and production credential and durable-store gates remain open.
 - `aether-domain` is the sole business-semantics owner. The former
   `aether-model` compatibility crate has been removed: Pack product contracts
-  live in `aether-pack`, SunSpec material lives in the IO protocol adapter,
-  and `aether-core` retains wire-codec and SHM ABI representations.
+  live in `aether-pack`, SunSpec material is absent from the kernel, and
+  `aether-core` retains wire-codec and SHM ABI representations.
 - Domain models and knowledge are absent by default. Automation and MCP load
   them only from manifest-validated Packs explicitly selected by
   `<AETHER_CONFIG_PATH>/global.yaml`; `packs: []` is the safe empty kernel.
@@ -96,11 +99,11 @@ HTTP command APIs.
 
 An optional single-process composition may exist for tests, simulation, or
 small development profiles. It is not the deployment default and does not
-replace the service binaries. Neither profile requires PostgreSQL; Redis is a
-compatibility mirror and never the live-state authority.
+replace the service binaries. Neither profile requires PostgreSQL or Redis.
 
-Optional adapters may add Redis state mirroring, PostgreSQL history, MQTT
-uplink, or HTTP APIs. They do not change the source-of-truth rules.
+Downstream Rust compositions may implement published ports for third-party
+systems. Those integrations stay outside this kernel repository and do not
+change the source-of-truth rules.
 
 ## Experimental CloudLink boundary
 
@@ -155,23 +158,23 @@ and a forecast, aggregate, estimate, or classification can influence equipment
 only through a separate automation/control use case. The domain contracts live
 in `aether-domain`, the ports and orchestration live in `aether-ports` and
 `aether-application`, and the strict v1 wire codec lives in
-`aether-data-processing`. Concrete processors and HTTP transport remain
-optional; `aether-data-processor` is only a reserved future process name. The
+`aether-data-processing`. Concrete processors remain downstream and the
+retained HTTP client is API-owned; `aether-data-processor` is only a reserved future process name. The
 default six-service runtime continues to operate when no processor is installed.
 
 ## Dependency Rule
 
 ```text
-interfaces ----> application ----> ports ----> domain
-                       ^              ^
-                       |              |
-runtime/composition ---+          extensions
-                       |
-                  data plane
+services/interfaces ----> application ----> ports ----> domain
+         |                     ^
+         |                     |
+         +---- composition ----+
+         |
+         +---- kernel adapters / data plane
 ```
 
 Only a composition root may depend on both application code and concrete
-extensions. Executable package-edge contracts live in
+kernel adapters. Executable package-edge contracts live in
 `tools/aether-architecture-tests`; they consume Cargo metadata rather than
 matching dependency text or source-file paths. Writer authority is represented
 by dedicated dependency edges, and governed command entry points have behavior

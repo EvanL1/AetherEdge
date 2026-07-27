@@ -66,7 +66,7 @@ jobs:
           cargo clippy --workspace --lib --bins -- -D clippy::unwrap_used -D clippy::expect_used
           cargo nextest run
           cargo nextest run -p aether-edge-sdk --features local-runtime --test local_runtime_facade
-          cargo nextest run -p aether-shm-bridge -p aether-redis-bridge -p aether-postgres-history -p aether-example-minimal-gateway -p aether-example-energy-gateway
+          cargo nextest run -p aether-shm-bridge -p aether-sqlite-topology -p aether-cloudlink-mqtt -p aether-http-data-processor -p aether-sqlite-history-query -p aether-example-minimal-gateway -p aether-example-energy-gateway
           cargo nextest run --workspace --lib --bins --tests
 
   # ============================================================================
@@ -510,9 +510,9 @@ jobs:
           - **CLI Tool**: aether
 
           The AetherEMS Console is owned and released by the downstream AetherEMS
-          repository. Redis mirror and PostgreSQL/TimescaleDB history artifacts
-          remain explicit optional extensions; none is included in the default
-          release package.
+          repository. Redis compatibility infrastructure and PostgreSQL/TimescaleDB
+          history artifacts remain explicit optional services; none is included in
+          the default release package.
 
           EOF
 

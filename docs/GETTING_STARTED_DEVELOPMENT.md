@@ -27,7 +27,7 @@
 |------|------|----------|
 | **Docker** | 完整 Compose 发行版与可选 profile | [下载 Docker Desktop](https://docs.docker.com/get-docker/) |
 | **Node.js / pnpm** | 可选 Web 客户端 | `npm install -g pnpm` |
-| **redis-cli** | 可选 Redis `StateMirror` 扩展调试 | `brew install redis` |
+| **redis-cli** | 可选 下游 Redis `StateMirror` 适配器调试 | `brew install redis` |
 | **sqlitebrowser** | SQLite 可视化 | `brew install --cask db-browser-for-sqlite` |
 | **just** | 任务运行器 | `brew install just` |
 
@@ -82,7 +82,7 @@ chmod 600 .env
 # AETHER_BOOTSTRAP_ADMIN_PASSWORD=<另一个随机值>
 # AETHER_CONFIG_PATH=./data/config
 # AETHER_DATA_PATH=./data
-# 仅启用可选 Redis StateMirror 扩展时才需要 AETHER_REDIS_URL
+# 仅启用可选下游 Redis StateMirror 适配器时才需要 AETHER_REDIS_URL
 ```
 
 ### 步骤 2：构建项目
@@ -112,7 +112,7 @@ cargo build --release --workspace
 # 默认仅启动六个 Rust 进程，不启动前端或外部数据库。
 docker compose up -d
 
-# 可选扩展必须显式选择 profile
+# 可选下游适配器必须显式选择 profile
 docker compose --profile redis up -d
 docker compose --profile postgres-storage up -d
 
@@ -290,7 +290,7 @@ git push -u origin feature/my-feature
 Error: Failed to connect to Redis at redis://localhost:6379
 ```
 
-核心服务不依赖 Redis；未启用镜像时可忽略这类扩展诊断。确实需要镜像时：
+核心服务不依赖 Redis；未启用镜像时可忽略这类下游适配器诊断。确实需要镜像时：
 
 ```bash
 # 显式启动可选 profile

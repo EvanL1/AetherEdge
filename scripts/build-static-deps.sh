@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Cross-compile optional static dependencies for bare-metal Aether installs.
-# Set INCLUDE_REDIS=1 for the Redis extension bundle. Runs on the build machine
+# Set INCLUDE_REDIS=1 for the Redis infrastructure bundle. Runs on the build machine
 # (still requires Docker when selected); targets
 # get zero new system dependencies. Results are cached under
 # build/cache/static-deps/<name>-<version>-<arch>/ so repeat builds are

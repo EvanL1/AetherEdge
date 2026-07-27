@@ -6,7 +6,17 @@ use std::sync::OnceLock;
 
 use serde::Deserialize;
 
-const RETIRED_PACKAGES: &[&str] = &["aether-model", "aether-rtdb", "aether-rtdb-shm"];
+const RETIRED_PACKAGES: &[&str] = &[
+    "aether-home-assistant-bridge",
+    "aether-http-history-query",
+    "aether-integration-control",
+    "aether-model",
+    "aether-postgres-history",
+    "aether-redis-bridge",
+    "aether-rtdb",
+    "aether-rtdb-shm",
+    "aether-sunspec",
+];
 const RETIRED_ROOT_PATHS: &[&str] = &[
     "libs/aether-model",
     "libs/aether-rtdb",
@@ -361,39 +371,26 @@ fn retired_workspace_crates_stay_retired() {
 }
 
 #[test]
-fn production_io_is_rust_only_and_sunspec_is_an_explicit_extension() {
+fn production_io_is_rust_only_and_in_tree_sunspec_is_retired() {
     let workspace = workspace();
     let io = workspace.package("aether-io");
-    let sunspec = workspace.package("aether-sunspec");
+    let member_names = workspace
+        .members()
+        .map(|package| package.name.as_str())
+        .collect::<BTreeSet<_>>();
 
+    assert!(!member_names.contains("aether-sunspec"));
     assert!(
-        workspace.package_is_under(sunspec, "extensions"),
-        "SunSpec catalog must be owned by an extension"
-    );
-    let dependency = production_dependencies(io)
-        .find(|dependency| dependency.name == "aether-sunspec")
-        .unwrap_or_else(|| panic!("aether-io is missing its explicit SunSpec extension edge"));
-    assert!(
-        dependency.optional,
-        "aether-io must not compile SunSpec into its default composition"
-    );
-    let sunspec_features = io
-        .features
-        .get("sunspec")
-        .unwrap_or_else(|| panic!("aether-io is missing its explicit sunspec feature"));
-    assert_eq!(
-        sunspec_features
-            .iter()
-            .map(String::as_str)
-            .collect::<BTreeSet<_>>(),
-        BTreeSet::from(["dep:aether-sunspec", "modbus"]),
-        "aether-io/sunspec must compose the catalog and its Modbus transport"
+        production_dependencies(io).all(|dependency| dependency.name != "aether-sunspec"),
+        "standard aether-io must not depend on a SunSpec implementation"
     );
     assert!(
-        io.features
-            .get("default")
-            .is_some_and(|features| !features.iter().any(|feature| feature == "sunspec")),
-        "SunSpec must stay default-off"
+        !io.features.contains_key("sunspec"),
+        "standard aether-io must not expose an in-tree SunSpec feature"
+    );
+    assert!(
+        !workspace.root().join("extensions/sunspec").exists(),
+        "the retired in-tree SunSpec catalog was restored"
     );
 
     let python_files = files_with_extension(&workspace.root().join("services/io"), "py");
@@ -401,33 +398,39 @@ fn production_io_is_rust_only_and_sunspec_is_an_explicit_extension() {
         python_files.is_empty(),
         "production IO contains Python assets: {python_files:?}"
     );
+}
 
-    let catalog = workspace.root().join("extensions/sunspec/models/json");
-    let catalog_entries = fs::read_dir(&catalog)
-        .unwrap_or_else(|error| panic!("failed to inspect {}: {error}", catalog.display()))
-        .map(|entry| {
-            entry.unwrap_or_else(|error| {
-                panic!(
-                    "failed to inspect entry below {}: {error}",
-                    catalog.display()
-                )
-            })
-        })
-        .collect::<Vec<_>>();
+#[test]
+fn kernel_has_no_in_tree_extension_layer_and_uplink_owns_cloudlink_transport() {
+    let workspace = workspace();
     assert!(
-        !catalog_entries.is_empty(),
-        "SunSpec model catalog is empty"
+        !workspace.root().join("extensions").exists(),
+        "the retired in-tree extension layer was restored"
     );
     assert!(
-        catalog_entries.iter().all(|entry| {
-            entry.file_type().is_ok_and(|kind| kind.is_file())
-                && entry
-                    .file_name()
-                    .to_str()
-                    .is_some_and(|name| name.starts_with("model_") && name.ends_with(".json"))
-        }),
-        "SunSpec catalog contains assets that its build does not consume"
+        workspace
+            .members()
+            .all(|package| !workspace.package_is_under(package, "extensions")),
+        "a workspace package is still owned by the retired extension layer"
     );
+
+    let cloudlink_mqtt = workspace.package("aether-cloudlink-mqtt");
+    assert!(
+        workspace.package_is_under(cloudlink_mqtt, "services/uplink"),
+        "CloudLink MQTT must be owned by aether-uplink"
+    );
+    let io = workspace.package("aether-io");
+    for dependency in [
+        "aether-cloudlink",
+        "aether-cloudlink-mqtt",
+        "aether-home-assistant-bridge",
+        "aether-integration-control",
+    ] {
+        assert!(
+            !has_production_workspace_dependency(workspace, io, dependency),
+            "aether-io still selects extracted integration dependency {dependency}"
+        );
+    }
 }
 
 #[test]
@@ -487,6 +490,18 @@ fn core_and_gateway_do_not_select_forbidden_sdk_or_adapter_edges() {
     let rules = workspace.package("aether-rules");
     if has_production_workspace_dependency(workspace, rules, "aether-routing") {
         violations.push("aether-rules depends on the mutable aether-routing cache".to_string());
+    }
+    if has_production_workspace_dependency(workspace, rules, "aether-shm-bridge") {
+        violations.push("aether-rules selects the concrete SHM runtime".to_string());
+    }
+    let local_store = workspace.package("aether-store-local");
+    if has_production_workspace_dependency(workspace, local_store, "aether-shm-bridge") {
+        violations.push("aether-store-local selects the concrete SHM runtime".to_string());
+    }
+    let sqlite_topology = workspace.package("aether-sqlite-topology");
+    if !has_production_workspace_dependency(workspace, sqlite_topology, "aether-shm-bridge") {
+        violations
+            .push("aether-sqlite-topology no longer owns SQLite-to-SHM composition".to_string());
     }
 
     let codec = workspace.package("aether-data-processing");

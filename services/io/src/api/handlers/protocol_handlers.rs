@@ -199,10 +199,7 @@ mod tests {
     async fn protocol_discovery_separates_strict_modbus_tcp_and_rtu_contracts() {
         let Json(response) = list_protocols().await.expect("protocol discovery");
 
-        #[allow(unused_mut)]
-        let mut tcp_protocols = vec!["modbus_tcp"];
-        #[cfg(feature = "sunspec")]
-        tcp_protocols.push("sunspec_tcp");
+        let tcp_protocols = ["modbus_tcp"];
         for protocol_type in tcp_protocols {
             let driver = &protocol(&response.data, protocol_type).drivers[0];
             assert_required_string(parameter(driver, "host"));
@@ -217,10 +214,7 @@ mod tests {
             );
         }
 
-        #[allow(unused_mut)]
-        let mut rtu_protocols = vec!["modbus_rtu"];
-        #[cfg(feature = "sunspec")]
-        rtu_protocols.push("sunspec_rtu");
+        let rtu_protocols = ["modbus_rtu"];
         for protocol_type in rtu_protocols {
             let driver = &protocol(&response.data, protocol_type).drivers[0];
             assert_required_string(parameter(driver, "device"));
@@ -235,10 +229,7 @@ mod tests {
             );
         }
 
-        #[allow(unused_mut)]
-        let mut bounded_protocols = vec!["modbus_tcp", "modbus_rtu"];
-        #[cfg(feature = "sunspec")]
-        bounded_protocols.extend(["sunspec_tcp", "sunspec_rtu"]);
+        let bounded_protocols = ["modbus_tcp", "modbus_rtu"];
         for protocol_type in bounded_protocols {
             let driver = &protocol(&response.data, protocol_type).drivers[0];
             let poll = parameter(driver, "poll_interval_ms");

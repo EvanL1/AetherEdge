@@ -102,11 +102,12 @@ Two mount classes matter for the runtime:
   stale file entry.
 - **Optional external stores** — no core service mounts a Redis socket, exports
   `REDIS_URL`, or waits for Redis. `docker compose --profile redis up -d`
-  starts mirror infrastructure for a host that explicitly wires
-  `aether-redis-bridge`. PostgreSQL history remains opt-in through
-  `--profile postgres-storage` and a PostgreSQL-enabled history build. Set a
-  unique non-empty `TIMESCALEDB_PASSWORD` before selecting that profile; the
-  packaged extension installer generates one without printing it.
+  starts compatibility infrastructure only; AetherEdge ships no Redis mirror
+  adapter, so any consumer belongs to a downstream composition. PostgreSQL
+  history remains opt-in through `--profile postgres-storage` and a
+  PostgreSQL-enabled history build. Set a unique non-empty
+  `TIMESCALEDB_PASSWORD` before selecting that profile; the packaged installer
+  generates one without printing it.
 
 All Rust containers read the shared configuration SQLite database from
 `${AETHER_BASE_PATH:-./data}/aether.db` (mounted at `/app/data/aether.db`)
@@ -137,7 +138,7 @@ install script:
   `aether-io`, `aether-automation`, `aether-history`, `aether-api`, `aether-uplink`, `aether-alarm`,
   `redis`, `timescaledb`; group shortcut `rust` expands to all six Rust
   services). Every fresh-install package must include the Rust core; select
-  extension variants as `-s rust,redis`, `-s rust,timescaledb`, or
+  external-service variants as `-s rust,redis`, `-s rust,timescaledb`, or
   `-s rust,redis,timescaledb`. The default package contains only the Rust
   edge-runtime image; external-store images must be selected explicitly.
 - `--enable-swagger` — compile the single `aether-api` gateway Swagger UI;
@@ -153,14 +154,6 @@ install script:
 
 # All Rust services only, with the gateway Swagger UI
 ./scripts/build-installer.sh v1.2.0 arm64 -s rust --enable-swagger
-
-# Docker installer with the local read-only Home Assistant bridge
-./scripts/build-installer.sh v1.2.0 arm64 \
-  --io-features=home-assistant
-
-# Docker installer with Home Assistant, CloudLink, and governed power control
-./scripts/build-installer.sh v1.2.0 arm64 \
-  --io-features=home-assistant-integration-control
 ```
 
 The script cross-compiles the six services and the `aether` CLI with
@@ -211,8 +204,8 @@ an Aether site before any recursive permission operation. Paths are also
 limited to characters that round-trip safely through Docker Compose `.env`.
 
 An `AETHER_TIMESCALE_DATA_PATH` outside the site root and Docker's optional
-`redis-data` named volume are extension-owned storage. They must also be empty
-for a fresh deployment. Reusing or migrating an extension store is outside the
+`redis-data` named volume are external-service storage. They must also be empty
+for a fresh deployment. Reusing or migrating an external store is outside the
 installer's supported workflow.
 
 The installer generates
@@ -228,84 +221,6 @@ Consequently host-network mutation requests fail closed. Remote runtime
 upgrade is not supported; installing another release requires the explicit
 fresh-deployment workflow above rather than expanding the API process's
 authority.
-
-### Home Assistant in a Docker installer
-
-Home Assistant support is available only in an installer built with one of
-the explicit `--io-features` selections above. The current official release
-workflow does not pass that option, so the precompiled official `.run`
-artifacts do not yet contain Home Assistant support. Do not enable the
-settings below against a default official artifact; it will fail closed
-because the feature is absent.
-
-The packaged Compose file passes only the documented Home Assistant variables
-to `aether-io`; it does not use `env_file` to copy the complete host
-environment. All three switches default to `false`:
-
-```dotenv
-AETHER_HOME_ASSISTANT_ENABLED=false
-AETHER_HOME_ASSISTANT_CLOUDLINK_ENABLED=false
-AETHER_HOME_ASSISTANT_CONTROL_ENABLED=false
-```
-
-After installing a custom artifact, edit `/opt/AetherEdge/.env` and keep it
-mode 0600. Set only the layer being commissioned. The local read-only bridge
-requires the origin, gateway identity, and token value:
-
-```dotenv
-AETHER_HOME_ASSISTANT_ENABLED=true
-AETHER_HOME_ASSISTANT_ORIGIN=https://homeassistant.example.lan:8123
-AETHER_GATEWAY_ID=33333333-3333-4333-8333-333333333333
-AETHER_HOME_ASSISTANT_INTEGRATION_ID=home-assistant-main
-AETHER_HOME_ASSISTANT_TOKEN=<access-token>
-```
-
-Compose fixes every `*_REF` to one documented value variable and passes that
-value separately:
-
-| Purpose or reference consumed by `aether-io` | Value variable in `.env` |
-|---|---|
-| `env:AETHER_HOME_ASSISTANT_TOKEN` | `AETHER_HOME_ASSISTANT_TOKEN` |
-| `env:AETHER_HOME_ASSISTANT_CLOUDLINK_CLOUD_PUBLIC_KEY` | `AETHER_HOME_ASSISTANT_CLOUDLINK_CLOUD_PUBLIC_KEY` |
-| `env:AETHER_HOME_ASSISTANT_CLOUDLINK_GATEWAY_SIGNING_KEY` | `AETHER_HOME_ASSISTANT_CLOUDLINK_GATEWAY_SIGNING_KEY` |
-| `env:AETHER_HOME_ASSISTANT_CLOUDLINK_MQTT_PASSWORD_SECRET` | `AETHER_HOME_ASSISTANT_CLOUDLINK_MQTT_PASSWORD_SECRET` |
-| `env:AETHER_HOME_ASSISTANT_CONTROL_CLOUD_PUBLIC_KEY` | `AETHER_HOME_ASSISTANT_CONTROL_CLOUD_PUBLIC_KEY` |
-| Control receipt signing | Uses the active CloudLink Gateway session signer; no second Edge identity, reference, or private-key variable is injected |
-
-The deprecated `AETHER_HOME_ASSISTANT_CONTROL_EDGE_KEY_ID` and
-`AETHER_HOME_ASSISTANT_CONTROL_EDGE_SIGNING_KEY_REF` migration aliases are not
-injected by Compose.
-
-Never add `AETHER_HOME_ASSISTANT_ACCESS_TOKEN` or
-`AETHER_HOME_ASSISTANT_CLOUDLINK_MQTT_PASSWORD`; those plaintext configuration
-names are rejected by the runtime. CloudLink and control also require their
-non-secret identities, broker settings, extension confirmations, and explicit
-enable switches from `.env.example`.
-
-Mutable Compose state is fixed inside the existing persistent `/app/data`
-mount. The feature-exact Runtime Manifest is the sole read-only exception:
-
-| State | Container path |
-|---|---|
-| Topology generation ledger | `/app/data/home-assistant/topology-generations.json` |
-| Verified Runtime Manifest directory | `/app/config` (read-only, baked into the exact image) |
-| Challenge replay ledger | `/app/data/home-assistant/cloudlink/challenge-ledger.json` |
-| Topology and observation spools | `/app/data/home-assistant/cloudlink/topology.spool`, `/app/data/home-assistant/cloudlink/observations.spool` |
-| Session epoch | `/app/data/home-assistant/cloudlink/session-epoch` |
-| Control ledger, policy, and audit | `/app/data/home-assistant/control/jobs-and-receipts.json`, `/app/data/home-assistant/control/policy.json`, `/app/data/home-assistant/control/audit.jsonl` |
-
-Create and commission the control policy before enabling control. Then restart
-only the composition root that owns this integration:
-
-```bash
-cd /opt/AetherEdge
-chmod 600 .env
-docker compose up -d --force-recreate aether-io
-```
-
-CloudLink failure does not disable the local Home Assistant projection, and
-neither optional path becomes an authority for commissioned native edge
-acquisition or safety behavior.
 
 ## Pack-only artifact
 
@@ -353,7 +268,7 @@ units, with zero container runtime dependency on the target machine. It
 contains the six Rust services, the `aether` CLI, and the core systemd units.
 Static `redis-server`/`redis-cli` and their unit are included only when Redis
 is selected. `scripts/build-static-deps.sh` uses `INCLUDE_REDIS=1` for that
-extension bundle. The core services are grouped by `aether.target`. The pinned
+optional infrastructure bundle. The core services are grouped by `aether.target`. The pinned
 Redis release also pins its source-archive SHA-256 value. Overriding the version
 requires its matching `REDIS_SHA256`; a cached binary is reused only with a
 matching provenance marker and after its static ELF linkage and target
@@ -372,10 +287,6 @@ Build:
 
 # Core plus optional Redis mirror infrastructure
 ./scripts/build-installer.sh --bare-metal [VERSION] [ARCH] -s rust,redis
-
-# Home Assistant, CloudLink, and governed power control
-./scripts/build-installer.sh --bare-metal v1.2.0 arm64 \
-  --io-features=home-assistant-integration-control
 ```
 
 This follows the same `[VERSION] [ARCH] [TARGET]` positional convention as
@@ -384,7 +295,7 @@ arguments is unchanged. It cross-compiles the same six services plus the
 `aether` CLI and packages them with `makeself` into
 `release/AetherEdge-baremetal-<arch>-<version>.run`. Selecting Redis adds
 `-redis` to the file name. A bare-metal package must include the Rust core.
-TimescaleDB is an external bare-metal extension and is not bundled by this
+TimescaleDB is an external bare-metal service and is not bundled by this
 builder.
 
 Ship and run as root — the installer refuses to proceed without
@@ -400,7 +311,7 @@ runs) lays out the install as:
 
 | Path | Contents |
 |------|----------|
-| `/opt/aether/bin/` | Service binaries and `aether` CLI; Redis tools only in an explicitly selected extension bundle |
+| `/opt/aether/bin/` | Service binaries and `aether` CLI; Redis tools only in an explicitly selected infrastructure bundle |
 | `/etc/aether/config/` | The activated configuration (from `config.template/` on first install) |
 | `/etc/aether/aether.env` | Explicit config/data/database paths, `AETHER_LOG_DIR`, `RUST_LOG`, and freshly generated secrets (mode 600) |
 | `/etc/aether/install.yaml` | Non-secret installed layout used by the CLI (`config_dir`, `data_dir`, runtime mode, release channel, and enabled packs) |
@@ -410,40 +321,6 @@ It also symlinks `aether` onto `/usr/local/bin` and drops a
 `/etc/profile.d/aether.sh` PATH entry, installs the systemd units,
 runs `aether init` and `aether sync` against `/etc/aether/config`, and
 finishes with `systemctl enable --now aether.target`.
-
-A Home Assistant-enabled bare-metal artifact remains disabled after
-installation. The installer does not generate Home Assistant, broker, or
-signing credentials. Create durable state directories and the commissioned
-control policy explicitly:
-
-```bash
-install -d -o root -g root -m 0700 \
-  /var/lib/aether/home-assistant \
-  /var/lib/aether/home-assistant/cloudlink \
-  /var/lib/aether/home-assistant/control
-```
-
-Add the selected configuration and the same fixed secret-reference/value pairs
-shown above to `/etc/aether/aether.env`. Use
-`/etc/aether/config` for
-`AETHER_HOME_ASSISTANT_CLOUDLINK_RUNTIME_CONFIG_DIR` and use only
-`/var/lib/aether/home-assistant/...` for mutable ledgers, spools, epoch, policy,
-and audit files. Do not set the deprecated
-`AETHER_HOME_ASSISTANT_CONTROL_EDGE_KEY_ID` or
-`AETHER_HOME_ASSISTANT_CONTROL_EDGE_SIGNING_KEY_REF` aliases; receipts use the
-active CloudLink Gateway session signer. Keep the environment file owned by
-root with mode 0600:
-
-```bash
-chown root:root /etc/aether/aether.env
-chmod 600 /etc/aether/aether.env
-systemctl restart aether-io
-```
-
-The packaged `aether-io.service` already reads that file through
-`EnvironmentFile=/etc/aether/aether.env`; no source checkout or `cargo run` is
-needed on the target.
-
 Day-to-day operation is native systemd:
 
 ```bash
@@ -465,8 +342,7 @@ error in this mode — there are no container images in a bare-metal install,
 and the `.run` package is not an in-place upgrader. `aether services refresh
 --smart` degrades to a plain `systemctl restart`, printing a note that
 `--smart` has no effect, since there's no image to diff against. Redis is not
-part of the default health contract; operators who enable the extension can
-inspect its unit or profile independently.
+part of the default health contract; operators who enable Redis can inspect its unit or profile independently.
 
 None of the six Rust service units declares `Requires=aether-redis.service`.
 The default target starts and keeps its SHM/SQLite work independently; an

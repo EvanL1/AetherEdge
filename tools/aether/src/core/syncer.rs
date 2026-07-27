@@ -67,7 +67,7 @@ fn normalize_protocol_mapping(
     mapping.remove("point_id");
 
     match protocol {
-        "modbus_tcp" | "modbus_rtu" | "sunspec_tcp" | "sunspec_rtu" => {
+        "modbus_tcp" | "modbus_rtu" => {
             let mut normalized = convert_fields(
                 mapping,
                 &[
