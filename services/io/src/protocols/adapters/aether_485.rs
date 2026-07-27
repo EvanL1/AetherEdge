@@ -39,7 +39,6 @@ use crate::protocols::core::error::{GatewayError, Result};
 use crate::protocols::core::logging::{
     ChannelLogConfig, ChannelLogHandler, ErrorContext, LogContext, LoggableProtocol,
 };
-use crate::protocols::core::metadata::{DriverMetadata, HasMetadata};
 use crate::protocols::core::{
     AdjustmentCommand, CommunicationMode, ConnectionState, ControlCommand, Diagnostics,
     PointFailure, PollResult, Protocol, ProtocolCapabilities, ProtocolClient, WriteResult,
@@ -480,30 +479,6 @@ impl Aether485Channel {
 // ============================================================================
 // Trait Implementations
 // ============================================================================
-
-impl HasMetadata for Aether485Channel {
-    fn metadata() -> DriverMetadata {
-        use serde_json::{Map, Value};
-        let mut config = Map::new();
-        config.insert(
-            "device".to_string(),
-            Value::String("/dev/ttyAP0".to_string()),
-        );
-        config.insert("baud_rate".to_string(), Value::Number(115_200.into()));
-        config.insert("timeout_ms".to_string(), Value::Number(1000.into()));
-        config.insert("retry_count".to_string(), Value::Number(2.into()));
-        config.insert("frame_delay_ms".to_string(), Value::Number(50.into()));
-
-        DriverMetadata {
-            name: "aether_485",
-            display_name: "Aether-485 Private Protocol",
-            description: "RS-485 private protocol for power data collection (Aether-485-V1.0)",
-            is_recommended: false,
-            example_config: Value::Object(config),
-            parameters: vec![],
-        }
-    }
-}
 
 impl ProtocolCapabilities for Aether485Channel {
     fn name(&self) -> &'static str {

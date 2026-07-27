@@ -60,9 +60,7 @@ use crate::protocols::core::error::{GatewayError, Result};
 use crate::protocols::core::logging::{
     ChannelLogConfig, ChannelLogHandler, ErrorContext, LogContext, LoggableProtocol,
 };
-use crate::protocols::core::metadata::{
-    DriverMetadata, HasMetadata, ParameterMetadata, ParameterType,
-};
+use crate::protocols::core::metadata::{DriverMetadata, ParameterMetadata, ParameterType};
 use crate::protocols::core::slot::AtomicBoolStore;
 use crate::protocols::core::traits::{
     AdjustmentCommand, CommunicationMode, ConnectionState, ControlCommand, DataEventReceiver,
@@ -352,9 +350,9 @@ impl GpiodDriver {
     }
 }
 
-impl HasMetadata for GpiodDriver {
+impl GpiodDriver {
     #[allow(clippy::disallowed_methods)] // json! macro
-    fn metadata() -> DriverMetadata {
+    pub(crate) fn metadata() -> DriverMetadata {
         DriverMetadata {
             name: "gpiod",
             display_name: "Gpiod (Recommended)",
@@ -550,9 +548,9 @@ impl SysfsDriver {
     }
 }
 
-impl HasMetadata for SysfsDriver {
+impl SysfsDriver {
     #[allow(clippy::disallowed_methods)] // json! macro
-    fn metadata() -> DriverMetadata {
+    pub(crate) fn metadata() -> DriverMetadata {
         DriverMetadata {
             name: "sysfs",
             display_name: "Sysfs (Legacy)",

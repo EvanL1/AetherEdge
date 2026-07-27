@@ -510,15 +510,13 @@ impl ProtocolClient for CanClient {
 }
 
 // ============================================================================
-// HasMetadata Implementation
+// Protocol discovery metadata
 // ============================================================================
 
-use crate::protocols::core::metadata::{
-    DriverMetadata, HasMetadata, ParameterMetadata, ParameterType,
-};
+use crate::protocols::core::metadata::{DriverMetadata, ParameterMetadata, ParameterType};
 
-impl HasMetadata for CanClient {
-    fn metadata() -> DriverMetadata {
+impl CanClient {
+    pub(crate) fn metadata() -> DriverMetadata {
         DriverMetadata {
             name: "can",
             display_name: "CAN Bus",

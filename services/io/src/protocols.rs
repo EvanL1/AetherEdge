@@ -34,8 +34,8 @@ pub use self::core::logging::{
     LoggableProtocol, PacketDirection, PacketMetadata,
 };
 pub use self::core::metadata::{
-    DriverMetadata, HasMetadata, ParameterMetadata, ParameterType, ProtocolMetadata,
-    ProtocolRegistry, get_protocol_registry,
+    DriverMetadata, ParameterMetadata, ParameterType, ProtocolMetadata, ProtocolRegistry,
+    get_protocol_registry,
 };
 pub use self::core::quality::Quality;
 pub use self::core::traits::{

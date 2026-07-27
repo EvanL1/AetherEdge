@@ -28,9 +28,7 @@ use crate::protocols::core::logging::{
     ChannelLogConfig, ChannelLogHandler, ErrorContext, LogContext, LoggableProtocol,
     ModbusTransportType,
 };
-use crate::protocols::core::metadata::{
-    DriverMetadata, HasMetadata, ParameterMetadata, ParameterType,
-};
+use crate::protocols::core::metadata::{DriverMetadata, ParameterMetadata, ParameterType};
 
 use crate::protocols::adapters::command_batcher::{BatchCommand, CommandBatcher};
 use crate::protocols::core::point::{PointConfig, ProtocolAddress};
@@ -332,12 +330,6 @@ impl ModbusChannel {
                 .with_integer_range(1, 86_400_000),
             ],
         }
-    }
-}
-
-impl HasMetadata for ModbusChannel {
-    fn metadata() -> DriverMetadata {
-        Self::tcp_metadata()
     }
 }
 

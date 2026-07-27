@@ -168,12 +168,6 @@ impl Default for ProtocolRegistry {
     }
 }
 
-/// Trait for types that can provide their own metadata.
-pub trait HasMetadata {
-    /// Get the metadata for this type.
-    fn metadata() -> DriverMetadata;
-}
-
 /// Build the global protocol registry.
 fn build_registry() -> ProtocolRegistry {
     let mut registry = ProtocolRegistry::new();
