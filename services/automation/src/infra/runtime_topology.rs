@@ -134,7 +134,6 @@ impl AutomationTopologyGeneration {
     }
 
     /// Copies the exact logical measurement bindings pinned to this generation.
-    #[must_use]
     pub fn measurement_route_bindings(&self) -> PortResult<Vec<MeasurementRouteBinding>> {
         self.measurement_routes
             .iter()
