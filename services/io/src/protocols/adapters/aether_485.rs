@@ -40,8 +40,8 @@ use crate::protocols::core::logging::{
     ChannelLogConfig, ChannelLogHandler, ErrorContext, LogContext,
 };
 use crate::protocols::core::{
-    AdjustmentCommand, CommunicationMode, ConnectionState, ControlCommand, Diagnostics,
-    PointFailure, PollResult, ProtocolCapabilities, WriteResult,
+    AdjustmentCommand, ConnectionState, ControlCommand, Diagnostics, PointFailure, PollResult,
+    WriteResult,
 };
 
 // ============================================================================
@@ -479,20 +479,6 @@ impl Aether485Channel {
 // ============================================================================
 // Trait Implementations
 // ============================================================================
-
-impl ProtocolCapabilities for Aether485Channel {
-    fn name(&self) -> &'static str {
-        "aether_485"
-    }
-
-    fn supported_modes(&self) -> &[CommunicationMode] {
-        &[CommunicationMode::Polling]
-    }
-
-    fn version(&self) -> &'static str {
-        "1.0"
-    }
-}
 
 impl Aether485Channel {
     fn connection_state(&self) -> ConnectionState {

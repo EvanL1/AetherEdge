@@ -63,8 +63,8 @@ use crate::protocols::core::logging::{
 use crate::protocols::core::metadata::{DriverMetadata, ParameterMetadata, ParameterType};
 use crate::protocols::core::slot::AtomicBoolStore;
 use crate::protocols::core::traits::{
-    AdjustmentCommand, CommunicationMode, ConnectionState, ControlCommand, DataEventReceiver,
-    Diagnostics, PointFailure, PollResult, ProtocolCapabilities, WriteResult,
+    AdjustmentCommand, ConnectionState, ControlCommand, DataEventReceiver, Diagnostics,
+    PointFailure, PollResult, WriteResult,
 };
 use crate::protocols::gateway::ChannelRuntime;
 use aether_core::PointType;
@@ -961,16 +961,6 @@ impl GpioChannel {
     }
 }
 
-impl ProtocolCapabilities for GpioChannel {
-    fn name(&self) -> &'static str {
-        "GPIO"
-    }
-
-    fn supported_modes(&self) -> &[CommunicationMode] {
-        &[CommunicationMode::Polling]
-    }
-}
-
 // Helper methods for GpioChannel
 impl GpioChannel {
     /// Read all GPIO pins and return batch with failures.
@@ -1016,7 +1006,7 @@ impl GpioChannel {
         let output_count = self.config.output_pins().count();
 
         Ok(Diagnostics {
-            protocol: ProtocolCapabilities::name(self).to_string(),
+            protocol: "GPIO".to_string(),
             connection_state: self.get_state(),
             read_count: self.diagnostics.read_count(),
             write_count: self.diagnostics.write_count(),

@@ -20,8 +20,7 @@ use crate::protocols::core::slot::SlotStore;
 use async_trait::async_trait;
 
 use crate::protocols::core::traits::{
-    CommunicationMode, ConnectionState, DataEvent, DataEventReceiver, DataEventSender, Diagnostics,
-    PollResult, ProtocolCapabilities,
+    ConnectionState, DataEvent, DataEventReceiver, DataEventSender, Diagnostics, PollResult,
 };
 use crate::protocols::gateway::ChannelRuntime;
 
@@ -388,28 +387,6 @@ impl CanClient {
 // ============================================================================
 // Trait Implementations
 // ============================================================================
-
-impl ProtocolCapabilities for CanClient {
-    fn name(&self) -> &'static str {
-        "CAN"
-    }
-
-    fn supported_modes(&self) -> &[CommunicationMode] {
-        &[CommunicationMode::EventDriven]
-    }
-
-    fn supports_client(&self) -> bool {
-        true
-    }
-
-    fn supports_server(&self) -> bool {
-        false
-    }
-
-    fn version(&self) -> &'static str {
-        "LYNK Protocol"
-    }
-}
 
 impl CanClient {
     fn connection_state(&self) -> ConnectionState {

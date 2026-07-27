@@ -5,10 +5,6 @@
 //! # Trait Hierarchy
 //!
 //! ```text
-//! Layer 1: Basic Capabilities (stateless queries)
-//! ├── ProtocolCapabilities  // metadata: name, modes, version
-//! └── Protocol              // connection_state, diagnostics
-//!
 //! Runtime operations are exposed through the object-safe `ChannelRuntime`
 //! boundary in `protocols::gateway`.
 //! ```
@@ -19,26 +15,6 @@ use std::sync::Arc;
 use tokio::sync::broadcast;
 
 use crate::protocols::core::data::DataBatch;
-
-/// Communication mode supported by a protocol.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum CommunicationMode {
-    /// Polling mode - actively request data at intervals.
-    ///
-    /// Used by: Modbus, BACnet (read), etc.
-    Polling,
-
-    /// Event-driven mode - passively receive data updates.
-    ///
-    /// Used by: IEC 104 (spontaneous), OPC UA (subscriptions), etc.
-    EventDriven,
-
-    /// Hybrid mode - supports both polling and events.
-    ///
-    /// Used by: DNP3, OPC UA, etc.
-    Hybrid,
-}
 
 /// Connection state of a protocol client.
 ///
@@ -306,30 +282,6 @@ impl Diagnostics {
             last_error: None,
             extra: serde_json::Value::Null,
         }
-    }
-}
-
-/// Protocol capabilities description.
-pub trait ProtocolCapabilities {
-    /// Get the protocol name.
-    fn name(&self) -> &'static str;
-
-    /// Get supported communication modes.
-    fn supported_modes(&self) -> &[CommunicationMode];
-
-    /// Check if client role is supported.
-    fn supports_client(&self) -> bool {
-        true
-    }
-
-    /// Check if server role is supported.
-    fn supports_server(&self) -> bool {
-        false
-    }
-
-    /// Get protocol version.
-    fn version(&self) -> &'static str {
-        "1.0"
     }
 }
 

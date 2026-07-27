@@ -38,7 +38,7 @@ pub use self::core::metadata::{
     get_protocol_registry,
 };
 pub use self::core::quality::Quality;
-pub use self::core::traits::{CommunicationMode, ConnectionState, ProtocolCapabilities};
+pub use self::core::traits::ConnectionState;
 
 // Re-export the object-safe runtime boundary.
 pub use self::gateway::{ChannelMode, ChannelRuntime};

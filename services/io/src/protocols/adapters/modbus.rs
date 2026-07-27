@@ -32,8 +32,8 @@ use crate::protocols::core::metadata::{DriverMetadata, ParameterMetadata, Parame
 use crate::protocols::adapters::command_batcher::{BatchCommand, CommandBatcher};
 use crate::protocols::core::point::{PointConfig, ProtocolAddress};
 use crate::protocols::core::traits::{
-    AdjustmentCommand, CommunicationMode, ConnectionState, ControlCommand, DataEventReceiver,
-    Diagnostics, PointFailure, PollResult, ProtocolCapabilities, WriteResult,
+    AdjustmentCommand, ConnectionState, ControlCommand, DataEventReceiver, Diagnostics,
+    PointFailure, PollResult, WriteResult,
 };
 use crate::protocols::gateway::ChannelRuntime;
 use async_trait::async_trait;
@@ -331,21 +331,13 @@ impl ModbusChannel {
     }
 }
 
-impl ProtocolCapabilities for ModbusChannel {
-    fn name(&self) -> &'static str {
+impl ModbusChannel {
+    fn protocol_display_name(&self) -> &'static str {
         match self.config.connection_mode {
             ConnectionMode::Tcp => "Modbus TCP",
             #[cfg(feature = "modbus")]
             ConnectionMode::Rtu => "Modbus RTU",
         }
-    }
-
-    fn supported_modes(&self) -> &[CommunicationMode] {
-        &[CommunicationMode::Polling]
-    }
-
-    fn version(&self) -> &'static str {
-        "1.0"
     }
 }
 
@@ -359,7 +351,7 @@ impl ModbusChannel {
         let state = self.get_state();
 
         Ok(Diagnostics {
-            protocol: ProtocolCapabilities::name(self).to_string(),
+            protocol: self.protocol_display_name().to_string(),
             connection_state: state,
             read_count: self.diagnostics.read_count(),
             write_count: self.diagnostics.write_count(),
@@ -1064,8 +1056,7 @@ mod tests {
         let config = ModbusChannelConfig::tcp("127.0.0.1:502");
         let channel = ModbusChannel::new(config, 1, "test_modbus".to_string());
 
-        assert_eq!(ProtocolCapabilities::name(&channel), "Modbus TCP");
-        assert_eq!(channel.supported_modes(), &[CommunicationMode::Polling]);
+        assert_eq!(channel.protocol_display_name(), "Modbus TCP");
     }
 
     #[test]
@@ -1113,7 +1104,7 @@ mod tests {
         assert_eq!(config.address, "192.168.1.100:502");
 
         let channel = ModbusChannel::new(config, 1, "test_tcp".to_string());
-        assert_eq!(ProtocolCapabilities::name(&channel), "Modbus TCP");
+        assert_eq!(channel.protocol_display_name(), "Modbus TCP");
     }
 
     #[cfg(feature = "modbus")]
@@ -1126,6 +1117,6 @@ mod tests {
         assert_eq!(config.baud_rate, 9600);
 
         let channel = ModbusChannel::new(config, 1, "test_rtu".to_string());
-        assert_eq!(ProtocolCapabilities::name(&channel), "Modbus RTU");
+        assert_eq!(channel.protocol_display_name(), "Modbus RTU");
     }
 }
