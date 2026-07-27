@@ -169,7 +169,6 @@ AetherEdge/
 ├── libs/                    # 共享 Rust 库
 │   ├── aether-core/       # 线协议类型与编解码器（no_std）
 │   ├── aether-routing/    # 数据流路由
-│   ├── aether-infra/      # 过渡期 SQLite 配置辅助层
 │   ├── aether-calc/       # 表达式求值引擎
 │   ├── aether-rules/      # 规则引擎
 │   ├── aether-sim/        # 波形生成器

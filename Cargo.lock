@@ -414,20 +414,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "aether-infra"
-version = "0.0.1"
-dependencies = [
- "anyhow",
- "bytes",
- "serde",
- "serde_json",
- "serde_yaml_ng",
- "sqlx",
- "tokio",
- "tracing",
-]
-
-[[package]]
 name = "aether-integration-contract"
 version = "0.0.1"
 dependencies = [
@@ -1398,7 +1384,6 @@ name = "common"
 version = "0.0.1"
 dependencies = [
  "aether-core",
- "aether-infra",
  "aether-schema-macro",
  "anyhow",
  "axum",

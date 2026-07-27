@@ -9,6 +9,7 @@ use serde::Deserialize;
 const RETIRED_PACKAGES: &[&str] = &[
     "aether-home-assistant-bridge",
     "aether-http-history-query",
+    "aether-infra",
     "aether-integration-control",
     "aether-model",
     "aether-postgres-history",
@@ -18,6 +19,7 @@ const RETIRED_PACKAGES: &[&str] = &[
     "aether-sunspec",
 ];
 const RETIRED_ROOT_PATHS: &[&str] = &[
+    "libs/aether-infra",
     "libs/aether-model",
     "libs/aether-rtdb",
     "libs/aether-rtdb-shm",

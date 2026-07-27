@@ -1,11 +1,9 @@
 //! Shared service bootstrap, configuration, logging, and API utilities.
 
-// Re-export the transitional SQLite configuration helper for compatibility.
-#[cfg(feature = "sqlite")]
-pub use aether_infra::sqlite;
-
 pub mod service_config;
 pub mod service_ports;
+#[cfg(feature = "sqlite")]
+pub mod sqlite;
 
 // Common modules
 pub mod admin_api;

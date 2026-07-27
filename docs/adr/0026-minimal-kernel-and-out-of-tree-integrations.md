@@ -47,8 +47,10 @@ and testkit contracts that downstream Rust compositions can consume.
    through `aether-api`; API uses the internal `HistoryQuery` boundary instead
    of opening the History service's SQLite database. Parallel, uncomposed
    Redis and PostgreSQL bridge packages are removed. The inherited generic
-   Redis client, retry/configuration helpers, warning monitor, and client-only
-   CI job are also removed rather than retained as uncomposed shelfware.
+   infrastructure package, Redis client, retry/configuration helpers, warning
+   monitor, and client-only CI job are also removed rather than retained as
+   uncomposed shelfware. Its two used SQLite service-configuration reads move
+   into `common` while unused generic SQLite wrappers are deleted.
 5. Home Assistant is a downstream integration rather than kernel source. Its
    implementation is extracted from this repository. Industry-neutral domain
    and application contracts may remain only when they have a kernel consumer
