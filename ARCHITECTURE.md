@@ -47,9 +47,10 @@ plane, and typed SHM port adapters. In particular:
   create/update/delete/enable/disable cross the same confirmed, audited
   `io.channel.manage` application boundary from HTTP, CLI, and MCP. SHM remains
   authoritative for live point values.
-- Redis is absent from the kernel composition. PostgreSQL is not a default
-  dependency; the History service retains an explicitly selected migration
-  backend while its extraction decision remains separate.
+- Redis is absent from the kernel composition and the workspace ships no Redis
+  client or mirror implementation. PostgreSQL is not a default dependency; the
+  History service retains an explicitly selected migration backend while its
+  extraction decision remains separate.
 - `aether-alarm`, `aether-api`, `aether-history`, and `aether-uplink` discover logical points from
   SQLite and read current values directly from SHM. `aether-alarm` and
   `aether-api` also own isolated PointWatch bitmaps and UDS listeners.

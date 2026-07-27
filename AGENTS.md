@@ -56,7 +56,8 @@ domain <- ports <- application <- services/interfaces
 ```
 
 - Core crates under `crates/` must not depend on Redis, PostgreSQL, SQLx web
-  frameworks, or concrete protocol implementations.
+  frameworks, or concrete protocol implementations. The kernel workspace ships
+  no Redis client or mirror implementation; those belong downstream.
 - `aether-domain` owns all industry-neutral business semantics. The retired
   `aether-model` compatibility crate must not be restored; wire, storage,
   protocol, and Pack DTOs stay in their owning adapters or contract crates.

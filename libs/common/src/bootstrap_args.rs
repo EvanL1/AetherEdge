@@ -43,11 +43,6 @@ pub struct ServiceArgs {
     /// Custom database path override
     #[cfg_attr(feature = "cli", clap(long, env = "DB_PATH"))]
     pub db_path: Option<String>,
-
-    /// Redis URL override
-    #[cfg(feature = "redis")]
-    #[cfg_attr(feature = "cli", clap(long, env = "REDIS_URL"))]
-    pub redis_url: Option<String>,
 }
 
 impl Default for ServiceArgs {
@@ -60,8 +55,6 @@ impl Default for ServiceArgs {
             validate: false,
             watch: false,
             db_path: None,
-            #[cfg(feature = "redis")]
-            redis_url: None,
         }
     }
 }
@@ -101,16 +94,6 @@ impl ServiceArgs {
 
         // Default unified database path
         "data/aether.db".to_string()
-    }
-
-    /// Get Redis URL with fallback to defaults
-    #[cfg(feature = "redis")]
-    pub fn get_redis_url(&self) -> String {
-        if let Some(url) = &self.redis_url {
-            return url.clone();
-        }
-
-        std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1:6379".to_string())
     }
 }
 

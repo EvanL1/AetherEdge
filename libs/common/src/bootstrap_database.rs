@@ -1,32 +1,17 @@
-//! Database connection and setup utilities
-//!
-//! Provides common functions for setting up SQLite connections and, behind
-//! the explicit `redis` feature, optional Redis connections.
+//! SQLite connection and setup utilities shared by local services.
 
 use errors::{AetherError, AetherResult};
 use sqlx::SqlitePool;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use std::path::Path;
 use std::str::FromStr;
-#[cfg(feature = "redis")]
-use std::sync::Arc;
 use tracing::{debug, error, info, warn};
-
-#[cfg(feature = "redis")]
-use crate::config_loader::{
-    DEFAULT_REDIS_MAX_ATTEMPTS, build_redis_candidates, connect_redis_with_retry,
-};
-#[cfg(feature = "redis")]
-use crate::redis::RedisClient;
 
 /// Database connection configuration
 #[derive(Debug, Clone)]
 pub struct DatabaseConfig {
     /// SQLite database path
     pub sqlite_path: String,
-    /// Redis URL for the optional mirror extension.
-    #[cfg(feature = "redis")]
-    pub redis_url: Option<String>,
     /// Maximum SQLite connections
     pub sqlite_max_connections: u32,
     /// Connection timeout in seconds
@@ -37,8 +22,6 @@ impl Default for DatabaseConfig {
     fn default() -> Self {
         Self {
             sqlite_path: "data/service.db".to_string(),
-            #[cfg(feature = "redis")]
-            redis_url: None,
             sqlite_max_connections: 5,
             connection_timeout: 10,
         }
@@ -125,152 +108,6 @@ pub async fn setup_sqlite_with_config(config: &DatabaseConfig) -> AetherResult<S
         .map_err(|e| AetherError::Database(format!("Failed to connect to SQLite: {}", e)))?;
 
     Ok(pool)
-}
-
-/// Setup Redis connection with exponential backoff retry (base=2s, max=15s, retries=5)
-#[cfg(feature = "redis")]
-pub async fn setup_redis_with_retry(
-    redis_url: Option<String>,
-) -> AetherResult<(String, Arc<RedisClient>)> {
-    const MAX_RETRIES: u32 = 5;
-    const BASE_DELAY_MS: u64 = 2000;
-    const MAX_DELAY_MS: u64 = 15000;
-
-    let candidates = build_redis_candidates(redis_url, "redis://127.0.0.1:6379");
-    let url = candidates
-        .first()
-        .map(|(_, u)| u.clone())
-        .unwrap_or_else(|| "redis://127.0.0.1:6379".to_string());
-
-    let mut retry_count = 0u32;
-    loop {
-        match RedisClient::new(&url).await {
-            Ok(client) => match client.ping().await {
-                Ok(_) => {
-                    info!("Redis connected: {}", url);
-                    return Ok((url, Arc::new(client)));
-                },
-                Err(e) if retry_count < MAX_RETRIES => {
-                    let delay = (BASE_DELAY_MS * 2u64.pow(retry_count)).min(MAX_DELAY_MS);
-                    warn!(
-                        "Redis ping failed (retry {}/{}): {} — retrying in {}ms",
-                        retry_count + 1,
-                        MAX_RETRIES,
-                        e,
-                        delay
-                    );
-                    tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
-                    retry_count += 1;
-                },
-                Err(e) => {
-                    return Err(AetherError::Internal(format!(
-                        "Redis ping failed after {} retries: {}",
-                        MAX_RETRIES, e
-                    )));
-                },
-            },
-            Err(e) if retry_count < MAX_RETRIES => {
-                let delay = (BASE_DELAY_MS * 2u64.pow(retry_count)).min(MAX_DELAY_MS);
-                warn!(
-                    "Redis not ready (retry {}/{}): {} — retrying in {}ms",
-                    retry_count + 1,
-                    MAX_RETRIES,
-                    e,
-                    delay
-                );
-                tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
-                retry_count += 1;
-            },
-            Err(e) => {
-                return Err(AetherError::Internal(format!(
-                    "Redis connection failed after {} retries: {}",
-                    MAX_RETRIES, e
-                )));
-            },
-        }
-    }
-}
-
-/// Setup Redis connection with retry logic
-#[cfg(feature = "redis")]
-pub async fn setup_redis_connection(
-    redis_url: Option<String>,
-) -> AetherResult<(String, Arc<RedisClient>)> {
-    setup_redis_with_retry(redis_url).await
-}
-
-/// Setup Redis with custom timeout
-#[cfg(feature = "redis")]
-pub async fn setup_redis_with_timeout(
-    redis_url: Option<String>,
-    timeout: tokio::time::Duration,
-) -> AetherResult<(String, Arc<RedisClient>)> {
-    // Build connection candidates with priority
-    let candidates = build_redis_candidates(redis_url, "redis://127.0.0.1:6379");
-
-    info!("Redis: {} candidates", candidates.len());
-
-    // Connect with retry logic (use default max attempts)
-    let (url, client) = connect_redis_with_retry(candidates, timeout, DEFAULT_REDIS_MAX_ATTEMPTS)
-        .await
-        .map_err(AetherError::Internal)?;
-
-    info!("Redis connected: {}", url);
-    Ok((url, Arc::new(client)))
-}
-
-/// Setup Redis with custom configuration (including dynamic connection pool)
-///
-/// This function allows fine-grained control over Redis connection pool settings,
-/// particularly useful for dynamically adjusting pool size based on workload.
-///
-/// # Arguments
-/// * `redis_url` - Optional Redis URL (falls back to environment or default)
-/// * `redis_config` - Custom Redis configuration with pool settings
-///
-/// # Example
-/// ```ignore
-/// // In an async context:
-/// let channel_count = 50;
-/// let max_connections = channel_count * 2 + 30; // Dynamic calculation
-///
-/// let mut redis_config = RedisPoolConfig::default();
-/// redis_config.max_connections = max_connections;
-///
-/// let (url, client) = setup_redis_with_config(None, redis_config).await?;
-/// ```
-#[cfg(feature = "redis")]
-pub async fn setup_redis_with_config(
-    redis_url: Option<String>,
-    redis_config: crate::redis::RedisPoolConfig,
-) -> AetherResult<(String, Arc<RedisClient>)> {
-    // Build connection candidates with priority
-    let candidates = build_redis_candidates(redis_url, "redis://127.0.0.1:6379");
-
-    info!(
-        "Redis: {} candidates (pool:{})",
-        candidates.len(),
-        redis_config.max_connections
-    );
-
-    // Connect with retry logic using custom config
-    let timeout = tokio::time::Duration::from_secs(redis_config.connection_timeout);
-    let (url, _) =
-        connect_redis_with_retry(candidates.clone(), timeout, DEFAULT_REDIS_MAX_ATTEMPTS)
-            .await
-            .map_err(AetherError::Internal)?;
-
-    // Create client with custom configuration
-    let mut final_config = redis_config;
-    final_config.url = url.clone();
-    let pool_size = final_config.max_connections;
-
-    let client = RedisClient::with_config(final_config)
-        .await
-        .map_err(|e| AetherError::Internal(format!("Failed to create Redis client: {}", e)))?;
-
-    info!("Redis connected: {} (pool:{})", url, pool_size);
-    Ok((url, Arc::new(client)))
 }
 
 /// Validate database exists and has required tables
@@ -373,54 +210,6 @@ pub async fn initialize_database_with_retry(
     Err(last_error.unwrap_or_else(|| {
         AetherError::Database("Failed to connect to database after all retries".to_string())
     }))
-}
-
-/// Test Redis connection and basic operations
-#[cfg(feature = "redis")]
-pub async fn test_redis_connection(client: &RedisClient) -> AetherResult<()> {
-    debug!("Testing Redis");
-
-    // Test PING
-    let pong: String = client
-        .ping()
-        .await
-        .map_err(|e| AetherError::Communication(format!("Redis PING failed: {}", e)))?;
-
-    if pong != "PONG" {
-        return Err(AetherError::Communication(format!(
-            "Unexpected PING response: {}",
-            pong
-        )));
-    }
-
-    // Test SET/GET
-    let test_key = "aether:test:connection";
-    let test_value = "ok";
-
-    client
-        .set(test_key, test_value)
-        .await
-        .map_err(|e| AetherError::Communication(format!("Redis SET failed: {}", e)))?;
-
-    let retrieved: Option<String> = client
-        .get(test_key)
-        .await
-        .map_err(|e| AetherError::Communication(format!("Redis GET failed: {}", e)))?;
-
-    if retrieved != Some(test_value.to_string()) {
-        return Err(AetherError::Communication(
-            "Redis GET returned unexpected value".to_string(),
-        ));
-    }
-
-    // Clean up test key
-    let _: u32 = client
-        .del(&[test_key])
-        .await
-        .map_err(|e| AetherError::Communication(format!("Redis DEL failed: {}", e)))?;
-
-    debug!("Redis ok");
-    Ok(())
 }
 
 #[cfg(test)]

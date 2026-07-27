@@ -7,7 +7,6 @@ license.workspace = true
 
 [features]
 default = ["sqlite", "axum", "openapi"]
-redis = ["aether-infra/redis", "dep:redis", "errors/redis"]
 sqlite = ["aether-infra/sqlite", "dep:sqlx"]
 cli = ["dep:clap", "dep:reqwest"]
 dependency = ["dep:reqwest"]
@@ -44,9 +43,6 @@ sysinfo = "0.32"
 # CLI dependencies  
 clap = { workspace = true, features = ["derive", "env", "cargo"], optional = true }
 reqwest = { workspace = true, features = ["json"], optional = true }
-
-# Redis - kept for direct usage in warning_monitor and service_config helpers
-redis = { workspace = true, optional = true }
 
 # SQLite - kept for direct usage in test_utils and service_config
 sqlx = { workspace = true, optional = true }

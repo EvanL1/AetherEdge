@@ -1,16 +1,7 @@
-//! Aether Infrastructure Layer
+//! Legacy SQLite configuration helpers used by the six service compositions.
 //!
-//! This library provides database infrastructure for AetherEdge:
-//! - Redis client with connection pooling
-//! - SQLite client with optimized settings
-//!
-//! # Features
-//!
-//! - `redis` - Enable Redis client (default)
-//! - `sqlite` - Enable SQLite client (default)
-
-#[cfg(feature = "redis")]
-pub mod redis;
+//! Live point state remains in SHM. This crate contains no external-service
+//! client and is not a public integration boundary.
 
 #[cfg(feature = "sqlite")]
 pub mod sqlite;

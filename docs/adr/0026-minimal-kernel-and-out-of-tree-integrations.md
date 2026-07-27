@@ -46,7 +46,9 @@ and testkit contracts that downstream Rust compositions can consume.
 4. History storage is owned by `aether-history`. Remote applications enter
    through `aether-api`; API uses the internal `HistoryQuery` boundary instead
    of opening the History service's SQLite database. Parallel, uncomposed
-   Redis and PostgreSQL bridge packages are removed.
+   Redis and PostgreSQL bridge packages are removed. The inherited generic
+   Redis client, retry/configuration helpers, warning monitor, and client-only
+   CI job are also removed rather than retained as uncomposed shelfware.
 5. Home Assistant is a downstream integration rather than kernel source. Its
    implementation is extracted from this repository. Industry-neutral domain
    and application contracts may remain only when they have a kernel consumer
@@ -95,6 +97,8 @@ processes.
 - SunSpec and Home Assistant are no longer capabilities of the standard
   AetherEdge build. Operators needing them use a downstream composition.
 - CloudLink has one process owner instead of parallel IO and Uplink MQTT paths.
+- The Rust workspace has no Redis client dependency; an operator-selected
+  Redis server alone does not become a kernel capability or live-state plane.
 - Removing unpublished, uncomposed adapters may require recreating them in a
   downstream repository if a real deployment later needs them.
 - AetherEdge still guarantees a six-process, zero-external-service default

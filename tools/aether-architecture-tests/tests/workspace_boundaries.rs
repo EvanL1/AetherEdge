@@ -22,6 +22,8 @@ const RETIRED_ROOT_PATHS: &[&str] = &[
     "libs/aether-rtdb",
     "libs/aether-rtdb-shm",
     "libs/aether-shm",
+    "libs/aether-infra/src/redis.rs",
+    "libs/common/src/warning_monitor.rs",
     "services/io/assets/script-host",
     "services/io/src/api/handlers/network_handlers.rs",
     "services/io/src/protocols/adapters/virtual_channel.rs",
@@ -31,6 +33,7 @@ const RETIRED_ROOT_PATHS: &[&str] = &[
     "services/io/src/protocols/sunspec/models",
     "services/io/src/protocols/sunspec/types.rs",
 ];
+const RETIRED_EXTERNAL_RUST_DEPENDENCIES: &[&str] = &["bb8", "bb8-redis", "redis"];
 const CORE_INFRASTRUCTURE_DEPENDENCIES: &[&str] = &[
     "aether-http-data-processor",
     "aether-http-history-query",
@@ -329,6 +332,29 @@ fn core_crates_do_not_select_infrastructure_or_runtime_implementations() {
 
     assert_no_violations(
         "core crates must remain independent of infrastructure and runtime implementations",
+        violations,
+    );
+}
+
+#[test]
+fn kernel_workspace_has_no_redis_client_dependency() {
+    let workspace = workspace();
+    let forbidden: BTreeSet<_> = RETIRED_EXTERNAL_RUST_DEPENDENCIES.iter().copied().collect();
+    let mut violations = Vec::new();
+
+    for package in workspace.members() {
+        for dependency in &package.dependencies {
+            if forbidden.contains(dependency.name.as_str()) {
+                violations.push(format!(
+                    "{} declares retired external client dependency {}",
+                    package.name, dependency.name
+                ));
+            }
+        }
+    }
+
+    assert_no_violations(
+        "Redis clients belong in downstream integrations, not the edge kernel workspace",
         violations,
     );
 }

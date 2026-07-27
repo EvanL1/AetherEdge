@@ -101,10 +101,6 @@ pub enum AetherError {
     #[error("SQLite error: {0}")]
     Sqlite(#[from] sqlx::Error),
 
-    #[error("Redis error: {0}")]
-    #[cfg(feature = "redis")]
-    Redis(#[from] redis::RedisError),
-
     #[error("Query failed: {query}: {error}")]
     QueryFailed { query: String, error: String },
 
@@ -270,16 +266,14 @@ impl AetherError {
 
     /// Check if this error is retryable
     pub fn is_retryable(&self) -> bool {
-        match self {
+        matches!(
+            self,
             Self::Timeout(_)
-            | Self::ServiceUnavailable(_)
-            | Self::ResourceBusy(_)
-            | Self::ConnectionFailed { .. }
-            | Self::Communication(_) => true,
-            #[cfg(feature = "redis")]
-            Self::Redis(_) => true,
-            _ => false,
-        }
+                | Self::ServiceUnavailable(_)
+                | Self::ResourceBusy(_)
+                | Self::ConnectionFailed { .. }
+                | Self::Communication(_)
+        )
     }
 
     /// Convert to API ErrorInfo for HTTP responses
@@ -376,8 +370,6 @@ impl AetherErrorTrait for AetherError {
             // Database Errors
             Self::Database(_) => "DATABASE_ERROR",
             Self::Sqlite(_) => "SQLITE_ERROR",
-            #[cfg(feature = "redis")]
-            Self::Redis(_) => "REDIS_ERROR",
             Self::QueryFailed { .. } => "QUERY_FAILED",
 
             // Protocol & Communication Errors
@@ -446,8 +438,6 @@ impl AetherErrorTrait for AetherError {
             Self::Database(_) | Self::Sqlite(_) | Self::QueryFailed { .. } => {
                 ErrorCategory::Database
             },
-            #[cfg(feature = "redis")]
-            Self::Redis(_) => ErrorCategory::Database,
 
             // Protocol -> Protocol
             Self::Protocol { .. } | Self::Modbus(_) => ErrorCategory::Protocol,
