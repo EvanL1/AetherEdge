@@ -20,9 +20,8 @@ use crate::protocols::core::slot::SlotStore;
 use async_trait::async_trait;
 
 use crate::protocols::core::traits::{
-    AdjustmentCommand, CommunicationMode, ConnectionState, ControlCommand, DataEvent,
-    DataEventReceiver, DataEventSender, Diagnostics, PollResult, Protocol, ProtocolCapabilities,
-    ProtocolClient, WriteResult,
+    CommunicationMode, ConnectionState, DataEvent, DataEventReceiver, DataEventSender, Diagnostics,
+    PollResult, ProtocolCapabilities,
 };
 use crate::protocols::gateway::ChannelRuntime;
 
@@ -412,7 +411,7 @@ impl ProtocolCapabilities for CanClient {
     }
 }
 
-impl Protocol for CanClient {
+impl CanClient {
     fn connection_state(&self) -> ConnectionState {
         ConnectionState::from(self.connection_state.load(Ordering::Acquire))
     }
@@ -435,7 +434,7 @@ impl Protocol for CanClient {
     }
 }
 
-impl ProtocolClient for CanClient {
+impl CanClient {
     async fn connect(&mut self) -> Result<()> {
         self.connection_state
             .store(ConnectionState::Connecting.into(), Ordering::Release);
@@ -491,21 +490,6 @@ impl ProtocolClient for CanClient {
         // CAN protocol is event-driven, export all cached data from slot store
         let batch = self.slot_store.export_all();
         PollResult::success(batch)
-    }
-
-    async fn write_control(&mut self, _commands: &[ControlCommand]) -> Result<WriteResult> {
-        Err(GatewayError::Unsupported(
-            "Write control not supported for CAN protocol".to_string(),
-        ))
-    }
-
-    async fn write_adjustment(
-        &mut self,
-        _adjustments: &[AdjustmentCommand],
-    ) -> Result<WriteResult> {
-        Err(GatewayError::Unsupported(
-            "Write adjustment not supported for CAN protocol".to_string(),
-        ))
     }
 }
 
@@ -601,15 +585,15 @@ impl ChannelRuntime for CanClient {
     }
 
     async fn connect(&mut self) -> Result<()> {
-        <Self as ProtocolClient>::connect(self).await
+        Self::connect(self).await
     }
 
     async fn disconnect(&mut self) -> Result<()> {
-        <Self as ProtocolClient>::disconnect(self).await
+        Self::disconnect(self).await
     }
 
     async fn poll_once(&mut self) -> PollResult {
-        <Self as ProtocolClient>::poll_once(self).await
+        Self::poll_once(self).await
     }
 
     async fn write_control(&mut self, _commands: &[(u32, f64)]) -> Result<usize> {
@@ -642,10 +626,10 @@ impl ChannelRuntime for CanClient {
     }
 
     async fn diagnostics(&self) -> Result<Diagnostics> {
-        <Self as Protocol>::diagnostics(self).await
+        Self::diagnostics(self).await
     }
 
     fn connection_state(&self) -> ConnectionState {
-        <Self as Protocol>::connection_state(self)
+        Self::connection_state(self)
     }
 }

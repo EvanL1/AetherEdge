@@ -9,18 +9,16 @@
 //! ├── ProtocolCapabilities  // metadata: name, modes, version
 //! └── Protocol              // connection_state, diagnostics
 //!
-//! Layer 2: Core Operations
-//! └── ProtocolClient        // connect, disconnect, poll_once, write_*
+//! Runtime operations are exposed through the object-safe `ChannelRuntime`
+//! boundary in `protocols::gateway`.
 //! ```
 
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
-use std::future::Future;
 use std::sync::Arc;
 use tokio::sync::broadcast;
 
 use crate::protocols::core::data::DataBatch;
-use crate::protocols::core::error::Result;
 
 /// Communication mode supported by a protocol.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -333,65 +331,6 @@ pub trait ProtocolCapabilities {
     fn version(&self) -> &'static str {
         "1.0"
     }
-}
-
-/// Base protocol trait - connection status and diagnostics.
-///
-/// This trait provides read-only access to protocol state. For data acquisition,
-/// use `ProtocolClient::poll_once()` instead.
-pub trait Protocol: ProtocolCapabilities + Send + Sync {
-    /// Get current connection state.
-    fn connection_state(&self) -> ConnectionState;
-
-    /// Get diagnostics information.
-    ///
-    /// Returns protocol statistics including read/write counts, error counts,
-    /// and protocol-specific extra information.
-    fn diagnostics(&self) -> impl Future<Output = Result<Diagnostics>> + Send;
-}
-
-/// Client protocol trait - active connection + data operations.
-///
-/// This trait combines connection lifecycle management with data acquisition
-/// and command writing capabilities.
-pub trait ProtocolClient: Protocol {
-    /// Connect to the target device/server.
-    fn connect(&mut self) -> impl Future<Output = Result<()>> + Send;
-
-    /// Disconnect from the target.
-    fn disconnect(&mut self) -> impl Future<Output = Result<()>> + Send;
-
-    /// Execute a single poll cycle and return collected data.
-    ///
-    /// This is the primary method for data acquisition. The caller (service layer)
-    /// is responsible for:
-    /// - Managing the polling loop (interval, scheduling)
-    /// - Storing the returned data
-    /// - Handling reconnection on failures
-    ///
-    /// # Returns
-    ///
-    /// A `PollResult` containing:
-    /// - `data`: Successfully read data points
-    /// - `failures`: Points that failed to read (partial success supported)
-    fn poll_once(&mut self) -> impl Future<Output = PollResult> + Send;
-
-    /// Write control commands (remote control).
-    ///
-    /// Control commands are boolean operations (ON/OFF, OPEN/CLOSE) with
-    /// optional pulse duration for momentary outputs.
-    fn write_control(
-        &mut self,
-        commands: &[ControlCommand],
-    ) -> impl Future<Output = Result<WriteResult>> + Send;
-
-    /// Write adjustment commands (remote adjustment).
-    ///
-    /// Adjustment commands are setpoint operations with floating-point values.
-    fn write_adjustment(
-        &mut self,
-        adjustments: &[AdjustmentCommand],
-    ) -> impl Future<Output = Result<WriteResult>> + Send;
 }
 
 /// Data event for event-driven protocols.

@@ -1,7 +1,7 @@
 //! Modbus protocol adapter.
 //!
 //! This module provides the `ModbusChannel` adapter that integrates
-//! `voltage_modbus` with the protocol layer's `Protocol` and `ProtocolClient` traits.
+//! `voltage_modbus` with the service's `ChannelRuntime` boundary.
 //!
 //! # Module structure
 //!
@@ -33,8 +33,7 @@ use crate::protocols::adapters::command_batcher::{BatchCommand, CommandBatcher};
 use crate::protocols::core::point::{PointConfig, ProtocolAddress};
 use crate::protocols::core::traits::{
     AdjustmentCommand, CommunicationMode, ConnectionState, ControlCommand, DataEventReceiver,
-    Diagnostics, PointFailure, PollResult, Protocol, ProtocolCapabilities, ProtocolClient,
-    WriteResult,
+    Diagnostics, PointFailure, PollResult, ProtocolCapabilities, WriteResult,
 };
 use crate::protocols::gateway::ChannelRuntime;
 use async_trait::async_trait;
@@ -60,7 +59,7 @@ const DEFAULT_POLLING_INTERVAL_MS: u64 = 1000;
 /// Modbus channel adapter.
 ///
 /// Wraps a `voltage_modbus` client and implements the protocol layer's
-/// `Protocol` and `ProtocolClient` traits. Pure protocol implementation
+/// protocol operations used by `ChannelRuntime`. Pure protocol implementation
 /// that handles device communication — data storage belongs to the service layer.
 pub struct ModbusChannel {
     config: ModbusChannelConfig,
@@ -350,7 +349,7 @@ impl ProtocolCapabilities for ModbusChannel {
     }
 }
 
-impl Protocol for ModbusChannel {
+impl ModbusChannel {
     fn connection_state(&self) -> ConnectionState {
         self.get_state()
     }
@@ -374,7 +373,7 @@ impl Protocol for ModbusChannel {
     }
 }
 
-impl ProtocolClient for ModbusChannel {
+impl ModbusChannel {
     async fn connect(&mut self) -> Result<()> {
         let start_time = std::time::Instant::now();
         let old_state = self.get_state();
@@ -969,15 +968,15 @@ impl ChannelRuntime for ModbusChannel {
     }
 
     async fn connect(&mut self) -> Result<()> {
-        <Self as ProtocolClient>::connect(self).await
+        Self::connect(self).await
     }
 
     async fn disconnect(&mut self) -> Result<()> {
-        <Self as ProtocolClient>::disconnect(self).await
+        Self::disconnect(self).await
     }
 
     async fn poll_once(&mut self) -> PollResult {
-        <Self as ProtocolClient>::poll_once(self).await
+        Self::poll_once(self).await
     }
 
     async fn write_control(&mut self, commands: &[(u32, f64)]) -> Result<usize> {
@@ -985,7 +984,7 @@ impl ChannelRuntime for ModbusChannel {
             .iter()
             .map(|(id, value)| ControlCommand::latching(*id, *value != 0.0))
             .collect();
-        let result = <Self as ProtocolClient>::write_control(self, &cmds).await?;
+        let result = Self::write_control(self, &cmds).await?;
         Ok(result.success_count)
     }
 
@@ -994,7 +993,7 @@ impl ChannelRuntime for ModbusChannel {
             .iter()
             .map(|(id, value)| AdjustmentCommand::new(*id, *value))
             .collect();
-        let result = <Self as ProtocolClient>::write_adjustment(self, &adjs).await?;
+        let result = Self::write_adjustment(self, &adjs).await?;
         Ok(result.success_count)
     }
 
@@ -1011,11 +1010,11 @@ impl ChannelRuntime for ModbusChannel {
     }
 
     async fn diagnostics(&self) -> Result<Diagnostics> {
-        <Self as Protocol>::diagnostics(self).await
+        Self::diagnostics(self).await
     }
 
     fn connection_state(&self) -> ConnectionState {
-        <Self as Protocol>::connection_state(self)
+        Self::connection_state(self)
     }
 
     fn set_log_handler(&mut self, handler: Arc<dyn ChannelLogHandler>) {

@@ -41,7 +41,7 @@ use crate::protocols::core::logging::{
 };
 use crate::protocols::core::{
     AdjustmentCommand, CommunicationMode, ConnectionState, ControlCommand, Diagnostics,
-    PointFailure, PollResult, Protocol, ProtocolCapabilities, ProtocolClient, WriteResult,
+    PointFailure, PollResult, ProtocolCapabilities, WriteResult,
 };
 
 // ============================================================================
@@ -315,8 +315,8 @@ pub struct Aether485ChannelConfig {
 
 /// Aether-485 channel adapter.
 ///
-/// Implements `ProtocolClient` + `ChannelRuntime` for the company's private
-/// RS-485 protocol. Polling-based — sends CMD 0x01 queries to each configured
+/// Implements `ChannelRuntime` for the polling-based Aether-485 physical
+/// protocol. It sends CMD 0x01 queries to each configured
 /// device on the bus and collects power readings (mW).
 pub struct Aether485Channel {
     config: Aether485ChannelConfig,
@@ -494,7 +494,7 @@ impl ProtocolCapabilities for Aether485Channel {
     }
 }
 
-impl Protocol for Aether485Channel {
+impl Aether485Channel {
     fn connection_state(&self) -> ConnectionState {
         self.get_state()
     }
@@ -513,7 +513,7 @@ impl Protocol for Aether485Channel {
     }
 }
 
-impl ProtocolClient for Aether485Channel {
+impl Aether485Channel {
     async fn connect(&mut self) -> Result<()> {
         let start = std::time::Instant::now();
         let old = self.get_state();
@@ -644,15 +644,15 @@ impl ChannelRuntime for Aether485Channel {
     }
 
     async fn connect(&mut self) -> Result<()> {
-        <Self as ProtocolClient>::connect(self).await
+        Self::connect(self).await
     }
 
     async fn disconnect(&mut self) -> Result<()> {
-        <Self as ProtocolClient>::disconnect(self).await
+        Self::disconnect(self).await
     }
 
     async fn poll_once(&mut self) -> PollResult {
-        <Self as ProtocolClient>::poll_once(self).await
+        Self::poll_once(self).await
     }
 
     async fn write_control(&mut self, commands: &[(u32, f64)]) -> Result<usize> {
@@ -660,7 +660,7 @@ impl ChannelRuntime for Aether485Channel {
             .iter()
             .map(|(id, val)| ControlCommand::latching(*id, *val != 0.0))
             .collect();
-        let result = <Self as ProtocolClient>::write_control(self, &cmds).await?;
+        let result = Self::write_control(self, &cmds).await?;
         Ok(result.success_count)
     }
 
@@ -669,7 +669,7 @@ impl ChannelRuntime for Aether485Channel {
             .iter()
             .map(|(id, val)| AdjustmentCommand::new(*id, *val))
             .collect();
-        let result = <Self as ProtocolClient>::write_adjustment(self, &adjs).await?;
+        let result = Self::write_adjustment(self, &adjs).await?;
         Ok(result.success_count)
     }
 
@@ -686,11 +686,11 @@ impl ChannelRuntime for Aether485Channel {
     }
 
     async fn diagnostics(&self) -> Result<Diagnostics> {
-        <Self as Protocol>::diagnostics(self).await
+        Self::diagnostics(self).await
     }
 
     fn connection_state(&self) -> ConnectionState {
-        <Self as Protocol>::connection_state(self)
+        Self::connection_state(self)
     }
 
     fn set_log_handler(&mut self, handler: Arc<dyn ChannelLogHandler>) {
