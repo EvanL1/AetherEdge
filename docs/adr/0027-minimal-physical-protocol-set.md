@@ -33,11 +33,14 @@ minimal-kernel rule.
    adapters, address DTOs, feature flags, dependencies, metadata, and mapping
    validators are removed. The runtime manifest rejects those feature names
    instead of advertising dormant capability.
-3. Existing site configuration naming a removed protocol fails as unavailable.
+3. The unconsumed second channel factory, generic gateway configuration DTOs,
+   and string-address parser are removed. Service composition continues through
+   the one `ChannelManager` path and the object-safe `ChannelRuntime` boundary.
+4. Existing site configuration naming a removed protocol fails as unavailable.
    It is never mapped to another protocol or treated as a generic address.
-4. Historical ADRs and external compatibility fixtures may retain old protocol
+5. Historical ADRs and external compatibility fixtures may retain old protocol
    names as records. They do not grant current runtime support.
-5. Reintroducing one of these protocols requires a real downstream distribution,
+6. Reintroducing one of these protocols requires a real downstream distribution,
    explicit security/interoperability evidence, and an accepted composition
    decision. AetherEdge will not add a speculative dynamic plugin host.
 

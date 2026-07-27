@@ -1,14 +1,7 @@
 //! Industrial Communication Protocol Layer
 //!
-//! This module provides a unified industrial protocol abstraction supporting multiple communication protocols:
-//! - Modbus TCP/RTU
-//! - IEC 60870-5-104
-//! - OPC UA
-//! - MQTT
-//! - HTTP
-//! - DL/T 645-2007
-//! - CAN
-//! - GPIO
+//! This module provides the shared runtime boundary for the maintained Modbus,
+//! MQTT, HTTP, raw CAN, GPIO, IEC 61850, and Aether-485 adapters.
 //!
 //! ## Design Principles
 //!
@@ -18,7 +11,6 @@
 
 pub mod adapters;
 pub mod codec;
-pub mod config;
 pub mod core;
 pub mod gateway;
 
@@ -50,11 +42,5 @@ pub use self::core::traits::{
     CommunicationMode, ConnectionState, Protocol, ProtocolCapabilities, ProtocolClient,
 };
 
-// Re-export config types
-pub use self::config::ChannelBuildResult;
-
-// Re-export gateway types
-pub use self::gateway::{
-    ChannelConfig, ChannelMode, ChannelModeConfig, ChannelRuntime, ConfigError, GatewayConfig,
-    GatewayGlobalConfig, PointDef, parse_address,
-};
+// Re-export the object-safe runtime boundary.
+pub use self::gateway::{ChannelMode, ChannelRuntime};

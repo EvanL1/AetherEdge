@@ -1792,7 +1792,7 @@
       "implementation_status": "partial",
       "production_readiness": "not-applicable",
       "context_sensitivity": "internal",
-      "updated": "2026-07-18",
+      "updated": "2026-07-27",
       "priority": "optional",
       "media_type": "text/markdown",
       "capability_refs": [],
@@ -3147,7 +3147,7 @@
       "implementation_status": "partial",
       "production_readiness": "not-applicable",
       "context_sensitivity": "public",
-      "updated": "2026-07-14",
+      "updated": "2026-07-27",
       "priority": "core",
       "media_type": "text/markdown",
       "capability_refs": [
