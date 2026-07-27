@@ -26,8 +26,8 @@ use crate::protocols::core::traits::{
 };
 use crate::protocols::gateway::ChannelRuntime;
 
-use super::config::{CanConfig, CanFrameCache, LynkCanId};
-use super::decoder::PointManager;
+use super::super::can_decoder::PointManager;
+use super::super::can_types::{CanConfig, CanFrameCache, CanPoint, LynkCanId};
 
 // ============================================================================
 // CanClient
@@ -100,7 +100,7 @@ impl CanClient {
 
     /// Add CAN points to the client.
     /// This should be called after `new()` and before `connect()`.
-    pub fn add_points(&mut self, points: Vec<super::config::CanPoint>) -> Result<()> {
+    pub fn add_points(&mut self, points: Vec<CanPoint>) -> Result<()> {
         #[cfg(feature = "tracing-support")]
         tracing::info!("Adding {} CAN points to client", points.len());
 

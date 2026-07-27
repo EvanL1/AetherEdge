@@ -30,6 +30,8 @@ const RETIRED_ROOT_PATHS: &[&str] = &[
     "services/io/src/api/handlers/network_handlers.rs",
     "services/io/src/protocols/adapters/can/j1939.rs",
     "services/io/src/protocols/adapters/can/j1939",
+    "services/io/src/protocols/adapters/can/config.rs",
+    "services/io/src/protocols/adapters/can/decoder.rs",
     "services/io/src/protocols/adapters/virtual_channel.rs",
     "services/io/src/protocols/config.rs",
     "services/io/src/protocols/core/script_runner.rs",
