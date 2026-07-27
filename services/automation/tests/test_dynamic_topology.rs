@@ -32,7 +32,7 @@ async fn create_topology_pool() -> sqlx::SqlitePool {
         .expect("IO schema");
     for statement in [
         "INSERT INTO instances (instance_id, instance_name, product_name) VALUES (100, 'device', 'fixture')",
-        "INSERT INTO channels (channel_id, name, protocol, enabled) VALUES (10, 'old', 'virtual', 1)",
+        "INSERT INTO channels (channel_id, name, protocol, enabled) VALUES (10, 'old', 'modbus_tcp', 1)",
         "INSERT INTO telemetry_points (channel_id, point_id, signal_name) VALUES (10, 0, 'power')",
         "INSERT INTO adjustment_points (channel_id, point_id, signal_name, min_value, max_value, step) VALUES (10, 0, 'setpoint', 0.0, 100.0, 1.0)",
         "INSERT INTO measurement_routing (instance_id, instance_name, channel_id, channel_type, channel_point_id, measurement_id, enabled) VALUES (100, 'device', 10, 'T', 0, 5, 1)",
@@ -140,7 +140,7 @@ async fn partial_physical_publication_retains_the_previous_service_generation() 
     );
 
     for statement in [
-        "INSERT INTO channels (channel_id, name, protocol, enabled) VALUES (5, 'new', 'virtual', 1)",
+        "INSERT INTO channels (channel_id, name, protocol, enabled) VALUES (5, 'new', 'modbus_tcp', 1)",
         "INSERT INTO telemetry_points (channel_id, point_id, signal_name) VALUES (5, 0, 'power')",
         "INSERT INTO adjustment_points (channel_id, point_id, signal_name, min_value, max_value, step) VALUES (5, 0, 'setpoint', 0.0, 100.0, 1.0)",
         "UPDATE measurement_routing SET channel_id = 5 WHERE instance_id = 100 AND measurement_id = 5",

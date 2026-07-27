@@ -8,9 +8,10 @@ use aether_ports::{ChannelRevision, PortErrorKind};
 use axum::http::{HeaderMap, StatusCode, header};
 
 use crate::dto::{AppError, ChannelCompletionAudit, ChannelCompletionAuditState, ErrorInfo};
+#[cfg(feature = "sunspec")]
+use crate::point_topology::PointTopologyAuthorization;
 use crate::point_topology::{
-    PointTopologyAcceptance, PointTopologyApplication, PointTopologyAuthorization,
-    PointTopologyMutation,
+    PointTopologyAcceptance, PointTopologyApplication, PointTopologyMutation,
 };
 
 const CONFIRMATION_HEADER: &str = "x-aether-confirmed";
@@ -33,11 +34,13 @@ struct GovernedPointTopology {
 ///
 /// Private fields prevent handlers from forging the captured application
 /// authorization or substituting request metadata after device discovery.
+#[cfg(feature = "sunspec")]
 pub(crate) struct PreauthorizedPointTopologyInvocation {
     application: Arc<PointTopologyApplication>,
     authorization: PointTopologyAuthorization,
 }
 
+#[cfg(feature = "sunspec")]
 impl PreauthorizedPointTopologyInvocation {
     /// Consumes the lease and invokes the one audited/CAS-fenced command.
     pub async fn mutate(
@@ -95,6 +98,7 @@ impl PointTopologyHttpBoundary {
     /// The same captured request context and revision are consumed by the
     /// eventual application command; no credential or confirmation header is
     /// parsed again after discovery.
+    #[cfg(feature = "sunspec")]
     pub(crate) fn preauthorize(
         &self,
         headers: &HeaderMap,

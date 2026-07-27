@@ -2441,7 +2441,7 @@ mod tests {
         let results = [
             mcp.channels_create(Parameters(ChannelsCreateParams {
                 name: "blocked".to_string(),
-                protocol: "virtual".to_string(),
+                protocol: "modbus_tcp".to_string(),
                 parameters: serde_json::json!({}),
                 description: None,
                 id: None,

@@ -502,7 +502,7 @@ mod tests {
             "CREATE TABLE measurement_routing (instance_id INTEGER, channel_id INTEGER, channel_type TEXT, channel_point_id INTEGER, measurement_id INTEGER, enabled BOOLEAN)",
             "CREATE TABLE action_routing (instance_id INTEGER, channel_id INTEGER, channel_type TEXT, channel_point_id INTEGER, action_id INTEGER, enabled BOOLEAN)",
             "CREATE TABLE point_mappings (point_id INTEGER, protocol_address TEXT)",
-            "INSERT INTO channels VALUES (10, 'virtual')",
+            "INSERT INTO channels VALUES (10, 'modbus_tcp')",
             "INSERT INTO telemetry_points VALUES (10, 0)",
             "INSERT INTO telemetry_points VALUES (10, 2)",
             "INSERT INTO adjustment_points VALUES (10, 4)",

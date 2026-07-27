@@ -195,32 +195,26 @@ impl ShmDataStore {
         if depth >= MAX_C2C_CASCADE_DEPTH {
             return Ok(());
         }
-        let point_type = match source.address().kind() {
-            PointKind::Telemetry => PointType::Telemetry,
-            PointKind::Status => PointType::Signal,
-            PointKind::Command | PointKind::Action => {
-                return Err(GatewayError::invalid_data(
-                    "command-owned point reached acquisition C2C expansion",
-                ));
-            },
-        };
+        let point_kind = source.address().kind();
+        if !point_kind.is_acquisition_owned() {
+            return Err(GatewayError::invalid_data(
+                "command-owned point reached acquisition C2C expansion",
+            ));
+        }
         let Some(target) = self.routing_cache.lookup_c2c_by_parts(
             source.address().channel_id().get(),
-            point_type,
+            point_kind,
             source.address().point_id().get(),
         ) else {
             return Ok(());
         };
-        let target_kind = match target.point_type {
-            PointType::Telemetry => PointKind::Telemetry,
-            PointType::Signal => PointKind::Status,
-            PointType::Control | PointType::Adjustment => {
-                return Err(GatewayError::invalid_data(format!(
-                    "C2C target {}:{:?}:{} is not acquisition-owned",
-                    target.channel_id, target.point_type, target.point_id
-                )));
-            },
-        };
+        let target_kind = target.point_kind;
+        if !target_kind.is_acquisition_owned() {
+            return Err(GatewayError::invalid_data(format!(
+                "C2C target {}:{:?}:{} is not acquisition-owned",
+                target.channel_id, target.point_kind, target.point_id
+            )));
+        }
         let target_address = ChannelPointAddress::new(
             ChannelId::new(target.channel_id),
             target_kind,

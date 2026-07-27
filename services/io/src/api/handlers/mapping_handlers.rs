@@ -281,38 +281,6 @@ pub async fn get_channel_mappings_handler(
                     "mode": "replace"
                 })
             )),
-            ("Virtual - Expression Mapping" = (
-                summary = "Virtual protocol with expression-based calculations",
-                description = "Map virtual points using mathematical expressions",
-                value = json!({
-                    "mappings": [
-                        {
-                            "point_id": 101,
-                            "four_remote": "T",
-                            "protocol_data": {
-                                "expression": "P1 + P2"
-                            }
-                        },
-                        {
-                            "point_id": 102,
-                            "four_remote": "T",
-                            "protocol_data": {
-                                "expression": "P1 * 0.5 + P3"
-                            }
-                        },
-                        {
-                            "point_id": 103,
-                            "four_remote": "T",
-                            "protocol_data": {
-                                "expression": "pow(P1, 2) + sqrt(P2)"
-                            }
-                        }
-                    ],
-                    "validate_only": false,
-                    "reload_channel": false,
-                    "mode": "replace"
-                })
-            )),
             ("DI/DO GPIO - Digital I/O Mapping" = (
                 summary = "GPIO digital input/output mapping",
                 description = "Map GPIO pins for digital I/O on industrial controllers (e.g., ECU-1170). S=Digital Input, C=Digital Output",
@@ -698,9 +666,6 @@ fn validate_mappings(protocol: &str, mappings: &[crate::dto::PointMappingItem]) 
 /// - `data_type`: string (unchanged)
 /// - `signed`: boolean (unchanged)
 ///
-/// ### Virtual Protocol
-/// - No numeric normalization needed (expression-based)
-///
 fn normalize_protocol_data(protocol: &str, value: &serde_json::Value) -> serde_json::Value {
     use serde_json::{Number, Value};
 
@@ -752,7 +717,7 @@ fn normalize_protocol_data(protocol: &str, value: &serde_json::Value) -> serde_j
                 "offset",
             ],
             _ => {
-                // Virtual or unknown protocol: no normalization needed
+                // Unknown protocols have no normalization contract.
                 return value.clone();
             },
         }

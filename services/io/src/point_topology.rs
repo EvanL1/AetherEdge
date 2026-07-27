@@ -1025,20 +1025,6 @@ pub(crate) fn validate_protocol_mapping(
     }
 
     match crate::utils::normalize_protocol_name(protocol).as_ref() {
-        "virtual" => {
-            // The current virtual runtime derives its address from point_id and
-            // does not consume an inline mapping. Preserve existing metadata,
-            // while still rejecting a malformed legacy expression when present.
-            if let Some(expression) = values.get("expression") {
-                let expression = expression
-                    .as_str()
-                    .ok_or_else(|| invalid_mapping(point_id, "expression must be a string"))?;
-                if expression.trim().is_empty() {
-                    return Err(invalid_mapping(point_id, "expression must not be blank"));
-                }
-            }
-            Ok(())
-        },
         "di_do" | "gpio" | "dido" => {
             let gpio = required_u64(values, point_id, "gpio_number")?;
             if gpio > 1023 {
@@ -1594,11 +1580,6 @@ mod tests {
                     "function_code": 3,
                     "register_address": 17
                 }),
-            ),
-            (
-                "virtual",
-                PointKind::Telemetry,
-                serde_json::json!({"initial_value": 25.0, "noise_range": 2.0}),
             ),
             (
                 "gpio",

@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 
-use super::DiscoveredModel;
+use aether_sunspec::DiscoveredModel;
 use voltage_modbus::{ModbusRtuClient, ModbusTcpClient, RtuTransport, TcpTransport};
 
 use crate::protocols::adapters::modbus_client::ModbusClientWrapper;

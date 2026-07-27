@@ -32,7 +32,6 @@ pub mod api {
         pub mod control_handlers;
         pub mod health;
         pub mod mapping_handlers;
-        pub mod network_handlers;
         pub mod point_handlers;
         pub mod protocol_handlers;
         pub mod provision_handlers;
@@ -61,7 +60,6 @@ pub use store::ShmDataStore;
 // - dl645: protocols::Dl645Channel
 // - can/j1939: protocols::CanChannel
 // - gpio: protocols::GpioChannel
-// - virtual: protocols::VirtualChannel
 
 pub mod runtime {
     //! Runtime Orchestration Layer

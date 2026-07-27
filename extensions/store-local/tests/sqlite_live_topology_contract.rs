@@ -29,7 +29,7 @@ async fn live_topology_pool() -> sqlx::SqlitePool {
 }
 
 async fn insert_channel_points(pool: &sqlx::SqlitePool) {
-    sqlx::query("INSERT INTO channels (channel_id, protocol) VALUES (7, 'virtual')")
+    sqlx::query("INSERT INTO channels (channel_id, protocol) VALUES (7, 'modbus_tcp')")
         .execute(pool)
         .await
         .expect("configured channel");
@@ -86,10 +86,10 @@ async fn live_snapshot_contains_validated_point_health_and_logical_routes() {
 #[tokio::test]
 async fn live_snapshot_exposes_exact_ordered_configured_physical_points() {
     let pool = live_topology_pool().await;
-    sqlx::query("INSERT INTO channels (channel_id, protocol) VALUES (7, 'virtual')")
+    sqlx::query("INSERT INTO channels (channel_id, protocol) VALUES (7, 'modbus_tcp')")
         .execute(&pool)
         .await
-        .expect("virtual channel");
+        .expect("commissioned channel");
     for (table, point_ids) in [
         ("telemetry_points", &[2_i64, 0][..]),
         ("signal_points", &[3][..]),
@@ -109,7 +109,7 @@ async fn live_snapshot_exposes_exact_ordered_configured_physical_points() {
 
     let snapshot = load_sqlite_live_topology(&pool)
         .await
-        .expect("live topology with sparse virtual points");
+        .expect("live topology with sparse points");
     let configured = snapshot
         .configured_physical_points()
         .iter()
@@ -191,7 +191,7 @@ async fn route_target_missing_from_the_same_manifest_fails_closed() {
 #[tokio::test]
 async fn route_target_in_a_sparse_manifest_hole_fails_closed() {
     let pool = live_topology_pool().await;
-    sqlx::query("INSERT INTO channels (channel_id, protocol) VALUES (7, 'virtual')")
+    sqlx::query("INSERT INTO channels (channel_id, protocol) VALUES (7, 'modbus_tcp')")
         .execute(&pool)
         .await
         .expect("configured channel");
@@ -280,10 +280,10 @@ async fn routing_only_change_advances_the_deterministic_digest() {
 #[tokio::test]
 async fn exact_configured_point_change_advances_digest_when_layout_is_unchanged() {
     let pool = live_topology_pool().await;
-    sqlx::query("INSERT INTO channels (channel_id, protocol) VALUES (7, 'virtual')")
+    sqlx::query("INSERT INTO channels (channel_id, protocol) VALUES (7, 'modbus_tcp')")
         .execute(&pool)
         .await
-        .expect("virtual channel");
+        .expect("commissioned channel");
     for point_id in [0_i64, 1, 3] {
         sqlx::query("INSERT INTO telemetry_points (channel_id, point_id) VALUES (7, ?)")
             .bind(point_id)

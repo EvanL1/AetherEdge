@@ -5,45 +5,50 @@
 //! Generic entry point for protocol-specific point table generation.
 //! Currently supports SunSpec (`sunspec_tcp` / `sunspec_rtu`).
 
+use crate::api::handlers::point_handlers::PointTopologyHttpBoundary;
+#[cfg(feature = "sunspec")]
 use crate::api::handlers::point_handlers::{
-    PointTopologyHttpBoundary, PreauthorizedPointTopologyInvocation, validate_channel_exists,
+    PreauthorizedPointTopologyInvocation, completion_audit, trigger_channel_reload_if_needed,
+    validate_channel_exists,
 };
-#[cfg(feature = "modbus")]
-use crate::api::handlers::point_handlers::{completion_audit, trigger_channel_reload_if_needed};
 use crate::api::routes::AppState;
 use crate::dto::{AppError, AutoReloadQuery, SuccessResponse};
-#[cfg(feature = "modbus")]
+#[cfg(feature = "sunspec")]
 use crate::point_topology::{
     PointDefinitionMutation, PointKind, PointTopologyMutation, PointTopologyMutationResult,
 };
+#[cfg(feature = "sunspec")]
+use aether_sunspec::{ExpandConfig, ExpandFilter, expand_model, load_model, model_exists};
+#[cfg(feature = "sunspec")]
+use axum::http::StatusCode;
 use axum::{
     Extension,
     extract::{Path, Query, State},
-    http::{HeaderMap, StatusCode},
+    http::HeaderMap,
     response::Json,
 };
+#[cfg(feature = "sunspec")]
 use common::ErrorInfo;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-#[cfg(feature = "modbus")]
+#[cfg(feature = "sunspec")]
 use crate::protocols::adapters::modbus_config::ModbusChannelParamsConfig;
-#[cfg(feature = "modbus")]
-use crate::protocols::sunspec::{
-    DiscoveredModel, ExpandConfig, ExpandFilter, connect_modbus, discover_models, expand_model,
-    load_model, model_exists,
-};
-#[cfg(feature = "modbus")]
-use crate::utils::{is_modbus_family, normalize_protocol_name};
-
-#[cfg(not(feature = "modbus"))]
+#[cfg(feature = "sunspec")]
+use crate::protocols::sunspec::{connect_modbus, discover_models};
+#[cfg(feature = "sunspec")]
+use crate::utils::is_modbus_family;
+#[cfg(any(feature = "sunspec", test))]
 use crate::utils::normalize_protocol_name;
 
-#[cfg(feature = "modbus")]
+#[cfg(feature = "sunspec")]
 use std::sync::Arc;
 
+#[cfg(feature = "sunspec")]
+use aether_sunspec::DiscoveredModel;
+
 /// Device-I/O seam for SunSpec discovery.
-#[cfg(feature = "modbus")]
+#[cfg(feature = "sunspec")]
 #[async_trait::async_trait]
 pub(crate) trait SunSpecDiscoveryPort: Send + Sync {
     async fn connect_and_discover(
@@ -57,13 +62,13 @@ pub(crate) trait SunSpecDiscoveryPort: Send + Sync {
 }
 
 /// Cloneable HTTP dependency around the production or test discovery port.
-#[cfg(feature = "modbus")]
+#[cfg(feature = "sunspec")]
 #[derive(Clone)]
 pub(crate) struct SunSpecDiscoveryBoundary {
     port: Arc<dyn SunSpecDiscoveryPort>,
 }
 
-#[cfg(feature = "modbus")]
+#[cfg(feature = "sunspec")]
 impl SunSpecDiscoveryBoundary {
     #[must_use]
     pub(crate) fn production() -> Self {
@@ -92,10 +97,10 @@ impl SunSpecDiscoveryBoundary {
     }
 }
 
-#[cfg(feature = "modbus")]
+#[cfg(feature = "sunspec")]
 struct ProductionSunSpecDiscovery;
 
-#[cfg(feature = "modbus")]
+#[cfg(feature = "sunspec")]
 #[async_trait::async_trait]
 impl SunSpecDiscoveryPort for ProductionSunSpecDiscovery {
     async fn connect_and_discover(
@@ -244,74 +249,62 @@ pub(crate) async fn provision_channel_handler(
     Query(reload_query): Query<AutoReloadQuery>,
     State(state): State<AppState>,
     Extension(boundary): Extension<PointTopologyHttpBoundary>,
-    #[cfg(feature = "modbus")] Extension(discovery): Extension<SunSpecDiscoveryBoundary>,
+    #[cfg(feature = "sunspec")] Extension(discovery): Extension<SunSpecDiscoveryBoundary>,
     headers: HeaderMap,
     Json(req): Json<ProvisionRequest>,
 ) -> Result<Json<SuccessResponse<ProvisionResult>>, AppError> {
-    let authorization = boundary.preauthorize(&headers)?;
-    validate_channel_exists(&state.sqlite_pool, channel_id).await?;
+    #[cfg(not(feature = "sunspec"))]
+    {
+        let _ = (channel_id, reload_query, state, boundary, headers, req);
+        return Err(AppError::bad_request(
+            "SunSpec provision requires io built with sunspec feature",
+        ));
+    }
 
-    let row: Option<(String, String)> =
-        sqlx::query_as("SELECT protocol, config FROM channels WHERE channel_id = ?")
-            .bind(channel_id as i64)
-            .fetch_optional(&state.sqlite_pool)
-            .await
-            .map_err(|e| {
-                tracing::error!("Load channel for provision: {}", e);
-                AppError::internal_error("Database operation failed")
-            })?;
+    #[cfg(feature = "sunspec")]
+    {
+        let authorization = boundary.preauthorize(&headers)?;
+        validate_channel_exists(&state.sqlite_pool, channel_id).await?;
 
-    let Some((protocol, config_json)) = row else {
-        return Err(AppError::not_found(format!(
-            "Channel {channel_id} not found"
-        )));
-    };
+        let row: Option<(String, String)> =
+            sqlx::query_as("SELECT protocol, config FROM channels WHERE channel_id = ?")
+                .bind(channel_id as i64)
+                .fetch_optional(&state.sqlite_pool)
+                .await
+                .map_err(|error| {
+                    tracing::error!("Load channel for provision: {}", error);
+                    AppError::internal_error("Database operation failed")
+                })?;
 
-    let strategy = resolve_strategy(&protocol, req.strategy.as_deref())?;
-
-    let result = match strategy.as_str() {
-        "sunspec" => {
-            #[cfg(feature = "modbus")]
-            {
-                provision_sunspec(
-                    channel_id,
-                    &protocol,
-                    &config_json,
-                    &state,
-                    &req,
-                    authorization,
-                    &discovery,
-                    reload_query.auto_reload,
-                )
-                .await?
-            }
-            #[cfg(not(feature = "modbus"))]
-            {
-                let _ = (
-                    channel_id,
-                    protocol,
-                    config_json,
-                    state,
-                    boundary,
-                    authorization,
-                    headers,
-                    req,
-                );
-                return Err(AppError::bad_request(
-                    "SunSpec provision requires io built with modbus feature",
-                ));
-            }
-        },
-        other => {
-            return Err(AppError::bad_request(format!(
-                "Unsupported provision strategy '{other}'"
+        let Some((protocol, config_json)) = row else {
+            return Err(AppError::not_found(format!(
+                "Channel {channel_id} not found"
             )));
-        },
-    };
+        };
 
-    Ok(Json(SuccessResponse::new(result)))
+        let strategy = resolve_strategy(&protocol, req.strategy.as_deref())?;
+        if strategy != "sunspec" {
+            return Err(AppError::bad_request(format!(
+                "Unsupported provision strategy '{strategy}'"
+            )));
+        }
+
+        let result = provision_sunspec(
+            channel_id,
+            &protocol,
+            &config_json,
+            &state,
+            &req,
+            authorization,
+            &discovery,
+            reload_query.auto_reload,
+        )
+        .await?;
+        Ok(Json(SuccessResponse::new(result)))
+    }
 }
 
+#[cfg(any(feature = "sunspec", test))]
 fn resolve_strategy(protocol: &str, requested: Option<&str>) -> Result<String, AppError> {
     if let Some(s) = requested {
         return Ok(s.to_ascii_lowercase());
@@ -327,7 +320,7 @@ fn resolve_strategy(protocol: &str, requested: Option<&str>) -> Result<String, A
     )))
 }
 
-#[cfg(feature = "modbus")]
+#[cfg(feature = "sunspec")]
 async fn provision_sunspec(
     channel_id: u32,
     protocol: &str,
@@ -524,7 +517,7 @@ async fn provision_sunspec(
     })
 }
 
-#[cfg(feature = "modbus")]
+#[cfg(feature = "sunspec")]
 async fn next_point_id(pool: &sqlx::SqlitePool, channel_id: u32) -> Result<u32, AppError> {
     let row: (i64,) = sqlx::query_as(
         "SELECT COALESCE(MAX(point_id), 0) FROM ( \
@@ -548,6 +541,7 @@ async fn next_point_id(pool: &sqlx::SqlitePool, channel_id: u32) -> Result<u32, 
         .ok_or_else(|| AppError::bad_request("next provision point_id exceeds u32"))
 }
 
+#[cfg(feature = "sunspec")]
 fn device_error(message: impl Into<String>) -> AppError {
     AppError::new(
         StatusCode::BAD_GATEWAY,

@@ -101,7 +101,6 @@ channels:
 | `http` | HTTP 轮询/Webhook | `url`（轮询）或 `listen_path`（Webhook） |
 | `can` | CAN 总线 | `device` |
 | `j1939` | J1939 车载网络（基于 CAN） | `device`, `pgn_list` |
-| `virtual` | 虚拟协议（测试/仿真） | `interval_ms` |
 
 #### MQTT 协议连接配置
 

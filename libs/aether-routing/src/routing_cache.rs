@@ -16,7 +16,7 @@
 //! - C2M/C2C: `(channel_id, point_type, point_id)`
 //! - M2C: `(instance_id, point_type, point_id)`
 
-use aether_core::PointType;
+use aether_domain::PointKind;
 use arc_swap::ArcSwap;
 use rustc_hash::FxHashMap;
 use std::collections::HashMap;
@@ -53,8 +53,8 @@ impl fmt::Display for C2MTarget {
 pub struct C2CTarget {
     /// Target channel ID
     pub channel_id: u32,
-    /// Target point type (T/S/C/A)
-    pub point_type: PointType,
+    /// Target point kind (T/S/C/A on the persistence boundary)
+    pub point_kind: PointKind,
     /// Target point ID
     pub point_id: u32,
     /// Linear scale factor (default 1.0)
@@ -83,7 +83,7 @@ impl fmt::Display for C2CTarget {
             f,
             "{}:{}:{}",
             self.channel_id,
-            self.point_type.as_str(),
+            point_kind_code(self.point_kind),
             self.point_id
         )
     }
@@ -97,8 +97,8 @@ impl fmt::Display for C2CTarget {
 pub struct M2CTarget {
     /// Target channel ID
     pub channel_id: u32,
-    /// Target point type (typically C or A)
-    pub point_type: PointType,
+    /// Target point kind (typically command or action)
+    pub point_kind: PointKind,
     /// Target point ID
     pub point_id: u32,
 }
@@ -109,7 +109,7 @@ impl fmt::Display for M2CTarget {
             f,
             "{}:{}:{}",
             self.channel_id,
-            self.point_type.as_str(),
+            point_kind_code(self.point_kind),
             self.point_id
         )
     }
@@ -138,7 +138,7 @@ fn parse_c2m_target(s: &str) -> Option<C2MTarget> {
 ///
 /// Used for both C2C and M2C targets (which have identical field structure).
 /// Callers construct the specific target type from the returned tuple.
-fn parse_channel_point(s: &str) -> Option<(u32, PointType, u32)> {
+fn parse_channel_point(s: &str) -> Option<(u32, PointKind, u32)> {
     let parts: Vec<&str> = s.split(':').collect();
     if parts.len() != 3 {
         return None;
@@ -154,12 +154,12 @@ fn parse_channel_point(s: &str) -> Option<(u32, PointType, u32)> {
 fn parse_c2c_value(s: &str) -> Option<C2CTarget> {
     let mut parts = s.splitn(3, '|');
     let target_str = parts.next()?;
-    let (channel_id, point_type, point_id) = parse_channel_point(target_str)?;
+    let (channel_id, point_kind, point_id) = parse_channel_point(target_str)?;
     let scale = parts.next().and_then(|s| s.parse().ok()).unwrap_or(1.0);
     let offset = parts.next().and_then(|s| s.parse().ok()).unwrap_or(0.0);
     Some(C2CTarget {
         channel_id,
-        point_type,
+        point_kind,
         point_id,
         scale,
         offset,
@@ -167,34 +167,54 @@ fn parse_c2c_value(s: &str) -> Option<C2CTarget> {
 }
 
 #[inline]
-fn m2c_from_parts((channel_id, point_type, point_id): (u32, PointType, u32)) -> M2CTarget {
+fn m2c_from_parts((channel_id, point_kind, point_id): (u32, PointKind, u32)) -> M2CTarget {
     M2CTarget {
         channel_id,
-        point_type,
+        point_kind,
         point_id,
     }
 }
 
-/// Parse point type string to PointType enum
+/// Parses the stable T/S/C/A representation at the SQLite compatibility boundary.
 #[inline]
-fn parse_point_type(s: &str) -> Option<PointType> {
-    match s {
-        "T" => Some(PointType::Telemetry),
-        "S" => Some(PointType::Signal),
-        "C" => Some(PointType::Control),
-        "A" => Some(PointType::Adjustment),
-        // Note: "M" in C2M targets means Measurement (instance point), not a PointType
+fn parse_point_type(value: &str) -> Option<PointKind> {
+    match value {
+        "T" => Some(PointKind::Telemetry),
+        "S" => Some(PointKind::Status),
+        "C" => Some(PointKind::Command),
+        "A" => Some(PointKind::Action),
+        // "M" is an instance Measurement marker, not a physical point kind.
         _ => None,
+    }
+}
+
+#[inline]
+const fn point_kind_code(kind: PointKind) -> &'static str {
+    match kind {
+        PointKind::Telemetry => "T",
+        PointKind::Status => "S",
+        PointKind::Command => "C",
+        PointKind::Action => "A",
+    }
+}
+
+#[inline]
+const fn point_kind_order(kind: PointKind) -> u8 {
+    match kind {
+        PointKind::Telemetry => 0,
+        PointKind::Status => 1,
+        PointKind::Command => 2,
+        PointKind::Action => 3,
     }
 }
 
 /// Structured route key type for C2M and C2C (zero-allocation lookups)
 /// Format: (channel_id, point_type, point_id)
-pub type StructuredRouteKey = (u32, PointType, u32);
+pub type StructuredRouteKey = (u32, PointKind, u32);
 
 /// Structured route key type for M2C (zero-allocation lookups)
 /// Format: (instance_id, point_type, point_id)
-pub type StructuredM2CKey = (u32, PointType, u32);
+pub type StructuredM2CKey = (u32, PointKind, u32);
 
 /// Parse route key string "id:type:point_id" into structured key
 #[inline]
@@ -223,7 +243,7 @@ fn parse_route_key(s: &str) -> Option<StructuredRouteKey> {
 /// instance-keyed callers (rule engine OnChange snapshot, instance-to-slot
 /// resolution) get O(1) lookups instead of O(N) `c2m_iter` scans.
 pub type StructuredC2MReverseKey = (u32, u32);
-pub type StructuredC2MReverseTarget = (u32, PointType, u32);
+pub type StructuredC2MReverseTarget = (u32, PointKind, u32);
 
 type BuiltTables = (
     FxHashMap<StructuredRouteKey, C2MTarget>,
@@ -402,7 +422,7 @@ impl RoutingCache {
     ///
     /// ## Example
     /// ```rust
-    /// use aether_core::PointType;
+    /// use aether_domain::PointKind;
     /// use aether_routing::RoutingCache;
     /// use std::collections::HashMap;
     ///
@@ -411,7 +431,7 @@ impl RoutingCache {
     /// let cache = RoutingCache::from_maps(c2m, HashMap::new(), HashMap::new());
     ///
     /// // Zero-allocation lookup
-    /// if let Some(target) = cache.lookup_c2m_by_parts(2, PointType::Telemetry, 1) {
+    /// if let Some(target) = cache.lookup_c2m_by_parts(2, PointKind::Telemetry, 1) {
     ///     assert_eq!(target.instance_id, 23);
     ///     assert_eq!(target.point_id, 1);
     /// }
@@ -420,12 +440,12 @@ impl RoutingCache {
     pub fn lookup_c2m_by_parts(
         &self,
         channel_id: u32,
-        point_type: PointType,
+        point_kind: PointKind,
         point_id: u32,
     ) -> Option<C2MTarget> {
         self.c2m
             .load()
-            .get(&(channel_id, point_type, point_id))
+            .get(&(channel_id, point_kind, point_id))
             .copied()
     }
 
@@ -441,7 +461,7 @@ impl RoutingCache {
         &self,
         instance_id: u32,
         instance_point_id: u32,
-    ) -> Option<(u32, PointType, u32)> {
+    ) -> Option<(u32, PointKind, u32)> {
         self.c2m_reverse
             .load()
             .get(&(instance_id, instance_point_id))
@@ -452,7 +472,7 @@ impl RoutingCache {
     ///
     /// ## Example
     /// ```rust
-    /// use aether_core::PointType;
+    /// use aether_domain::PointKind;
     /// use aether_routing::RoutingCache;
     /// use std::collections::HashMap;
     ///
@@ -462,7 +482,7 @@ impl RoutingCache {
     ///
     /// if let Some(target) = cache.lookup_m2c("23:A:4") {
     ///     assert_eq!(target.channel_id, 2);
-    ///     assert_eq!(target.point_type, PointType::Adjustment);
+    ///     assert_eq!(target.point_kind, PointKind::Action);
     ///     assert_eq!(target.point_id, 1);
     /// }
     /// ```
@@ -476,12 +496,12 @@ impl RoutingCache {
     pub fn lookup_m2c_by_parts(
         &self,
         instance_id: u32,
-        point_type: PointType,
+        point_kind: PointKind,
         point_id: u32,
     ) -> Option<M2CTarget> {
         self.m2c
             .load()
-            .get(&(instance_id, point_type, point_id))
+            .get(&(instance_id, point_kind, point_id))
             .copied()
     }
 
@@ -491,7 +511,7 @@ impl RoutingCache {
     ///
     /// ## Example
     /// ```rust
-    /// use aether_core::PointType;
+    /// use aether_domain::PointKind;
     /// use aether_routing::RoutingCache;
     /// use std::collections::HashMap;
     ///
@@ -500,7 +520,7 @@ impl RoutingCache {
     /// let cache = RoutingCache::from_maps(HashMap::new(), HashMap::new(), c2c);
     ///
     /// // Zero-allocation lookup
-    /// if let Some(target) = cache.lookup_c2c_by_parts(1001, PointType::Telemetry, 1) {
+    /// if let Some(target) = cache.lookup_c2c_by_parts(1001, PointKind::Telemetry, 1) {
     ///     assert_eq!(target.channel_id, 1002);
     ///     assert_eq!(target.point_id, 5);
     /// }
@@ -509,12 +529,12 @@ impl RoutingCache {
     pub fn lookup_c2c_by_parts(
         &self,
         channel_id: u32,
-        point_type: PointType,
+        point_kind: PointKind,
         point_id: u32,
     ) -> Option<C2CTarget> {
         self.c2c
             .load()
-            .get(&(channel_id, point_type, point_id))
+            .get(&(channel_id, point_kind, point_id))
             .copied()
     }
 
@@ -605,23 +625,25 @@ impl RoutingCache {
         let mut hasher = rustc_hash::FxHasher::default();
 
         let mut c2m_entries: Vec<_> = c2m.iter().map(|(k, v)| (*k, *v)).collect();
-        c2m_entries.sort_by_key(|((ch_id, pt, pt_id), _)| (*ch_id, pt.to_u8(), *pt_id));
-        for ((ch_id, pt, pt_id), target) in c2m_entries {
+        c2m_entries
+            .sort_by_key(|((ch_id, kind, pt_id), _)| (*ch_id, point_kind_order(*kind), *pt_id));
+        for ((ch_id, kind, pt_id), target) in c2m_entries {
             ch_id.hash(&mut hasher);
-            pt.to_u8().hash(&mut hasher);
+            point_kind_order(kind).hash(&mut hasher);
             pt_id.hash(&mut hasher);
             target.instance_id.hash(&mut hasher);
             target.point_id.hash(&mut hasher);
         }
 
         let mut m2c_entries: Vec<_> = m2c.iter().map(|(k, v)| (*k, *v)).collect();
-        m2c_entries.sort_by_key(|((inst_id, pt, pt_id), _)| (*inst_id, pt.to_u8(), *pt_id));
-        for ((inst_id, pt, pt_id), target) in m2c_entries {
+        m2c_entries
+            .sort_by_key(|((inst_id, kind, pt_id), _)| (*inst_id, point_kind_order(*kind), *pt_id));
+        for ((inst_id, kind, pt_id), target) in m2c_entries {
             inst_id.hash(&mut hasher);
-            pt.to_u8().hash(&mut hasher);
+            point_kind_order(kind).hash(&mut hasher);
             pt_id.hash(&mut hasher);
             target.channel_id.hash(&mut hasher);
-            target.point_type.to_u8().hash(&mut hasher);
+            point_kind_order(target.point_kind).hash(&mut hasher);
             target.point_id.hash(&mut hasher);
         }
 
@@ -665,15 +687,15 @@ mod tests {
         // Verify M2C lookup returns structured type
         let m2c = cache.lookup_m2c("23:A:4").unwrap();
         assert_eq!(m2c.channel_id, 2);
-        assert_eq!(m2c.point_type, PointType::Adjustment);
+        assert_eq!(m2c.point_kind, PointKind::Action);
         assert_eq!(m2c.point_id, 1);
 
         // Verify C2C lookup returns structured type
         let c2c = cache
-            .lookup_c2c_by_parts(1001, PointType::Telemetry, 1)
+            .lookup_c2c_by_parts(1001, PointKind::Telemetry, 1)
             .unwrap();
         assert_eq!(c2c.channel_id, 1002);
-        assert_eq!(c2c.point_type, PointType::Telemetry);
+        assert_eq!(c2c.point_kind, PointKind::Telemetry);
         assert_eq!(c2c.point_id, 5);
 
         let stats = cache.stats();
@@ -694,14 +716,14 @@ mod tests {
 
         // Test C2M by_parts lookup
         let c2m = cache
-            .lookup_c2m_by_parts(2, PointType::Telemetry, 1)
+            .lookup_c2m_by_parts(2, PointKind::Telemetry, 1)
             .unwrap();
         assert_eq!(c2m.instance_id, 23);
         assert_eq!(c2m.point_id, 1);
 
         // Test C2C by_parts lookup
         let c2c = cache
-            .lookup_c2c_by_parts(1001, PointType::Telemetry, 1)
+            .lookup_c2c_by_parts(1001, PointKind::Telemetry, 1)
             .unwrap();
         assert_eq!(c2c.channel_id, 1002);
         assert_eq!(c2c.point_id, 5);
@@ -709,12 +731,12 @@ mod tests {
         // Non-existent should return None
         assert!(
             cache
-                .lookup_c2m_by_parts(999, PointType::Telemetry, 1)
+                .lookup_c2m_by_parts(999, PointKind::Telemetry, 1)
                 .is_none()
         );
         assert!(
             cache
-                .lookup_c2c_by_parts(999, PointType::Telemetry, 1)
+                .lookup_c2c_by_parts(999, PointKind::Telemetry, 1)
                 .is_none()
         );
     }
@@ -741,14 +763,14 @@ mod tests {
 
         let m2c = cache.lookup_m2c("23:A:4").unwrap();
         assert_eq!(m2c.channel_id, 2);
-        assert_eq!(m2c.point_type, PointType::Adjustment);
+        assert_eq!(m2c.point_kind, PointKind::Action);
         assert_eq!(m2c.point_id, 1);
 
         let c2c = cache
-            .lookup_c2c_by_parts(1001, PointType::Signal, 2)
+            .lookup_c2c_by_parts(1001, PointKind::Status, 2)
             .unwrap();
         assert_eq!(c2c.channel_id, 1002);
-        assert_eq!(c2c.point_type, PointType::Signal);
+        assert_eq!(c2c.point_kind, PointKind::Status);
         assert_eq!(c2c.point_id, 3);
     }
 
@@ -798,7 +820,7 @@ mod tests {
 
         // Verify routes contain expected data
         let has_route = c2m_routes.iter().any(|(key, target)| {
-            key.0 == 1001 && key.1 == PointType::Telemetry && key.2 == 1 && target.instance_id == 5
+            key.0 == 1001 && key.1 == PointKind::Telemetry && key.2 == 1 && target.instance_id == 5
         });
         assert!(has_route);
 
@@ -807,7 +829,7 @@ mod tests {
         assert_eq!(m2c_routes.len(), 1);
 
         let has_m2c_route = m2c_routes.iter().any(|(key, target)| {
-            key.0 == 5 && key.1 == PointType::Adjustment && key.2 == 1 && target.channel_id == 1001
+            key.0 == 5 && key.1 == PointKind::Action && key.2 == 1 && target.channel_id == 1001
         });
         assert!(has_m2c_route);
     }

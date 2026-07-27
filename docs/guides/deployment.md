@@ -404,7 +404,6 @@ runs) lays out the install as:
 | `/etc/aether/config/` | The activated configuration (from `config.template/` on first install) |
 | `/etc/aether/aether.env` | Explicit config/data/database paths, `AETHER_LOG_DIR`, `RUST_LOG`, and freshly generated secrets (mode 600) |
 | `/etc/aether/install.yaml` | Non-secret installed layout used by the CLI (`config_dir`, `data_dir`, runtime mode, release channel, and enabled packs) |
-| `/etc/aether/script-host/main.py` | The Python script host for aether-io custom transforms (matches the deployed-path lookup in `services/io/src/protocols/core/script_runner.rs`) |
 | `/var/lib/aether/` | Service logs (`logs/`) and optional Redis data (`redis/`) |
 
 It also symlinks `aether` onto `/usr/local/bin` and drops a

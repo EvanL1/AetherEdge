@@ -198,13 +198,10 @@ dependencies = [
  "arc-swap",
  "async-trait",
  "axum",
- "bytes",
  "chrono",
  "common",
- "dashmap 6.2.1",
  "errors",
  "http-body-util",
- "itoa",
  "jsonwebtoken",
  "serde",
  "serde_json",
@@ -511,6 +508,7 @@ dependencies = [
  "aether-runtime-catalog",
  "aether-shm-bridge",
  "aether-store-local",
+ "aether-sunspec",
  "anyhow",
  "arc-swap",
  "async-opcua",
@@ -604,13 +602,11 @@ dependencies = [
 name = "aether-routing"
 version = "0.0.1"
 dependencies = [
- "aether-core",
  "aether-domain",
  "anyhow",
  "arc-swap",
  "itoa",
  "rustc-hash",
- "serde_json",
  "sqlx",
  "tokio",
  "tracing",
@@ -728,6 +724,16 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "uuid",
+]
+
+[[package]]
+name = "aether-sunspec"
+version = "0.0.1"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tracing",
 ]
 
 [[package]]

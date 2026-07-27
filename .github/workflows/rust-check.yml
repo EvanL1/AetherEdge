@@ -192,8 +192,8 @@ jobs:
             -p aether-example-minimal-gateway \
             -p aether-example-energy-gateway
 
-      - name: Run Unit Tests
-        run: cargo nextest run --workspace --lib --bins
+      - name: Run Workspace Tests
+        run: cargo nextest run --workspace --lib --bins --tests
         env:
           RUST_LOG: warn # Reduce noise in unit tests
 

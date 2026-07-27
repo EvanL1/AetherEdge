@@ -37,7 +37,7 @@ async fn load_channel_point_manifest(
 async fn insert_channel(pool: &sqlx::SqlitePool, channel_id: i64) {
     sqlx::query(
         "INSERT INTO channels (channel_id, name, protocol, enabled, config, revision) \
-         VALUES (?, ?, 'virtual', 1, '{}', 1)",
+         VALUES (?, ?, 'modbus_tcp', 1, '{}', 1)",
     )
     .bind(channel_id)
     .bind(format!("channel-{channel_id}"))
@@ -84,17 +84,17 @@ fn now_ms() -> u64 {
 }
 
 #[tokio::test]
-async fn io_manifest_hash_matches_canonical_snapshot_for_virtual_measurements() {
+async fn io_manifest_hash_matches_canonical_snapshot_for_sparse_status_points() {
     let pool = pool().await;
     insert_channel(&pool, 7).await;
     insert_telemetry(&pool, 7, 2).await;
     sqlx::query(
         "INSERT INTO signal_points \
-         (channel_id, point_id, signal_name) VALUES (7, 1, 'virtual-status')",
+         (channel_id, point_id, signal_name) VALUES (7, 1, 'sparse-status')",
     )
     .execute(&pool)
     .await
-    .expect("virtual signal point");
+    .expect("sparse signal point");
 
     let io_manifest = load_channel_point_manifest(&pool)
         .await

@@ -44,7 +44,7 @@ pub const DEFAULT_IO_PROTOCOL_FEATURES: [&str; 5] =
 /// Compatibility alias for release tooling.
 pub const SHIPPED_IO_PROTOCOL_FEATURES: [&str; 5] = DEFAULT_IO_PROTOCOL_FEATURES;
 
-const KNOWN_IO_PROTOCOL_FEATURES: [&str; 17] = [
+const KNOWN_IO_PROTOCOL_FEATURES: [&str; 18] = [
     "aether_485",
     "ble",
     "can",
@@ -61,6 +61,7 @@ const KNOWN_IO_PROTOCOL_FEATURES: [&str; 17] = [
     "modbus",
     "mqtt",
     "opcua",
+    "sunspec",
     "zigbee",
 ];
 
@@ -830,6 +831,9 @@ fn canonical_io_features(features: Vec<String>) -> Result<Vec<String>, RuntimeMa
     if resolved.contains("j1939") {
         resolved.insert("can".to_string());
     }
+    if resolved.contains("sunspec") {
+        resolved.insert("modbus".to_string());
+    }
     if resolved.contains("home-assistant-integration-control") {
         resolved.insert("home-assistant-cloudlink".to_string());
     }
@@ -863,16 +867,14 @@ fn parse_package_features(cargo_features: &[String]) -> Result<Vec<String>, Runt
 }
 
 fn derive_protocols(features: &[String], target_os: &str) -> Vec<String> {
-    let mut protocols = BTreeSet::from(["virtual".to_string()]);
+    let mut protocols = BTreeSet::new();
     for feature in features {
         match feature.as_str() {
             "modbus" => {
-                protocols.extend([
-                    "modbus_rtu".to_string(),
-                    "modbus_tcp".to_string(),
-                    "sunspec_rtu".to_string(),
-                    "sunspec_tcp".to_string(),
-                ]);
+                protocols.extend(["modbus_rtu".to_string(), "modbus_tcp".to_string()]);
+            },
+            "sunspec" => {
+                protocols.extend(["sunspec_rtu".to_string(), "sunspec_tcp".to_string()]);
             },
             "iec104" => insert(&mut protocols, "iec104"),
             "opcua" => insert(&mut protocols, "opcua"),
@@ -1103,8 +1105,20 @@ mod tests {
         let macos = protocol_adapters_for_io_features(["can", "gpio"], "aarch64-apple-darwin")
             .expect("known macOS features");
 
-        assert_eq!(linux, ["can", "di_do", "virtual"]);
-        assert_eq!(macos, ["virtual"]);
+        assert_eq!(linux, ["can", "di_do"]);
+        assert!(macos.is_empty());
+    }
+
+    #[test]
+    fn sunspec_is_explicit_and_expands_its_modbus_dependency() {
+        let features = normalize_io_protocol_features(["sunspec"]).expect("known feature");
+        assert_eq!(features, ["modbus", "sunspec"]);
+        let protocols = protocol_adapters_for_io_features(features, "x86_64-unknown-linux-gnu")
+            .expect("SunSpec composition");
+        assert_eq!(
+            protocols,
+            ["modbus_rtu", "modbus_tcp", "sunspec_rtu", "sunspec_tcp"]
+        );
     }
 
     #[test]

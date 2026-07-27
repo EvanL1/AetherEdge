@@ -152,12 +152,13 @@ command: the flow is evaluated against live values, and any action that fires
 is submitted to the local command plane. Acceptance does not prove that the
 physical device executed the command or reached the target value.
 
-So test against hardware that does not exist yet. The Virtual protocol has
-no feature gate precisely so it is always available for this:
+For hardware-independent testing, run the protocol simulator as the device
+boundary rather than adding a simulation adapter to the production IO process:
 
-1. Create a Virtual-protocol channel with control and adjustment points
-   matching what the rule will write, and route a scratch instance's action
-   points to it (see [Connect Devices](connect-devices.md)).
+1. Start `tools/simulator` with a deterministic Modbus scenario, then create a
+   disabled-by-default Modbus channel with the control and adjustment points
+   the rule will write. Commission it only for the isolated test and route a
+   scratch instance's action points to it (see [Connect Devices](connect-devices.md)).
 2. Point the rule's actions at the scratch instance and execute:
 
    ```bash
@@ -192,4 +193,4 @@ subscriptions atomically. `GET /api/scheduler/status` confirms the result —
 
 - [Rule Engine](../concepts/rule-engine.md) — dual-column storage, scheduling, execution, hot reload
 - [Control Strategies as Rules](../domain/control-strategies.md) — expressing SOC management and peak shaving as flows
-- [Connect Devices](connect-devices.md) — channels, Virtual protocol, point mapping
+- [Connect Devices](connect-devices.md) — channels, protocol simulator, point mapping

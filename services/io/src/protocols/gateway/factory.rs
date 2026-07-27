@@ -79,10 +79,6 @@ pub fn create_channel(config: &ChannelConfig) -> Result<Box<dyn ChannelRuntime>>
         return create_iec61850_channel(config);
     }
 
-    if protocol.eq_ignore_ascii_case("virtual") {
-        return create_virtual_channel(config);
-    }
-
     Err(GatewayError::Config(format!(
         "Unsupported protocol: {}. Check if the required feature is enabled.",
         protocol
@@ -405,21 +401,28 @@ fn create_iec61850_channel(config: &ChannelConfig) -> Result<Box<dyn ChannelRunt
     Ok(Box::new(channel))
 }
 
-fn create_virtual_channel(config: &ChannelConfig) -> Result<Box<dyn ChannelRuntime>> {
-    use crate::protocols::adapters::virtual_channel::{VirtualChannel, VirtualChannelParamsConfig};
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::protocols::gateway::config::ChannelModeConfig;
 
-    // Parse parameters (optional for virtual)
-    let params: VirtualChannelParamsConfig =
-        serde_json::from_value(config.parameters.clone()).unwrap_or_default();
+    #[test]
+    fn retired_virtual_protocol_is_rejected_explicitly() {
+        let config = ChannelConfig {
+            id: 7,
+            name: "retired simulation channel".to_string(),
+            protocol: "virtual".to_string(),
+            enabled: false,
+            mode: ChannelModeConfig::Polling,
+            poll_interval_ms: None,
+            parameters: serde_json::json!({}),
+            points: Vec::new(),
+        };
 
-    // Build point configs
-    let points = build_point_configs(config)?;
-
-    // Build channel config
-    let channel_config = params.to_config().with_points(points);
-
-    // VirtualChannel now directly implements ChannelRuntime - no wrapper needed
-    let channel = VirtualChannel::new(channel_config, config.id);
-
-    Ok(Box::new(channel))
+        let error = match create_channel(&config) {
+            Ok(_) => panic!("retired virtual protocol unexpectedly created a runtime"),
+            Err(error) => error,
+        };
+        assert!(error.to_string().contains("Unsupported protocol: virtual"));
+    }
 }

@@ -89,7 +89,7 @@ impl RoutingFixture {
         .expect("instance fixture");
         sqlx::query(
             "INSERT INTO channels (channel_id, name, protocol, enabled) \
-             VALUES (3, 'fieldbus_3', 'virtual', 1)",
+             VALUES (3, 'fieldbus_3', 'modbus_tcp', 1)",
         )
         .execute(&pool)
         .await

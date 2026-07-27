@@ -71,7 +71,7 @@ pub struct ChannelCore {
     /// Channel description
     pub description: Option<String>,
 
-    /// Protocol type (modbus, virtual, grpc, etc.)
+    /// Protocol type (for example modbus_tcp, modbus_rtu, or grpc)
     pub protocol: String,
 
     /// Whether the channel is enabled
@@ -602,28 +602,6 @@ pub struct GpioMapping {
     pub gpio_number: u32,
 }
 
-/// Virtual protocol mapping (corresponds to virtual_mappings table)
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "openapi", derive(ToSchema))]
-pub struct VirtualMapping {
-    #[serde(default)] // channel_id from directory context
-    pub channel_id: u32,
-    pub point_id: u32,
-    #[serde(default)] // telemetry_type from filename context
-    pub telemetry_type: String,
-    pub expression: Option<String>,
-    #[serde(default = "default_update_interval")]
-    pub update_interval: Option<u32>,
-    #[serde(default)]
-    pub initial_value: Option<f64>,
-    #[serde(default)]
-    pub noise_range: Option<f64>,
-}
-
-fn default_update_interval() -> Option<u32> {
-    Some(1000)
-}
-
 /// IEC 60870-5-104 protocol mapping (corresponds to iec_mappings table)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "openapi", derive(ToSchema))]
@@ -888,7 +866,7 @@ impl ConfigValidator for IoConfig {
             result.add_warning("No channels configured".to_string());
         }
 
-        let supported_protocols = ["modbus_tcp", "modbus_rtu", "virtual", "grpc"];
+        let supported_protocols = ["modbus_tcp", "modbus_rtu", "grpc"];
         let mut channel_ids = std::collections::HashSet::new();
         let mut channel_names = std::collections::HashSet::new();
         for channel in &self.channels {
@@ -1143,8 +1121,10 @@ mod tests {
 channels:
   - id: 1001
     name: inert-channel
-    protocol: virtual
-    parameters: {}
+    protocol: modbus_tcp
+    parameters:
+      host: 127.0.0.1
+      port: 502
 "#,
         )
         .expect("channel config without enabled");
@@ -1227,8 +1207,14 @@ channels:
             serde_json::json!(0),
             serde_json::json!(86_400_001),
         ] {
-            let result =
-                validate_channel("virtual", serde_json::json!({"poll_interval_ms": value}));
+            let result = validate_channel(
+                "modbus_tcp",
+                serde_json::json!({
+                    "host": "127.0.0.1",
+                    "port": 502,
+                    "poll_interval_ms": value
+                }),
+            );
             assert!(
                 !result.is_valid,
                 "invalid poll interval must fail schema validation"
@@ -1236,8 +1222,12 @@ channels:
         }
         assert!(
             validate_channel(
-                "virtual",
-                serde_json::json!({"poll_interval_ms": 86_400_000})
+                "modbus_tcp",
+                serde_json::json!({
+                    "host": "127.0.0.1",
+                    "port": 502,
+                    "poll_interval_ms": 86_400_000
+                })
             )
             .is_valid
         );

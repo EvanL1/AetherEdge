@@ -6,6 +6,7 @@ fn compiled_io_protocol_features() -> Vec<&'static str> {
     let mut features = Vec::new();
     for (enabled, feature) in [
         (cfg!(feature = "modbus"), "modbus"),
+        (cfg!(feature = "sunspec"), "sunspec"),
         (cfg!(feature = "iec104"), "iec104"),
         (cfg!(feature = "opcua"), "opcua"),
         (cfg!(feature = "can"), "can"),
@@ -64,6 +65,8 @@ fn manifest_protocols_match_the_io_binary_feature_set() {
     assert_eq!(protocols.contains("mqtt"), cfg!(feature = "mqtt"));
     assert_eq!(protocols.contains("http"), cfg!(feature = "http"));
     assert_eq!(protocols.contains("iec104"), cfg!(feature = "iec104"));
+    assert_eq!(protocols.contains("sunspec_tcp"), cfg!(feature = "sunspec"));
+    assert_eq!(protocols.contains("sunspec_rtu"), cfg!(feature = "sunspec"));
     assert_eq!(protocols.contains("opcua"), cfg!(feature = "opcua"));
     assert_eq!(protocols.contains("dl645"), cfg!(feature = "dl645"));
     assert_eq!(
@@ -87,5 +90,5 @@ fn manifest_protocols_match_the_io_binary_feature_set() {
         protocols.contains("can"),
         cfg!(all(target_os = "linux", feature = "can"))
     );
-    assert!(protocols.contains("virtual"));
+    assert!(!protocols.contains("virtual"));
 }

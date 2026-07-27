@@ -1,4 +1,4 @@
-//! SunSpec model JSON types (mirrors sunspec-json/schema.json).
+//! SunSpec model JSON types matching the upstream SunSpec schema.
 
 use serde::Deserialize;
 

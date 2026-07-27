@@ -53,6 +53,8 @@ assert_contains "$AGENT_INSTRUCTIONS" \
     'workspace suite locally by default.'
 assert_contains "$AGENT_INSTRUCTIONS" \
     'CI runs; retrieve detailed logs only for failures'
+assert_contains "$AGENT_INSTRUCTIONS" \
+    'production `aether-io` runtime is Rust-only and contains only explicitly'
 
 echo "Checking the pull-request template asks for focused local evidence..."
 assert_contains "$PULL_REQUEST_TEMPLATE" 'Focused affected check(s)'
@@ -71,7 +73,8 @@ assert_contains "$CODE_CHECK_WORKFLOW" './scripts/check-architecture.sh'
 assert_contains "$CODE_CHECK_WORKFLOW" './scripts/check-distribution-contracts.sh'
 assert_contains "$CODE_CHECK_WORKFLOW" \
     'cargo clippy --workspace --all-targets --all-features -- -D warnings'
-assert_contains "$CODE_CHECK_WORKFLOW" 'cargo nextest run --workspace --lib --bins'
+assert_contains "$CODE_CHECK_WORKFLOW" \
+    'cargo nextest run --workspace --lib --bins --tests'
 assert_contains "$CODE_CHECK_WORKFLOW" \
     'cargo check --manifest-path firmware/Cargo.toml --target thumbv7em-none-eabihf'
 assert_not_contains "$ARCHITECTURE_CHECK" 'ruby -r'

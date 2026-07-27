@@ -2,15 +2,15 @@
 //!
 //! Create ChannelRuntime implementations from configuration.
 //!
-//! This module provides factory functions that create protocol client instances
-//! (VirtualChannel, ModbusChannel, GpioChannel, CanClient) from io configuration.
+//! This module provides factory functions that create physical protocol client
+//! instances from IO configuration.
 
-use crate::protocols::adapters::virtual_channel::{VirtualChannel, VirtualChannelConfig};
-use crate::protocols::core::point::PointConfig;
 use crate::protocols::gateway::ChannelRuntime;
 
 #[cfg(feature = "modbus")]
 use crate::protocols::adapters::modbus::{ModbusChannel, ModbusChannelConfig, ReconnectConfig};
+#[cfg(feature = "modbus")]
+use crate::protocols::core::point::PointConfig;
 
 #[cfg(all(target_os = "linux", feature = "gpio"))]
 use crate::protocols::adapters::gpio::{GpioChannel, GpioChannelConfig, GpioPinConfig};
@@ -25,26 +25,6 @@ use crate::core::config::RuntimeChannelConfig;
 use crate::protocols::adapters::aether_485::{
     Aether485Channel, Aether485ChannelConfig, Aether485PointMapping, PollTarget,
 };
-
-// ============================================================================
-// Virtual Channel Factory
-// ============================================================================
-
-/// Create a VirtualChannel that directly implements ChannelRuntime.
-///
-/// Note: The channel no longer holds a store reference. Storage is handled
-/// by the service layer (ChannelManager) after polling.
-pub fn create_virtual_channel(
-    channel_id: u32,
-    channel_name: &str,
-    point_configs: Vec<PointConfig>,
-) -> Box<dyn ChannelRuntime> {
-    let config = VirtualChannelConfig::new(channel_name).with_points(point_configs);
-    let channel = VirtualChannel::new(config, channel_id);
-
-    // VirtualChannel now directly implements ChannelRuntime - no wrapper needed
-    Box::new(channel)
-}
 
 // ============================================================================
 // Modbus Channel Factory

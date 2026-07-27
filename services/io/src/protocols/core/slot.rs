@@ -14,7 +14,7 @@
 //!
 //! - [`AtomicBoolStore`]: Lock-free boolean storage for GPIO DO states
 //! - [`SlotStore`]: Single-writer store for CAN/J1939 cached data
-//! - [`ShardedSlotStore`]: Multi-writer store for VirtualChannel
+//! - [`ShardedSlotStore`]: Multi-writer store for event-driven adapters
 
 use std::collections::HashMap;
 use std::sync::RwLock;
@@ -320,7 +320,7 @@ impl SlotStore {
 /// Sharded slot store for multi-writer scenarios.
 ///
 /// Divides slots into shards to reduce lock contention.
-/// Suitable for VirtualChannel where multiple sources may write concurrently.
+/// Suitable for adapters where multiple sources may write concurrently.
 ///
 /// # Sharding Strategy
 ///

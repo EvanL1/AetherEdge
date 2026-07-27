@@ -247,6 +247,8 @@ echo "Testing full installer checksums remain in the release workflow..."
 assert_file_contains "$RELEASE_WORKFLOW" './scripts/test-release-integrity.sh'
 assert_file_contains "$RELEASE_WORKFLOW" './scripts/test-extraction-readiness.sh'
 assert_file_contains "$RELEASE_WORKFLOW" './scripts/check-extraction-readiness.sh --local-only'
+assert_file_contains "$RELEASE_WORKFLOW" \
+    'cargo nextest run --workspace --lib --bins --tests'
 assert_file_contains "$RELEASE_WORKFLOW" 'sha256sum "$ARTIFACT_NAME" > "${ARTIFACT_NAME}.sha256"'
 assert_file_contains "$RELEASE_WORKFLOW" 'sha256sum "$AETHER_TAR_NAME" > "${AETHER_TAR_NAME}.sha256"'
 assert_file_contains "$RELEASE_WORKFLOW" 'release/${{ steps.version.outputs.artifact_name }}.sha256'

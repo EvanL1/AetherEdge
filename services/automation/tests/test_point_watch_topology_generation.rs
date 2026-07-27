@@ -27,8 +27,8 @@ async fn topology_pool() -> sqlx::SqlitePool {
 
     for statement in [
         "INSERT INTO instances (instance_id, instance_name, product_name) VALUES (5, 'device', 'fixture')",
-        "INSERT INTO channels (channel_id, name, protocol, enabled) VALUES (10, 'old', 'virtual', 1)",
-        "INSERT INTO channels (channel_id, name, protocol, enabled) VALUES (20, 'new', 'virtual', 1)",
+        "INSERT INTO channels (channel_id, name, protocol, enabled) VALUES (10, 'old', 'modbus_tcp', 1)",
+        "INSERT INTO channels (channel_id, name, protocol, enabled) VALUES (20, 'new', 'modbus_tcp', 1)",
         "INSERT INTO telemetry_points (channel_id, point_id, signal_name) VALUES (10, 0, 'old-temperature')",
         "INSERT INTO telemetry_points (channel_id, point_id, signal_name) VALUES (20, 0, 'new-temperature')",
         "INSERT INTO measurement_routing (instance_id, instance_name, channel_id, channel_type, channel_point_id, measurement_id, enabled) VALUES (5, 'device', 10, 'T', 0, 10, 1)",

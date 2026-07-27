@@ -275,7 +275,7 @@ Usage: aether channels create [OPTIONS] --name <NAME> --protocol <PROTOCOL> --pa
 | Flag | Description |
 |------|-------------|
 | `--name <NAME>` | Channel name (must be unique) |
-| `--protocol <PROTOCOL>` | Protocol type (`modbus_tcp`, `modbus_rtu`, `virtual`, `di_do`, `can`) |
+| `--protocol <PROTOCOL>` | Protocol type (`modbus_tcp`, `modbus_rtu`, `di_do`, `can`) |
 | `--params <PARAMS>` | Protocol parameters as JSON string (e.g. `'{"host":"192.168.1.10","port":502}'`) |
 | `--description <DESCRIPTION>` | Channel description |
 | `--enabled <ENABLED>` | Start channel immediately (default: false) [possible values: `true`, `false`] |

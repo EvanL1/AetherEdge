@@ -203,6 +203,6 @@ What a strategy author can rely on:
   execution: the flow is evaluated, and whichever
   actions the conditions select are dispatched through shared memory to io
   and on to the device. There is no test or dry-run endpoint. Trial a
-  new strategy against a Virtual-protocol channel first (see
-  [Connect Devices](../guides/connect-devices.md)) before pointing it at
-  real hardware.
+  new strategy against an isolated channel connected to `tools/simulator`
+  first (see [Connect Devices](../guides/connect-devices.md)) before pointing
+  it at real hardware.

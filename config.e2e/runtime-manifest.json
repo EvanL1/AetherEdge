@@ -40,13 +40,10 @@
     "di_do",
     "iec61850",
     "modbus_rtu",
-    "modbus_tcp",
-    "sunspec_rtu",
-    "sunspec_tcp",
-    "virtual"
+    "modbus_tcp"
   ],
   "checksum": {
     "algorithm": "sha256",
-    "digest": "19063a57c5638e89979cb9dfe64e0845787e0c59e1cfd1036ce6363a48a69a1a"
+    "digest": "d2970bbf4acb7d276eeb9a7b0c208d4343f571d45206ad10721a08083414d473"
   }
 }

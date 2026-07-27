@@ -7,7 +7,10 @@ use proc_macro2::{TokenStream, TokenTree};
 use serde::Deserialize;
 use syn::punctuated::Punctuated;
 use syn::visit::{self, Visit};
-use syn::{Attribute, Expr, Ident, ImplItemFn, Item, ItemEnum, ItemImpl, Lit, Meta, Token};
+use syn::{
+    Attribute, Expr, ExprPath, Ident, ImplItemFn, Item, ItemEnum, ItemImpl, ItemUse, Lit, Meta,
+    Token, UseTree,
+};
 
 const AUTOMATION_CONFIGURATION_TABLES: &[&str] = &[
     "measurement_routing",
@@ -56,6 +59,16 @@ const LEGACY_PRODUCT_SYMBOLS: &[&str] = &[
     "get_product_names",
     "get_child_products",
     "builtin_only",
+];
+const RETIRED_IO_SYMBOLS: &[&str] = &[
+    "NetworkConfigUpdateRequest",
+    "NetworkInterfaceConfig",
+    "ScriptRunner",
+    "VirtualAddress",
+    "VirtualChannel",
+    "VirtualMapping",
+    "network_handlers",
+    "transform_script",
 ];
 
 #[derive(Debug, Deserialize)]
@@ -290,6 +303,11 @@ impl BoundaryVisitor<'_> {
         if self.package_name == "aether-io" && identifier == "ReloadableService" {
             self.record("IO restored a duplicate runtime-reload owner");
         }
+        if self.package_name == "aether-io" && RETIRED_IO_SYMBOLS.contains(&identifier) {
+            self.record(format!(
+                "production IO restored retired symbol {identifier}"
+            ));
+        }
     }
 
     fn inspect_call_name(&mut self, name: &str) {
@@ -322,7 +340,17 @@ impl<'ast> Visit<'ast> for BoundaryVisitor<'_> {
     }
 
     fn visit_lit_str(&mut self, literal: &'ast syn::LitStr) {
-        self.inspect_sql(&literal.value());
+        let value = literal.value();
+        self.inspect_sql(&value);
+        if self.package_name == "aether-io"
+            && (value == "networkctl"
+                || value.contains("script-host")
+                || value.contains("/api/network/"))
+        {
+            self.record(format!(
+                "production IO restored retired host surface {value:?}"
+            ));
+        }
         visit::visit_lit_str(self, literal);
     }
 
@@ -355,6 +383,38 @@ impl<'ast> Visit<'ast> for BoundaryVisitor<'_> {
             self.inspect_call_name(&segment.ident.to_string());
         }
         visit::visit_expr_call(self, node);
+    }
+
+    fn visit_expr_path(&mut self, node: &'ast ExprPath) {
+        if self.package_name == "aether-io" {
+            let segments = node
+                .path
+                .segments
+                .iter()
+                .map(|segment| segment.ident.to_string())
+                .collect::<Vec<_>>();
+            if segments
+                .windows(2)
+                .any(|window| window == ["process", "Command"])
+            {
+                self.record("production IO launches a subprocess");
+            }
+        }
+        visit::visit_expr_path(self, node);
+    }
+
+    fn visit_item_use(&mut self, node: &'ast ItemUse) {
+        if self.package_name == "aether-io" {
+            let mut paths = Vec::new();
+            collect_use_paths(&node.tree, &mut Vec::new(), &mut paths);
+            if paths.iter().any(|path| {
+                path.windows(2)
+                    .any(|window| window == ["process", "Command"])
+            }) {
+                self.record("production IO imports a subprocess launcher");
+            }
+        }
+        visit::visit_item_use(self, node);
     }
 
     fn visit_item_enum(&mut self, node: &'ast ItemEnum) {
@@ -401,6 +461,32 @@ impl<'ast> Visit<'ast> for BoundaryVisitor<'_> {
             return;
         }
         visit::visit_impl_item_fn(self, node);
+    }
+}
+
+fn collect_use_paths(tree: &UseTree, prefix: &mut Vec<String>, paths: &mut Vec<Vec<String>>) {
+    match tree {
+        UseTree::Path(path) => {
+            prefix.push(path.ident.to_string());
+            collect_use_paths(&path.tree, prefix, paths);
+            prefix.pop();
+        },
+        UseTree::Name(name) => {
+            let mut path = prefix.clone();
+            path.push(name.ident.to_string());
+            paths.push(path);
+        },
+        UseTree::Rename(rename) => {
+            let mut path = prefix.clone();
+            path.push(rename.ident.to_string());
+            paths.push(path);
+        },
+        UseTree::Glob(_) => paths.push(prefix.clone()),
+        UseTree::Group(group) => {
+            for tree in &group.items {
+                collect_use_paths(tree, prefix, paths);
+            }
+        },
     }
 }
 
@@ -476,6 +562,41 @@ fn structured_policy_detects_bypasses_and_ignores_test_only_fixtures() {
         cli.iter()
             .any(|violation| violation.contains("reload fanout")),
         "{cli:#?}"
+    );
+}
+
+#[test]
+fn production_io_rejects_simulation_host_network_and_subprocess_surfaces() {
+    let violations = inspect_snippet(
+        "aether-io",
+        &[],
+        r#"
+        use tokio::process::Command;
+
+        struct VirtualChannel;
+
+        async fn mutate_host() {
+            let _ = Command::new("networkctl").output().await;
+        }
+
+        #[cfg(test)]
+        struct ScriptRunner;
+        "#,
+    );
+
+    for expected in ["subprocess launcher", "VirtualChannel", "networkctl"] {
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains(expected)),
+            "missing {expected:?} violation: {violations:#?}"
+        );
+    }
+    assert!(
+        violations
+            .iter()
+            .all(|violation| !violation.contains("ScriptRunner")),
+        "test-only fixtures must stay outside production checks: {violations:#?}"
     );
 }
 

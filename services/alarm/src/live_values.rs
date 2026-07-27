@@ -773,7 +773,7 @@ mod tests {
             "CREATE TABLE adjustment_points (channel_id INTEGER, point_id INTEGER)",
             "CREATE TABLE measurement_routing (instance_id INTEGER, channel_id INTEGER, channel_type TEXT, channel_point_id INTEGER, measurement_id INTEGER, enabled BOOLEAN)",
             "CREATE TABLE action_routing (instance_id INTEGER, channel_id INTEGER, channel_type TEXT, channel_point_id INTEGER, action_id INTEGER, enabled BOOLEAN)",
-            "INSERT INTO channels VALUES (10, 'virtual')",
+            "INSERT INTO channels VALUES (10, 'modbus_tcp')",
             "INSERT INTO telemetry_points VALUES (10, 0)",
             "INSERT INTO telemetry_points VALUES (10, 1)",
             "INSERT INTO measurement_routing VALUES (100, 10, 'T', 0, 5, TRUE)",
@@ -847,7 +847,7 @@ mod tests {
             "CREATE TABLE adjustment_points (channel_id INTEGER, point_id INTEGER)",
             "CREATE TABLE measurement_routing (instance_id INTEGER, channel_id INTEGER, channel_type TEXT, channel_point_id INTEGER, measurement_id INTEGER, enabled BOOLEAN)",
             "CREATE TABLE action_routing (instance_id INTEGER, channel_id INTEGER, channel_type TEXT, channel_point_id INTEGER, action_id INTEGER, enabled BOOLEAN)",
-            "INSERT INTO channels VALUES (10, 'virtual')",
+            "INSERT INTO channels VALUES (10, 'modbus_tcp')",
             "INSERT INTO telemetry_points VALUES (10, 0)",
             "INSERT INTO measurement_routing VALUES (100, 10, 'T', 0, 5, TRUE)",
         ] {
@@ -933,7 +933,7 @@ mod tests {
         assert!(source.accepts_point_watch_event(old_event));
 
         for statement in [
-            "INSERT INTO channels VALUES (5, 'virtual')",
+            "INSERT INTO channels VALUES (5, 'modbus_tcp')",
             "INSERT INTO telemetry_points VALUES (5, 0)",
             "UPDATE measurement_routing SET channel_id = 5 WHERE instance_id = 100 AND measurement_id = 5",
         ] {

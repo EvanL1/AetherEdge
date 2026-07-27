@@ -30,7 +30,6 @@ pub enum ProtocolType {
     Opcua,
     Bacnet,
     Dnp3,
-    Virtual,
     Grpc,
 }
 
@@ -53,7 +52,6 @@ impl ProtocolType {
             "opcua" | "opc_ua" | "OPCUA" | "OPC_UA" => return Some(Self::Opcua),
             "bacnet" | "BACnet" | "BACNET" => return Some(Self::Bacnet),
             "dnp3" | "DNP3" => return Some(Self::Dnp3),
-            "virtual" | "Virtual" | "VIRTUAL" => return Some(Self::Virtual),
             "grpc" | "GRPC" | "gRPC" => return Some(Self::Grpc),
             _ => {},
         }
@@ -70,7 +68,6 @@ impl ProtocolType {
             "opcua" | "opc_ua" => Some(Self::Opcua),
             "bacnet" => Some(Self::Bacnet),
             "dnp3" => Some(Self::Dnp3),
-            "virtual" => Some(Self::Virtual),
             "grpc" => Some(Self::Grpc),
             _ => None,
         }
@@ -88,7 +85,6 @@ impl ProtocolType {
             Self::Opcua => "opcua",
             Self::Bacnet => "bacnet",
             Self::Dnp3 => "dnp3",
-            Self::Virtual => "virtual",
             Self::Grpc => "grpc",
         }
     }
@@ -136,9 +132,6 @@ pub fn normalize_protocol_name(name: &str) -> Cow<'static, str> {
         // SunSpec (Modbus transport alias)
         "sunspec_tcp" | "sunspectcp" | "sunspec tcp" => Cow::Borrowed("sunspec_tcp"),
         "sunspec_rtu" | "sunspecrtu" | "sunspec rtu" => Cow::Borrowed("sunspec_rtu"),
-
-        // Virtual protocol variations
-        "virtual" | "virt" | "virtual_protocol" => Cow::Borrowed("virtual"),
 
         // IEC variations
         "iec104" | "iec_104" | "iec60870" | "iec_60870" | "iec60870_5_104" | "iec_60870_5_104" => {
@@ -201,12 +194,6 @@ mod tests {
         assert_eq!(normalize_protocol_name("SUNSPEC-TCP"), "sunspec_tcp");
         assert_eq!(normalize_protocol_name("sunspec_rtu"), "sunspec_rtu");
 
-        // Test Virtual variations
-        assert_eq!(normalize_protocol_name("virtual"), "virtual");
-        assert_eq!(normalize_protocol_name("virt"), "virtual");
-        assert_eq!(normalize_protocol_name("VIRTUAL"), "virtual");
-        assert_eq!(normalize_protocol_name("virtual_protocol"), "virtual");
-
         // Test IEC variations
         assert_eq!(normalize_protocol_name("iec104"), "iec104");
         assert_eq!(normalize_protocol_name("iec_104"), "iec104");
@@ -261,10 +248,6 @@ mod tests {
             Some(ProtocolType::ModbusRtu)
         );
 
-        assert_eq!(parse_protocol_type("virtual"), Some(ProtocolType::Virtual));
-        assert_eq!(parse_protocol_type("virt"), Some(ProtocolType::Virtual));
-        assert_eq!(parse_protocol_type("VIRTUAL"), Some(ProtocolType::Virtual));
-
         // Test additional valid protocol types (now supported in full ProtocolType)
         assert_eq!(
             parse_protocol_type("iec104"),
@@ -294,7 +277,6 @@ mod tests {
             protocol_type_to_string(ProtocolType::ModbusRtu),
             "modbus_rtu"
         );
-        assert_eq!(protocol_type_to_string(ProtocolType::Virtual), "virtual");
     }
 
     #[test]

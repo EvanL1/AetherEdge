@@ -497,7 +497,7 @@ async fn invalid_common_channel_data_is_rejected_without_port_side_effects() {
         ChannelMutation::create(ChannelDefinition::new(
             None,
             "valid-name",
-            "virtual",
+            "modbus_tcp",
             BTreeMap::from([(
                 "nested".to_string(),
                 ChannelParameterValue::Object(BTreeMap::from([(
@@ -509,7 +509,7 @@ async fn invalid_common_channel_data_is_rejected_without_port_side_effects() {
         ChannelMutation::create(ChannelDefinition::new(
             Some(ChannelId::new(10_000)),
             "valid-name",
-            "virtual",
+            "modbus_tcp",
             BTreeMap::new(),
         )),
     ];

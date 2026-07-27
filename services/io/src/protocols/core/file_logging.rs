@@ -327,7 +327,6 @@ impl ChannelFileLogHandler {
                 format!("opcua [msg={} req={}]", message_type, request_id)
             },
             PacketMetadata::Gpio => "gpio".to_string(),
-            PacketMetadata::Virtual => "virtual".to_string(),
             PacketMetadata::Other { protocol } => protocol.clone(),
         };
 

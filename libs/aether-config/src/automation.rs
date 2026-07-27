@@ -107,7 +107,7 @@ pub struct Product {
     /// Parent product name for hierarchy
     pub parent_name: Option<String>,
 
-    /// Measurement points (includes physical and virtual)
+    /// Measurement points (includes physical and derived values)
     #[serde(default)]
     pub measurements: Vec<MeasurementPoint>,
 

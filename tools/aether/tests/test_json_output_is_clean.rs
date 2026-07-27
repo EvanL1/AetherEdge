@@ -176,7 +176,7 @@ fn dry_run_rejects_invalid_nested_rule_before_touching_the_real_database() {
         .expect("write global config");
     std::fs::write(
         config_path.join("io/io.yaml"),
-        "channels:\n  - id: 1\n    name: disabled-simulator\n    protocol: virtual\n    enabled: false\n",
+        "channels:\n  - id: 1\n    name: disabled-simulator\n    protocol: modbus_tcp\n    enabled: false\n",
     )
     .expect("write io config");
     std::fs::write(

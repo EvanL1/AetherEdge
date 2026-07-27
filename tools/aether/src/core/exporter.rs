@@ -352,6 +352,9 @@ impl ConfigExporter {
             let channel_id: u32 = row.try_get("channel_id")?;
             let name: String = row.try_get("name")?;
             let protocol: Option<String> = row.try_get("protocol")?;
+            let protocol = protocol
+                .filter(|value| !value.trim().is_empty())
+                .with_context(|| format!("channel {channel_id} is missing its protocol"))?;
             let enabled: bool = row.try_get("enabled")?;
             let config_str: Option<String> = row.try_get("config")?;
 
@@ -360,7 +363,7 @@ impl ConfigExporter {
                     id: channel_id,
                     name,
                     description: None,
-                    protocol: protocol.unwrap_or_else(|| "virtual".to_string()),
+                    protocol,
                     enabled,
                 },
                 parameters: HashMap::new(),

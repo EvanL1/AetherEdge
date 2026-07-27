@@ -2,7 +2,7 @@
 //!
 //! Provides unified routing map loading from SQLite for both io and automation.
 
-use aether_core::PointType;
+use aether_domain::PointKind;
 use anyhow::Result;
 use std::collections::HashMap;
 use tracing::{debug, info};
@@ -22,6 +22,30 @@ impl RoutingMaps {
     /// Get total route count
     pub fn total_routes(&self) -> usize {
         self.c2m.len() + self.m2c.len() + self.c2c.len()
+    }
+}
+
+fn channel_route_key(channel_id: u32, point_kind: PointKind, point_id: &str) -> String {
+    let code = match point_kind {
+        PointKind::Telemetry => "T",
+        PointKind::Status => "S",
+        PointKind::Command => "C",
+        PointKind::Action => "A",
+    };
+    format!("{channel_id}:{code}:{point_id}")
+}
+
+fn parse_channel_point_kind(value: &str) -> Option<PointKind> {
+    if value.eq_ignore_ascii_case("T") || value.eq_ignore_ascii_case("YC") {
+        Some(PointKind::Telemetry)
+    } else if value.eq_ignore_ascii_case("S") || value.eq_ignore_ascii_case("YX") {
+        Some(PointKind::Status)
+    } else if value.eq_ignore_ascii_case("C") || value.eq_ignore_ascii_case("YK") {
+        Some(PointKind::Command)
+    } else if value.eq_ignore_ascii_case("A") || value.eq_ignore_ascii_case("YT") {
+        Some(PointKind::Action)
+    } else {
+        None
     }
 }
 
@@ -67,10 +91,6 @@ pub async fn load_routing_maps(sqlite_pool: &sqlx::SqlitePool) -> Result<Routing
     Ok(maps)
 }
 
-fn channel_route_key(channel_id: u32, point_type: PointType, point_id: &str) -> String {
-    format!("{channel_id}:{}:{point_id}", point_type.as_str())
-}
-
 /// Load C2M (Channel to Model) routing from measurement_routing table
 async fn load_c2m_routes(
     pool: &sqlx::SqlitePool,
@@ -93,7 +113,7 @@ async fn load_c2m_routes(
     let mut ibuf = itoa::Buffer::new();
 
     for (instance_id, _, channel_id, channel_type, channel_point_id, measurement_id) in rows {
-        let point_type = match PointType::from_str(&channel_type) {
+        let point_kind = match parse_channel_point_kind(&channel_type) {
             Some(pt) => pt,
             None => {
                 tracing::warn!(
@@ -108,7 +128,7 @@ async fn load_c2m_routes(
         };
 
         // From: channel_id:type:point_id -> To: instance_id:M:point_id
-        let from_key = channel_route_key(channel_id, point_type, ibuf.format(channel_point_id));
+        let from_key = channel_route_key(channel_id, point_kind, ibuf.format(channel_point_id));
         let to_key = format!("{}:M:{}", instance_id, measurement_id);
 
         c2m_map.insert(from_key, to_key);
@@ -148,7 +168,7 @@ async fn load_m2c_routes(
     let mut ibuf = itoa::Buffer::new();
 
     for (instance_id, _, action_id, channel_id, channel_type, channel_point_id) in rows {
-        let point_type = match PointType::from_str(&channel_type) {
+        let point_kind = match parse_channel_point_kind(&channel_type) {
             Some(pt) => pt,
             None => {
                 tracing::warn!(
@@ -164,7 +184,7 @@ async fn load_m2c_routes(
 
         // From: instance_id:A:point_id -> To: channel_id:type:point_id
         let from_key = format!("{}:A:{}", instance_id, action_id);
-        let to_key = channel_route_key(channel_id, point_type, ibuf.format(channel_point_id));
+        let to_key = channel_route_key(channel_id, point_kind, ibuf.format(channel_point_id));
 
         m2c_map.insert(from_key, to_key);
     }
@@ -218,23 +238,23 @@ async fn load_c2c_routes(pool: &sqlx::SqlitePool, c2c_map: &mut HashMap<String, 
         offset,
     ) in rows
     {
-        let source_point_type = match PointType::from_str(&source_type) {
+        let source_point_kind = match parse_channel_point_kind(&source_type) {
             Some(t) => t,
             None => continue,
         };
-        let target_point_type = match PointType::from_str(&target_type) {
+        let target_point_kind = match parse_channel_point_kind(&target_type) {
             Some(t) => t,
             None => continue,
         };
 
         let from_key = channel_route_key(
             source_channel_id,
-            source_point_type,
+            source_point_kind,
             ibuf.format(source_point_id),
         );
         let to_key = channel_route_key(
             target_channel_id,
-            target_point_type,
+            target_point_kind,
             ibuf.format(target_point_id),
         );
 

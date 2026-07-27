@@ -83,9 +83,9 @@ A product is a type; an instance is a device. Creating an instance from the `Bat
 
 ## Standard information models
 
-**Field protocols.** io speaks 14 protocols: Modbus TCP/RTU, IEC 60870-5-104, IEC 61850 (MMS), OPC UA, MQTT, HTTP, DL/T 645, CAN/J1939, GPIO, BLE, Zigbee, Matter, Aether-485, and Virtual. Which of these are compiled into a given binary is controlled by Cargo feature flags on io.
+**Field protocols.** IO supports Modbus TCP/RTU, the optional SunSpec extension, IEC 60870-5-104, IEC 61850 (MMS), OPC UA, MQTT, HTTP, DL/T 645, CAN/J1939, GPIO, BLE, Zigbee, Matter, and Aether-485. Which adapters are compiled into a given binary is controlled by explicit Cargo features on IO; simulation remains an external tool.
 
-**SunSpec.** The IO SunSpec protocol adapter embeds model definitions at compile time and exposes `load_model(model_id)`, `list_model_ids()`, and `model_exists(model_id)`. `expand_model` walks a model's group tree and produces Modbus-ready point definitions (`ExpandedPoint` with signal name, register address, data type, unit, scale, and offset), so a SunSpec-compliant inverter or meter can be mapped to channel points without hand-writing a register table. An `ExpandFilter` controls whether static/nameplate points, scale-factor registers, and optional points are included.
+**SunSpec.** The optional `aether-sunspec` extension embeds SunSpec model definitions at compile time when the composition enables `aether-io/sunspec`: `load_model(model_id)` parses an embedded model, `list_model_ids()` enumerates what is available, and `model_exists(model_id)` checks for one. `expand_model` walks a model's group tree and produces Modbus-ready point definitions (`ExpandedPoint` with signal name, register address, data type, unit, scale, and offset), so a SunSpec-compliant inverter or meter can be mapped to channel points without hand-writing a register table. An `ExpandFilter` controls whether static/nameplate points, scale-factor registers, and optional points are included.
 
 ## Where to go next
 
