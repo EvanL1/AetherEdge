@@ -7,7 +7,7 @@ use aether_shm_bridge::{
     ChannelHealthManifest, ChannelPointManifest, ShmChannelHealthWriterHandle, ShmWriterHandle,
     publish_topology_generation, validate_topology_publication,
 };
-use aether_sqlite_topology::load_sqlite_shm_topology;
+use aether_store_local::load_physical_topology;
 use sqlx::SqlitePool;
 use tokio::sync::Mutex;
 
@@ -246,7 +246,7 @@ struct TopologySnapshot {
 }
 
 async fn load_topology_snapshot(pool: &SqlitePool) -> PortResult<TopologySnapshot> {
-    let (points, health) = load_sqlite_shm_topology(pool).await?.into_manifests();
+    let (points, health) = load_physical_topology(pool).await?.into_manifests();
     Ok(TopologySnapshot {
         points: Arc::new(points),
         health: Arc::new(health),

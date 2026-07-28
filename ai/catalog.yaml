@@ -106,14 +106,15 @@ components:
       - cargo test -p aether-testkit
   local_store:
     path: libs/aether-store-local
-    responsibility: Zero-external-service state, history, audit, legacy outbox, and application-ACK-driven CloudLink spools
+    responsibility: Zero-external-service state, history, audit, commissioned routing adapters, legacy outbox, and application-ACK-driven CloudLink spools
     verify:
       - cargo test -p aether-store-local
-  sqlite_topology_adapter:
-    path: libs/aether-sqlite-topology
-    responsibility: Shared service-composition adapter that validates one SQLite topology snapshot and derives coherent SHM manifests and logical routes
+      - cargo test -p aether-store-local --features sqlite-routing --test sqlite_routing_contract --test sqlite_physical_topology_contract
+  routing:
+    path: libs/aether-routing
+    responsibility: Storage-agnostic typed C2M, M2C, and C2C routing snapshots, validation, and deterministic generation digests
     verify:
-      - cargo test -p aether-sqlite-topology
+      - cargo test -p aether-routing
   jwt_auth_adapter:
     path: libs/aether-auth-jwt
     responsibility: Shared fail-closed access-JWT verification and server-owned application permissions for HTTP and CLI command boundaries

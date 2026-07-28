@@ -1,6 +1,8 @@
+#![cfg(feature = "sqlite-routing")]
+
 use aether_domain::PointKind;
 use aether_ports::PortErrorKind;
-use aether_sqlite_topology::load_sqlite_live_topology;
+use aether_store_local::{load_channel_routes, load_routing_snapshot};
 use sqlx::sqlite::SqlitePoolOptions;
 
 async fn live_topology_pool() -> sqlx::SqlitePool {
@@ -50,6 +52,32 @@ async fn insert_channel_points(pool: &sqlx::SqlitePool) {
 }
 
 #[tokio::test]
+async fn local_adapter_loads_typed_c2c_routes_without_string_maps() {
+    let pool = live_topology_pool().await;
+    insert_channel_points(&pool).await;
+    sqlx::query(
+        "CREATE TABLE channel_routing (source_channel_id INTEGER, source_type TEXT, \
+         source_point_id INTEGER, target_channel_id INTEGER, target_type TEXT, \
+         target_point_id INTEGER, scale REAL, offset REAL, enabled INTEGER)",
+    )
+    .execute(&pool)
+    .await
+    .expect("channel routing table");
+    sqlx::query("INSERT INTO channel_routing VALUES (7, 'T', 1, 7, 'S', 1, 2.0, 3.0, 1)")
+        .execute(&pool)
+        .await
+        .expect("channel route");
+
+    let routes = load_channel_routes(&pool).await.expect("typed C2C routes");
+    assert_eq!(routes.len(), 1);
+    let route = routes[0];
+    assert_eq!(route.source().channel_id().get(), 7);
+    assert_eq!(route.source().kind(), PointKind::Telemetry);
+    assert_eq!(route.target().point_kind, PointKind::Status);
+    assert_eq!(route.target().transform(4.0), 11.0);
+}
+
+#[tokio::test]
 async fn live_snapshot_contains_validated_point_health_and_logical_routes() {
     let pool = live_topology_pool().await;
     insert_channel_points(&pool).await;
@@ -62,7 +90,7 @@ async fn live_snapshot_contains_validated_point_health_and_logical_routes() {
         .await
         .expect("action route");
 
-    let snapshot = load_sqlite_live_topology(&pool)
+    let snapshot = load_routing_snapshot(&pool)
         .await
         .expect("coherent live topology");
 
@@ -105,7 +133,7 @@ async fn live_snapshot_exposes_exact_ordered_configured_physical_points() {
         }
     }
 
-    let snapshot = load_sqlite_live_topology(&pool)
+    let snapshot = load_routing_snapshot(&pool)
         .await
         .expect("live topology with sparse points");
     let configured = snapshot
@@ -146,7 +174,7 @@ async fn enabled_but_fully_unbound_routes_are_not_physical_routes() {
         .await
         .expect("unbound action route");
 
-    let snapshot = load_sqlite_live_topology(&pool)
+    let snapshot = load_routing_snapshot(&pool)
         .await
         .expect("fully unbound rows are valid configuration placeholders");
 
@@ -163,7 +191,7 @@ async fn partially_bound_routes_fail_closed_as_invalid_topology() {
         .await
         .expect("partially bound route row");
 
-    let error = load_sqlite_live_topology(&pool)
+    let error = load_routing_snapshot(&pool)
         .await
         .expect_err("partial physical bindings must not be silently ignored");
 
@@ -179,7 +207,7 @@ async fn route_target_missing_from_the_same_manifest_fails_closed() {
         .await
         .expect("orphan route row");
 
-    let error = load_sqlite_live_topology(&pool)
+    let error = load_routing_snapshot(&pool)
         .await
         .expect_err("orphan physical target must be rejected");
 
@@ -205,7 +233,7 @@ async fn route_target_in_a_sparse_manifest_hole_fails_closed() {
         .await
         .expect("route into sparse hole");
 
-    let error = load_sqlite_live_topology(&pool)
+    let error = load_routing_snapshot(&pool)
         .await
         .expect_err("a route must target an actually configured physical point");
 
@@ -220,7 +248,7 @@ async fn point_topology_without_a_configured_health_channel_fails_closed() {
         .await
         .expect("orphan physical point");
 
-    let error = load_sqlite_live_topology(&pool)
+    let error = load_routing_snapshot(&pool)
         .await
         .expect_err("every point-owning channel must exist in the health topology");
 
@@ -239,7 +267,7 @@ async fn duplicate_logical_address_fails_instead_of_overwriting_by_query_order()
             .expect("duplicate logical route row");
     }
 
-    let error = load_sqlite_live_topology(&pool)
+    let error = load_routing_snapshot(&pool)
         .await
         .expect_err("duplicate logical route must be rejected");
 
@@ -254,7 +282,7 @@ async fn routing_only_change_advances_the_deterministic_digest() {
         .execute(&pool)
         .await
         .expect("initial route");
-    let first = load_sqlite_live_topology(&pool)
+    let first = load_routing_snapshot(&pool)
         .await
         .expect("first live topology");
 
@@ -264,7 +292,7 @@ async fn routing_only_change_advances_the_deterministic_digest() {
     .execute(&pool)
     .await
     .expect("move route without changing SHM layout");
-    let second = load_sqlite_live_topology(&pool)
+    let second = load_routing_snapshot(&pool)
         .await
         .expect("second live topology");
 
@@ -289,7 +317,7 @@ async fn exact_configured_point_change_advances_digest_when_layout_is_unchanged(
             .await
             .expect("initial configured point");
     }
-    let first = load_sqlite_live_topology(&pool)
+    let first = load_routing_snapshot(&pool)
         .await
         .expect("first live topology");
 
@@ -301,7 +329,7 @@ async fn exact_configured_point_change_advances_digest_when_layout_is_unchanged(
         .execute(&pool)
         .await
         .expect("replace low configured point");
-    let second = load_sqlite_live_topology(&pool)
+    let second = load_routing_snapshot(&pool)
         .await
         .expect("second live topology");
 
@@ -329,10 +357,10 @@ async fn unchanged_snapshot_preserves_the_deterministic_digest() {
         .await
         .expect("action route");
 
-    let first = load_sqlite_live_topology(&pool)
+    let first = load_routing_snapshot(&pool)
         .await
         .expect("first live topology");
-    let second = load_sqlite_live_topology(&pool)
+    let second = load_routing_snapshot(&pool)
         .await
         .expect("unchanged live topology");
 

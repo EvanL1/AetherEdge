@@ -11,6 +11,7 @@ Local adapters for a gateway that must run without external services.
 | `SnapshotCovariateSource` | atomically replaceable JSON | production known-future covariates without an external service |
 | `MemoryAuditSink` | process-local | tests and host-managed persistence |
 | `SqliteAuditSink` (`sqlite-audit`) | embedded SQLite | mandatory command audit without an external service |
+| routing loaders (`sqlite-routing`) | embedded SQLite | adapt commissioned point and route definitions into storage-agnostic routing snapshots |
 | `MemoryOutbox` | process-local | conformance tests and ephemeral workloads |
 | `FileOutbox` | crash-recoverable file | production offline store-and-forward |
 | `MemoryCloudLinkSpool` | process-local | deterministic application-ACK/replay conformance |

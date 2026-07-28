@@ -19,6 +19,7 @@ const RETIRED_PACKAGES: &[&str] = &[
     "aether-redis-bridge",
     "aether-rtdb",
     "aether-rtdb-shm",
+    "aether-sqlite-topology",
     "aether-sunspec",
     "errors",
 ];
@@ -30,6 +31,7 @@ const RETIRED_ROOT_PATHS: &[&str] = &[
     "libs/aether-rtdb",
     "libs/aether-rtdb-shm",
     "libs/aether-shm",
+    "libs/aether-sqlite-topology",
     "libs/errors",
     "crates/aether-integration-contract",
     "crates/aether-application/src/integration_synchronizer.rs",
@@ -565,14 +567,17 @@ fn core_and_gateway_do_not_select_forbidden_sdk_or_adapter_edges() {
     if has_production_workspace_dependency(workspace, rules, "aether-shm-bridge") {
         violations.push("aether-rules selects the concrete SHM runtime".to_string());
     }
-    let local_store = workspace.package("aether-store-local");
-    if has_production_workspace_dependency(workspace, local_store, "aether-shm-bridge") {
-        violations.push("aether-store-local selects the concrete SHM runtime".to_string());
+    let routing = workspace.package("aether-routing");
+    if production_dependencies(routing).any(|dependency| dependency.name == "sqlx") {
+        violations.push("aether-routing depends on the concrete SQLite client".to_string());
     }
-    let sqlite_topology = workspace.package("aether-sqlite-topology");
-    if !has_production_workspace_dependency(workspace, sqlite_topology, "aether-shm-bridge") {
-        violations
-            .push("aether-sqlite-topology no longer owns SQLite-to-SHM composition".to_string());
+    let local_store = workspace.package("aether-store-local");
+    for required in ["aether-routing", "aether-shm-bridge"] {
+        if !has_production_workspace_dependency(workspace, local_store, required) {
+            violations.push(format!(
+                "aether-store-local no longer adapts commissioned topology into {required}"
+            ));
+        }
     }
 
     let codec = workspace.package("aether-data-processing");

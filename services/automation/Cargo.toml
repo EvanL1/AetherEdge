@@ -24,8 +24,8 @@ aether-pack = { path = "../../crates/aether-pack" }
 aether-runtime-catalog = { path = "../../libs/aether-runtime-catalog" }
 aether-domain = { path = "../../crates/aether-domain" }
 aether-ports = { path = "../../crates/aether-ports" }
-aether-store-local = { path = "../../libs/aether-store-local", features = ["sqlite-audit"] }
-aether-sqlite-topology = { path = "../../libs/aether-sqlite-topology" }
+aether-routing = { path = "../../libs/aether-routing" }
+aether-store-local = { path = "../../libs/aether-store-local", features = ["sqlite-audit", "sqlite-routing"] }
 aether-shm-bridge = { path = "../../libs/aether-shm-bridge" }
 aether-rules = { path = "../../libs/aether-rules" }
 aether-calc = { path = "../../libs/aether-calc" }

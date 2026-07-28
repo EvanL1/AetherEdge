@@ -1,14 +1,11 @@
-//! In-memory routing indexes and SHM data-plane routing metadata.
+//! Typed runtime routing independent of persistence and transport adapters.
 //!
-//! Routing configuration is loaded from SQLite and atomically published in
-//! [`RoutingCache`]. This crate performs no live-value storage and contains no
-//! Redis fallback.
+//! This crate owns immutable C2M/M2C routing generations and the acquisition
+//! owner's typed C2C index. It deliberately contains no database client, SQL,
+//! table name, configuration-file parser, or cross-process transport.
 
-pub mod loader;
-pub mod routing_cache;
+mod channel;
+mod snapshot;
 
-pub use loader::{RoutingMaps, load_routing_maps};
-pub use routing_cache::{C2CTarget, C2MTarget, M2CTarget, RoutingCache, RoutingCacheStats};
-
-/// Maximum number of C2C forwarding hops.
-pub const MAX_C2C_CASCADE_DEPTH: u8 = 2;
+pub use channel::{C2CTarget, ChannelRoute, ChannelRoutingCache, MAX_C2C_CASCADE_DEPTH};
+pub use snapshot::{LogicalPointRoutes, PhysicalTopologySnapshot, RoutingSnapshot};

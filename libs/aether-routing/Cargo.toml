@@ -1,21 +1,22 @@
 [package]
 name = "aether-routing"
-publish = false
 version.workspace = true
 edition = "2024"
+rust-version = "1.90"
+description = "Storage-agnostic typed routing for the Aether edge kernel"
 license.workspace = true
+repository.workspace = true
+documentation = "https://docs.aetheriot.dev/libs/aether-routing"
+readme = "README.md"
+keywords = ["iot", "edge", "routing", "gateway"]
+categories = ["embedded", "asynchronous"]
 
 [dependencies]
-anyhow = { workspace = true }
-tracing = { workspace = true }
-sqlx = { workspace = true }
-itoa = { workspace = true }
-rustc-hash = { workspace = true } # Fast FxHashMap for small integer keys
-arc-swap = "1.7"  # Lock-free atomic pointer swap for RoutingCache
-aether-domain = { path = "../../crates/aether-domain" }
-
-[dev-dependencies]
-tokio = { workspace = true }
+aether-domain = { version = "0.0.1", path = "../../crates/aether-domain" }
+aether-ports = { version = "0.0.1", path = "../../crates/aether-ports" }
+aether-shm-bridge = { version = "0.0.1", path = "../aether-shm-bridge" }
+arc-swap = "1.7"
+rustc-hash = { workspace = true }
 
 [lints]
 workspace = true

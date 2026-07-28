@@ -432,7 +432,7 @@ mod cache_tests {
 
     use crate::api::routes::AppState;
     use crate::core::channels::ChannelManager;
-    use aether_routing::RoutingCache;
+    use aether_routing::ChannelRoutingCache;
 
     async fn create_test_sqlite_pool() -> sqlx::SqlitePool {
         let pool = sqlx::sqlite::SqlitePoolOptions::new()
@@ -450,7 +450,7 @@ mod cache_tests {
 
     async fn create_test_state() -> AppState {
         let sqlite_pool = create_test_sqlite_pool().await;
-        let routing_cache = Arc::new(RoutingCache::default());
+        let routing_cache = Arc::new(ChannelRoutingCache::default());
         let shm_handle = crate::test_utils::create_test_shm_handle_with_points(BTreeMap::from([(
             1,
             [103, 0, 0, 0],

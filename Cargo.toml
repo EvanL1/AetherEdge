@@ -31,7 +31,6 @@ members = [
     "crates/aether-sdk",
     "crates/aether-testkit",
     "libs/aether-store-local",
-    "libs/aether-sqlite-topology",
     "services/uplink/adapters/cloudlink-mqtt",
     "libs/aether-shm-bridge",
     "libs/aether-auth-jwt",

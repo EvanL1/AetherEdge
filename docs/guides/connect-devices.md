@@ -120,8 +120,9 @@ The bridge is an instance plus routing:
 
 2. **Map channel points to instance points.** Routing wires a channel point
    to an instance point: telemetry and signal points feed instance
-   measurement points (M, the `route:c2m` table), and instance action
-   points (A) drive channel control and adjustment points (`route:m2c`). Author
+   measurement points (M, commissioned C2M routing), and instance action
+   points (A) drive channel control and adjustment points through commissioned
+   M2C routing. Author
    instances and measurement routes in the commissioned automation
    configuration. For one online physical action route, use the authenticated,
    explicitly confirmed `aether routing action upsert` command.

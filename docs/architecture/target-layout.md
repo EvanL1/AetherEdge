@@ -19,9 +19,9 @@ crates/
 libs/
   aether-auth-jwt        shared application-interface authentication
   aether-shm-bridge      native SHM runtime implementation
-  aether-store-local     default zero-external-service storage
+  aether-store-local     default zero-external-service storage adapters
   common                 shared service bootstrap and configuration DTOs
-  aether-routing         internal logical routing projection
+  aether-routing         storage-agnostic typed C2M/M2C/C2C generations
   aether-runtime-catalog exact build/runtime capability manifest
   aether-rules           deterministic industry-neutral rule engine
   ...                    other shared kernel implementation

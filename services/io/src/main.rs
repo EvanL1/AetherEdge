@@ -29,7 +29,7 @@ use aether_io::{
     runtime::{start_cleanup_task, start_communication_service},
     shutdown_services, wait_for_shutdown,
 };
-use aether_routing::load_routing_maps;
+use aether_routing::ChannelRoutingCache;
 use aether_shm_bridge::{
     AcquisitionCommitObserver, DEFAULT_MAX_SLOTS, PointWatchPublisher,
     ShmChannelHealthWriterHandle, ShmRuntimeConfig, ShmWriterHandle, SubscriptionBitmap,
@@ -37,6 +37,7 @@ use aether_shm_bridge::{
     channel_health_path_from_shm, cleanup_orphan_generation_files, default_shm_path,
     point_watch_socket_from_shm, timestamp_ms,
 };
+use aether_store_local::{load_channel_routes, load_physical_topology};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -82,34 +83,29 @@ async fn main() -> anyhow::Result<()> {
         .await
         .map_err(|e| IoError::ConfigError(format!("Failed to create SQLite pool: {}", e)))?;
 
-    // Load routing configuration from the unified SQLite database.
-    info!("Loading routing cache from unified database...");
-    let routing_cache = {
-        // Load routing maps from shared library
-        let maps = load_routing_maps(&sqlite_pool)
-            .await
-            .map_err(|e| IoError::ConfigError(format!("Failed to load routing: {}", e)))?;
-
-        info!("Loaded routing cache: {} total routes", maps.total_routes());
-
-        Arc::new(aether_routing::RoutingCache::from_maps(
-            maps.c2m, maps.m2c, maps.c2c,
-        ))
-    };
+    // Load the acquisition owner's typed C2C routing configuration.
+    info!("Loading channel routing from the local configuration store...");
+    let channel_routes = load_channel_routes(&sqlite_pool).await.map_err(|error| {
+        IoError::ConfigError(format!("Failed to load channel routing: {error}"))
+    })?;
+    info!("Loaded {} C2C routes", channel_routes.len());
+    let routing_cache = Arc::new(
+        ChannelRoutingCache::from_routes(channel_routes)
+            .map_err(|error| IoError::ConfigError(error.to_string()))?,
+    );
 
     // Shutdown token — created here so the SHM block can capture it for the
     // PointWatch drain task spawned during UnifiedWriter initialization.
     let shutdown_token = CancellationToken::new();
 
-    let (initial_point_manifest, initial_health_manifest) =
-        aether_sqlite_topology::load_sqlite_shm_topology(&sqlite_pool)
-            .await
-            .map_err(|error| {
-                IoError::config(format!(
-                    "failed to load authoritative SHM topology from SQLite: {error}"
-                ))
-            })?
-            .into_manifests();
+    let (initial_point_manifest, initial_health_manifest) = load_physical_topology(&sqlite_pool)
+        .await
+        .map_err(|error| {
+            IoError::config(format!(
+                "failed to load authoritative SHM topology from SQLite: {error}"
+            ))
+        })?
+        .into_manifests();
     // ============ Phase 2.5: publish the authoritative SHM generation ============
     let (
         shm_handle,
@@ -501,9 +497,12 @@ async fn main() -> anyhow::Result<()> {
                 _ = tokio::time::sleep(Duration::from_secs(2)) => {},
                 _ = poll_token.cancelled() => break,
             }
-            match aether_routing::load_routing_maps(&poll_pool).await {
-                Ok(maps) => {
-                    poll_cache.update(maps.c2m, maps.m2c, maps.c2c);
+            match load_channel_routes(&poll_pool).await {
+                Ok(routes) => {
+                    if let Err(error) = poll_cache.replace(routes) {
+                        tracing::warn!(%error, "Channel routing replacement rejected");
+                        continue;
+                    }
                     let new_hash = poll_cache.content_hash();
                     if new_hash != last_hash {
                         info!(

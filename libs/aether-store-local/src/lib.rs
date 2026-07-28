@@ -10,6 +10,8 @@ mod file_outbox;
 mod history;
 mod live_state;
 mod outbox;
+#[cfg(feature = "sqlite-routing")]
+mod routing_sqlite;
 mod snapshot_covariates;
 
 use aether_ports::{PortError, PortErrorKind};
@@ -29,6 +31,8 @@ pub use file_outbox::FileOutbox;
 pub use history::MemoryHistorySink;
 pub use live_state::MemoryLiveState;
 pub use outbox::MemoryOutbox;
+#[cfg(feature = "sqlite-routing")]
+pub use routing_sqlite::{load_channel_routes, load_physical_topology, load_routing_snapshot};
 pub use snapshot_covariates::{SnapshotCovariateLimits, SnapshotCovariateSource};
 
 fn lock_error(resource: &str) -> PortError {

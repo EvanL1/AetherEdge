@@ -234,7 +234,7 @@ async fn create_test_database_with_gpio_channel() -> Result<sqlx::SqlitePool> {
 /// Helper function to create a test app router with custom database
 async fn create_test_app_with_pool(pool: sqlx::SqlitePool) -> Result<axum::Router> {
     // Create routing cache (empty for integration test)
-    let routing_cache = Arc::new(aether_routing::RoutingCache::new());
+    let routing_cache = Arc::new(aether_routing::ChannelRoutingCache::new());
 
     // Create the channel manager over an available temporary SHM layout.
     let channel_manager = Arc::new(aether_io::ChannelManager::new(

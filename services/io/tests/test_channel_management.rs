@@ -57,7 +57,7 @@ async fn create_test_app() -> Result<axum::Router> {
     let pool = create_test_database().await?;
 
     // Create routing cache (empty for integration test)
-    let routing_cache = Arc::new(aether_routing::RoutingCache::new());
+    let routing_cache = Arc::new(aether_routing::ChannelRoutingCache::new());
 
     // Create the channel manager over an available temporary SHM layout.
     let channel_manager = Arc::new(aether_io::ChannelManager::new(

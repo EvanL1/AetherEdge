@@ -8,11 +8,12 @@ use aether_domain::{ChannelId, PointAddress, PointKind, PointQuality, PointSampl
 #[cfg(test)]
 use aether_ports::ChannelHealthObservation;
 use aether_ports::{ChannelHealthSource, LiveState, PortError, PortErrorKind, PortResult};
+use aether_routing::RoutingSnapshot;
 use aether_shm_bridge::{
     ChannelPointManifest, PhysicalPointAddress, PointWatchEvent, ShmClientConfig,
     ShmReadTopologyGeneration, SlotSnapshot, SlotSource,
 };
-use aether_sqlite_topology::{SqliteLiveTopologySnapshot, load_sqlite_live_topology};
+use aether_store_local::load_routing_snapshot;
 use anyhow::Context;
 use arc_swap::ArcSwap;
 use async_trait::async_trait;
@@ -191,7 +192,7 @@ impl ShmGatewayValueSource {
         pool: &SqlitePool,
         config: &GatewayConfig,
     ) -> PortResult<bool> {
-        let snapshot = load_sqlite_live_topology(pool).await?;
+        let snapshot = load_routing_snapshot(pool).await?;
         let current = self.current.load_full();
         let physical_current = current
             .topology
@@ -510,7 +511,7 @@ pub async fn build_gateway_value_source(
     pool: &SqlitePool,
     config: &GatewayConfig,
 ) -> anyhow::Result<Arc<ShmGatewayValueSource>> {
-    let snapshot = load_sqlite_live_topology(pool)
+    let snapshot = load_routing_snapshot(pool)
         .await
         .context("load canonical live topology for api")?;
     let generation = build_gateway_generation(snapshot, config, false)?;
@@ -547,7 +548,7 @@ pub async fn run_gateway_topology_refresh(
 }
 
 fn build_gateway_generation(
-    snapshot: SqliteLiveTopologySnapshot,
+    snapshot: RoutingSnapshot,
     config: &GatewayConfig,
     validate_physical: bool,
 ) -> PortResult<GatewayValueGeneration> {
@@ -592,7 +593,7 @@ fn build_gateway_generation(
     })
 }
 
-fn gateway_routing(snapshot: &SqliteLiveTopologySnapshot) -> Arc<GatewayRouting> {
+fn gateway_routing(snapshot: &RoutingSnapshot) -> Arc<GatewayRouting> {
     Arc::new(GatewayRouting::from_entries(
         snapshot
             .measurement_routes()
@@ -997,7 +998,7 @@ mod tests {
             channel_health_shm_path: health_path.to_string_lossy().into_owned(),
             ..Default::default()
         };
-        let first = aether_sqlite_topology::load_sqlite_live_topology(&pool)
+        let first = aether_store_local::load_routing_snapshot(&pool)
             .await
             .expect("initial topology snapshot");
         let first_epoch = 100;
@@ -1086,7 +1087,7 @@ mod tests {
                 .await
                 .expect("change desired topology");
         }
-        let second = aether_sqlite_topology::load_sqlite_live_topology(&pool)
+        let second = aether_store_local::load_routing_snapshot(&pool)
             .await
             .expect("replacement topology snapshot");
         let second_epoch = 102;

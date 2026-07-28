@@ -102,7 +102,7 @@ class ChannelAdapter:
 | **连接管理** | 管理所有 IM channel 连接 | 管理所有设备通道连接 |
 | **控制接口** | WebSocket (18789) | HTTP API（应用经 6005 网关；io 内部端口 6001） |
 | **会话路由** | 私聊/群聊/工作号隔离 | C2M/M2C/C2C 路由 |
-| **状态缓存** | 连接状态 + 会话上下文 | `ArcSwap<ConnectionState>` + `RoutingCache` |
+| **状态缓存** | 连接状态 + 会话上下文 | `ArcSwap<ConnectionState>` + immutable `RoutingSnapshot` |
 
 **代码对比**：
 
@@ -110,7 +110,7 @@ class ChannelAdapter:
 // AetherEMS: ChannelManager
 pub struct ChannelManager<R: Rtdb> {
     rtdb: Arc<R>,
-    routing_cache: Arc<RoutingCache>,
+    routing: Arc<RoutingSnapshot>,
     channels: RwLock<HashMap<u32, Arc<ChannelEntry<R>>>>,
     shared_writer: Option<Arc<UnifiedWriter>>,  // SHM
     command_tx_cache: Option<Arc<CommandTxCache>>,
@@ -197,7 +197,7 @@ AetherEMS RuleScheduler:
 // 写入数据自动触发路由（类似 OpenClaw 工具调用的原子性）
 pub async fn set_action_point(
     rtdb: &R,
-    routing_cache: &RoutingCache,
+    routing: &RoutingSnapshot,
     instance_id: u32,
     point_id: &str,
     value: f64,

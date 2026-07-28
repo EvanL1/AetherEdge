@@ -22,8 +22,7 @@ aether-domain = { path = "../../crates/aether-domain" }
 aether-ports = { path = "../../crates/aether-ports" }
 aether-routing = { path = "../../libs/aether-routing" }
 aether-shm-bridge = { path = "../../libs/aether-shm-bridge" }
-aether-store-local = { path = "../../libs/aether-store-local", features = ["sqlite-audit"] }
-aether-sqlite-topology = { path = "../../libs/aether-sqlite-topology" }
+aether-store-local = { path = "../../libs/aether-store-local", features = ["sqlite-audit", "sqlite-routing"] }
 
 # Protocol libraries
 voltage_modbus = { version = "0.5.0", optional = true, features = ["rtu"] }

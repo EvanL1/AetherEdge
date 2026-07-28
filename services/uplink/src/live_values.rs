@@ -8,10 +8,11 @@ use aether_domain::{
     InstanceId, PointAddress, PointId, PointKind, PointQuality, PointSample, TimestampMs,
 };
 use aether_ports::{ChannelHealthObservation, PortError, PortErrorKind, PortResult};
+use aether_routing::RoutingSnapshot;
 use aether_shm_bridge::{
     PhysicalPointAddress, ShmClientConfig, ShmReadTopologyGeneration, SlotSource,
 };
-use aether_sqlite_topology::{SqliteLiveTopologySnapshot, load_sqlite_live_topology};
+use aether_store_local::load_routing_snapshot;
 use arc_swap::ArcSwap;
 use regex::Regex;
 use sqlx::SqlitePool;
@@ -157,7 +158,7 @@ pub struct UplinkTopologyHandle {
 
 impl UplinkTopologyHandle {
     /// Creates an offline-first generation from exactly one SQLite snapshot.
-    pub fn new_lazy(snapshot: SqliteLiveTopologySnapshot, config: &EnvConfig) -> PortResult<Self> {
+    pub fn new_lazy(snapshot: RoutingSnapshot, config: &EnvConfig) -> PortResult<Self> {
         let initial = Arc::new(build_uplink_generation(snapshot, config, false)?);
         Ok(Self {
             current: ArcSwap::new(initial),
@@ -175,7 +176,7 @@ impl UplinkTopologyHandle {
     /// committed point/health pair, and atomically publishes both together.
     pub async fn refresh(&self, pool: &SqlitePool, config: &EnvConfig) -> PortResult<bool> {
         let _refresh = self.refresh_gate.lock().await;
-        let snapshot = load_sqlite_live_topology(pool).await?;
+        let snapshot = load_routing_snapshot(pool).await?;
         let candidate = Arc::new(build_uplink_generation(snapshot, config, true)?);
         let current = self.load();
         if current.digest() == candidate.digest()
@@ -388,7 +389,7 @@ impl ShmNetValueSource {
 }
 
 fn build_uplink_generation(
-    snapshot: SqliteLiveTopologySnapshot,
+    snapshot: RoutingSnapshot,
     config: &EnvConfig,
     validate_physical: bool,
 ) -> PortResult<UplinkTopologyGeneration> {
@@ -425,9 +426,7 @@ fn build_uplink_generation(
     })
 }
 
-fn logical_groups_from_snapshot(
-    snapshot: &SqliteLiveTopologySnapshot,
-) -> PortResult<Vec<LogicalGroup>> {
+fn logical_groups_from_snapshot(snapshot: &RoutingSnapshot) -> PortResult<Vec<LogicalGroup>> {
     let manifest = snapshot.point_manifest();
     let mut groups = BTreeMap::<String, (String, String, String, BTreeMap<String, usize>)>::new();
     for &target in snapshot.configured_physical_points() {
@@ -619,7 +618,7 @@ mod tests {
             .execute(&pool)
             .await
             .expect("insert sparse physical point");
-        let snapshot = aether_sqlite_topology::load_sqlite_live_topology(&pool)
+        let snapshot = aether_store_local::load_routing_snapshot(&pool)
             .await
             .expect("load one authoritative snapshot");
 
@@ -646,7 +645,7 @@ mod tests {
             channel_health_shm_path: health_path.to_string_lossy().into_owned(),
             ..Default::default()
         };
-        let snapshot = aether_sqlite_topology::load_sqlite_live_topology(&pool)
+        let snapshot = aether_store_local::load_routing_snapshot(&pool)
             .await
             .expect("load initial snapshot");
         let points = Arc::new(snapshot.point_manifest().clone());
@@ -737,7 +736,7 @@ mod tests {
             channel_health_shm_path: health_path.to_string_lossy().into_owned(),
             ..Default::default()
         };
-        let snapshot = aether_sqlite_topology::load_sqlite_live_topology(&pool)
+        let snapshot = aether_store_local::load_routing_snapshot(&pool)
             .await
             .expect("load initial snapshot");
         let points = Arc::new(snapshot.point_manifest().clone());
@@ -869,9 +868,7 @@ mod tests {
     #[tokio::test]
     async fn sqlite_catalog_discovers_cloud_groups_without_scan() {
         let pool = config_pool().await;
-        let snapshot = load_sqlite_live_topology(&pool)
-            .await
-            .expect("load snapshot");
+        let snapshot = load_routing_snapshot(&pool).await.expect("load snapshot");
         let groups = logical_groups_from_snapshot(&snapshot).expect("load groups");
 
         assert!(groups.iter().any(|group| {
@@ -899,7 +896,7 @@ mod tests {
             ..Default::default()
         };
 
-        let snapshot = load_sqlite_live_topology(&pool)
+        let snapshot = load_routing_snapshot(&pool)
             .await
             .expect("load embedded snapshot");
         let handle = UplinkTopologyHandle::new_lazy(snapshot, &config)
@@ -956,7 +953,7 @@ mod tests {
             ..Default::default()
         };
 
-        let initial = load_sqlite_live_topology(&pool)
+        let initial = load_routing_snapshot(&pool)
             .await
             .expect("initial Uplink topology");
         let mut epoch = 20_000_u64;
@@ -1088,7 +1085,7 @@ mod tests {
                     .await
                     .expect("remove Uplink layout point");
             }
-            let snapshot = load_sqlite_live_topology(&pool)
+            let snapshot = load_routing_snapshot(&pool)
                 .await
                 .expect("load switched Uplink topology");
             epoch += 1;
@@ -1171,7 +1168,7 @@ mod tests {
 
         fn write_uplink_soak_points(
             writer: &ShmWriterHandle,
-            snapshot: &SqliteLiveTopologySnapshot,
+            snapshot: &RoutingSnapshot,
             epoch: u64,
         ) {
             let samples = snapshot
@@ -1205,7 +1202,7 @@ mod tests {
 
         fn write_uplink_soak_health(
             writer: &ShmChannelHealthWriterHandle,
-            snapshot: &SqliteLiveTopologySnapshot,
+            snapshot: &RoutingSnapshot,
             epoch: u64,
         ) {
             for channel_id in snapshot.health_manifest().channel_ids() {

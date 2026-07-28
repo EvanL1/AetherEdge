@@ -53,9 +53,10 @@ retired architectures.
    simulator and test tooling. The installer no longer accepts `py` or
    `dev-py` compatibility groups.
 7. Following the `KeySpaceConfig` removal in ADR-0023, `aether-routing` uses
-   canonical domain point kinds, drops its representation-layer dependency and
-   zero-consumer APIs, and keeps private stable logical-route keys for SQLite
-   snapshots. Those keys are not a Redis authority or public protocol.
+   canonical domain point kinds and typed physical addresses, drops its
+   representation-layer dependency and zero-consumer APIs, and owns no
+   persistence keys or table schema. Concrete local storage converts its rows
+   into the same storage-agnostic routing definitions.
 
 ## Compatibility and migration
 

@@ -1,8 +1,10 @@
+#![cfg(feature = "sqlite-routing")]
+
 use std::collections::BTreeMap;
 
 use aether_ports::PortErrorKind;
 use aether_shm_bridge::ChannelPointManifest;
-use aether_sqlite_topology::load_sqlite_shm_topology;
+use aether_store_local::load_physical_topology;
 use sqlx::sqlite::SqlitePoolOptions;
 
 async fn topology_pool() -> sqlx::SqlitePool {
@@ -52,7 +54,7 @@ async fn snapshot_includes_sparse_measurements_and_all_channel_health() {
         .expect("configured point");
     }
 
-    let snapshot = load_sqlite_shm_topology(&pool)
+    let snapshot = load_physical_topology(&pool)
         .await
         .expect("canonical topology snapshot");
 
@@ -76,7 +78,7 @@ async fn snapshot_rejects_negative_stored_identifiers() {
         .await
         .expect("malformed channel row");
 
-    let error = load_sqlite_shm_topology(&pool)
+    let error = load_physical_topology(&pool)
         .await
         .expect_err("negative channel identity must be rejected");
 
@@ -95,7 +97,7 @@ async fn snapshot_rejects_negative_point_ranges() {
         .await
         .expect("malformed point row");
 
-    let error = load_sqlite_shm_topology(&pool)
+    let error = load_physical_topology(&pool)
         .await
         .expect_err("negative point ranges must be rejected");
 
@@ -117,7 +119,7 @@ async fn snapshot_rejects_a_negative_point_hidden_below_a_valid_maximum() {
             .expect("mixed point range");
     }
 
-    let error = load_sqlite_shm_topology(&pool)
+    let error = load_physical_topology(&pool)
         .await
         .expect_err("a valid maximum must not hide a negative point id");
 
@@ -139,7 +141,7 @@ async fn snapshot_accepts_sparse_nonzero_point_ranges_and_allocates_the_upper_bo
             .expect("sparse configured point");
     }
 
-    let snapshot = load_sqlite_shm_topology(&pool)
+    let snapshot = load_physical_topology(&pool)
         .await
         .expect("sparse point ids are part of the physical writer contract");
 
@@ -163,7 +165,7 @@ async fn snapshot_rejects_duplicate_point_identifiers() {
             .expect("duplicate point row");
     }
 
-    let error = load_sqlite_shm_topology(&pool)
+    let error = load_physical_topology(&pool)
         .await
         .expect_err("duplicate point identities must not collapse into one SHM slot");
 
@@ -178,7 +180,7 @@ async fn snapshot_reports_an_unavailable_authoritative_schema() {
         .await
         .expect("in-memory database without topology schema");
 
-    let error = load_sqlite_shm_topology(&pool)
+    let error = load_physical_topology(&pool)
         .await
         .expect_err("missing authoritative schema must fail closed");
 

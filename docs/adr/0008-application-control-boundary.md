@@ -43,9 +43,9 @@ aether-automation, and aether-io.
    the reusable `aether-store-local` adapter.
    External audit systems may mirror those events through an extension but
    are never required for the default distribution.
-7. The command continues through the existing routing cache, channel-health
-   gate, SHM command slot, and UDS notification. SHM remains the live-state and
-   command-transport authority.
+7. The command continues through the pinned immutable routing generation,
+   channel-health gate, SHM command slot, and UDS notification. SHM remains the
+   live-state and command-transport authority.
 8. aether-io's public `/write` endpoint rejects C/A writes. T/S simulation
    writes are also disabled by default and require the explicit
    `AETHER_ALLOW_SIMULATION_WRITES=true` development opt-in, because forged

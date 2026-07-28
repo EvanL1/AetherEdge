@@ -10,7 +10,7 @@ use aether_shm_bridge::{
     ShmChannelHealthWriterHandle, ShmClientConfig, ShmRuntimeConfig, ShmWriterHandle,
     commit_topology_publication,
 };
-use aether_sqlite_topology::load_sqlite_shm_topology;
+use aether_store_local::load_physical_topology;
 use sqlx::sqlite::SqlitePoolOptions;
 
 async fn pool() -> sqlx::SqlitePool {
@@ -28,10 +28,7 @@ async fn pool() -> sqlx::SqlitePool {
 async fn load_channel_point_manifest(
     pool: &sqlx::SqlitePool,
 ) -> anyhow::Result<aether_shm_bridge::ChannelPointManifest> {
-    Ok(load_sqlite_shm_topology(pool)
-        .await?
-        .point_manifest()
-        .clone())
+    Ok(load_physical_topology(pool).await?.point_manifest().clone())
 }
 
 async fn insert_channel(pool: &sqlx::SqlitePool, channel_id: i64) {
@@ -99,7 +96,7 @@ async fn io_manifest_hash_matches_canonical_snapshot_for_sparse_status_points() 
     let io_manifest = load_channel_point_manifest(&pool)
         .await
         .expect("io compatibility manifest");
-    let canonical = load_sqlite_shm_topology(&pool)
+    let canonical = load_physical_topology(&pool)
         .await
         .expect("canonical topology snapshot");
 

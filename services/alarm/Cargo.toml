@@ -16,8 +16,8 @@ aether-domain = { path = "../../crates/aether-domain" }
 aether-application = { path = "../../crates/aether-application" }
 aether-ports = { path = "../../crates/aether-ports" }
 aether-auth-jwt = { path = "../../libs/aether-auth-jwt" }
-aether-store-local = { path = "../../libs/aether-store-local", features = ["sqlite-audit"] }
-aether-sqlite-topology = { path = "../../libs/aether-sqlite-topology" }
+aether-routing = { path = "../../libs/aether-routing" }
+aether-store-local = { path = "../../libs/aether-store-local", features = ["sqlite-audit", "sqlite-routing"] }
 aether-shm-bridge = { path = "../../libs/aether-shm-bridge" }
 
 # Async runtime

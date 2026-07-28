@@ -5,10 +5,13 @@
 
 use aether_dataplane::SlotReader;
 use aether_domain::PointKind;
-use aether_routing::{RoutingCache, load_routing_maps};
+use aether_routing::RoutingSnapshot;
 #[cfg(test)]
-use aether_shm_bridge::PhysicalPointAddress;
-use aether_shm_bridge::{ChannelPointManifest, ShmChannelReader, default_shm_path};
+use aether_routing::{LogicalPointRoutes, PhysicalTopologySnapshot};
+#[cfg(test)]
+use aether_shm_bridge::{ChannelHealthManifest, PhysicalPointAddress};
+use aether_shm_bridge::{ShmChannelReader, default_shm_path};
+use aether_store_local::load_routing_snapshot;
 use anyhow::{Context, Result, bail};
 use clap::Subcommand;
 use colored::*;
@@ -311,21 +314,15 @@ pub async fn handle_command(cmd: Option<ShmCommands>, data_directory: &Path) -> 
 /// channel and instance lookups.
 pub(crate) struct ShmRuntimeView {
     reader: ShmChannelReader,
-    routing_cache: RoutingCache,
+    routing: RoutingSnapshot,
 }
 
 impl ShmRuntimeView {
-    fn open(
-        shm_path: &Path,
-        manifest: Arc<ChannelPointManifest>,
-        routing_cache: RoutingCache,
-    ) -> Result<Self> {
+    fn open(shm_path: &Path, routing: RoutingSnapshot) -> Result<Self> {
+        let manifest = Arc::new(routing.point_manifest().clone());
         let reader = ShmChannelReader::open(shm_path, manifest)
             .with_context(|| format!("failed to open typed SHM at {}", shm_path.display()))?;
-        Ok(Self {
-            reader,
-            routing_cache,
-        })
+        Ok(Self { reader, routing })
     }
 
     fn resolve_key(&self, key: &ShmKey) -> Option<(u32, PointKind, u32)> {
@@ -340,31 +337,23 @@ impl ShmRuntimeView {
                 point_type: 0,
                 point_id,
             } => {
-                let (channel_id, kind, channel_point_id) = self
-                    .routing_cache
-                    .lookup_c2m_reverse(*instance_id, *point_id)?;
-                kind.is_acquisition_owned()
-                    .then_some((channel_id, kind, channel_point_id))
+                let target = self.routing.measurement_route(*instance_id, *point_id)?;
+                Some((
+                    target.channel_id().get(),
+                    target.kind(),
+                    target.point_id().get(),
+                ))
             },
             ShmKey::Instance {
                 instance_id,
                 point_type: 1,
                 point_id,
             } => {
-                let target = self
-                    .routing_cache
-                    .lookup_m2c_by_parts(*instance_id, PointKind::Command, *point_id)
-                    .or_else(|| {
-                        self.routing_cache.lookup_m2c_by_parts(
-                            *instance_id,
-                            PointKind::Action,
-                            *point_id,
-                        )
-                    })?;
-                target.point_kind.is_writable().then_some((
-                    target.channel_id,
-                    target.point_kind,
-                    target.point_id,
+                let target = self.routing.action_route(*instance_id, *point_id)?;
+                Some((
+                    target.channel_id().get(),
+                    target.kind(),
+                    target.point_id().get(),
                 ))
             },
             ShmKey::Instance { .. } => None,
@@ -373,15 +362,15 @@ impl ShmRuntimeView {
 
     pub(crate) fn named_keys(&self) -> Vec<ShmKey> {
         let mut keys = BTreeMap::<String, ShmKey>::new();
-        for (_, target) in self.routing_cache.c2m_iter() {
+        for (instance_id, point_id, _) in self.routing.measurement_routes() {
             let key = ShmKey::Instance {
-                instance_id: target.instance_id,
+                instance_id,
                 point_type: 0,
-                point_id: target.point_id,
+                point_id,
             };
             keys.insert(key.to_string(), key);
         }
-        for ((instance_id, _, point_id), _) in self.routing_cache.m2c_iter() {
+        for (instance_id, point_id, _) in self.routing.action_routes() {
             let key = ShmKey::Instance {
                 instance_id,
                 point_type: 1,
@@ -405,16 +394,14 @@ impl ShmRuntimeView {
     pub(crate) fn instance_ids(&self) -> Vec<u32> {
         let mut instance_ids = BTreeSet::new();
         instance_ids.extend(
-            self.routing_cache
-                .c2m_iter()
-                .into_iter()
-                .map(|(_, target)| target.instance_id),
+            self.routing
+                .measurement_routes()
+                .map(|(instance_id, _, _)| instance_id),
         );
         instance_ids.extend(
-            self.routing_cache
-                .m2c_iter()
-                .into_iter()
-                .map(|((instance_id, _, _), _)| instance_id),
+            self.routing
+                .action_routes()
+                .map(|(instance_id, _, _)| instance_id),
         );
         instance_ids.into_iter().collect()
     }
@@ -462,31 +449,6 @@ fn model_point_type(kind: PointKind) -> PointType {
     }
 }
 
-async fn load_channel_point_manifest(pool: &sqlx::SqlitePool) -> Result<ChannelPointManifest> {
-    let mut counts = BTreeMap::<u32, [u32; 4]>::new();
-    for (table, kind_index) in [
-        ("telemetry_points", 0_usize),
-        ("signal_points", 1),
-        ("control_points", 2),
-        ("adjustment_points", 3),
-    ] {
-        let query =
-            format!("SELECT channel_id, MAX(point_id) + 1 FROM {table} GROUP BY channel_id");
-        let rows = sqlx::query_as::<_, (i64, i64)>(&query)
-            .fetch_all(pool)
-            .await
-            .with_context(|| format!("failed to load channel layout from {table}"))?;
-        for (channel_id, point_count) in rows {
-            let channel_id = u32::try_from(channel_id)
-                .with_context(|| format!("invalid channel id {channel_id} in {table}"))?;
-            let point_count = u32::try_from(point_count)
-                .with_context(|| format!("invalid point count {point_count} in {table}"))?;
-            counts.entry(channel_id).or_insert([0; 4])[kind_index] = point_count;
-        }
-    }
-    Ok(ChannelPointManifest::from_map(counts))
-}
-
 pub(crate) async fn open_reader(data_directory: &Path) -> Result<ShmRuntimeView> {
     open_reader_at(data_directory, &default_shm_path()).await
 }
@@ -506,16 +468,11 @@ async fn open_reader_at(data_directory: &Path, shm_path: &Path) -> Result<ShmRun
                 database_path.display()
             )
         })?;
-    let manifest = Arc::new(load_channel_point_manifest(&pool).await?);
-    let maps = load_routing_maps(&pool)
+    let routing = load_routing_snapshot(&pool)
         .await
         .context("failed to load routing metadata for named SHM queries")?;
     pool.close().await;
-    ShmRuntimeView::open(
-        shm_path,
-        manifest,
-        RoutingCache::from_maps(maps.c2m, maps.m2c, maps.c2c),
-    )
+    ShmRuntimeView::open(shm_path, routing)
 }
 
 fn open_raw_reader() -> Result<SlotReader> {
@@ -808,7 +765,7 @@ fn print_help() {
 #[allow(clippy::disallowed_methods)] // Test code - unwrap is acceptable
 mod tests {
     use super::*;
-    use std::collections::{BTreeSet, HashMap};
+    use std::collections::BTreeSet;
     use std::sync::Arc;
 
     use aether_dataplane::SlotWriter;
@@ -851,13 +808,19 @@ mod tests {
             101,
         );
 
-        let routing_cache = RoutingCache::from_maps(
-            HashMap::from([("7:T:0".to_owned(), "9:M:4".to_owned())]),
-            HashMap::from([("9:A:5".to_owned(), "7:A:0".to_owned())]),
-            HashMap::new(),
-        );
-        let view = ShmRuntimeView::open(&shm_path, manifest, routing_cache)
-            .expect("open typed runtime view");
+        let telemetry = PhysicalPointAddress::from_legacy_raw(7, PointKind::Telemetry, 0);
+        let action = PhysicalPointAddress::from_legacy_raw(7, PointKind::Action, 0);
+        let routing = RoutingSnapshot::new(
+            PhysicalTopologySnapshot::new(
+                manifest.as_ref().clone(),
+                ChannelHealthManifest::from_channel_ids([7]),
+            ),
+            vec![telemetry, action],
+            LogicalPointRoutes::from([((9, 4), telemetry)]),
+            LogicalPointRoutes::from([((9, 5), action)]),
+        )
+        .expect("typed routing snapshot");
+        let view = ShmRuntimeView::open(&shm_path, routing).expect("open typed runtime view");
         (directory, view)
     }
 
@@ -916,9 +879,19 @@ mod tests {
             actual.layout_hash(),
         )
         .expect("create typed SHM fixture");
-        let mismatched = Arc::new(ChannelPointManifest::from_entries([(7, [2, 0, 0, 0])]));
+        let mismatched = ChannelPointManifest::from_entries([(7, [2, 0, 0, 0])]);
+        let routing = RoutingSnapshot::new(
+            PhysicalTopologySnapshot::new(mismatched, ChannelHealthManifest::from_channel_ids([7])),
+            vec![
+                PhysicalPointAddress::from_legacy_raw(7, PointKind::Telemetry, 0),
+                PhysicalPointAddress::from_legacy_raw(7, PointKind::Telemetry, 1),
+            ],
+            LogicalPointRoutes::new(),
+            LogicalPointRoutes::new(),
+        )
+        .expect("mismatched routing snapshot");
 
-        let result = ShmRuntimeView::open(&shm_path, mismatched, RoutingCache::default());
+        let result = ShmRuntimeView::open(&shm_path, routing);
 
         assert!(result.is_err());
     }
@@ -937,6 +910,10 @@ mod tests {
             .connect_with(database_options)
             .await
             .expect("create runtime database");
+        sqlx::query("CREATE TABLE channels (channel_id INTEGER PRIMARY KEY)")
+            .execute(&pool)
+            .await
+            .expect("create channels table");
         for table in [
             "telemetry_points",
             "signal_points",
@@ -978,6 +955,10 @@ mod tests {
         .execute(&pool)
         .await
         .expect("create action routing table");
+        sqlx::query("INSERT INTO channels VALUES (7)")
+            .execute(&pool)
+            .await
+            .expect("insert channel");
         sqlx::query("INSERT INTO telemetry_points VALUES (7, 0)")
             .execute(&pool)
             .await

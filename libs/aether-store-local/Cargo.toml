@@ -14,6 +14,8 @@ categories = ["embedded", "asynchronous"]
 [dependencies]
 aether-domain = { version = "0.0.1", path = "../../crates/aether-domain" }
 aether-ports = { version = "0.0.1", path = "../../crates/aether-ports" }
+aether-routing = { version = "0.0.1", path = "../aether-routing", optional = true }
+aether-shm-bridge = { version = "0.0.1", path = "../aether-shm-bridge", optional = true }
 async-trait = { workspace = true }
 fs2 = "0.4"
 serde = { workspace = true }
@@ -29,6 +31,7 @@ libc = "0.2"
 [features]
 default = []
 sqlite-audit = ["dep:sqlx"]
+sqlite-routing = ["dep:sqlx", "dep:aether-routing", "dep:aether-shm-bridge"]
 
 [dev-dependencies]
 aether-testkit = { path = "../../crates/aether-testkit" }

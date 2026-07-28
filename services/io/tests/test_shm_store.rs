@@ -6,11 +6,26 @@ use aether_domain::PointKind;
 use aether_io::ShmDataStore;
 use aether_io::protocols::core::data::{DataBatch, DataPoint};
 use aether_io::protocols::core::error::GatewayError;
-use aether_routing::RoutingCache;
+use aether_routing::{ChannelRoute, ChannelRoutingCache};
 use aether_shm_bridge::{
     ChannelPointManifest, PhysicalPointAddress, ShmAcquisitionStateWriter, ShmRuntimeConfig,
     ShmWriterHandle,
 };
+
+fn c2c_route(
+    source_channel: u32,
+    source_point: u32,
+    target_channel: u32,
+    target_point: u32,
+) -> ChannelRoute {
+    ChannelRoute::new(
+        PhysicalPointAddress::from_legacy_raw(source_channel, PointKind::Telemetry, source_point),
+        PhysicalPointAddress::from_legacy_raw(target_channel, PointKind::Telemetry, target_point),
+        1.0,
+        0.0,
+    )
+    .expect("valid typed C2C route")
+}
 
 fn create_test_handle() -> (tempfile::TempDir, Arc<ShmWriterHandle>) {
     let directory = tempfile::tempdir().expect("create temp SHM directory");
@@ -31,8 +46,11 @@ fn create_test_handle() -> (tempfile::TempDir, Arc<ShmWriterHandle>) {
 #[tokio::test]
 async fn shm_store_writes_poll_data_to_the_authoritative_slot() {
     let (_directory, handle) = create_test_handle();
-    let store = ShmDataStore::new(Arc::clone(&handle), Arc::new(RoutingCache::default()))
-        .expect("available SHM must construct the store");
+    let store = ShmDataStore::new(
+        Arc::clone(&handle),
+        Arc::new(ChannelRoutingCache::default()),
+    )
+    .expect("available SHM must construct the store");
 
     let mut batch = DataBatch::default();
     batch.add(DataPoint::telemetry(1, 42.5));
@@ -59,7 +77,7 @@ fn shm_store_rejects_an_unavailable_layout() {
         16,
     )));
 
-    let result = ShmDataStore::new(handle, Arc::new(RoutingCache::default()));
+    let result = ShmDataStore::new(handle, Arc::new(ChannelRoutingCache::default()));
     assert!(
         result.is_err(),
         "missing authoritative SHM must fail closed"
@@ -77,14 +95,10 @@ fn production_store_source_does_not_call_legacy_batch_direct() {
 
 #[tokio::test]
 async fn unknown_c2c_target_rejects_source_before_any_production_write() {
-    use std::collections::HashMap;
-
     let (_directory, handle) = create_test_handle();
-    let routing = Arc::new(RoutingCache::from_maps(
-        HashMap::new(),
-        HashMap::new(),
-        HashMap::from([("7:T:0".to_string(), "99:T:0".to_string())]),
-    ));
+    let routing = Arc::new(
+        ChannelRoutingCache::from_routes([c2c_route(7, 0, 99, 0)]).expect("typed routing snapshot"),
+    );
     let store = ShmDataStore::new(Arc::clone(&handle), routing).expect("production SHM store");
     let mut batch = DataBatch::default();
     batch.add(DataPoint::telemetry(0, 55.0));
@@ -112,8 +126,6 @@ async fn unknown_c2c_target_rejects_source_before_any_production_write() {
 
 #[tokio::test]
 async fn c2c_expansion_deduplicates_targets_before_the_typed_port_call() {
-    use std::collections::HashMap;
-
     let directory = tempfile::tempdir().expect("create temp SHM directory");
     let config = ShmRuntimeConfig::new(directory.path().join("c2c.shm"), 16);
     let manifest = Arc::new(ChannelPointManifest::from_map(BTreeMap::from([
@@ -124,14 +136,10 @@ async fn c2c_expansion_deduplicates_targets_before_the_typed_port_call() {
         ShmWriterHandle::create_published(config, manifest, None)
             .expect("compose typed C2C SHM generation"),
     );
-    let routing = Arc::new(RoutingCache::from_maps(
-        HashMap::new(),
-        HashMap::new(),
-        HashMap::from([
-            ("7:T:0".to_string(), "8:T:0".to_string()),
-            ("7:T:1".to_string(), "8:T:0".to_string()),
-        ]),
-    ));
+    let routing = Arc::new(
+        ChannelRoutingCache::from_routes([c2c_route(7, 0, 8, 0), c2c_route(7, 1, 8, 0)])
+            .expect("typed routing snapshot"),
+    );
     let store = ShmDataStore::new(Arc::clone(&handle), routing).expect("production SHM store");
     let mut batch = DataBatch::default();
     batch.add(DataPoint::telemetry(0, 11.0));
@@ -180,7 +188,7 @@ async fn shm_store_composes_the_typed_acquisition_writer_atomically() {
     ));
     let store = ShmDataStore::from_acquisition_writer(
         acquisition_writer,
-        Arc::new(RoutingCache::default()),
+        Arc::new(ChannelRoutingCache::default()),
     );
 
     let mut valid_batch = DataBatch::default();
@@ -243,7 +251,7 @@ async fn duplicate_batch_is_invalid_data_without_polluting_slot_miss_metric() {
             Arc::clone(&writer),
             Arc::new(manifest),
         )),
-        Arc::new(RoutingCache::default()),
+        Arc::new(ChannelRoutingCache::default()),
     );
     let mut batch = DataBatch::default();
     batch.add(DataPoint::telemetry(0, 11.0));
@@ -277,7 +285,7 @@ async fn generation_conflict_is_retryable_without_polluting_slot_miss_metric() {
             Arc::clone(&writer),
             Arc::new(manifest),
         )),
-        Arc::new(RoutingCache::default()),
+        Arc::new(ChannelRoutingCache::default()),
     );
     let mut batch = DataBatch::default();
     batch.add(DataPoint::telemetry(0, 11.0));

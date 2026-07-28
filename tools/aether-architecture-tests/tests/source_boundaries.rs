@@ -275,11 +275,7 @@ impl BoundaryVisitor<'_> {
         if matches!(self.package_name, "aether-automation" | "aether-rules")
             && matches!(
                 identifier,
-                "LegacyRoutingTables"
-                    | "RoutingCache"
-                    | "compatibility_routing"
-                    | "routing_cache"
-                    | "aether_routing"
+                "LegacyRoutingTables" | "RoutingCache" | "compatibility_routing" | "routing_cache"
             )
         {
             self.record(format!(
@@ -508,6 +504,32 @@ fn production_sources_preserve_irreducible_boundaries() {
         "source architecture boundaries changed:\n- {}",
         violations.into_iter().collect::<Vec<_>>().join("\n- ")
     );
+}
+
+#[test]
+fn routing_library_is_storage_agnostic() {
+    let root = workspace_metadata().workspace_root;
+    for relative in [
+        "libs/aether-routing/Cargo.toml",
+        "libs/aether-routing/src/lib.rs",
+        "libs/aether-routing/src/channel.rs",
+        "libs/aether-routing/src/snapshot.rs",
+    ] {
+        let source = fs::read_to_string(root.join(relative))
+            .unwrap_or_else(|error| panic!("failed to read {relative}: {error}"));
+        for forbidden in [
+            "sqlx",
+            "Sqlite",
+            "measurement_routing",
+            "action_routing",
+            "channel_routing",
+        ] {
+            assert!(
+                !source.contains(forbidden),
+                "{relative} restored concrete storage concern {forbidden}"
+            );
+        }
+    }
 }
 
 #[test]

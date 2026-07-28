@@ -118,7 +118,7 @@ async fn point_watch_publication_failure_is_gated_and_a_later_reload_recovers() 
     .await
     .expect("point");
 
-    let snapshot = aether_sqlite_topology::load_sqlite_live_topology(&pool)
+    let snapshot = aether_store_local::load_routing_snapshot(&pool)
         .await
         .expect("topology snapshot");
     let shm_directory = tempfile::tempdir().expect("SHM directory");

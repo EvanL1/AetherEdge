@@ -309,6 +309,7 @@ registry_manifests=(
     crates/aether-sdk/Cargo.toml
     crates/aether-testkit/Cargo.toml
     libs/aether-shm-bridge/Cargo.toml
+    libs/aether-routing/Cargo.toml
     libs/aether-store-local/Cargo.toml
 )
 for manifest in "${registry_manifests[@]}"; do
@@ -321,7 +322,6 @@ private_manifests=(
     services/api/adapters/sqlite-history-query/Cargo.toml
     services/uplink/adapters/cloudlink-mqtt/Cargo.toml
     libs/aether-runtime-catalog/Cargo.toml
-    libs/aether-sqlite-topology/Cargo.toml
     tools/aether/Cargo.toml
     tools/simulator/Cargo.toml
 )

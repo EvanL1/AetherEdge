@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use aether_routing::RoutingCache;
+use aether_routing::ChannelRoutingCache;
 use aether_shm_bridge::{
     ChannelPointManifest, PhysicalPointAddress, ShmRuntimeConfig, ShmWriterHandle,
 };
@@ -30,8 +30,8 @@ pub fn create_test_shm_handle_with_points(points: BTreeMap<u32, [u32; 4]>) -> Ar
 }
 
 /// Creates an empty in-memory routing cache.
-pub fn create_test_routing_cache() -> Arc<RoutingCache> {
-    Arc::new(RoutingCache::new())
+pub fn create_test_routing_cache() -> Arc<ChannelRoutingCache> {
+    Arc::new(ChannelRoutingCache::new())
 }
 
 /// Verifies one channel point directly from the authoritative SHM slot.

@@ -68,7 +68,7 @@ async fn partial_physical_publication_retains_the_previous_service_generation() 
     let directory = tempfile::tempdir().expect("temporary SHM directory");
     let point_path = directory.path().join("live.shm");
     let health_path = directory.path().join("health.shm");
-    let first = aether_sqlite_topology::load_sqlite_live_topology(&pool)
+    let first = aether_store_local::load_routing_snapshot(&pool)
         .await
         .expect("initial topology snapshot");
     let point_writer = ShmWriterHandle::create_published_at_epoch(
@@ -151,7 +151,7 @@ async fn partial_physical_publication_retains_the_previous_service_generation() 
             .await
             .expect("mutate replacement topology");
     }
-    let second = aether_sqlite_topology::load_sqlite_live_topology(&pool)
+    let second = aether_store_local::load_routing_snapshot(&pool)
         .await
         .expect("replacement topology snapshot");
     point_writer
@@ -235,7 +235,7 @@ async fn topology_changes_notify_subscription_rebuilders_but_no_ops_do_not() {
     let directory = tempfile::tempdir().expect("temporary SHM directory");
     let point_path = directory.path().join("live.shm");
     let health_path = directory.path().join("health.shm");
-    let snapshot = aether_sqlite_topology::load_sqlite_live_topology(&pool)
+    let snapshot = aether_store_local::load_routing_snapshot(&pool)
         .await
         .expect("initial topology snapshot");
     let _point_writer = ShmWriterHandle::create_published_at_epoch(

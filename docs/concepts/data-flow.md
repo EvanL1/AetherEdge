@@ -67,10 +67,11 @@ Device ──frame──► aether-io protocol adapter (decode)
    dispatcher path directly during the staged migration.
 2. The dispatcher calls aether-automation's `execute_action`
    (`services/automation/src/instance_data.rs`), which resolves the instance action point to its channel command point
-   **once**, from the in-memory routing cache (a mirror of the `route:m2c`
-   table populated by `aether sync`). The resolved target is threaded through
-   the rest of the call so a concurrent routing reload cannot change the
-   decision mid-flight.
+   **once**, from the immutable M2C index in the currently pinned
+   `RoutingSnapshot`. The default local-store adapter constructs that snapshot
+   from commissioned configuration, but routing itself has no storage
+   dependency. The resolved target is threaded through the rest of the call so
+   a concurrent routing publication cannot change the decision mid-flight.
 3. The offline gate reads the channel-health SHM segment. An offline channel
    rejects the write with `ChannelUnreachable` before anything is written.
 4. After value validation, `ShmDeviceCommandSink`

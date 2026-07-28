@@ -77,9 +77,11 @@ fi
 # Run unit tests (no external dependencies required)
 echo -e "${YELLOW}Running unit tests...${NC}"
 "${TEST_RUNNER[@]}"
+"${TEST_RUNNER[@]}" -p aether-store-local --features sqlite-routing \
+    --test sqlite_routing_contract --test sqlite_physical_topology_contract
 "${TEST_RUNNER[@]}" \
     -p aether-shm-bridge \
-    -p aether-sqlite-topology \
+    -p aether-routing \
     -p aether-cloudlink-mqtt \
     -p aether-http-data-processor \
     -p aether-sqlite-history-query \

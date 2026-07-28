@@ -49,7 +49,7 @@ async fn topology_pool() -> sqlx::SqlitePool {
 #[tokio::test]
 async fn rebuild_uses_the_route_and_manifest_of_one_pinned_service_generation() {
     let pool = topology_pool().await;
-    let snapshot = aether_sqlite_topology::load_sqlite_live_topology(&pool)
+    let snapshot = aether_store_local::load_routing_snapshot(&pool)
         .await
         .expect("initial topology");
     let topology = AutomationTopologyHandle::new_lazy(

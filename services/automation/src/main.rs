@@ -67,7 +67,7 @@ async fn main() -> Result<()> {
     let shm_path = default_shm_path();
     debug!("SHM path: {}", shm_path.display());
 
-    let topology_snapshot = aether_sqlite_topology::load_sqlite_live_topology(&sqlite_pool)
+    let topology_snapshot = aether_store_local::load_routing_snapshot(&sqlite_pool)
         .await
         .map_err(|error| {
             AutomationError::DispatchDegraded(format!(

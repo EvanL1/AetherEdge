@@ -8,11 +8,12 @@ use aether_domain::{ChannelId, PointKind};
 #[cfg(test)]
 use aether_ports::ChannelHealthObservation;
 use aether_ports::{ChannelHealthSource, PortError, PortErrorKind, PortResult};
+use aether_routing::RoutingSnapshot;
 use aether_shm_bridge::{
     ChannelPointManifest, PhysicalPointAddress, PointWatchEvent, ShmClientConfig,
     ShmReadTopologyGeneration, SlotSnapshot, SlotSource,
 };
-use aether_sqlite_topology::{SqliteLiveTopologySnapshot, load_sqlite_live_topology};
+use aether_store_local::load_routing_snapshot;
 use anyhow::Context;
 use arc_swap::ArcSwap;
 use sqlx::SqlitePool;
@@ -149,7 +150,7 @@ impl ShmAlarmValueSource {
         pool: &SqlitePool,
         config: &AlarmConfig,
     ) -> PortResult<bool> {
-        let snapshot = load_sqlite_live_topology(pool).await?;
+        let snapshot = load_routing_snapshot(pool).await?;
         let current = self.current.load_full();
         let physical_current = current
             .topology
@@ -370,7 +371,7 @@ pub async fn build_shm_alarm_source(
     pool: &SqlitePool,
     config: &AlarmConfig,
 ) -> anyhow::Result<Arc<ShmAlarmValueSource>> {
-    let snapshot = load_sqlite_live_topology(pool)
+    let snapshot = load_routing_snapshot(pool)
         .await
         .context("load canonical live topology for alarm")?;
     let generation = build_alarm_generation(snapshot, config, TopologyOpenMode::Lazy)
@@ -418,7 +419,7 @@ enum TopologyOpenMode {
 }
 
 fn build_alarm_generation(
-    snapshot: SqliteLiveTopologySnapshot,
+    snapshot: RoutingSnapshot,
     config: &AlarmConfig,
     mode: TopologyOpenMode,
 ) -> PortResult<AlarmValueGeneration> {
@@ -460,10 +461,7 @@ fn build_alarm_generation(
     })
 }
 
-fn physical_layout_matches(
-    current: &AlarmValueGeneration,
-    snapshot: &SqliteLiveTopologySnapshot,
-) -> bool {
+fn physical_layout_matches(current: &AlarmValueGeneration, snapshot: &RoutingSnapshot) -> bool {
     current.topology.as_ref().is_some_and(|topology| {
         topology.point_manifest().layout_hash() == snapshot.point_manifest().layout_hash()
             && topology.point_manifest().slot_count() == snapshot.point_manifest().slot_count()
@@ -472,7 +470,7 @@ fn physical_layout_matches(
     })
 }
 
-fn alarm_routing_from_snapshot(snapshot: &SqliteLiveTopologySnapshot) -> AlarmRouting {
+fn alarm_routing_from_snapshot(snapshot: &RoutingSnapshot) -> AlarmRouting {
     AlarmRouting::from_entries(
         snapshot
             .measurement_routes()
@@ -864,7 +862,7 @@ mod tests {
             channel_health_shm_path: health_path.to_string_lossy().into_owned(),
             ..Default::default()
         };
-        let first = aether_sqlite_topology::load_sqlite_live_topology(&pool)
+        let first = aether_store_local::load_routing_snapshot(&pool)
             .await
             .expect("initial topology snapshot");
         let first_epoch = 100;
@@ -942,7 +940,7 @@ mod tests {
                 .await
                 .expect("mutate replacement topology");
         }
-        let second = aether_sqlite_topology::load_sqlite_live_topology(&pool)
+        let second = aether_store_local::load_routing_snapshot(&pool)
             .await
             .expect("replacement topology snapshot");
         let second_epoch = 102;

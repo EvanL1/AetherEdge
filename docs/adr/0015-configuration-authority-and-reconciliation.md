@@ -2,8 +2,9 @@
 
 ## Status
 
-Accepted and implemented on 2026-07-13. ADR-0026 later moved the shared
-SQLite-to-SHM composition into `aether-sqlite-topology`; authority is unchanged.
+Accepted and implemented on 2026-07-13. The 2026-07-28 routing convergence
+made runtime routing storage-agnostic while preserving SQLite as the default
+local configuration authority.
 
 ## Context
 
@@ -49,7 +50,7 @@ topology.
    runtime. A logical routing-only change replaces routing/service-local
    generations without rebuilding physical SHM.
 5. History and Uplink load exact configured physical points and only the
-   logical routes they consume from one `SqliteLiveTopologySnapshot`. They bind
+   logical routes they consume from one immutable `RoutingSnapshot`. They bind
    that snapshot to a committed `ShmReadTopologyGeneration` and atomically
    replace the pair. They never read protocol mappings.
 6. Any missing/invalid authority table, non-current SHM projection, degraded
@@ -93,6 +94,13 @@ topology.
     the whole command if any member is routed. It then deletes the complete set
     in one transaction; routing-integrity triggers remain the fail-closed second
     line of defense against a missed precheck or concurrent legacy writer.
+11. `aether-routing` owns only typed, immutable routing facts, validation,
+    generation digests, and the IO-owned C2C index. It contains no SQL client,
+    table names, or configuration parser. The default `aether-store-local`
+    adapter reads the commissioned SQLite transaction and constructs those
+    routing facts at each composition root. The former string-keyed routing
+    cache and `aether-sqlite-topology` crate are removed; storage technology is
+    not part of the routing capability contract.
 
 ## Compatibility and removal criteria
 
@@ -174,7 +182,9 @@ topology.
 ## Verification
 
 ```bash
-cargo test -p aether-sqlite-topology --tests
+cargo test -p aether-routing
+cargo test -p aether-store-local --features sqlite-routing \
+  --test sqlite_routing_contract --test sqlite_physical_topology_contract
 cargo test -p aether-io --test automatic_reconciliation_contract
 cargo test -p aether-io --test channel_mutator_contract
 cargo test -p aether-io --test shm_topology_projector_contract

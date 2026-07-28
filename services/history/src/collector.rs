@@ -10,11 +10,12 @@ use std::time::Duration;
 
 use aether_domain::PointKind;
 use aether_ports::{PortError, PortErrorKind, PortResult};
+use aether_routing::RoutingSnapshot;
 use aether_shm_bridge::{
     ChannelPointManifest, PhysicalPointAddress, ShmClientConfig, ShmReadTopologyGeneration,
     SlotSource,
 };
-use aether_sqlite_topology::{SqliteLiveTopologySnapshot, load_sqlite_live_topology};
+use aether_store_local::load_routing_snapshot;
 use anyhow::Context;
 use arc_swap::ArcSwap;
 use chrono::{DateTime, Utc};
@@ -83,7 +84,7 @@ impl ShmHistoryCollector {
         pool: &SqlitePool,
         config: &EnvConfig,
     ) -> PortResult<bool> {
-        let snapshot = load_sqlite_live_topology(pool).await?;
+        let snapshot = load_routing_snapshot(pool).await?;
         let current = self.current.load_full();
         let physical_current = current
             .topology
@@ -225,7 +226,7 @@ pub async fn build_shm_history_collector(
     pool: &SqlitePool,
     config: &EnvConfig,
 ) -> anyhow::Result<Arc<ShmHistoryCollector>> {
-    let snapshot = load_sqlite_live_topology(pool)
+    let snapshot = load_routing_snapshot(pool)
         .await
         .context("load canonical live topology for history")?;
     let generation = build_history_generation(snapshot, config, TopologyOpenMode::Lazy)
@@ -269,7 +270,7 @@ enum TopologyOpenMode {
 }
 
 fn build_history_generation(
-    snapshot: SqliteLiveTopologySnapshot,
+    snapshot: RoutingSnapshot,
     config: &EnvConfig,
     mode: TopologyOpenMode,
 ) -> PortResult<HistoryGeneration> {
@@ -309,9 +310,7 @@ fn build_history_generation(
     })
 }
 
-fn history_series_from_snapshot(
-    snapshot: &SqliteLiveTopologySnapshot,
-) -> PortResult<Vec<HistorySeries>> {
+fn history_series_from_snapshot(snapshot: &RoutingSnapshot) -> PortResult<Vec<HistorySeries>> {
     let manifest = snapshot.point_manifest();
     let mut series = BTreeMap::<(String, String), usize>::new();
 
@@ -382,10 +381,7 @@ fn add_series(
     Ok(())
 }
 
-fn physical_layout_matches(
-    current: &HistoryGeneration,
-    snapshot: &SqliteLiveTopologySnapshot,
-) -> bool {
+fn physical_layout_matches(current: &HistoryGeneration, snapshot: &RoutingSnapshot) -> bool {
     current.topology.as_ref().is_some_and(|topology| {
         topology.point_manifest().layout_hash() == snapshot.point_manifest().layout_hash()
             && topology.point_manifest().slot_count() == snapshot.point_manifest().slot_count()
@@ -605,7 +601,7 @@ mod tests {
     #[tokio::test]
     async fn sqlite_snapshot_yields_only_exact_points_and_enabled_logical_routes() {
         let pool = config_pool().await;
-        let snapshot = load_sqlite_live_topology(&pool)
+        let snapshot = load_routing_snapshot(&pool)
             .await
             .expect("load one authoritative topology snapshot");
 
@@ -700,7 +696,7 @@ mod tests {
             ..Default::default()
         };
 
-        let initial = load_sqlite_live_topology(&pool)
+        let initial = load_routing_snapshot(&pool)
             .await
             .expect("initial History topology");
         let mut epoch = 10_000_u64;
@@ -835,7 +831,7 @@ mod tests {
                     .await
                     .expect("remove History layout point");
             }
-            let snapshot = load_sqlite_live_topology(&pool)
+            let snapshot = load_routing_snapshot(&pool)
                 .await
                 .expect("load switched History topology");
             epoch += 1;
@@ -918,7 +914,7 @@ mod tests {
 
         fn write_history_soak_points(
             writer: &ShmWriterHandle,
-            snapshot: &SqliteLiveTopologySnapshot,
+            snapshot: &RoutingSnapshot,
             epoch: u64,
         ) {
             let samples = snapshot
@@ -953,7 +949,7 @@ mod tests {
 
         fn write_history_soak_health(
             writer: &ShmChannelHealthWriterHandle,
-            snapshot: &SqliteLiveTopologySnapshot,
+            snapshot: &RoutingSnapshot,
             epoch: u64,
         ) {
             for channel_id in snapshot.health_manifest().channel_ids() {

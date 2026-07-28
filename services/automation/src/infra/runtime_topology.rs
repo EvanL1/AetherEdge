@@ -7,12 +7,12 @@ use std::time::Duration;
 
 use aether_domain::ChannelPointAddress;
 use aether_ports::{ChannelHealthObservation, PortError, PortErrorKind, PortResult};
+use aether_routing::{LogicalPointRoutes, RoutingSnapshot};
 use aether_rules::{MeasurementRouteBinding, RuleScheduler};
 use aether_shm_bridge::{
     ChannelPointManifest, PhysicalPointAddress, PointWatchEvent, ShmClientConfig,
     ShmDeviceCommandSink, ShmReadTopologyGeneration, SlotSource, SubscriptionBitmap,
 };
-use aether_sqlite_topology::{LogicalPointRoutes, SqliteLiveTopologySnapshot};
 use arc_swap::ArcSwap;
 use sqlx::SqlitePool;
 use tokio::sync::{Mutex, MutexGuard, OwnedMutexGuard, OwnedRwLockReadGuard, RwLock, watch};
@@ -28,7 +28,7 @@ struct CandidateParts {
 }
 
 impl CandidateParts {
-    fn from_snapshot(snapshot: SqliteLiveTopologySnapshot) -> Self {
+    fn from_snapshot(snapshot: RoutingSnapshot) -> Self {
         let digest = snapshot.digest();
         let (point_manifest, health_manifest, measurements, actions) = snapshot.into_parts();
         Self {
@@ -315,7 +315,7 @@ impl AutomationTopologyHandle {
     pub fn new_lazy(
         point_path: impl Into<PathBuf>,
         health_path: impl Into<PathBuf>,
-        snapshot: SqliteLiveTopologySnapshot,
+        snapshot: RoutingSnapshot,
         command_sink: Arc<ShmDeviceCommandSink>,
     ) -> PortResult<Self> {
         let point_path = point_path.into();
@@ -428,7 +428,7 @@ impl AutomationTopologyHandle {
     }
 
     async fn refresh_locked(&self, pool: &SqlitePool) -> PortResult<bool> {
-        let snapshot = aether_sqlite_topology::load_sqlite_live_topology(pool).await?;
+        let snapshot = aether_store_local::load_routing_snapshot(pool).await?;
         let parts = CandidateParts::from_snapshot(snapshot);
         let current = self.current.load_full();
         let physical_changed = !current.has_physical_layout(&parts);

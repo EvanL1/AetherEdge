@@ -39,7 +39,7 @@ pub struct ChannelManager {
     /// Shared authoritative SHM store used by all channels.
     pub(super) store: Arc<ShmDataStore>,
     /// Routing cache for C2M/M2C routing (public for reload operations)
-    pub routing_cache: Arc<aether_routing::RoutingCache>,
+    pub routing_cache: Arc<aether_routing::ChannelRoutingCache>,
     /// SQLite connection pool for configuration loading
     pub(super) sqlite_pool: Option<sqlx::SqlitePool>,
     /// Runtime-swappable shared memory handle (writer + index, rebuilt on routing reload)
@@ -71,7 +71,7 @@ impl ChannelManager {
     /// Create new channel manager
     pub fn new(
         shm_handle: Arc<ShmWriterHandle>,
-        routing_cache: Arc<aether_routing::RoutingCache>,
+        routing_cache: Arc<aether_routing::ChannelRoutingCache>,
     ) -> Result<Self> {
         let store = Arc::new(ShmDataStore::new(
             Arc::clone(&shm_handle),
@@ -91,7 +91,7 @@ impl ChannelManager {
 
     /// Create channel manager with shared memory support
     pub fn with_shared_memory(
-        routing_cache: Arc<aether_routing::RoutingCache>,
+        routing_cache: Arc<aether_routing::ChannelRoutingCache>,
         sqlite_pool: sqlx::SqlitePool,
         shm_handle: Arc<ShmWriterHandle>,
         channel_health_writer: Option<Arc<ShmChannelHealthWriterHandle>>,
@@ -332,8 +332,8 @@ mod tests {
     use super::*;
 
     /// Create test routing cache for unit tests
-    fn create_test_routing_cache() -> Arc<aether_routing::RoutingCache> {
-        Arc::new(aether_routing::RoutingCache::new())
+    fn create_test_routing_cache() -> Arc<aether_routing::ChannelRoutingCache> {
+        Arc::new(aether_routing::ChannelRoutingCache::new())
     }
 
     #[tokio::test]

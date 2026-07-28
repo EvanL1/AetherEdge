@@ -36,6 +36,7 @@ readonly SDK_SOURCE_PACKAGES=(
     "aether-testkit:crates/aether-testkit"
     "aether-store-local:libs/aether-store-local"
     "aether-shm-bridge:libs/aether-shm-bridge"
+    "aether-routing:libs/aether-routing"
     "aether-http-data-processor:services/api/adapters/http-data-processor"
     "aether-sqlite-history-query:services/api/adapters/sqlite-history-query"
 )
@@ -54,6 +55,7 @@ readonly REGISTRY_RELEASE_PACKAGES=(
     aether-edge-sdk
     aether-pack
     aether-ports
+    aether-routing
     aether-shm-bridge
     aether-store-local
     aether-testkit

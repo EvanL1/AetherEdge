@@ -6,6 +6,8 @@ Accepted on 2026-07-25. Supersedes ADR-0013 clauses 3 and 7. All other
 ADR-0013 clauses remain in force. ADR-0026 later removes in-tree integrations
 from the active workspace; previously reserved registry names remain
 historical, while the SDK-facade and dependency-closure rule remains active.
+The 2026-07-28 storage-agnostic routing convergence adds `aether-routing` to
+that closure through the optional local-store routing adapter.
 
 ## Context
 
@@ -85,7 +87,7 @@ consumer types.
 
 - `cargo add aether-edge-sdk` works, and every package in the release set gets
   a docs.rs page and a lib.rs entry.
-- Thirteen names become permanently reserved on crates.io. Renaming an internal
+- Fourteen names become permanently reserved on crates.io. Renaming an internal
   package now leaves a stale registry name behind.
 - Publishing is irreversible per version. Re-tagging an already-published
   version fails the publish job; a botched release needs a new version, not a

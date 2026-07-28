@@ -220,13 +220,12 @@ const fn runtime_projection(
     }
 }
 
-/// Reload the routing cache only (does not touch channels).
+/// Reloads the IO-owned C2C routing cache without touching channels.
 ///
-/// Unlike `/reload`, this only refreshes the C2M / M2C / C2C routing tables without
-/// touching the channel protocol layer. Use this when routing changes without point
-/// changes — it is lighter and faster than `/reload` and does not interrupt device
-/// connections. The routing table is replaced atomically via ArcSwap. Note: automation
-/// maintains its own independent routing cache and will sync on its next periodic reload.
+/// C2M and M2C remain part of the independently published logical routing
+/// generation consumed by automation and read-side services. Their counts are
+/// reported from the local configuration snapshot but IO does not cache or
+/// execute those logical routes.
 #[utoipa::path(
     post,
     path = "/api/routing/reload",
@@ -244,24 +243,32 @@ pub async fn reload_routing_handler(
     let start_time = std::time::Instant::now();
     let mut errors = Vec::new();
 
-    let (c2m_count, m2c_count, c2c_count) =
-        match aether_routing::load_routing_maps(&state.sqlite_pool).await {
-            Ok(maps) => {
-                let counts = (maps.c2m.len(), maps.m2c.len(), maps.c2c.len());
-                state
-                    .channel_manager
-                    .routing_cache
-                    .update(maps.c2m, maps.m2c, maps.c2c);
-                // SHM layout is based on channel points, not routing.
-                // No SHM rebuild is needed for routing changes.
-                counts
-            },
-            Err(error) => {
-                tracing::error!(error = %error, "failed to reload routing cache");
-                errors.push("Failed to reload routing cache".to_string());
-                (0, 0, 0)
-            },
-        };
+    let logical = aether_store_local::load_routing_snapshot(&state.sqlite_pool).await;
+    let channel_routes = aether_store_local::load_channel_routes(&state.sqlite_pool).await;
+    let (c2m_count, m2c_count, c2c_count) = match (logical, channel_routes) {
+        (Ok(logical), Ok(channel_routes)) => {
+            let counts = (
+                logical.measurement_route_count(),
+                logical.action_route_count(),
+                channel_routes.len(),
+            );
+            if let Err(error) = state.channel_manager.routing_cache.replace(channel_routes) {
+                tracing::error!(%error, "failed to publish channel routing");
+                errors.push("Failed to publish channel routing".to_string());
+            }
+            counts
+        },
+        (logical, channel_routes) => {
+            if let Err(error) = logical {
+                tracing::error!(%error, "failed to observe logical routing");
+            }
+            if let Err(error) = channel_routes {
+                tracing::error!(%error, "failed to load channel routing");
+            }
+            errors.push("Failed to reload routing".to_string());
+            (0, 0, 0)
+        },
+    };
 
     let duration_ms = start_time.elapsed().as_millis() as u64;
 

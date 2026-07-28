@@ -19,12 +19,12 @@ use aether_domain::{
     TimestampMs,
 };
 use aether_ports::{PortError, PortErrorKind};
-use aether_routing::{MAX_C2C_CASCADE_DEPTH, RoutingCache};
+use aether_routing::{ChannelRoutingCache, MAX_C2C_CASCADE_DEPTH};
 use aether_shm_bridge::{ShmAcquisitionStateWriter, ShmChannelHealthWriterHandle, ShmWriterHandle};
 
 /// Acquisition-side live-state writer.
 pub struct ShmDataStore {
-    routing_cache: Arc<RoutingCache>,
+    routing_cache: Arc<ChannelRoutingCache>,
     write_path: ShmWritePath,
     channel_health_writer: Option<Arc<ShmChannelHealthWriterHandle>>,
     slot_miss_count: AtomicU64,
@@ -39,7 +39,7 @@ impl ShmDataStore {
     /// Creates a store over an already-published coherent SHM layout.
     pub fn new(
         shm_handle: Arc<ShmWriterHandle>,
-        routing_cache: Arc<RoutingCache>,
+        routing_cache: Arc<ChannelRoutingCache>,
     ) -> ProtocolResult<Self> {
         if !shm_handle.is_available() {
             return Err(GatewayError::config(
@@ -62,7 +62,7 @@ impl ShmDataStore {
     /// manifest atomically published by the runtime `ShmWriterHandle`.
     pub fn from_acquisition_writer(
         acquisition_writer: Arc<ShmAcquisitionStateWriter>,
-        routing_cache: Arc<RoutingCache>,
+        routing_cache: Arc<ChannelRoutingCache>,
     ) -> Self {
         Self {
             routing_cache,
