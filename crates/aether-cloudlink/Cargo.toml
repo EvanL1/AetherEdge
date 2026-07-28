@@ -14,7 +14,6 @@ categories = ["embedded", "network-programming"]
 [dependencies]
 aether-domain = { version = "0.0.1", path = "../aether-domain" }
 aether-ports = { version = "0.0.1", path = "../aether-ports" }
-async-trait = { workspace = true }
 base64 = "0.22"
 ed25519-dalek = { version = "2.2", features = ["zeroize"] }
 serde = { workspace = true }
@@ -23,14 +22,13 @@ serde_json_canonicalizer = { workspace = true }
 semver = { workspace = true }
 sha2 = { workspace = true }
 thiserror = { workspace = true }
-tokio = { workspace = true, features = ["sync"] }
 zeroize = { workspace = true }
 
 [dev-dependencies]
 aether-runtime-catalog = { path = "../../libs/aether-runtime-catalog" }
+async-trait = { workspace = true }
 aether-store-local = { path = "../../libs/aether-store-local" }
 aether-testkit = { path = "../aether-testkit" }
-tempfile = { workspace = true }
 tokio = { workspace = true }
 
 [lints]
