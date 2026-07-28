@@ -5,7 +5,6 @@
 
 use anyhow::Result;
 use clap::Subcommand;
-use reqwest::Client;
 use serde_json::Value;
 
 #[derive(Subcommand)]
@@ -330,44 +329,9 @@ fn print_batch_result(data: &Value) {
     }
 }
 
-pub(crate) struct HistoryClient {
-    client: Client,
-    base_url: String,
-    access_token: Option<String>,
-}
+crate::api_client::authenticated_api_client!(pub(crate) HistoryClient);
 
 impl HistoryClient {
-    pub(crate) fn new(base_url: &str) -> Result<Self> {
-        Ok(Self {
-            client: Client::new(),
-            base_url: base_url.to_string(),
-            access_token: std::env::var("AETHER_ACCESS_TOKEN")
-                .ok()
-                .filter(|value| !value.trim().is_empty() && value.trim() == value),
-        })
-    }
-
-    #[cfg(test)]
-    pub(crate) fn with_access_token(base_url: &str, access_token: &str) -> Result<Self> {
-        Ok(Self {
-            client: Client::new(),
-            base_url: base_url.to_string(),
-            access_token: Some(access_token.to_string()),
-        })
-    }
-
-    /// Attaches the session Bearer token when one is present. Requests without
-    /// a token go out unauthenticated and let the gateway respond 401.
-    fn apply_auth(&self, request: reqwest::RequestBuilder) -> Result<reqwest::RequestBuilder> {
-        match &self.access_token {
-            Some(token) => {
-                crate::transport_security::require_secure_bearer_transport(&self.base_url)?;
-                Ok(request.bearer_auth(token))
-            },
-            None => Ok(request),
-        }
-    }
-
     pub(crate) async fn get_latest(&self, series_key: &str, point_id: &str) -> Result<Value> {
         let request = self
             .client
@@ -512,16 +476,11 @@ impl HistoryClient {
 #[cfg(test)]
 mod tests {
     use super::HistoryClient;
-    use reqwest::Client;
     use wiremock::matchers::{header, method, path, query_param};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     fn unauthenticated_client(base_url: &str) -> HistoryClient {
-        HistoryClient {
-            client: Client::new(),
-            base_url: base_url.to_string(),
-            access_token: None,
-        }
+        HistoryClient::without_access_token(base_url)
     }
 
     #[tokio::test]

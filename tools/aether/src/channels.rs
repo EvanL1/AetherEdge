@@ -4,7 +4,6 @@
 
 use anyhow::Result;
 use clap::Subcommand;
-use reqwest::Client;
 use serde::Deserialize;
 use serde_json::Value;
 
@@ -772,47 +771,10 @@ fn print_reconciliation_receipt(response: &Value, json: bool) -> Result<()> {
     Ok(())
 }
 
-fn access_token_from_env() -> Option<String> {
-    std::env::var("AETHER_ACCESS_TOKEN")
-        .ok()
-        .filter(|value| !value.trim().is_empty() && value.trim() == value)
-}
-
 // HTTP client for channel management
-pub(crate) struct ChannelClient {
-    client: Client,
-    base_url: String,
-    access_token: Option<String>,
-}
+crate::api_client::authenticated_api_client!(pub(crate) ChannelClient);
 
 impl ChannelClient {
-    pub(crate) fn new(base_url: &str) -> Result<Self> {
-        Ok(Self {
-            client: Client::new(),
-            base_url: base_url.to_string(),
-            access_token: access_token_from_env(),
-        })
-    }
-
-    #[cfg(test)]
-    pub(crate) fn with_access_token(base_url: &str, access_token: &str) -> Result<Self> {
-        Ok(Self {
-            client: Client::new(),
-            base_url: base_url.to_string(),
-            access_token: Some(access_token.to_string()),
-        })
-    }
-
-    fn apply_auth(&self, request: reqwest::RequestBuilder) -> Result<reqwest::RequestBuilder> {
-        match &self.access_token {
-            Some(token) => {
-                crate::transport_security::require_secure_bearer_transport(&self.base_url)?;
-                Ok(request.bearer_auth(token))
-            },
-            None => Ok(request),
-        }
-    }
-
     pub(crate) async fn list_channels(&self) -> Result<Value> {
         let request = self.client.get(format!("{}/api/channels", self.base_url));
         let response = self.apply_auth(request)?.send().await?;
@@ -1001,18 +963,14 @@ impl ChannelClient {
     }
 
     fn validate_mutation(&self, confirmed: bool, expected_revision: Option<u64>) -> Result<&str> {
-        if !confirmed {
-            anyhow::bail!("channel management requires explicit --confirmed");
-        }
         if expected_revision == Some(0) {
             anyhow::bail!("--expected-revision must be at least 1");
         }
-        crate::transport_security::require_secure_bearer_transport(&self.base_url)?;
-        self.access_token.as_deref().ok_or_else(|| {
-            anyhow::anyhow!(
-                "channel management requires AETHER_ACCESS_TOKEN from an authenticated Admin or Engineer session"
-            )
-        })
+        self.require_governed_auth(
+            confirmed,
+            "channel management requires explicit --confirmed",
+            "channel management requires AETHER_ACCESS_TOKEN from an authenticated Admin or Engineer session",
+        )
     }
 
     fn governed_request(
@@ -1111,40 +1069,9 @@ impl ChannelClient {
 }
 
 // HTTP client for point management
-pub(crate) struct PointClient {
-    client: Client,
-    base_url: String,
-    access_token: Option<String>,
-}
+crate::api_client::authenticated_api_client!(pub(crate) PointClient);
 
 impl PointClient {
-    pub(crate) fn new(base_url: &str) -> Result<Self> {
-        Ok(Self {
-            client: Client::new(),
-            base_url: base_url.to_string(),
-            access_token: access_token_from_env(),
-        })
-    }
-
-    #[cfg(test)]
-    pub(crate) fn with_access_token(base_url: &str, access_token: &str) -> Result<Self> {
-        Ok(Self {
-            client: Client::new(),
-            base_url: base_url.to_string(),
-            access_token: Some(access_token.to_string()),
-        })
-    }
-
-    fn apply_auth(&self, request: reqwest::RequestBuilder) -> Result<reqwest::RequestBuilder> {
-        match &self.access_token {
-            Some(token) => {
-                crate::transport_security::require_secure_bearer_transport(&self.base_url)?;
-                Ok(request.bearer_auth(token))
-            },
-            None => Ok(request),
-        }
-    }
-
     pub(crate) async fn list_points(
         &self,
         channel_id: u32,
@@ -1340,7 +1267,6 @@ mod tests {
         reconciliation_receipt_summary,
     };
     use clap::Parser;
-    use reqwest::Client;
     use wiremock::matchers::{body_json, header, header_exists, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -1617,11 +1543,7 @@ mod tests {
             "{unconfirmed:?}"
         );
 
-        let unauthenticated = ChannelClient {
-            client: Client::new(),
-            base_url: server.uri(),
-            access_token: None,
-        };
+        let unauthenticated = ChannelClient::without_access_token(&server.uri());
         let unauthenticated_results = [
             unauthenticated
                 .create_channel(
@@ -1709,11 +1631,7 @@ mod tests {
             .to_string();
         assert!(unconfirmed.contains("--confirmed"), "{unconfirmed}");
 
-        let unauthenticated = ChannelClient {
-            client: Client::new(),
-            base_url: server.uri(),
-            access_token: None,
-        };
+        let unauthenticated = ChannelClient::without_access_token(&server.uri());
         let missing_token = unauthenticated
             .reconcile_channels(true)
             .await
@@ -1881,11 +1799,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = ChannelClient {
-            client: Client::new(),
-            base_url: server.uri(),
-            access_token: None,
-        };
+        let client = ChannelClient::without_access_token(&server.uri());
         client.list_channels().await.unwrap();
 
         let requests = server.received_requests().await.unwrap();
@@ -1946,11 +1860,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = PointClient {
-            client: Client::new(),
-            base_url: server.uri(),
-            access_token: None,
-        };
+        let client = PointClient::without_access_token(&server.uri());
         client.list_points(1001, None).await.unwrap();
 
         let requests = server.received_requests().await.unwrap();
@@ -2162,11 +2072,7 @@ mod tests {
                 .await;
         }
 
-        let client = PointClient {
-            client: Client::new(),
-            base_url: server.uri(),
-            access_token: None,
-        };
+        let client = PointClient::without_access_token(&server.uri());
         client
             .add_point(1001, "T", 5, "voltage", "V", None, None, None)
             .await

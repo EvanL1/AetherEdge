@@ -4,7 +4,6 @@
 
 use anyhow::Result;
 use clap::Subcommand;
-use reqwest::Client;
 use serde_json::Value;
 
 #[derive(Subcommand)]
@@ -271,42 +270,9 @@ pub async fn handle_command(cmd: RuleCommands, base_url: &str, json: bool) -> Re
 }
 
 // HTTP client for rule management
-pub(crate) struct RuleClient {
-    client: Client,
-    base_url: String,
-    access_token: Option<String>,
-}
+crate::api_client::authenticated_api_client!(pub(crate) RuleClient);
 
 impl RuleClient {
-    pub(crate) fn new(base_url: &str) -> Result<Self> {
-        Ok(Self {
-            client: Client::new(),
-            base_url: base_url.to_string(),
-            access_token: std::env::var("AETHER_ACCESS_TOKEN")
-                .ok()
-                .filter(|value| !value.trim().is_empty() && value.trim() == value),
-        })
-    }
-
-    #[cfg(test)]
-    pub(crate) fn with_access_token(base_url: &str, access_token: &str) -> Result<Self> {
-        Ok(Self {
-            client: Client::new(),
-            base_url: base_url.to_string(),
-            access_token: Some(access_token.to_string()),
-        })
-    }
-
-    fn apply_auth(&self, request: reqwest::RequestBuilder) -> Result<reqwest::RequestBuilder> {
-        match &self.access_token {
-            Some(token) => {
-                crate::transport_security::require_secure_bearer_transport(&self.base_url)?;
-                Ok(request.bearer_auth(token))
-            },
-            None => Ok(request),
-        }
-    }
-
     pub(crate) async fn list_rules(&self) -> Result<Value> {
         let request = self.client.get(format!("{}/api/rules", self.base_url));
         let response = self.apply_auth(request)?.send().await?;
@@ -498,17 +464,11 @@ impl RuleClient {
     }
 
     fn require_rule_management_auth(&self, confirmed: bool) -> Result<()> {
-        if !confirmed {
-            return Err(anyhow::anyhow!(
-                "rule management requires explicit --confirmed"
-            ));
-        }
-        crate::transport_security::require_secure_bearer_transport(&self.base_url)?;
-        if self.access_token.is_none() {
-            return Err(anyhow::anyhow!(
-                "rule management requires AETHER_ACCESS_TOKEN from an authenticated Admin or Engineer session"
-            ));
-        }
+        self.require_governed_auth(
+            confirmed,
+            "rule management requires explicit --confirmed",
+            "rule management requires AETHER_ACCESS_TOKEN from an authenticated Admin or Engineer session",
+        )?;
         Ok(())
     }
 
@@ -538,17 +498,11 @@ impl RuleClient {
     }
 
     fn require_rule_execution_auth(&self, confirmed: bool) -> Result<()> {
-        if !confirmed {
-            return Err(anyhow::anyhow!(
-                "manual rule execution requires explicit confirmation"
-            ));
-        }
-        crate::transport_security::require_secure_bearer_transport(&self.base_url)?;
-        if self.access_token.is_none() {
-            return Err(anyhow::anyhow!(
-                "manual rule execution requires AETHER_ACCESS_TOKEN from an authenticated Admin or Engineer session"
-            ));
-        }
+        self.require_governed_auth(
+            confirmed,
+            "manual rule execution requires explicit confirmation",
+            "manual rule execution requires AETHER_ACCESS_TOKEN from an authenticated Admin or Engineer session",
+        )?;
         Ok(())
     }
 }
@@ -585,11 +539,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = RuleClient {
-            client: reqwest::Client::new(),
-            base_url: server.uri(),
-            access_token: None,
-        };
+        let client = RuleClient::without_access_token(&server.uri());
         client.list_rules().await.expect("tokenless list");
 
         let requests = server.received_requests().await.expect("received requests");
@@ -623,11 +573,7 @@ mod tests {
 
     #[test]
     fn bearer_writes_reject_remote_plaintext_before_token_access() {
-        let client = RuleClient {
-            client: reqwest::Client::new(),
-            base_url: "http://192.0.2.10:6002".to_string(),
-            access_token: None,
-        };
+        let client = RuleClient::without_access_token("http://192.0.2.10:6002");
 
         for result in [
             client.require_rule_management_auth(true),

@@ -6,7 +6,6 @@
 
 use anyhow::Result;
 use clap::Subcommand;
-use reqwest::Client;
 use serde_json::Value;
 
 use crate::output::{parse_error_body, print_action};
@@ -532,32 +531,9 @@ fn truncate(s: &str, max: usize) -> &str {
 
 // ── HTTP client ───────────────────────────────────────────────────────────────
 
-pub(crate) struct AlarmClient {
-    client: Client,
-    base_url: String,
-    access_token: Option<String>,
-}
+crate::api_client::authenticated_api_client!(pub(crate) AlarmClient);
 
 impl AlarmClient {
-    pub(crate) fn new(base_url: &str) -> Result<Self> {
-        Ok(Self {
-            client: Client::new(),
-            base_url: base_url.to_string(),
-            access_token: std::env::var("AETHER_ACCESS_TOKEN")
-                .ok()
-                .filter(|value| !value.trim().is_empty() && value.trim() == value),
-        })
-    }
-
-    #[cfg(test)]
-    pub(crate) fn with_access_token(base_url: &str, access_token: &str) -> Result<Self> {
-        Ok(Self {
-            client: Client::new(),
-            base_url: base_url.to_string(),
-            access_token: Some(access_token.to_string()),
-        })
-    }
-
     pub(crate) async fn list_alerts(
         &self,
         channel: Option<i64>,
@@ -835,47 +811,24 @@ impl AlarmClient {
         }
     }
 
-    /// Attaches the session Bearer token when one is present. Reads without a
-    /// token go out unauthenticated and let the gateway respond 401.
-    fn apply_auth(&self, request: reqwest::RequestBuilder) -> Result<reqwest::RequestBuilder> {
-        match &self.access_token {
-            Some(token) => {
-                crate::transport_security::require_secure_bearer_transport(&self.base_url)?;
-                Ok(request.bearer_auth(token))
-            },
-            None => Ok(request),
-        }
-    }
-
     fn alarm_management_token(&self, confirmed: bool) -> Result<&str> {
-        if !confirmed {
-            return Err(anyhow::anyhow!(
-                "alarm policy commands require explicit --confirmed"
-            ));
-        }
-        crate::transport_security::require_secure_bearer_transport(&self.base_url)?;
-        self.access_token.as_deref().ok_or_else(|| {
-            anyhow::anyhow!(
-                "alarm policy commands require AETHER_ACCESS_TOKEN from an authenticated Admin or Engineer session"
-            )
-        })
+        self.require_governed_auth(
+            confirmed,
+            "alarm policy commands require explicit --confirmed",
+            "alarm policy commands require AETHER_ACCESS_TOKEN from an authenticated Admin or Engineer session",
+        )
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::AlarmClient;
-    use reqwest::Client;
     use wiremock::matchers::{body_json, header, header_exists, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     #[test]
     fn bearer_writes_reject_remote_plaintext_before_token_access() {
-        let client = AlarmClient {
-            client: Client::new(),
-            base_url: "http://192.0.2.10:6007".to_string(),
-            access_token: None,
-        };
+        let client = AlarmClient::without_access_token("http://192.0.2.10:6007");
 
         let error = client
             .alarm_management_token(true)
@@ -895,11 +848,7 @@ mod tests {
             .to_string();
         assert!(error.contains("--confirmed"), "{error}");
 
-        let unauthenticated_client = AlarmClient {
-            client: Client::new(),
-            base_url: server.uri(),
-            access_token: None,
-        };
+        let unauthenticated_client = AlarmClient::without_access_token(&server.uri());
         let error = unauthenticated_client
             .delete_rule(7, true)
             .await
@@ -1158,11 +1107,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = AlarmClient {
-            client: Client::new(),
-            base_url: server.uri(),
-            access_token: None,
-        };
+        let client = AlarmClient::without_access_token(&server.uri());
         client.get_statistics().await.unwrap();
     }
 

@@ -4,6 +4,7 @@
 //! service management, and operational control for all AetherEdge services.
 
 mod alarms;
+mod api_client;
 mod channels;
 mod core;
 mod deploy_mode;

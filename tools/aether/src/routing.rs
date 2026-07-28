@@ -4,7 +4,6 @@
 
 use anyhow::Result;
 use clap::{Subcommand, ValueEnum};
-use reqwest::Client;
 use serde_json::Value;
 
 /// Point type: M (measurement) or A (action)
@@ -429,42 +428,9 @@ fn is_action_routing_entry(value: &Value) -> bool {
 }
 
 // HTTP client for routing management
-pub(crate) struct RoutingClient {
-    client: Client,
-    base_url: String,
-    access_token: Option<String>,
-}
+crate::api_client::authenticated_api_client!(pub(crate) RoutingClient);
 
 impl RoutingClient {
-    pub(crate) fn new(base_url: &str) -> Result<Self> {
-        Ok(Self {
-            client: Client::new(),
-            base_url: base_url.to_string(),
-            access_token: std::env::var("AETHER_ACCESS_TOKEN")
-                .ok()
-                .filter(|value| !value.trim().is_empty() && value.trim() == value),
-        })
-    }
-
-    #[cfg(test)]
-    pub(crate) fn with_access_token(base_url: &str, access_token: &str) -> Result<Self> {
-        Ok(Self {
-            client: Client::new(),
-            base_url: base_url.to_string(),
-            access_token: Some(access_token.to_string()),
-        })
-    }
-
-    fn apply_auth(&self, request: reqwest::RequestBuilder) -> Result<reqwest::RequestBuilder> {
-        match &self.access_token {
-            Some(token) => {
-                crate::transport_security::require_secure_bearer_transport(&self.base_url)?;
-                Ok(request.bearer_auth(token))
-            },
-            None => Ok(request),
-        }
-    }
-
     pub(crate) async fn list_all(&self) -> Result<Value> {
         let request = self.client.get(format!("{}/api/routing", self.base_url));
         let response = self.apply_auth(request)?.send().await?;
@@ -720,15 +686,11 @@ impl RoutingClient {
     }
 
     fn require_routing_management_auth(&self, confirmed: bool) -> Result<()> {
-        if !confirmed {
-            anyhow::bail!("action routing requires explicit confirmation (--confirmed)");
-        }
-        crate::transport_security::require_secure_bearer_transport(&self.base_url)?;
-        if self.access_token.is_none() {
-            anyhow::bail!(
-                "action routing requires AETHER_ACCESS_TOKEN from an authenticated Admin or Engineer session"
-            );
-        }
+        self.require_governed_auth(
+            confirmed,
+            "action routing requires explicit confirmation (--confirmed)",
+            "action routing requires AETHER_ACCESS_TOKEN from an authenticated Admin or Engineer session",
+        )?;
         Ok(())
     }
 }
@@ -766,11 +728,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = RoutingClient {
-            client: reqwest::Client::new(),
-            base_url: server.uri(),
-            access_token: None,
-        };
+        let client = RoutingClient::without_access_token(&server.uri());
         client.list_all().await.expect("tokenless list");
 
         let requests = server.received_requests().await.expect("received requests");
@@ -800,11 +758,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = RoutingClient {
-            client: reqwest::Client::new(),
-            base_url: server.uri(),
-            access_token: None,
-        };
+        let client = RoutingClient::without_access_token(&server.uri());
         client
             .create_routing(7, serde_json::json!({"point_type": "M"}))
             .await
@@ -817,11 +771,7 @@ mod tests {
 
     #[test]
     fn bearer_writes_reject_remote_plaintext_before_token_access() {
-        let client = RoutingClient {
-            client: reqwest::Client::new(),
-            base_url: "http://192.0.2.10:6002".to_string(),
-            access_token: None,
-        };
+        let client = RoutingClient::without_access_token("http://192.0.2.10:6002");
 
         let error = client
             .require_routing_management_auth(true)

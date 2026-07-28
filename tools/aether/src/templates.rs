@@ -4,7 +4,6 @@
 
 use anyhow::Result;
 use clap::Subcommand;
-use reqwest::Client;
 use serde_json::Value;
 use tracing::info;
 
@@ -182,46 +181,9 @@ async fn handle_delete(client: &TemplateClient, id: i64, force: bool, json: bool
     Ok(())
 }
 
-fn access_token_from_env() -> Option<String> {
-    std::env::var("AETHER_ACCESS_TOKEN")
-        .ok()
-        .filter(|value| !value.trim().is_empty() && value.trim() == value)
-}
-
-pub(crate) struct TemplateClient {
-    client: Client,
-    base_url: String,
-    access_token: Option<String>,
-}
+crate::api_client::authenticated_api_client!(pub(crate) TemplateClient);
 
 impl TemplateClient {
-    pub(crate) fn new(base_url: &str) -> Result<Self> {
-        Ok(Self {
-            client: Client::new(),
-            base_url: base_url.to_string(),
-            access_token: access_token_from_env(),
-        })
-    }
-
-    #[cfg(test)]
-    pub(crate) fn with_access_token(base_url: &str, access_token: &str) -> Result<Self> {
-        Ok(Self {
-            client: Client::new(),
-            base_url: base_url.to_string(),
-            access_token: Some(access_token.to_string()),
-        })
-    }
-
-    fn apply_auth(&self, request: reqwest::RequestBuilder) -> Result<reqwest::RequestBuilder> {
-        match &self.access_token {
-            Some(token) => {
-                crate::transport_security::require_secure_bearer_transport(&self.base_url)?;
-                Ok(request.bearer_auth(token))
-            },
-            None => Ok(request),
-        }
-    }
-
     pub(crate) async fn list_templates(&self, protocol: Option<&str>) -> Result<Value> {
         let mut url = format!("{}/api/templates", self.base_url);
         if let Some(p) = protocol {
@@ -344,7 +306,6 @@ impl TemplateClient {
 #[cfg(test)]
 mod tests {
     use super::TemplateClient;
-    use reqwest::Client;
     use wiremock::matchers::{header, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -374,11 +335,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = TemplateClient {
-            client: Client::new(),
-            base_url: server.uri(),
-            access_token: None,
-        };
+        let client = TemplateClient::without_access_token(&server.uri());
         client.list_templates(None).await.unwrap();
 
         let requests = server.received_requests().await.unwrap();
@@ -414,11 +371,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = TemplateClient {
-            client: Client::new(),
-            base_url: server.uri(),
-            access_token: None,
-        };
+        let client = TemplateClient::without_access_token(&server.uri());
         client.snapshot_channel(7, "snap", None).await.unwrap();
         client.apply_template(1, 7, false, None).await.unwrap();
         client.delete_template(1).await.unwrap();

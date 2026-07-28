@@ -511,6 +511,29 @@ fn production_sources_preserve_irreducible_boundaries() {
 }
 
 #[test]
+fn cli_and_mcp_share_one_concrete_authenticated_http_client() {
+    let root = workspace_metadata().workspace_root;
+    for relative in [
+        "tools/aether/src/alarms.rs",
+        "tools/aether/src/channels.rs",
+        "tools/aether/src/history.rs",
+        "tools/aether/src/models/client.rs",
+        "tools/aether/src/net.rs",
+        "tools/aether/src/routing.rs",
+        "tools/aether/src/rules.rs",
+        "tools/aether/src/templates.rs",
+    ] {
+        let source = fs::read_to_string(root.join(relative))
+            .unwrap_or_else(|error| panic!("failed to read {relative}: {error}"));
+        assert!(
+            !source.contains("access_token: Option<String>")
+                && !source.contains("client: reqwest::Client"),
+            "{relative} restored duplicate authenticated HTTP client state"
+        );
+    }
+}
+
+#[test]
 fn sql_classifier_recognizes_supported_mutations_without_matching_reads() {
     assert_eq!(
         mutation_table(" INSERT OR REPLACE INTO action_routing (id) VALUES (1)"),

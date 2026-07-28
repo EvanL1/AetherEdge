@@ -4,7 +4,6 @@ use std::path::Path;
 
 use anyhow::Result;
 use clap::Subcommand;
-use reqwest::Client;
 use serde_json::Value;
 
 use crate::output::{parse_error_body, print_action, print_value};
@@ -140,44 +139,9 @@ async fn handle_cert_command(cmd: CertCommands, base_url: &str, json: bool) -> R
     Ok(())
 }
 
-pub(crate) struct NetClient {
-    client: Client,
-    base_url: String,
-    access_token: Option<String>,
-}
+crate::api_client::authenticated_api_client!(pub(crate) NetClient);
 
 impl NetClient {
-    pub(crate) fn new(base_url: &str) -> Result<Self> {
-        Ok(Self {
-            client: Client::new(),
-            base_url: base_url.trim_end_matches('/').to_string(),
-            access_token: std::env::var("AETHER_ACCESS_TOKEN")
-                .ok()
-                .filter(|value| !value.trim().is_empty() && value.trim() == value),
-        })
-    }
-
-    #[cfg(test)]
-    pub(crate) fn with_access_token(base_url: &str, access_token: &str) -> Result<Self> {
-        Ok(Self {
-            client: Client::new(),
-            base_url: base_url.trim_end_matches('/').to_string(),
-            access_token: Some(access_token.to_string()),
-        })
-    }
-
-    /// Attaches the session Bearer token when one is present. Requests without
-    /// a token go out unauthenticated and let the gateway respond 401.
-    fn apply_auth(&self, request: reqwest::RequestBuilder) -> Result<reqwest::RequestBuilder> {
-        match &self.access_token {
-            Some(token) => {
-                crate::transport_security::require_secure_bearer_transport(&self.base_url)?;
-                Ok(request.bearer_auth(token))
-            },
-            None => Ok(request),
-        }
-    }
-
     pub(crate) async fn mqtt_status(&self) -> Result<Value> {
         let request = self.client.get(format!("{}/mqtt/status", self.base_url));
         let resp = self.apply_auth(request)?.send().await?;
@@ -304,7 +268,6 @@ impl NetClient {
 #[cfg(test)]
 mod tests {
     use super::NetClient;
-    use reqwest::Client;
     use wiremock::matchers::{header, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -338,11 +301,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = NetClient {
-            client: Client::new(),
-            base_url: server.uri(),
-            access_token: None,
-        };
+        let client = NetClient::without_access_token(&server.uri());
         client.mqtt_status().await.unwrap();
     }
 

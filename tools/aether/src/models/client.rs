@@ -1,46 +1,12 @@
 //! HTTP client for model management
 
 use anyhow::Result;
-use reqwest::Client;
 use serde_json::Value;
 use std::collections::HashMap;
 
-pub struct ModelClient {
-    client: Client,
-    base_url: String,
-    access_token: Option<String>,
-}
+crate::api_client::authenticated_api_client!(pub(crate) ModelClient);
 
 impl ModelClient {
-    pub fn new(base_url: &str) -> Result<Self> {
-        Ok(Self {
-            client: Client::new(),
-            base_url: base_url.to_string(),
-            access_token: std::env::var("AETHER_ACCESS_TOKEN")
-                .ok()
-                .filter(|value| !value.trim().is_empty() && value.trim() == value),
-        })
-    }
-
-    #[cfg(test)]
-    pub(crate) fn with_access_token(base_url: &str, access_token: &str) -> Result<Self> {
-        Ok(Self {
-            client: Client::new(),
-            base_url: base_url.to_string(),
-            access_token: Some(access_token.to_string()),
-        })
-    }
-
-    fn apply_auth(&self, request: reqwest::RequestBuilder) -> Result<reqwest::RequestBuilder> {
-        match &self.access_token {
-            Some(token) => {
-                crate::transport_security::require_secure_bearer_transport(&self.base_url)?;
-                Ok(request.bearer_auth(token))
-            },
-            None => Ok(request),
-        }
-    }
-
     // Product operations
     pub async fn list_products(&self) -> Result<Value> {
         let request = self.client.get(format!("{}/api/products", self.base_url));
@@ -235,15 +201,11 @@ impl ModelClient {
     }
 
     fn require_device_control_auth(&self, confirmed: bool) -> Result<()> {
-        if !confirmed {
-            anyhow::bail!("device control requires explicit confirmation (--confirmed)");
-        }
-        crate::transport_security::require_secure_bearer_transport(&self.base_url)?;
-        if self.access_token.is_none() {
-            anyhow::bail!(
-                "device control requires AETHER_ACCESS_TOKEN from an authenticated Admin or Engineer session"
-            );
-        }
+        self.require_governed_auth(
+            confirmed,
+            "device control requires explicit confirmation (--confirmed)",
+            "device control requires AETHER_ACCESS_TOKEN from an authenticated Admin or Engineer session",
+        )?;
         Ok(())
     }
 }
@@ -279,11 +241,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = ModelClient {
-            client: reqwest::Client::new(),
-            base_url: server.uri(),
-            access_token: None,
-        };
+        let client = ModelClient::without_access_token(&server.uri());
         client.list_products().await.unwrap();
 
         let requests = server.received_requests().await.unwrap();
@@ -320,11 +278,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = ModelClient {
-            client: reqwest::Client::new(),
-            base_url: server.uri(),
-            access_token: None,
-        };
+        let client = ModelClient::without_access_token(&server.uri());
         client
             .create_instance("pump", "pump-1", std::collections::HashMap::new())
             .await
@@ -338,11 +292,7 @@ mod tests {
 
     #[test]
     fn bearer_writes_reject_remote_plaintext_before_token_access() {
-        let client = ModelClient {
-            client: reqwest::Client::new(),
-            base_url: "http://192.0.2.10:6002".to_string(),
-            access_token: None,
-        };
+        let client = ModelClient::without_access_token("http://192.0.2.10:6002");
 
         let error = client
             .require_device_control_auth(true)
@@ -390,11 +340,7 @@ mod tests {
 
     #[tokio::test]
     async fn execute_action_fails_before_http_without_access_token() {
-        let client = ModelClient {
-            client: reqwest::Client::new(),
-            base_url: "http://127.0.0.1:1".to_string(),
-            access_token: None,
-        };
+        let client = ModelClient::without_access_token("http://127.0.0.1:1");
 
         let error = client
             .execute_action(3, "1", 4500.0, true)
@@ -440,11 +386,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = ModelClient {
-            client: reqwest::Client::new(),
-            base_url: server.uri(),
-            access_token: None,
-        };
+        let client = ModelClient::without_access_token(&server.uri());
         let data = client
             .get_instance_data(3, Some("measurement"))
             .await
