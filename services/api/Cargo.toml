@@ -15,17 +15,13 @@ common = { path = "../../libs/common", default-features = false, features = ["sq
 aether-domain = { path = "../../crates/aether-domain" }
 aether-ports = { path = "../../crates/aether-ports" }
 aether-application = { path = "../../crates/aether-application" }
-aether-data-processing = { path = "../../crates/aether-data-processing" }
 aether-shm-bridge = { path = "../../libs/aether-shm-bridge" }
-aether-http-data-processor = { path = "adapters/http-data-processor" }
-aether-sqlite-history-query = { path = "adapters/sqlite-history-query" }
 aether-routing = { path = "../../libs/aether-routing" }
 aether-store-local = { path = "../../libs/aether-store-local", features = ["sqlite-audit", "sqlite-routing"] }
 
 # Async runtime
 tokio = { workspace = true }
 tokio-util = { workspace = true }
-async-trait = { workspace = true }
 
 # Web framework
 axum = { workspace = true, features = ["ws", "multipart"] }

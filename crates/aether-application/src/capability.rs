@@ -265,40 +265,7 @@ pub const RESOLVE_ALERT_CAPABILITY: CapabilityDescriptor = CapabilityDescriptor:
     false,
 );
 
-/// Discover configured data-processing tasks and bindings.
-pub const TASKS_LIST_CAPABILITY: CapabilityDescriptor = CapabilityDescriptor::new(
-    "data_processing.tasks.list",
-    OperationKind::Query,
-    RiskLevel::Low,
-    "data_processing.read",
-    ConfirmationPolicy::Never,
-    AuditPolicy::NotRequired,
-    true,
-);
-
-/// Discover current processor readiness without sending task data.
-pub const PROCESSOR_HEALTH_CAPABILITY: CapabilityDescriptor = CapabilityDescriptor::new(
-    "data_processing.processors.health",
-    OperationKind::Query,
-    RiskLevel::Low,
-    "data_processing.read",
-    ConfirmationPolicy::Never,
-    AuditPolicy::NotRequired,
-    true,
-);
-
-/// Assemble a governed frame and request derived data from a processor.
-pub const PROCESS_DATA_CAPABILITY: CapabilityDescriptor = CapabilityDescriptor::new(
-    "data_processing.process",
-    OperationKind::Query,
-    RiskLevel::Medium,
-    "data_processing.run",
-    ConfirmationPolicy::Policy,
-    AuditPolicy::Required,
-    false,
-);
-
-const CAPABILITY_CATALOG: [CapabilityDescriptor; 13] = [
+const CAPABILITY_CATALOG: [CapabilityDescriptor; 10] = [
     READ_POINT_CAPABILITY,
     WRITE_POINT_CAPABILITY,
     EXECUTE_RULE_CAPABILITY,
@@ -309,9 +276,6 @@ const CAPABILITY_CATALOG: [CapabilityDescriptor; 13] = [
     RECONCILE_CHANNELS_CAPABILITY,
     MANAGE_ALARM_RULE_CAPABILITY,
     RESOLVE_ALERT_CAPABILITY,
-    TASKS_LIST_CAPABILITY,
-    PROCESSOR_HEALTH_CAPABILITY,
-    PROCESS_DATA_CAPABILITY,
 ];
 
 /// Returns the transport-neutral capability catalog.

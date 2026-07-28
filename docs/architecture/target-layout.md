@@ -11,7 +11,6 @@ crates/
   aether-ports           industry-neutral capability traits
   aether-application     commands, queries, policies, capability registry
   aether-pack            versioned declarative Pack loader
-  aether-data-processing strict transport-neutral processor codec
   aether-dataplane       physical SHM layout, slots, mmap I/O, snapshots
   aether-sdk             supported public facade
   aether-testkit         reusable port conformance suites
@@ -32,7 +31,6 @@ services/
   alarm                  independent alarm evaluation
   history                historian and history database owner
   api                    authenticated remote application boundary
-    adapters/            API-private HTTP/data-processing implementations
   uplink                 sole cloud and CloudLink runtime owner
     adapters/            Uplink-private transport implementations
 
@@ -64,7 +62,6 @@ Storage remains split by intent rather than database vocabulary:
 | acquisition writer | Acquisition-owned T/S updates | IO-owned SHM writer |
 | configuration repositories | Devices, mappings, rules | local SQLite |
 | `HistorySink` | Append historical samples | History-owned embedded storage |
-| `HistoryQuery` | Bounded historical windows | History service boundary |
 | `DurableOutbox` | Offline store-and-forward | local append-only journal |
 | `UplinkPublisher` | Transport delivery | Uplink-owned transport |
 | `AuditSink` | Durable operation audit | local file/SQLite |
@@ -89,25 +86,6 @@ Concrete mechanisms belong to the process that owns their lifecycle:
 Shared `libs/` packages provide kernel implementation used by more than one
 process. They are not public plug-in points. Non-composition libraries depend
 on domain and port contracts rather than selecting concrete runtime adapters.
-
-## Data processing
-
-Aether Data Processing remains opt-in and does not add a seventh process:
-
-```text
-aether-domain                    task identity, values, quality, provenance
-aether-ports                     HistoryQuery, CovariateSource, Clock, DataProcessor
-aether-application               frame assembly, policy, invocation, validation
-aether-data-processing           strict v1 DTOs and canonical digest
-services/api/adapters/           transitional concrete query/processor clients
-services/api                     authenticated composition and HTTP routes
-packs/<industry>/data-processing declarative task and semantic binding assets
-```
-
-Processors receive bounded frames and cannot read SHM, SQLite, configuration,
-or credentials directly. Results are derived artifacts, never authoritative
-live state. The current direct read-only SQLite History adapter is transitional;
-the target is API-to-History `HistoryQuery` composition.
 
 ## External integrations and protocol plugins
 

@@ -44,44 +44,6 @@ const RULE: &str = r#"{
   "enabled": false
 }"#;
 
-const DATA_PROCESSING_MANIFEST: &str = r#"schema_version: 1
-id: demo
-name: Demo
-version: 1.0.0
-status: stable
-description: Data Processing task index fixture
-distribution:
-  id: demo-distribution
-  version: 1.0.0
-  composition: demo-gateway
-compatibility:
-  aether: ">=0.5.0,<0.6.0"
-  required_capabilities: []
-  required_protocols: []
-assets:
-  data_processing: data-processing/tasks
-examples:
-  commissioned: false
-capabilities:
-  data_processing_tasks:
-    - demo.forecast
-"#;
-
-const DATA_PROCESSING_INDEX: &str = r#"schema: aether.pack.asset-index.v1
-category: data_processing
-assets:
-  - id: demo.forecast
-    path: forecast.yaml
-    schema: aether.data-processing-task.v1
-    media_type: application/yaml
-"#;
-
-const DATA_PROCESSING_TASK: &str = r#"schema: aether.data-processing-task.v1
-id: demo.forecast
-revision: 1
-enabled: false
-"#;
-
 fn runtime() -> PackRuntime {
     PackRuntime::new("0.5.0")
 }
@@ -91,45 +53,6 @@ fn write_valid_pack(root: &Path) {
     fs::write(root.join("pack.yaml"), MANIFEST).expect("manifest");
     fs::write(root.join("rules/index.yaml"), INDEX).expect("index");
     fs::write(root.join("rules/safe-rule.json"), RULE).expect("rule");
-}
-
-fn write_data_processing_pack(root: &Path) {
-    fs::create_dir_all(root.join("data-processing/tasks")).expect("task directory");
-    fs::write(root.join("pack.yaml"), DATA_PROCESSING_MANIFEST).expect("manifest");
-    fs::write(
-        root.join("data-processing/tasks/index.yaml"),
-        DATA_PROCESSING_INDEX,
-    )
-    .expect("task index");
-    fs::write(
-        root.join("data-processing/tasks/forecast.yaml"),
-        DATA_PROCESSING_TASK,
-    )
-    .expect("task");
-}
-
-#[test]
-fn data_processing_tasks_are_a_formal_exact_pack_index() {
-    let root = tempfile::tempdir().expect("pack root");
-    write_data_processing_pack(root.path());
-
-    let manifest = load_pack_manifest(root.path(), &runtime()).expect("task pack");
-    let index = manifest
-        .asset_index("data_processing")
-        .expect("Data Processing task assets require a validated index");
-    assert_eq!(index.assets()[0].id(), "demo.forecast");
-
-    fs::write(
-        root.path()
-            .join("data-processing/tasks/unindexed-task.yaml"),
-        DATA_PROCESSING_TASK.replace("demo.forecast", "demo.other"),
-    )
-    .expect("unindexed task");
-    assert!(matches!(
-        load_pack_manifest(root.path(), &runtime()),
-        Err(PackError::AssetInventoryMismatch { category, .. })
-            if category == "data_processing"
-    ));
 }
 
 #[test]

@@ -155,7 +155,7 @@ mod tests {
     #[test]
     fn query_tokens_are_classified_as_websocket_only() {
         let rest = Request::builder()
-            .uri("/api/v1/data-processing/tasks?token=secret")
+            .uri("/api/models?token=secret")
             .body(Body::empty())
             .expect("valid request");
         assert!(has_query_token(&rest));
@@ -173,7 +173,7 @@ mod tests {
 
         let spoofed_rest = Request::builder()
             .method(Method::GET)
-            .uri("/api/v1/data-processing/tasks?token=secret")
+            .uri("/api/models?token=secret")
             .header(header::CONNECTION, "Upgrade")
             .header(header::UPGRADE, "websocket")
             .body(Body::empty())
@@ -185,7 +185,7 @@ mod tests {
     async fn verified_claims_are_injected_and_rest_query_tokens_are_rejected() {
         let state = app_state().await;
         let mut authenticated = Request::builder()
-            .uri("/api/v1/data-processing/tasks")
+            .uri("/api/models")
             .body(Body::empty())
             .expect("valid request");
         *authenticated.headers_mut() = authorization_headers("Engineer");
@@ -198,7 +198,7 @@ mod tests {
         assert_eq!(claims.role.as_deref(), Some("Engineer"));
 
         let mut leaked = Request::builder()
-            .uri("/api/v1/data-processing/tasks?token=leaked")
+            .uri("/api/models?token=leaked")
             .body(Body::empty())
             .expect("valid request");
         *leaked.headers_mut() = authorization_headers("Admin");

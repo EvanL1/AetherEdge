@@ -44,16 +44,6 @@ Swagger UI 是可选构建能力。安装包使用 `--enable-swagger` 后，只�
 `/openapi.json` 源规范。Gateway 将规范重写到固定的认证命名空间，且其 Swagger
 路由本身不经过 JWT middleware，只应在受信的投运网络中启用。
 
-## 可选 Data Processing
-
-- [概念与边界](./concepts/data-processing.md)
-- [数据通路](./concepts/data-processing-flow.md)
-- [Processor 接入指南](./guides/data-processors.md)
-- [传输契约](./reference/data-processing-contracts.md)
-- [AetherEMS 能源预测映射](https://github.com/EvanL1/AetherEMS/blob/main/packs/energy/knowledge/power-forecasting.md)
-
-Data Processing 是可选能力，不属于采集或硬实时安全闭环。
-
 ## 实验性 CloudLink MQTT
 
 - [Edge contract 与兼容性边界](./reference/cloudlink-mqtt-v1.md)

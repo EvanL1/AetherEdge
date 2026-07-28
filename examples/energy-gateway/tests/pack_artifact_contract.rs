@@ -18,10 +18,9 @@ const EXPECTED_MODELS: [&str; 13] = [
     "PV_DCDC.json",
     "Station.json",
 ];
-const EXPECTED_KNOWLEDGE: [&str; 5] = [
+const EXPECTED_KNOWLEDGE: [&str; 4] = [
     "control-strategies.md",
     "ess-primer.md",
-    "power-forecasting.md",
     "product-models.md",
     "safe-operations.md",
 ];
@@ -32,8 +31,6 @@ const EXPECTED_MAPPINGS: [&str; 3] = [
 ];
 const EXPECTED_RULES: [&str; 1] = ["energy.battery-soc-management"];
 const EXPECTED_EVALUATIONS: [&str; 1] = ["energy.pack-safety"];
-const EXPECTED_DATA_PROCESSING_TASKS: [&str; 2] =
-    ["energy.site-load-forecast", "energy.site-pv-forecast"];
 
 fn repository_pack_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../packs/energy")
@@ -128,7 +125,6 @@ fn energy_pack_declares_complete_formal_asset_directories() {
         ("mappings", EXPECTED_MAPPINGS.as_slice()),
         ("rules", EXPECTED_RULES.as_slice()),
         ("evaluations", EXPECTED_EVALUATIONS.as_slice()),
-        ("data_processing", EXPECTED_DATA_PROCESSING_TASKS.as_slice()),
     ] {
         let directory = manifest
             .asset_directory(category)
@@ -166,7 +162,7 @@ fn energy_pack_loads_after_copying_only_the_pack_artifact() {
         file_names(&isolated.path().join("knowledge"), "md"),
         EXPECTED_KNOWLEDGE
     );
-    for category in ["mappings", "rules", "evaluations", "data_processing"] {
+    for category in ["mappings", "rules", "evaluations"] {
         let directory = manifest
             .asset_directory(category)
             .unwrap_or_else(|| panic!("missing {category} directory declaration"));
@@ -229,12 +225,6 @@ fn formal_energy_assets_retain_versioned_fail_safe_payloads() {
             .as_array()
             .is_some_and(|scenarios| !scenarios.is_empty())
     );
-
-    for task in ["site-load-forecast.yaml", "site-pv-forecast.yaml"] {
-        let task = yaml_value(&root.join("data-processing/tasks").join(task));
-        assert_eq!(task["schema"], "aether.data-processing-task.v1");
-        assert_eq!(task["enabled"], false);
-    }
 }
 
 #[test]
@@ -248,7 +238,7 @@ fn only_an_explicitly_active_energy_pack_exposes_namespaced_formal_assets() {
     fs::write(config.join("global.yaml"), "packs: []\n").expect("empty Pack config");
 
     let empty = load_active_packs(&config, &runtime()).expect("empty active set");
-    for category in ["mappings", "rules", "evaluations", "data_processing"] {
+    for category in ["mappings", "rules", "evaluations"] {
         assert!(empty.namespaced_asset_ids(category).is_empty());
     }
 
@@ -265,13 +255,6 @@ fn only_an_explicitly_active_energy_pack_exposes_namespaced_formal_assets() {
     assert_eq!(
         active.namespaced_asset_ids("evaluations"),
         vec!["energy/evaluations/energy.pack-safety"]
-    );
-    assert_eq!(
-        active.namespaced_asset_ids("data_processing"),
-        vec![
-            "energy/data_processing/energy.site-load-forecast",
-            "energy/data_processing/energy.site-pv-forecast",
-        ]
     );
     assert!(
         active

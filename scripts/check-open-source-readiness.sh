@@ -31,14 +31,11 @@ readonly SDK_SOURCE_PACKAGES=(
     "aether-ports:crates/aether-ports"
     "aether-application:crates/aether-application"
     "aether-pack:crates/aether-pack"
-    "aether-data-processing:crates/aether-data-processing"
     "aether-edge-sdk:crates/aether-sdk"
     "aether-testkit:crates/aether-testkit"
     "aether-store-local:libs/aether-store-local"
     "aether-shm-bridge:libs/aether-shm-bridge"
     "aether-routing:libs/aether-routing"
-    "aether-http-data-processor:services/api/adapters/http-data-processor"
-    "aether-sqlite-history-query:services/api/adapters/sqlite-history-query"
 )
 
 # ADR-0022: the crates.io release set is aether-edge-sdk plus the transitive
@@ -49,7 +46,6 @@ readonly SDK_SOURCE_PACKAGES=(
 readonly REGISTRY_RELEASE_PACKAGES=(
     aether-application
     aether-cloudlink
-    aether-data-processing
     aether-dataplane
     aether-domain
     aether-edge-sdk

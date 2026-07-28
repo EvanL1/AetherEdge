@@ -18,27 +18,6 @@ capabilities:
     idempotent: true
     confirmation: never
     audit: not_required
-  data_processing.tasks.list:
-    kind: query
-    risk: low
-    permission: data_processing.read
-    idempotent: true
-    confirmation: never
-    audit: not_required
-  data_processing.processors.health:
-    kind: query
-    risk: low
-    permission: data_processing.read
-    idempotent: true
-    confirmation: never
-    audit: not_required
-  data_processing.process:
-    kind: query
-    risk: medium
-    permission: data_processing.run
-    idempotent: false
-    confirmation: policy
-    audit: required
   device.write_point:
     kind: command
     risk: high

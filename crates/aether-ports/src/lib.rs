@@ -8,7 +8,6 @@ mod channel_health;
 mod clock;
 mod cloudlink;
 mod control;
-mod data_processing;
 mod error;
 mod history;
 mod live_state;
@@ -49,10 +48,6 @@ pub use cloudlink::{
     CloudLinkTransportRoute, DurableAckOutcome,
 };
 pub use control::{CommandDispatcher, CommandReceipt, CommandTopologyFence, DeviceCommandSink};
-pub use data_processing::{
-    CovariateSource, CovariateWindow, DataBoundary, DataProcessor, DataProcessorDescriptor,
-    HistoryQuery, HistoryWindow, ProcessorHealth, SourcedSegment,
-};
 pub use error::{PortError, PortErrorKind, PortResult};
 pub use history::HistorySink;
 pub use live_state::{LiveState, LiveStateWriter};

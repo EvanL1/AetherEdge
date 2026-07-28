@@ -58,49 +58,6 @@ used as tooling fallbacks when runtime configuration does not override them.
 | aether-alarm | 6007 | Alarm service — alarm rules, alarm events, notifications |
 | TimescaleDB | 5432 | Optional time-series database for historical data, runtime-configured through aether-history |
 
-## Optional Data Processing application
-
-Aether Data Processing adds an industry-neutral application capability without
-changing the six-service default. It assembles bounded observation frames from
-read-only live state, history queries, request context, and industry-pack
-bindings, then invokes a configured local or remote `DataProcessor`.
-
-```text
-authenticated HTTP
-              │ typed processing query (non-idempotent)
-              ▼
-  DataProcessingApplication
-       ├─ LiveState (read-only)
-       ├─ HistoryQuery
-       └─ task/context inputs
-              │ complete ProcessingFrame
-              ▼
-         DataProcessor
-              │ validated, expiring result
-              ▼
-       direct DerivedData response
-```
-
-The processor is deliberately outside every Aether data authority: it cannot
-attach to SHM, read the history database, or resolve a `plant_id` by calling
-back into internal service APIs. No processor is required by the default
-runtime. A deployment may compose the capability in-process or isolate model
-and network dependencies behind a processor sidecar. Version 1 hosts
-`DataProcessingApplication` in opt-in `aether-api`; no standalone
-`aether-data-processor`, cache, CLI/MCP binding, or scheduler is implemented.
-The process name remains reserved for a future orchestration boundary.
-
-The default SQLite read is one invocation-time snapshot, not a bitemporal
-historical cut. `as_of` filters event time, while late ingestion, physical
-source epochs, and model training/availability cuts require frozen evaluation
-inputs or stronger adapters/contracts.
-
-Data Processing never writes the IO-owned T/S plane and never dispatches a
-device command. Automation may consume fresh, validated derived data as one
-input to a separate planning or control use case, whose authorization, safety,
-and audit rules remain unchanged. See [Data Processing](data-processing.md)
-and [Data Processing Flow](data-processing-flow.md).
-
 ## Communication paths
 
 Latency figures below come from historical `README.md` and CHANGELOG
@@ -193,8 +150,6 @@ for operator recovery.
 
 - [Shared Memory](shared-memory.md) — segment layout, seqlock, write ownership
 - [Data Flow](data-flow.md) — upstream and downstream paths end to end
-- [Data Processing](data-processing.md) — optional cross-industry processing orchestration
-- [Data Processing Flow](data-processing-flow.md) — data assembly and derived-result flow
 - [Rule Engine](rule-engine.md) — how aether-automation evaluates and executes rules
 - [Data Model](data-model.md) — products, instances, points
 - [Deployment Guide](../guides/deployment.md) — Docker Compose and installer

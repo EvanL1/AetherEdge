@@ -157,17 +157,6 @@ const governanceMetadataOverrides = {
     human_escalation: 'required-for-unknown-or-unsafe-physical-outcome',
     verification: ['verify-channel-status', 'verify-read-only-observations'],
   },
-  'docs/guides/data-processors.md': {
-    capability_refs: [
-      'data_processing.tasks.list',
-      'data_processing.processors.health',
-      'data_processing.process',
-    ],
-    preconditions: ['validated-task-and-binding', 'bounded-processor-route'],
-    recovery_route: null,
-    human_escalation: 'required-for-unknown-non-idempotent-processor-outcome',
-    verification: ['verify-derived-result-contract', 'verify-audit-record'],
-  },
   'docs/guides/deployment.md': {
     capability_refs: [],
     preconditions: ['approved-runtime-manifest', 'operator-maintenance-window'],
@@ -214,9 +203,6 @@ const governanceMetadataOverrides = {
     capability_refs: [
       'device.read_point',
       'device.write_point',
-      'data_processing.tasks.list',
-      'data_processing.processors.health',
-      'data_processing.process',
       'automation.rule.execute',
       'automation.rule.manage',
       'automation.routing.manage',

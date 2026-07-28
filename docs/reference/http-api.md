@@ -156,15 +156,13 @@ Most business handlers return the shared success envelope:
 ```
 
 `metadata` is omitted when empty. Health probes, service banners, WebSocket
-upgrades, CSV exports, and strict Data Processing responses intentionally use
-their own representations.
+upgrades and CSV exports intentionally use their own representations.
 
 Error responses are still migrating and may use one of these compatibility
 shapes:
 
 - `{ "success": false, "error": { "code": 400, "message": "..." } }`;
 - `{ "success": false, "message": "..." }`;
-- the versioned Data Processing `{ "error": { "code": "...", ... } }` form;
 - the flat `AetherError` mapping with `error_code`, `category`, and `retryable`.
 
 Clients must treat the operation's OpenAPI status and response content type as

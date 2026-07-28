@@ -26,9 +26,6 @@
     "automation.routing.manage",
     "automation.rule.execute",
     "automation.rule.manage",
-    "data_processing.process",
-    "data_processing.processors.health",
-    "data_processing.tasks.list",
     "device.read_point",
     "device.write_point",
     "io.channel.manage",
@@ -44,6 +41,6 @@
   ],
   "checksum": {
     "algorithm": "sha256",
-    "digest": "ed802ac88c443c9d0e29450b6e52cbb6692b237c777b14531f4871212238ddb2"
+    "digest": "d2e0ce32386fefa2f59af4e96bc8bd47d605f1ba2f6bbe492cd3da9d71316159"
   }
 }

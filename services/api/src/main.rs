@@ -31,7 +31,6 @@ use utoipa_swagger_ui::{Config, SwaggerUi, Url};
 
 mod auth;
 mod config;
-mod data_processing_runtime;
 mod db;
 mod live_values;
 mod middleware_auth;
@@ -41,7 +40,6 @@ mod openapi_gateway;
 mod routes_auth;
 mod routes_broadcast;
 mod routes_config;
-mod routes_data_processing;
 mod routes_homepage;
 mod routes_network;
 mod service_gateway;
@@ -52,8 +50,6 @@ mod ws;
 
 use crate::config::GatewayConfig;
 use crate::live_values::{build_gateway_value_source, run_gateway_topology_refresh};
-#[cfg(feature = "openapi")]
-use crate::routes_data_processing::DataProcessingApiDoc;
 use crate::state::AppState;
 use crate::ws::WsHub;
 
@@ -327,27 +323,9 @@ async fn health_check() -> &'static str {
 
 // ── Router ────────────────────────────────────────────────────────────────────
 
-fn commissioned_data_processing_router(state: &AppState) -> Option<Router<Arc<AppState>>> {
-    state
-        .data_processing
-        .as_ref()
-        .map(|_| routes_data_processing::router())
-}
-
 #[cfg(feature = "swagger-ui")]
-fn gateway_openapi(state: &AppState) -> utoipa::openapi::OpenApi {
-    if state.data_processing.is_some() {
-        ApiDoc::openapi().nest("", DataProcessingApiDoc::openapi())
-    } else {
-        ApiDoc::openapi()
-    }
-}
-
-#[cfg(feature = "swagger-ui")]
-async fn gateway_openapi_document(
-    State(state): State<Arc<AppState>>,
-) -> axum::Json<utoipa::openapi::OpenApi> {
-    axum::Json(gateway_openapi(&state))
+async fn gateway_openapi_document() -> axum::Json<utoipa::openapi::OpenApi> {
+    axum::Json(ApiDoc::openapi())
 }
 
 fn build_router(state: Arc<AppState>) -> Router {
@@ -407,10 +385,6 @@ fn build_router(state: Arc<AppState>) -> Router {
         .nest("/network", network_routes)
         .nest("/config", config_routes)
         .merge(service_gateway::router());
-    let protected_v1 = match commissioned_data_processing_router(&state) {
-        Some(routes) => protected_v1.nest("/data-processing", routes),
-        None => protected_v1,
-    };
     let protected_v1 = protected_v1.layer(axum::middleware::from_fn_with_state(
         Arc::clone(&state),
         middleware_auth::require_jwt,
@@ -528,17 +502,6 @@ async fn main() -> anyhow::Result<()> {
 
     let live_values = build_gateway_value_source(&db_pool, &cfg).await?;
 
-    // Data Processing is composed only after explicit deployment opt-in. A
-    // disabled deployment neither constructs source/processor clients nor
-    // mounts the corresponding HTTP routes. Its read-only live state shares
-    // the gateway's atomically refreshed topology generation.
-    let data_processing = data_processing_runtime::build_data_processing_application(
-        &db_pool,
-        &cfg,
-        Arc::clone(&live_values),
-    )
-    .await?;
-
     // ── Bootstrap admin user ──────────────────────────────────────────────────
     ensure_bootstrap_admin(&db_pool, || {
         std::env::var(BOOTSTRAP_ADMIN_PASSWORD_ENV).ok()
@@ -557,7 +520,6 @@ async fn main() -> anyhow::Result<()> {
         db: db_pool,
         config: Arc::new(cfg),
         ws_hub: Arc::clone(&ws_hub),
-        data_processing,
         refresh_tokens: DashMap::new(),
         service_client,
     });
@@ -885,12 +847,6 @@ mod openapi_tests {
             "token"
         );
 
-        assert!(
-            specification["paths"]
-                .get("/api/v1/data-processing/tasks")
-                .is_none(),
-            "conditional routes must not appear in the base document"
-        );
         assert_eq!(
             operation_count(&specification),
             38,
@@ -1049,45 +1005,5 @@ mod openapi_tests {
                 );
             }
         }
-    }
-
-    #[test]
-    fn commissioned_data_processing_document_adds_only_conditional_routes() {
-        let specification = json(ApiDoc::openapi().nest("", DataProcessingApiDoc::openapi()));
-
-        for (path, method) in [
-            ("/api/v1/data-processing/tasks", "get"),
-            ("/api/v1/data-processing/processors/health", "get"),
-            ("/api/v1/data-processing/process", "post"),
-        ] {
-            assert!(
-                specification["paths"][path][method].is_object(),
-                "missing commissioned {method} {path}"
-            );
-            assert_eq!(
-                specification["paths"][path][method]["security"][0]["bearer_auth"],
-                serde_json::json!([]),
-                "missing Bearer security on commissioned {method} {path}"
-            );
-        }
-        let process = &specification["paths"]["/api/v1/data-processing/process"]["post"];
-        for status in [
-            "400", "401", "403", "404", "413", "415", "422", "428", "500", "502", "503", "504",
-        ] {
-            assert!(
-                process["responses"][status].is_object(),
-                "data-processing command must document HTTP {status}"
-            );
-        }
-        assert!(
-            process["responses"]["404"]["description"]
-                .as_str()
-                .is_some_and(|description| description.contains("commissioned resource"))
-        );
-        assert_eq!(
-            operation_count(&specification),
-            41,
-            "commissioned Router/OpenAPI drift"
-        );
     }
 }

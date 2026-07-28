@@ -43,7 +43,11 @@
     "distribution": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "version", "composition"],
+      "required": [
+        "id",
+        "version",
+        "composition"
+      ],
       "properties": {
         "id": {
           "$ref": "#/$defs/identifier"
@@ -59,7 +63,11 @@
     "compatibility": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["aether", "required_capabilities", "required_protocols"],
+      "required": [
+        "aether",
+        "required_capabilities",
+        "required_protocols"
+      ],
       "properties": {
         "aether": {
           "type": "string",
@@ -79,9 +87,6 @@
       "minProperties": 1,
       "properties": {
         "config": {
-          "$ref": "#/$defs/relativeDirectory"
-        },
-        "data_processing": {
           "$ref": "#/$defs/relativeDirectory"
         },
         "models": {
@@ -104,7 +109,9 @@
     "examples": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["commissioned"],
+      "required": [
+        "commissioned"
+      ],
       "properties": {
         "commissioned": {
           "const": false
@@ -119,9 +126,6 @@
           "$ref": "#/$defs/nonEmptyUniqueStrings"
         },
         "rule_topics": {
-          "$ref": "#/$defs/nonEmptyUniqueStrings"
-        },
-        "data_processing_tasks": {
           "$ref": "#/$defs/nonEmptyUniqueStrings"
         },
         "mappings": {

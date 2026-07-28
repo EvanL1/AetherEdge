@@ -15,9 +15,6 @@ compatibility:
     - device.write_point
     - automation.rule.execute
     - automation.routing.manage
-    - data_processing.tasks.list
-    - data_processing.processors.health
-    - data_processing.process
   required_protocols:
     - modbus_tcp
     - modbus_rtu
@@ -27,7 +24,6 @@ compatibility:
     - http
 assets:
   config: examples/config
-  data_processing: data-processing/tasks
   knowledge: knowledge
   models: models
   mappings: mappings
@@ -60,6 +56,3 @@ capabilities:
     - energy.battery-soc-management
   evaluations:
     - energy.pack-safety
-  data_processing_tasks:
-    - energy.site-load-forecast
-    - energy.site-pv-forecast

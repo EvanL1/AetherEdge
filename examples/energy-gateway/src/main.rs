@@ -5,10 +5,9 @@ fn main() {
         Ok(gateway) => {
             let summary = gateway.pack_summary();
             println!(
-                "AetherEMS ready: pack={}, capabilities={}, processing_tasks={}, example_channels={}, commissioned=0",
+                "AetherEMS ready: pack={}, capabilities={}, example_channels={}, commissioned=0",
                 summary.id,
                 summary.capabilities.len(),
-                summary.data_processing_task_count,
                 summary.example_channel_count
             );
         },

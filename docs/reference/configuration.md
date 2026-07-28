@@ -186,8 +186,6 @@ gates):
 | `AETHER_INSTALL_CONTEXT_PATH` | `/etc/aether/install.yaml` | Overrides the installed layout descriptor; CLI flags and the two path variables take precedence |
 | `AETHER_BOOTSTRAP_ADMIN_PASSWORD` | unset | Required only while `users` is empty; installers generate a strong value in their mode-0600 environment file, and it should be removed after the first password change |
 | `AETHER_ALLOW_PUBLIC_REGISTRATION` | `false` | Explicit opt-in for anonymous Viewer registration; Admin creation is never available through public registration |
-| `AETHER_DATA_PROCESSING_ENABLED` | `false` | Explicitly enables the opt-in Data Processing application and HTTP routes; startup fails closed if enabled configuration is invalid |
-| `AETHER_DATA_PROCESSING_CONFIG` | `/app/data/config/data-processing/runtime.yaml` | Strict runtime YAML containing commissioned task, binding, history, covariate, processor, and audit composition; downstream compositions provide processor-specific credential variables named by this file |
 | `RUST_LOG` | `info` | Log level for the Rust services; supports filter syntax such as `info,io=debug,automation=trace` |
 
 ### Experimental CloudLink MQTT settings
@@ -225,22 +223,6 @@ or an incomplete audit/publication result. Channel mutations also return a
 desired-state revision and may succeed with a degraded runtime projection;
 inspect `request_id`, `resulting_revision`, and `reconciliation_required`
 instead of retrying automatically.
-
-### Data Processing and historian storage changes
-
-The Data Processing runtime's `history.path` must name the SQLite file that
-the running historian actually writes. Values under
-`history_config.storage_*` are persisted desired settings. In particular,
-`PUT /hisApi/storage` saves them but does not reconnect the active backend, so
-matching those rows is not sufficient proof of the live writer. Change storage
-only with Data Processing disabled; reconnect or restart `aether-history`,
-verify its active backend/health and a commissioned sentinel series, then
-restart `aether-api` with the matching runtime path.
-
-The API also needs independent read-only OS permission to the historian
-database/WAL/SHM directory. Keep that path separate from the API's writable
-configuration/audit database. SQLite `mode=ro` over the base Compose
-`/app/data:rw` mount is not a completed production permission boundary.
 
 ## Related pages
 

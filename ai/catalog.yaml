@@ -54,22 +54,6 @@ components:
     responsibility: Machine-readable Pack v1 manifest contract
     verify:
       - uvx --from check-jsonschema check-jsonschema --check-metaschema contracts/pack/pack-manifest.v1.schema.json
-  data_processing:
-    path: crates/aether-application/src/data_processing.rs
-    responsibility: Governed frame assembly, processor invocation, untrusted-result validation, and DerivedData stamping
-    verify:
-      - cargo test -p aether-application --test data_processing_application
-      - cargo test -p aether-application --test safety_policy_contract
-  data_processing_codec:
-    path: crates/aether-data-processing
-    responsibility: Strict transport-neutral v1 JSON conversion and RFC 8785 input digests
-    verify:
-      - cargo test -p aether-data-processing
-  data_processing_contracts:
-    path: contracts/data-processing
-    responsibility: Strict Draft 2020-12 wire schemas for every v1 Data Processing trust boundary
-    verify:
-      - uvx --from check-jsonschema check-jsonschema --check-metaschema contracts/data-processing/*.schema.json
   cloudlink_candidate_codec:
     path: crates/aether-cloudlink
     responsibility: Experimental transport-neutral CloudLink v1 strict codec, session binding, canonical business digests, and truthful Runtime Manifest/PointSample mapping
@@ -91,19 +75,6 @@ components:
     responsibility: Uplink-owned user-broker-neutral MQTT 3.1.1/QoS 1/TLS binding with exact per-gateway topics, PUBACK evidence without application receipt deletion, reconnect, and an opt-in shared-broker harness
     verify:
       - cargo test -p aether-cloudlink-mqtt
-  data_processing_ai_evals:
-    path: ai/evals/data-processing.yaml
-    responsibility: AI-facing permission, confirmation, audit, non-idempotency, failure-isolation, and no-control scenarios backed by Rust tests
-    verify:
-      - ruby -ryaml -e 'YAML.safe_load(File.read(ARGV.fetch(0)), [], [], false)' ai/evals/data-processing.yaml
-      - cargo test -p aether-application --test data_processing_application
-      - cargo test -p aether-http-data-processor --test http_data_processor
-      - cargo test -p aether-example-energy-gateway --test composition_contract
-  data_processing_testkit:
-    path: crates/aether-testkit
-    responsibility: Reusable HistoryQuery and DataProcessor conformance checks and deterministic test doubles
-    verify:
-      - cargo test -p aether-testkit
   local_store:
     path: libs/aether-store-local
     responsibility: Zero-external-service state, history, audit, commissioned routing adapters, legacy outbox, and application-ACK-driven CloudLink spools
@@ -120,41 +91,11 @@ components:
     responsibility: Shared fail-closed access-JWT verification and server-owned application permissions for HTTP and CLI command boundaries
     verify:
       - cargo test -p aether-auth-jwt
-  snapshot_covariates:
-    path: libs/aether-store-local/src/snapshot_covariates.rs
-    responsibility: Bounded, reloadable local covariate snapshots with valid-time and issue-time provenance
-    verify:
-      - cargo test -p aether-store-local --test snapshot_covariate_source
-  sqlite_history_query:
-    path: services/api/adapters/sqlite-history-query
-    responsibility: API-owned transitional read-only SQLite HistoryQuery adapter with task-scoped interval aggregation in one snapshot
-    verify:
-      - cargo test -p aether-sqlite-history-query
   shm_bridge:
     path: libs/aether-shm-bridge
     responsibility: Typed channel manifest plus LiveState, acquisition-writer, and C/A command-sink adapters over the physical SHM data plane
     verify:
       - cargo test -p aether-shm-bridge
-  http_data_processor:
-    path: services/api/adapters/http-data-processor
-    responsibility: Bounded local or remote HTTP implementation of the DataProcessor port
-    verify:
-      - cargo test -p aether-http-data-processor
-  data_processing_api:
-    path: services/api/src/routes_data_processing.rs
-    responsibility: Opt-in authenticated Data Processing v1 HTTP task discovery, health, and process routes
-    verify:
-      - cargo test -p aether-api --bin aether-api routes_data_processing
-  data_processing_runtime:
-    path: services/api/src/data_processing_runtime.rs
-    responsibility: Opt-in production composition of SQLite history, snapshot covariates, read-only live state, audit, and HTTP processor routes
-    verify:
-      - cargo test -p aether-api --bin aether-api data_processing_runtime
-  energy_data_processing:
-    path: packs/energy/data-processing
-    responsibility: Disabled load/PV task declarations, uncommissioned binding, and cross-language v1 fixtures
-    verify:
-      - cargo test -p aether-example-energy-gateway --test data_processing_composition
   aether_uplink_runtime:
     path: services/uplink/src/uplink.rs
     responsibility: aether-uplink integration with DurableOutbox and UplinkPublisher

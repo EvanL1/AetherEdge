@@ -3,32 +3,14 @@
 Small, object-safe capability interfaces for kernel and downstream adapters.
 
 The crate separates authoritative live reads, device command dispatch, audit,
-history, mirroring, durable outbox, uplink publishing, I/O channel
-commissioning, and request-driven data processing. The owner-only physical
-writer is deliberately isolated in `aether-acquisition-port`, so application
-interfaces cannot acquire it through this general port crate.
-`ChannelMutator` keeps durable desired configuration authoritative and reports
-the rebuildable runtime projection, resulting revision, and reconciliation
-state without choosing a wire encoding. `HistoryQuery` and
-`CovariateSource` accept bounded logical windows and return source provenance;
-`DataProcessor` receives a complete `DataProcessingRequest` and has no callback
-into Aether data sources. It deliberately does not expose a generic database,
-cache, model, or script-runner API. Hosts choose concrete adapters at the
-composition boundary.
+history sinks, mirroring, durable outbox, uplink publishing, alarm operations,
+automation mutations, and I/O channel commissioning. The owner-only physical
+writer remains isolated in `aether-acquisition-port`.
 
-`CloudLinkSpool` is intentionally separate from `DurableOutbox`: it owns stream
-epoch/position, stable batch identity/digest, replay and explicit loss evidence,
-and removes records only after a validated cloud application receipt.
-`CloudLinkTransport` carries bounded logical routes without exposing MQTT topic
-strings to core callers. There is no CloudLink command or arbitrary-RPC route.
-
-`HistoryQuery` bounds event time but does not implicitly promise bitemporal or
-source-epoch history; an implementation must declare stronger point-in-time
-semantics explicitly. Likewise, artifact chronology is not a history-port
-responsibility.
-
-Errors carry recovery semantics so callers can distinguish unavailable,
-transient, rejected, invalid-data, and permanent failures.
+It deliberately exposes no generic database, cache, model, processor, or script
+runtime. Hosts choose concrete adapters at composition boundaries. Port errors
+retain recovery semantics so callers can distinguish unavailable, timeout,
+conflict, rejected, invalid-data, and permanent failures.
 
 ```bash
 cargo test -p aether-ports

@@ -310,24 +310,8 @@ impl From<aether_application::ApplicationError> for AutomationError {
             ApplicationError::ConfirmationRequired { .. }
             | ApplicationError::InvalidCommand(_)
             | ApplicationError::InvalidChannelMutation(_) => Self::InvalidData(error.to_string()),
-            ApplicationError::InvalidProcessingRequest(_)
-            | ApplicationError::InputQualityRejected(_)
-            | ApplicationError::ProcessingRequestTooLarge { .. } => {
-                Self::InvalidData(error.to_string())
-            },
-            ApplicationError::InvalidProcessingConfiguration(_) => {
-                Self::InvalidConfig(error.to_string())
-            },
-            ApplicationError::InvalidProcessorResult(_)
-            | ApplicationError::ProcessingUnavailable { .. } => {
-                Self::DispatchDegraded(error.to_string())
-            },
-            ApplicationError::ProcessingCodec(_) => Self::InternalError(error.to_string()),
             ApplicationError::AuditUnavailable(_) => Self::AuditUnavailable(error.to_string()),
-            ApplicationError::HistoryQueryFailed(port_error)
-            | ApplicationError::CovariateSourceFailed(port_error)
-            | ApplicationError::ProcessorFailed(port_error)
-            | ApplicationError::Port(port_error) => match port_error.kind() {
+            ApplicationError::Port(port_error) => match port_error.kind() {
                 PortErrorKind::Rejected | PortErrorKind::InvalidData => {
                     Self::InvalidData(port_error.to_string())
                 },

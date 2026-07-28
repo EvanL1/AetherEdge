@@ -1,13 +1,13 @@
 //! WebSocket live-state reads from SHM.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
 use std::time::Duration;
 
-use aether_domain::{ChannelId, PointAddress, PointKind, PointQuality, PointSample, TimestampMs};
+use aether_domain::{ChannelId, PointKind};
 #[cfg(test)]
 use aether_ports::ChannelHealthObservation;
-use aether_ports::{ChannelHealthSource, LiveState, PortError, PortErrorKind, PortResult};
+use aether_ports::{ChannelHealthSource, PortError, PortErrorKind, PortResult};
 use aether_routing::RoutingSnapshot;
 use aether_shm_bridge::{
     ChannelPointManifest, PhysicalPointAddress, PointWatchEvent, ShmClientConfig,
@@ -16,7 +16,6 @@ use aether_shm_bridge::{
 use aether_store_local::load_routing_snapshot;
 use anyhow::Context;
 use arc_swap::ArcSwap;
-use async_trait::async_trait;
 use sqlx::SqlitePool;
 use tokio_util::sync::CancellationToken;
 
@@ -616,144 +615,6 @@ const fn channel_point_ref(target: PhysicalPointAddress) -> ChannelPointRef {
     )
 }
 
-/// Builds the read-only `LiveState` used by an enabled Data Processing route.
-///
-/// Only explicitly commissioned logical point addresses are resolved. Reads
-/// pin the gateway's current physical/routing generation and therefore follow
-/// validated topology refreshes without receiving any writer capability.
-pub fn build_data_processing_live_state(
-    source: Arc<ShmGatewayValueSource>,
-    addresses: &[PointAddress],
-) -> anyhow::Result<Arc<dyn LiveState>> {
-    let generation = source.current.load_full();
-    let mut commissioned = HashSet::with_capacity(addresses.len());
-    let mut physical_targets = HashSet::with_capacity(addresses.len());
-    for address in addresses {
-        if address.kind().is_writable() {
-            anyhow::bail!("Data Processing live-state mapping targets a writable point");
-        }
-        let target = generation
-            .routing
-            .point(address.instance_id().get(), "M", address.point_id().get())
-            .with_context(|| format!("no enabled measurement route for {address:?}"))?;
-        if target.kind != address.kind() {
-            anyhow::bail!("commissioned logical point kind does not match its physical route");
-        }
-        generation
-            .manifest
-            .slot_for(PhysicalPointAddress::from_legacy_raw(
-                target.channel_id,
-                target.kind,
-                target.point_id,
-            ))
-            .with_context(|| format!("no SHM slot for commissioned point {address:?}"))?;
-        if !physical_targets.insert(target) {
-            anyhow::bail!("multiple commissioned logical points resolve to one SHM slot");
-        }
-        commissioned.insert(*address);
-    }
-    Ok(Arc::new(GatewayCommissionedLiveState {
-        source,
-        commissioned,
-    }))
-}
-
-struct GatewayCommissionedLiveState {
-    source: Arc<ShmGatewayValueSource>,
-    commissioned: HashSet<PointAddress>,
-}
-
-impl GatewayCommissionedLiveState {
-    fn resolve_target(
-        &self,
-        generation: &GatewayValueGeneration,
-        address: PointAddress,
-    ) -> PortResult<ChannelPointRef> {
-        if !self.commissioned.contains(&address) {
-            return Err(PortError::new(
-                PortErrorKind::NotFound,
-                format!("point {address:?} is not commissioned for Data Processing"),
-            ));
-        }
-        let target = generation
-            .routing
-            .point(address.instance_id().get(), "M", address.point_id().get())
-            .ok_or_else(|| {
-                PortError::new(
-                    PortErrorKind::NotFound,
-                    format!("no current measurement route for {address:?}"),
-                )
-            })?;
-        if target.kind != address.kind() {
-            return Err(PortError::new(
-                PortErrorKind::InvalidData,
-                format!("current physical route kind changed for {address:?}"),
-            ));
-        }
-        if generation
-            .manifest
-            .slot_for(PhysicalPointAddress::from_legacy_raw(
-                target.channel_id,
-                target.kind,
-                target.point_id,
-            ))
-            .is_none()
-        {
-            return Err(PortError::new(
-                PortErrorKind::InvalidData,
-                format!("current physical route is absent from SHM for {address:?}"),
-            ));
-        }
-        Ok(target)
-    }
-
-    fn read_from(
-        &self,
-        generation: &GatewayValueGeneration,
-        address: PointAddress,
-    ) -> PortResult<Option<PointSample>> {
-        let target = self.resolve_target(generation, address)?;
-        Ok(generation.read_point(target)?.map(|sample| {
-            PointSample::new(
-                address,
-                sample.value(),
-                TimestampMs::new(sample.timestamp_ms()),
-                PointQuality::Good,
-            )
-        }))
-    }
-}
-
-#[async_trait]
-impl LiveState for GatewayCommissionedLiveState {
-    async fn read(&self, address: PointAddress) -> PortResult<Option<PointSample>> {
-        let generation = self.source.current.load_full();
-        self.read_from(&generation, address)
-    }
-
-    async fn read_many(&self, addresses: &[PointAddress]) -> PortResult<Vec<Option<PointSample>>> {
-        let generation = self.source.current.load_full();
-        let mut physical_owners = HashMap::with_capacity(addresses.len());
-        for &address in addresses {
-            let target = self.resolve_target(&generation, address)?;
-            if physical_owners
-                .insert(target, address)
-                .is_some_and(|existing| existing != address)
-            {
-                return Err(PortError::new(
-                    PortErrorKind::InvalidData,
-                    "multiple commissioned Data Processing points now resolve to one SHM slot",
-                ));
-            }
-        }
-        addresses
-            .iter()
-            .copied()
-            .map(|address| self.read_from(&generation, address))
-            .collect()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
@@ -958,8 +819,7 @@ mod tests {
     #[tokio::test]
     async fn production_source_refreshes_point_health_and_routing_as_one_view() {
         use aether_domain::{
-            AcquiredPointSample, ChannelId, ChannelPointAddress, InstanceId, PointAddress, PointId,
-            PointQuality, TimestampMs,
+            AcquiredPointSample, ChannelId, ChannelPointAddress, PointId, PointQuality, TimestampMs,
         };
         use aether_shm_bridge::{
             PointWatchEvent, ShmChannelHealthWriterHandle, ShmRuntimeConfig, ShmWriterHandle,
@@ -1047,29 +907,11 @@ mod tests {
             .refresh_topology(&pool, &config)
             .await
             .expect("pin initial committed publication");
-        let commissioned_address =
-            PointAddress::new(InstanceId::new(100), PointKind::Telemetry, PointId::new(5));
-        let second_commissioned_address =
-            PointAddress::new(InstanceId::new(101), PointKind::Telemetry, PointId::new(6));
-        let data_processing = super::build_data_processing_live_state(
-            Arc::clone(&source),
-            &[commissioned_address, second_commissioned_address],
-        )
-        .expect("commission Data Processing live state");
         assert_eq!(
             source
                 .read_formula("inst:100:M:5")
                 .expect("read initial route")
                 .expect("initial value")
-                .value(),
-            10.0
-        );
-        assert_eq!(
-            data_processing
-                .read(commissioned_address)
-                .await
-                .expect("read initial commissioned point")
-                .expect("initial commissioned sample")
                 .value(),
             10.0
         );
@@ -1140,20 +982,6 @@ mod tests {
                 .value(),
             50.0
         );
-        assert_eq!(
-            data_processing
-                .read(commissioned_address)
-                .await
-                .expect("read refreshed commissioned point")
-                .expect("refreshed commissioned sample")
-                .value(),
-            50.0
-        );
-        let duplicate_error = data_processing
-            .read_many(&[commissioned_address, second_commissioned_address])
-            .await
-            .expect_err("a refreshed duplicate physical target must fail closed");
-        assert_eq!(duplicate_error.kind(), PortErrorKind::InvalidData);
         assert!(!source.accepts_point_watch_event(old_event));
         assert!(source.accepts_point_watch_event(PointWatchEvent::new(
             5,

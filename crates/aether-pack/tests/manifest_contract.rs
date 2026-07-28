@@ -25,7 +25,6 @@ compatibility:
     - modbus_tcp
 assets:
   config: examples/config
-  data_processing: data-processing
 examples:
   commissioned: false
 capabilities:
@@ -33,32 +32,11 @@ capabilities:
     - DemoDevice
   rule_topics:
     - demo-control
-  data_processing_tasks:
-    - demo.forecast
 "#;
 
 fn pack_root() -> TempDir {
     let root = tempfile::tempdir().expect("temporary pack root");
     fs::create_dir_all(root.path().join("examples/config")).expect("config asset directory");
-    fs::create_dir_all(root.path().join("data-processing"))
-        .expect("data-processing asset directory");
-    fs::write(
-        root.path().join("data-processing/index.yaml"),
-        r#"schema: aether.pack.asset-index.v1
-category: data_processing
-assets:
-  - id: demo.forecast
-    path: forecast.yaml
-    schema: aether.data-processing-task.v1
-    media_type: application/yaml
-"#,
-    )
-    .expect("data-processing asset index");
-    fs::write(
-        root.path().join("data-processing/forecast.yaml"),
-        "schema: aether.data-processing-task.v1\nid: demo.forecast\nenabled: false\n",
-    )
-    .expect("data-processing task asset");
     root
 }
 
@@ -91,10 +69,6 @@ fn valid_v1_manifest_loads_from_its_pack_root() {
     assert_eq!(
         manifest.asset_directory("config"),
         Some(Path::new("examples/config"))
-    );
-    assert_eq!(
-        manifest.asset_directory("data_processing"),
-        Some(Path::new("data-processing"))
     );
     assert_eq!(
         manifest.capability_ids("models"),
@@ -225,9 +199,8 @@ fn packs_without_runtime_requirements_or_optional_capability_groups_are_valid() 
     let source = VALID_MANIFEST
         .replace("    - point.read", "    []")
         .replace("    - modbus_tcp", "    []")
-        .replace("  data_processing: data-processing\n", "")
         .replace(
-            "capabilities:\n  models:\n    - DemoDevice\n  rule_topics:\n    - demo-control\n  data_processing_tasks:\n    - demo.forecast",
+            "capabilities:\n  models:\n    - DemoDevice\n  rule_topics:\n    - demo-control",
             "capabilities: {}",
         );
 
@@ -416,11 +389,10 @@ fn v1_json_schema_declares_the_same_fail_closed_surface() {
         index_schema["properties"]["schema"]["const"],
         aether_pack::PACK_ASSET_INDEX_SCHEMA
     );
-    assert!(
+    assert_eq!(
         index_schema["properties"]["category"]["enum"]
             .as_array()
-            .is_some_and(|categories| categories
-                .iter()
-                .any(|category| category == "data_processing"))
+            .map(Vec::len),
+        Some(3)
     );
 }

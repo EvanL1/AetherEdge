@@ -105,17 +105,13 @@ name = "aether-api"
 version = "0.0.1"
 dependencies = [
  "aether-application",
- "aether-data-processing",
  "aether-domain",
- "aether-http-data-processor",
  "aether-ports",
  "aether-routing",
  "aether-shm-bridge",
- "aether-sqlite-history-query",
  "aether-store-local",
  "anyhow",
  "arc-swap",
- "async-trait",
  "axum",
  "bcrypt",
  "bytes",
@@ -146,7 +142,6 @@ dependencies = [
 name = "aether-application"
 version = "0.0.1"
 dependencies = [
- "aether-data-processing",
  "aether-domain",
  "aether-ports",
  "aether-store-local",
@@ -156,7 +151,6 @@ dependencies = [
  "sha2",
  "thiserror 2.0.18",
  "tokio",
- "uuid",
 ]
 
 [[package]]
@@ -258,19 +252,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "aether-data-processing"
-version = "0.0.1"
-dependencies = [
- "aether-domain",
- "chrono",
- "serde",
- "serde_json",
- "serde_json_canonicalizer",
- "sha2",
- "thiserror 2.0.18",
-]
-
-[[package]]
 name = "aether-dataplane"
 version = "0.0.1"
 dependencies = [
@@ -306,14 +287,11 @@ dependencies = [
  "aether-edge-sdk",
  "aether-example-minimal-gateway",
  "aether-runtime-catalog",
- "aether-store-local",
- "async-trait",
  "serde",
  "serde_json",
  "serde_yaml_ng",
  "tempfile",
  "thiserror 2.0.18",
- "tokio",
 ]
 
 [[package]]
@@ -353,22 +331,6 @@ dependencies = [
  "url",
  "urlencoding",
  "utoipa",
-]
-
-[[package]]
-name = "aether-http-data-processor"
-version = "0.0.1"
-dependencies = [
- "aether-data-processing",
- "aether-domain",
- "aether-ports",
- "async-trait",
- "chrono",
- "reqwest",
- "serde",
- "serde_json",
- "tokio",
- "wiremock",
 ]
 
 [[package]]
@@ -517,20 +479,6 @@ dependencies = [
  "tempfile",
  "tokio",
  "tokio-util",
-]
-
-[[package]]
-name = "aether-sqlite-history-query"
-version = "0.0.1"
-dependencies = [
- "aether-domain",
- "aether-ports",
- "aether-testkit",
- "async-trait",
- "chrono",
- "sqlx",
- "tempfile",
- "tokio",
 ]
 
 [[package]]

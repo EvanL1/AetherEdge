@@ -43,45 +43,6 @@ processor belong to the independent
 | aether-uplink | aetherems:latest | MQTT cloud uplink, TLS certificates |
 | aether-alarm | aetherems:latest | Alarm rules and notifications |
 
-The generic Data Processing application remains disabled by default. A
-downstream composition supplies its processor image or process, commissioned
-runtime YAML, credentials, resource limits, and network policy. See the
-[AetherEMS Load-Forecasting processor](https://github.com/EvanL1/AetherEMS/tree/main/processors/load-forecasting)
-for the energy-domain composition.
-
-Historian authority requires a separate operational check. A storage
-`PUT /hisApi/storage` saves settings but does not reconnect the active writer.
-Keep Data Processing disabled across a storage change, reconnect or restart
-`aether-history`, verify its active SQLite backend and a commissioned sentinel
-series, then restart `aether-api` with runtime `history.path` matching the
-applied backend. The persisted `history_config.storage_*` rows alone do not
-prove the live write target.
-
-Direct SQLite history also needs a filesystem boundary. The API must receive
-the historian database, WAL, and SHM through a dedicated read-only directory
-mount (or an independently permissioned read-only OS account/ACL); its own
-`aether.db` and audit writes stay on a separate writable path. The base Compose
-currently mounts the whole `/app/data` directory read-write into `aether-api`,
-so the documented production Data Processing route is blocked until a site
-override provides and verifies that separation. SQLite `mode=ro` and
-`query_only=ON` alone are not sufficient containment.
-
-The `/api/v1/data-processing/process` call is non-idempotent and writes a
-mandatory audit record even when work is rejected. The current API does not
-provide an actor/IP request-rate limiter or an audit retention quota. A
-production ingress must therefore enforce authenticated actor and source-IP
-rates plus an in-flight ceiling, while operations monitor
-`command_audit_events` growth and apply a retention/export policy that
-preserves required evidence. Production enablement is blocked without those
-controls; the per-route processor semaphore alone does not bound rejected-call
-audit writes.
-
-A downstream processor should bind to loopback and receive no Aether data,
-configuration, device, history-database, or SHM mount. The application sends a
-complete, bounded `ProcessingFrame` over the processor port. The downstream
-composition must also enforce egress policy and measured CPU, memory, and PID
-limits so processor load cannot starve deterministic services.
-
 The six Rust services share one `aetherems:latest` compatibility image, each
 started with its own command. The image name is retained while downstream
 release consumers migrate; it does not imply that this repository owns the EMS

@@ -22,10 +22,9 @@ will be checked before legacy HTTP payloads are removed.
   defines the feature-exact, checksummed composition metadata consumed by
   Automation, MCP, and Pack installation tooling before Pack activation.
 - [`pack/pack-asset-index.v1.schema.json`](pack/pack-asset-index.v1.schema.json)
-  defines the exact inventory for Pack-owned mappings, rules, evaluations, and
-  Data Processing tasks.
-- The mapping, rule, evaluation, and Data Processing task schemas in
-  [`pack/`](pack/) version the corresponding asset payloads. `aether-pack`
+  defines the exact inventory for Pack-owned mappings, rules, and evaluations.
+- The mapping, rule, and evaluation schemas in [`pack/`](pack/) version the
+  corresponding asset payloads. `aether-pack`
   verifies index identity, confinement, size, media type, and exact file
   inventory before activation. Each category is bound to its corresponding v1
   payload schema; distribution conformance validates each schema-specific

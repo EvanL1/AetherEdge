@@ -8,7 +8,6 @@ scenarios:
       mapping_schema: aether.pack.mapping-set.v1
       rule_enabled: false
       rule_commissioned: false
-      data_processing_tasks_enabled: false
     evidence:
       command: cargo test -p aether-example-energy-gateway --test pack_artifact_contract formal_energy_assets_retain_versioned_fail_safe_payloads
       test: formal_energy_assets_retain_versioned_fail_safe_payloads

@@ -7,8 +7,7 @@ and operational knowledge; it is not a dependency of the Aether kernel.
 The v1 manifest is validated by the industry-neutral `aether-pack` boundary and
 contains only pack-root-relative asset directories. Product models under
 `models/`, operational knowledge under `knowledge/`, and the indexed
-`mappings/`, `rules/`, `evaluations/`, and `data-processing/tasks/`
-directories are Pack-owned assets.
+`mappings/`, `rules/`, and `evaluations/` directories are Pack-owned assets.
 Each formal directory has a closed v1 index whose IDs exactly match
 `pack.yaml` and its actual regular files.
 The pack-owned configuration examples under `examples/config/` are deliberately
@@ -53,7 +52,7 @@ Run the fail-safe distribution proof from the repository root:
 ```bash
 cargo run -p aether-example-energy-gateway
 cargo test -p aether-example-energy-gateway --test pack_artifact_contract
-cargo test -p aether-example-energy-gateway --test data_processing_composition
+cargo test -p aether-example-energy-gateway --test composition_contract
 ```
 
 This validates and reports the bundled energy capabilities but does not start
@@ -78,13 +77,7 @@ Aether Kernel artifact and publish its own Pack artifact and downstream CI
 evidence according to
 [ADR-0007](../../docs/adr/0007-aether-core-and-ems-distribution.md).
 
-Load and PV forecasting are the first Aether Data Processing tasks in this
-pack. Their complete disabled-by-default declarations, synthetic binding, and
-contract fixtures live under [data-processing](data-processing/README.md).
-Their semantic inputs, request-driven processor boundary, and migration from
-the existing service are documented in
-[Power Forecasting](knowledge/power-forecasting.md). Installing this
-pack never starts a model or contacts a remote processor by itself. The
-opt-in implementations are the bounded
-[HTTP adapter](../../services/api/adapters/http-data-processor/README.md) and
-[downstream Load-Forecasting processor](https://github.com/EvanL1/AetherEMS/tree/main/processors/load-forecasting).
+Forecasting and other derived-data applications live in the downstream
+[AetherEMS repository](https://github.com/EvanL1/AetherEMS). The Edge Kernel
+Pack contains only the models, mappings, rules, evaluations, and knowledge
+needed by retained deterministic runtime capabilities.

@@ -12,8 +12,5 @@ Every high-risk command requires at least these cases:
 - audited on success and rejection;
 - no direct state mutation when the adapter fails.
 
-[`data-processing.yaml`](data-processing.yaml) records the v1 Data Processing
-query scenarios for permission, confirmation, mandatory audit, non-idempotent
-execution, untrusted results, failure isolation, and the no-control boundary.
-There is no separate eval runner: each scenario names the existing deterministic
-Rust test and command that provide its evidence.
+There is no separate eval runner: each scenario names deterministic tests and
+commands that provide its evidence.

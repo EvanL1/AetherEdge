@@ -301,7 +301,6 @@ echo "Testing the ADR-0022 registry release set is publishable..."
 registry_manifests=(
     crates/aether-application/Cargo.toml
     crates/aether-cloudlink/Cargo.toml
-    crates/aether-data-processing/Cargo.toml
     crates/aether-dataplane/Cargo.toml
     crates/aether-domain/Cargo.toml
     crates/aether-pack/Cargo.toml
@@ -318,8 +317,6 @@ done
 
 echo "Testing crates outside the registry release set cannot be published..."
 private_manifests=(
-    services/api/adapters/http-data-processor/Cargo.toml
-    services/api/adapters/sqlite-history-query/Cargo.toml
     services/uplink/adapters/cloudlink-mqtt/Cargo.toml
     libs/aether-runtime-catalog/Cargo.toml
     tools/aether/Cargo.toml

@@ -52,8 +52,8 @@ symlinks, non-regular or oversized files, path escapes, malformed JSON, and
 duplicate product identities with typed `ProductLibraryError` values. No
 product catalog is embedded in the kernel.
 
-Pack-owned `mappings`, `rules`, `evaluations`, and `data_processing` tasks are
-formal indexed asset categories. Each directory contains `index.yaml` using
+Pack-owned `mappings`, `rules`, and `evaluations` are formal indexed asset
+categories. Each directory contains `index.yaml` using
 `aether.pack.asset-index.v1`; manifest capability IDs, index IDs, and actual
 regular files must match exactly. Unknown fields/files, duplicate IDs or paths,
 symlinks, path escapes, media/schema mismatches, and oversized files fail

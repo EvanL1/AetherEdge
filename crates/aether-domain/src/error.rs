@@ -11,28 +11,6 @@ pub enum DomainError {
     EmptyIdentifier,
     /// A versioned identity used revision zero.
     ZeroRevision,
-    /// A required collection was empty.
-    EmptyCollection,
-    /// A task or segment declared the same feature more than once.
-    DuplicateFeature,
-    /// A processing number was NaN or infinite.
-    NonFiniteProcessingValue,
-    /// A feature value did not match its declared type.
-    FeatureTypeMismatch,
-    /// Parallel processing arrays had different lengths.
-    ArrayLengthMismatch,
-    /// A missing value and its quality marker disagreed.
-    InvalidSampleQuality,
-    /// Timestamps were duplicated or out of order.
-    TimestampsNotStrictlyIncreasing,
-    /// Frame quality values were outside their valid range.
-    InvalidFrameQuality,
-    /// A processing cutoff, source window, deadline, or expiry was invalid.
-    InvalidProcessingWindow,
-    /// A quantile probability or ordering was invalid.
-    InvalidQuantile,
-    /// A processing result combined status-specific fields illegally.
-    InvalidProcessingState,
     /// A control command targeted a read-only point.
     PointNotWritable(PointKind),
     /// An acquisition sample targeted a command-owned point.
@@ -72,31 +50,6 @@ impl fmt::Display for DomainError {
         match self {
             Self::EmptyIdentifier => formatter.write_str("identifier must not be empty"),
             Self::ZeroRevision => formatter.write_str("revision must be greater than zero"),
-            Self::EmptyCollection => formatter.write_str("required collection must not be empty"),
-            Self::DuplicateFeature => formatter.write_str("feature names must be unique"),
-            Self::NonFiniteProcessingValue => {
-                formatter.write_str("processing values must be finite")
-            },
-            Self::FeatureTypeMismatch => {
-                formatter.write_str("feature value does not match its declared type")
-            },
-            Self::ArrayLengthMismatch => {
-                formatter.write_str("processing arrays must have matching lengths")
-            },
-            Self::InvalidSampleQuality => {
-                formatter.write_str("sample value and quality are inconsistent")
-            },
-            Self::TimestampsNotStrictlyIncreasing => {
-                formatter.write_str("timestamps must be strictly increasing")
-            },
-            Self::InvalidFrameQuality => formatter.write_str("frame quality is invalid"),
-            Self::InvalidProcessingWindow => {
-                formatter.write_str("processing time window is invalid")
-            },
-            Self::InvalidQuantile => formatter.write_str("forecast quantile is invalid"),
-            Self::InvalidProcessingState => {
-                formatter.write_str("processing status fields are inconsistent")
-            },
             Self::PointNotWritable(kind) => {
                 write!(formatter, "point kind {kind:?} is not writable")
             },

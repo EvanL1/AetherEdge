@@ -44,8 +44,8 @@ and testkit contracts that downstream Rust compositions can consume.
    owner of the MQTT transport, session, signing, spool, acknowledgement, and
    replay lifecycle. IO must not establish a CloudLink broker session.
 4. History storage is owned by `aether-history`. Remote applications enter
-   through `aether-api`; API uses the internal `HistoryQuery` boundary instead
-   of opening the History service's SQLite database. Parallel, uncomposed
+   through `aether-api`; API does not open the History service's SQLite
+   database. Parallel, uncomposed
    Redis and PostgreSQL bridge packages are removed. The inherited generic
    infrastructure package, Redis client, retry/configuration helpers, warning
    monitor, and client-only CI job are also removed rather than retained as

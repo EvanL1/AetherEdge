@@ -176,34 +176,6 @@
       "verification": []
     },
     {
-      "id": "edge-ai-evals-data-processing",
-      "path": "ai/evals/data-processing.yaml",
-      "canonical_url": "https://raw.githubusercontent.com/EvanL1/AetherEdge/main/ai/evals/data-processing.yaml",
-      "title": "data-processing.yaml",
-      "description": "Machine-readable AetherEdge data-processing.yaml resource.",
-      "locale": "en",
-      "translation_of": null,
-      "document_role": "reference",
-      "agent_profiles": [
-        "coding-agent",
-        "operator-agent"
-      ],
-      "intents": [
-        "understand-edge-platform"
-      ],
-      "implementation_status": "partial",
-      "production_readiness": "not-applicable",
-      "context_sensitivity": "internal",
-      "updated": "2026-07-12",
-      "priority": "core",
-      "media_type": "application/yaml",
-      "capability_refs": [],
-      "preconditions": [],
-      "recovery_route": null,
-      "human_escalation": null,
-      "verification": []
-    },
-    {
       "id": "edge-ai-invariants",
       "path": "ai/invariants.md",
       "canonical_url": "https://github.com/EvanL1/AetherEdge/blob/main/ai/invariants.md",
@@ -224,34 +196,6 @@
       "production_readiness": "not-applicable",
       "context_sensitivity": "internal",
       "updated": "2026-07-16",
-      "priority": "core",
-      "media_type": "text/markdown",
-      "capability_refs": [],
-      "preconditions": [],
-      "recovery_route": null,
-      "human_escalation": null,
-      "verification": []
-    },
-    {
-      "id": "edge-ai-runbooks-add-data-processor",
-      "path": "ai/runbooks/add-data-processor.md",
-      "canonical_url": "https://github.com/EvanL1/AetherEdge/blob/main/ai/runbooks/add-data-processor.md",
-      "title": "Add a data processor",
-      "description": "Read the authoritative AetherEdge resource at ai/runbooks/add-data-processor.md.",
-      "locale": "en",
-      "translation_of": null,
-      "document_role": "agent-task",
-      "agent_profiles": [
-        "coding-agent",
-        "operator-agent"
-      ],
-      "intents": [
-        "complete-edge-task"
-      ],
-      "implementation_status": "partial",
-      "production_readiness": "experimental",
-      "context_sensitivity": "internal",
-      "updated": "2026-07-27",
       "priority": "core",
       "media_type": "text/markdown",
       "capability_refs": [],
@@ -542,34 +486,6 @@
       "verification": []
     },
     {
-      "id": "edge-contracts-data-processing-readme",
-      "path": "contracts/data-processing/README.md",
-      "canonical_url": "https://github.com/EvanL1/AetherEdge/blob/main/contracts/data-processing/README.md",
-      "title": "Aether Data Processing JSON Schemas",
-      "description": "This directory publishes the Draft 2020-12 transport schemas for version 1 of the Aether Data Processing contract family.",
-      "locale": "en",
-      "translation_of": null,
-      "document_role": "reference",
-      "agent_profiles": [
-        "coding-agent",
-        "operator-agent"
-      ],
-      "intents": [
-        "inspect-edge-implementation"
-      ],
-      "implementation_status": "partial",
-      "production_readiness": "not-applicable",
-      "context_sensitivity": "public",
-      "updated": "2026-07-12",
-      "priority": "optional",
-      "media_type": "text/markdown",
-      "capability_refs": [],
-      "preconditions": [],
-      "recovery_route": null,
-      "human_escalation": null,
-      "verification": []
-    },
-    {
       "id": "edge-crates-agents",
       "path": "crates/AGENTS.md",
       "canonical_url": "https://github.com/EvanL1/AetherEdge/blob/main/crates/AGENTS.md",
@@ -673,34 +589,6 @@
       "production_readiness": "not-applicable",
       "context_sensitivity": "public",
       "updated": "2026-07-28",
-      "priority": "optional",
-      "media_type": "text/markdown",
-      "capability_refs": [],
-      "preconditions": [],
-      "recovery_route": null,
-      "human_escalation": null,
-      "verification": []
-    },
-    {
-      "id": "edge-crates-aether-data-processing-readme",
-      "path": "crates/aether-data-processing/README.md",
-      "canonical_url": "https://docs.aetheriot.dev/crates/aether-data-processing.md",
-      "title": "aether-data-processing crate",
-      "description": "Strict, transport-neutral JSON codec for the Aether Data Processing v1 processor boundary. It converts validated domain values to and from the versioned RFC 3339/JSON DTOs, encodes Aether-accepted DerivedData, and computes RFC 8785 input…",
-      "locale": "en",
-      "translation_of": null,
-      "document_role": "reference",
-      "agent_profiles": [
-        "coding-agent",
-        "operator-agent"
-      ],
-      "intents": [
-        "inspect-edge-implementation"
-      ],
-      "implementation_status": "partial",
-      "production_readiness": "not-applicable",
-      "context_sensitivity": "public",
-      "updated": "2026-07-27",
       "priority": "optional",
       "media_type": "text/markdown",
       "capability_refs": [],
@@ -1246,7 +1134,7 @@
       "path": "docs/adr/0009-aether-data-processing.md",
       "canonical_url": "https://github.com/EvanL1/AetherEdge/blob/main/docs/adr/0009-aether-data-processing.md",
       "title": "ADR-0009: Introduce optional, industry-neutral data processing",
-      "description": "Accepted on 2026-07-11. Implementation notes reconciled on 2026-07-11.",
+      "description": "Superseded by ADR-0028 on 2026-07-28.",
       "locale": "en",
       "translation_of": null,
       "document_role": "decision",
@@ -1774,6 +1662,34 @@
       "verification": []
     },
     {
+      "id": "edge-docs-adr-0028-move-derived-data-processing-downstream",
+      "path": "docs/adr/0028-move-derived-data-processing-downstream.md",
+      "canonical_url": "https://github.com/EvanL1/AetherEdge/blob/main/docs/adr/0028-move-derived-data-processing-downstream.md",
+      "title": "ADR-0028: Move derived-data processing downstream",
+      "description": "Accepted and implemented on 2026-07-28. Supersedes ADR-0009.",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "decision",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "inspect-edge-implementation"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "not-applicable",
+      "context_sensitivity": "internal",
+      "updated": "2026-07-18",
+      "priority": "optional",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
       "id": "edge-docs-aethercloud-index",
       "path": "docs/aethercloud/index.md",
       "canonical_url": "https://docs.aetheriot.dev/aethercloud.md",
@@ -2054,62 +1970,6 @@
       "verification": []
     },
     {
-      "id": "edge-docs-concepts-data-processing-flow",
-      "path": "docs/concepts/data-processing-flow.md",
-      "canonical_url": "https://docs.aetheriot.dev/concepts/data-processing-flow.md",
-      "title": "Data Processing Flow",
-      "description": "How Aether assembles governed IoT data, invokes a request-driven processor, validates derived data, and keeps control separate",
-      "locale": "en",
-      "translation_of": null,
-      "document_role": "reference",
-      "agent_profiles": [
-        "coding-agent",
-        "operator-agent"
-      ],
-      "intents": [
-        "understand-edge-platform"
-      ],
-      "implementation_status": "partial",
-      "production_readiness": "not-applicable",
-      "context_sensitivity": "public",
-      "updated": "2026-07-27",
-      "priority": "core",
-      "media_type": "text/markdown",
-      "capability_refs": [],
-      "preconditions": [],
-      "recovery_route": null,
-      "human_escalation": null,
-      "verification": []
-    },
-    {
-      "id": "edge-docs-concepts-data-processing",
-      "path": "docs/concepts/data-processing.md",
-      "canonical_url": "https://docs.aetheriot.dev/concepts/data-processing.md",
-      "title": "Aether Data Processing",
-      "description": "Industry-neutral, request-driven processing of governed IoT data into validated derived data",
-      "locale": "en",
-      "translation_of": null,
-      "document_role": "reference",
-      "agent_profiles": [
-        "coding-agent",
-        "operator-agent"
-      ],
-      "intents": [
-        "understand-edge-platform"
-      ],
-      "implementation_status": "partial",
-      "production_readiness": "not-applicable",
-      "context_sensitivity": "public",
-      "updated": "2026-07-27",
-      "priority": "core",
-      "media_type": "text/markdown",
-      "capability_refs": [],
-      "preconditions": [],
-      "recovery_route": null,
-      "human_escalation": null,
-      "verification": []
-    },
-    {
       "id": "edge-docs-concepts-rule-engine",
       "path": "docs/concepts/rule-engine.md",
       "canonical_url": "https://docs.aetheriot.dev/concepts/rule-engine.md",
@@ -2226,7 +2086,7 @@
       "path": "docs/domain/power-forecasting.md",
       "canonical_url": "https://github.com/EvanL1/AetherEdge/blob/main/docs/domain/power-forecasting.md",
       "title": "Power Forecasting (Moved)",
-      "description": "Compatibility pointer to the Energy Pack knowledge page",
+      "description": "Compatibility pointer to the downstream AetherEMS knowledge page",
       "locale": "en",
       "translation_of": null,
       "document_role": "reference",
@@ -2414,44 +2274,6 @@
       "verification": [
         "verify-channel-status",
         "verify-read-only-observations"
-      ]
-    },
-    {
-      "id": "edge-docs-guides-data-processors",
-      "path": "docs/guides/data-processors.md",
-      "canonical_url": "https://docs.aetheriot.dev/guides/data-processors.md",
-      "title": "Connect Data Processors",
-      "description": "Declare data-processing tasks in domain packs and connect request-driven local or remote processors",
-      "locale": "en",
-      "translation_of": null,
-      "document_role": "agent-task",
-      "agent_profiles": [
-        "coding-agent",
-        "operator-agent"
-      ],
-      "intents": [
-        "complete-edge-task"
-      ],
-      "implementation_status": "partial",
-      "production_readiness": "experimental",
-      "context_sensitivity": "public",
-      "updated": "2026-07-27",
-      "priority": "core",
-      "media_type": "text/markdown",
-      "capability_refs": [
-        "data_processing.tasks.list",
-        "data_processing.processors.health",
-        "data_processing.process"
-      ],
-      "preconditions": [
-        "validated-task-and-binding",
-        "bounded-processor-route"
-      ],
-      "recovery_route": null,
-      "human_escalation": "required-for-unknown-non-idempotent-processor-outcome",
-      "verification": [
-        "verify-derived-result-contract",
-        "verify-audit-record"
       ]
     },
     {
@@ -3045,34 +2867,6 @@
       "verification": []
     },
     {
-      "id": "edge-docs-reference-data-processing-contracts",
-      "path": "docs/reference/data-processing-contracts.md",
-      "canonical_url": "https://docs.aetheriot.dev/reference/data-processing-contracts.md",
-      "title": "Data Processing Contracts",
-      "description": "Version 1 contracts for processing frames, requests, derived results, validation, and failure semantics",
-      "locale": "en",
-      "translation_of": null,
-      "document_role": "reference",
-      "agent_profiles": [
-        "coding-agent",
-        "operator-agent"
-      ],
-      "intents": [
-        "understand-edge-platform"
-      ],
-      "implementation_status": "partial",
-      "production_readiness": "not-applicable",
-      "context_sensitivity": "public",
-      "updated": "2026-07-27",
-      "priority": "core",
-      "media_type": "text/markdown",
-      "capability_refs": [],
-      "preconditions": [],
-      "recovery_route": null,
-      "human_escalation": null,
-      "verification": []
-    },
-    {
       "id": "edge-docs-reference-http-api",
       "path": "docs/reference/http-api.md",
       "canonical_url": "https://docs.aetheriot.dev/reference/http-api.md",
@@ -3125,9 +2919,6 @@
       "capability_refs": [
         "device.read_point",
         "device.write_point",
-        "data_processing.tasks.list",
-        "data_processing.processors.health",
-        "data_processing.process",
         "automation.rule.execute",
         "automation.rule.manage",
         "automation.routing.manage",

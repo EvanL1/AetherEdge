@@ -103,49 +103,6 @@ but the notification lost, or no writer available) surfaces as an error to the
 caller; see [Data Model](data-model.md) for how those failures map to HTTP
 statuses.
 
-## Data-processing path (source data → derived data)
-
-Aether Data Processing introduces a third, non-authoritative path for
-request-driven computation. It is neither an uplink mirror nor a downlink
-command path:
-
-```text
-caller
-  │ typed data-processing task
-  ▼
-DataProcessingApplication
-  ├─ HistoryQuery ───────────── historical observations
-  ├─ LiveState ──────────────── current read-only tail
-  └─ task/request context ───── future or external covariates
-             │
-             ▼ complete, bounded ProcessingFrame
-         DataProcessor
-             │
-             ▼ schema-validated, expiring ProcessingResult
-       authenticated HTTP DerivedData response
-```
-
-The application resolves semantic bindings, aligns and aggregates timestamps,
-requires commissioned unit/sign metadata to match exactly, checks missing and
-stale inputs, and sends the values in the processor request. Version 1 performs
-no runtime unit/sign conversion.
-The processor never receives credentials for SHM, SQLite, or internal service
-APIs and never resolves a site identifier by reaching back into Aether.
-
-The result records its input watermark, input digest, processor
-provenance, quality, status, and expiry. It is derived evidence rather than a
-measurement: it is not written to the IO-owned T/S segment. If automation uses
-the result, a separate planning/control use case validates freshness and safety
-before the existing audited command path can act. Processor loss therefore
-removes an optional advisory input without interrupting acquisition or local
-safety rules. See [Data Processing Flow](data-processing-flow.md) for the
-complete contract.
-
-An event-time `as_of` is not by itself a historical knowledge cut. The current
-historian has no ingestion/source epoch and artifact provenance has no
-training/availability cut, so point-in-time evaluation uses frozen history and
-artifact inputs rather than querying today's mutable sources for an old frame.
-
 ## Latency budget
 
 The microsecond figures are historical measurements on production hardware
@@ -184,7 +141,5 @@ startup dependencies.
 - [Architecture](architecture.md) — the services these paths connect
 - [Shared Memory](shared-memory.md) — slot layout, seqlock, write ownership
 - [Data Model](data-model.md) — points, instances, and NaN/absence semantics
-- [Data Processing](data-processing.md) — the optional industry-neutral processing boundary
-- [Data Processing Flow](data-processing-flow.md) — processor-request data flow and failure semantics
 - [CloudLink MQTT v1](../reference/cloudlink-mqtt-v1.md) — experimental application-ACK/replay edge path
 - [Rule Engine](rule-engine.md) — what happens after a PointWatch event arrives

@@ -31,18 +31,13 @@ pub const MAX_PACK_ASSET_BYTES: usize = 1024 * 1024;
 /// Maximum size of one asset `index.yaml`.
 pub const MAX_PACK_ASSET_INDEX_BYTES: usize = 64 * 1024;
 
-const INDEXED_ASSET_CATEGORIES: [(&str, &str, &str); 4] = [
+const INDEXED_ASSET_CATEGORIES: [(&str, &str, &str); 3] = [
     ("mappings", "mappings", "aether.pack.mapping-set.v1"),
     ("rules", "rules", "aether.pack.rule.v1"),
     (
         "evaluations",
         "evaluations",
         "aether.pack.evaluation-suite.v1",
-    ),
-    (
-        "data_processing",
-        "data_processing_tasks",
-        "aether.data-processing-task.v1",
     ),
 ];
 
@@ -851,8 +846,6 @@ struct AssetDirectoriesDto {
     #[serde(default)]
     config: Option<String>,
     #[serde(default)]
-    data_processing: Option<String>,
-    #[serde(default)]
     models: Option<String>,
     #[serde(default)]
     knowledge: Option<String>,
@@ -868,7 +861,6 @@ impl AssetDirectoriesDto {
     fn into_entries(self) -> impl Iterator<Item = (&'static str, String)> {
         [
             ("config", self.config),
-            ("data_processing", self.data_processing),
             ("models", self.models),
             ("knowledge", self.knowledge),
             ("rules", self.rules),
@@ -888,8 +880,6 @@ struct CapabilitiesDto {
     #[serde(default)]
     rule_topics: Vec<String>,
     #[serde(default)]
-    data_processing_tasks: Vec<String>,
-    #[serde(default)]
     mappings: Vec<String>,
     #[serde(default)]
     rules: Vec<String>,
@@ -902,10 +892,6 @@ impl CapabilitiesDto {
         BTreeMap::from([
             ("models".to_string(), self.models),
             ("rule_topics".to_string(), self.rule_topics),
-            (
-                "data_processing_tasks".to_string(),
-                self.data_processing_tasks,
-            ),
             ("mappings".to_string(), self.mappings),
             ("rules".to_string(), self.rules),
             ("evaluations".to_string(), self.evaluations),

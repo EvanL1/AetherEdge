@@ -10,7 +10,9 @@ const RETIRED_PACKAGES: &[&str] = &[
     "aether-calc",
     "aether-config",
     "aether-core",
+    "aether-data-processing",
     "aether-home-assistant-bridge",
+    "aether-http-data-processor",
     "aether-http-history-query",
     "aether-infra",
     "aether-integration-contract",
@@ -21,6 +23,7 @@ const RETIRED_PACKAGES: &[&str] = &[
     "aether-rtdb",
     "aether-rtdb-shm",
     "aether-sim",
+    "aether-sqlite-history-query",
     "aether-sqlite-topology",
     "aether-sunspec",
     "errors",
@@ -29,6 +32,9 @@ const RETIRED_ROOT_PATHS: &[&str] = &[
     "libs/aether-calc",
     "libs/aether-config",
     "libs/aether-core",
+    "crates/aether-data-processing",
+    "contracts/data-processing",
+    "contracts/pack/data-processing-task.v1.schema.json",
     "libs/aether-infra",
     "libs/aether-model",
     "libs/aether-rtdb",
@@ -37,7 +43,25 @@ const RETIRED_ROOT_PATHS: &[&str] = &[
     "libs/aether-sim",
     "libs/aether-sqlite-topology",
     "libs/errors",
+    "services/api/adapters/http-data-processor",
+    "services/api/adapters/sqlite-history-query",
     "crates/aether-integration-contract",
+    "crates/aether-domain/src/data_processing.rs",
+    "crates/aether-ports/src/data_processing.rs",
+    "crates/aether-application/src/data_processing.rs",
+    "services/api/src/data_processing_runtime.rs",
+    "services/api/src/routes_data_processing.rs",
+    "libs/aether-store-local/src/data_processing.rs",
+    "libs/aether-store-local/src/snapshot_covariates.rs",
+    "packs/energy/data-processing",
+    "packs/energy/knowledge/power-forecasting.md",
+    "services/api/tests/fixtures/data-processing-runtime.yaml",
+    "ai/evals/data-processing.yaml",
+    "ai/runbooks/add-data-processor.md",
+    "docs/concepts/data-processing.md",
+    "docs/concepts/data-processing-flow.md",
+    "docs/guides/data-processors.md",
+    "docs/reference/data-processing-contracts.md",
     "crates/aether-application/src/integration_synchronizer.rs",
     "crates/aether-domain/src/integration.rs",
     "crates/aether-ports/src/integration.rs",
@@ -289,15 +313,11 @@ fn canonical_layers_only_depend_inward() {
     let contracts: &[(&str, &[&str])] = &[
         ("aether-domain", &[]),
         ("aether-ports", &["aether-domain"]),
-        ("aether-data-processing", &["aether-domain"]),
         (
             "aether-acquisition-port",
             &["aether-domain", "aether-ports"],
         ),
-        (
-            "aether-application",
-            &["aether-data-processing", "aether-domain", "aether-ports"],
-        ),
+        ("aether-application", &["aether-domain", "aether-ports"]),
     ];
     let mut violations = Vec::new();
 
@@ -582,19 +602,6 @@ fn core_and_gateway_do_not_select_forbidden_sdk_or_adapter_edges() {
                 "aether-store-local no longer adapts commissioned topology into {required}"
             ));
         }
-    }
-
-    let codec = workspace.package("aether-data-processing");
-    if has_production_workspace_dependency(workspace, codec, "aether-http-data-processor") {
-        violations.push(
-            "aether-data-processing depends outward on aether-http-data-processor".to_string(),
-        );
-    }
-    let http_adapter = workspace.package("aether-http-data-processor");
-    if !has_production_workspace_dependency(workspace, http_adapter, "aether-data-processing") {
-        violations.push(
-            "aether-http-data-processor no longer composes aether-data-processing".to_string(),
-        );
     }
 
     assert_no_violations("SDK and adapter dependency boundaries changed", violations);

@@ -9,7 +9,6 @@ mod channel_management;
 mod channel_reconciliation;
 mod context;
 mod control;
-mod data_processing;
 mod edge;
 mod error;
 mod measurement_routing;
@@ -31,20 +30,14 @@ pub use alert_resolution::AlertResolutionApplication;
 pub use capability::{
     AuditPolicy, CapabilityDescriptor, ConfirmationPolicy, EXECUTE_RULE_CAPABILITY,
     MANAGE_ALARM_RULE_CAPABILITY, MANAGE_CHANNEL_CAPABILITY, MANAGE_INSTANCE_CAPABILITY,
-    MANAGE_ROUTING_CAPABILITY, MANAGE_RULE_CAPABILITY, OperationKind, PROCESS_DATA_CAPABILITY,
-    PROCESSOR_HEALTH_CAPABILITY, READ_POINT_CAPABILITY, RECONCILE_CHANNELS_CAPABILITY,
-    RESOLVE_ALERT_CAPABILITY, RiskLevel, TASKS_LIST_CAPABILITY, WRITE_POINT_CAPABILITY,
+    MANAGE_ROUTING_CAPABILITY, MANAGE_RULE_CAPABILITY, OperationKind, READ_POINT_CAPABILITY,
+    RECONCILE_CHANNELS_CAPABILITY, RESOLVE_ALERT_CAPABILITY, RiskLevel, WRITE_POINT_CAPABILITY,
     capability_catalog,
 };
 pub use channel_management::ChannelManagementApplication;
 pub use channel_reconciliation::ChannelReconciliationApplication;
 pub use context::{Actor, RequestContext};
 pub use control::ControlApplication;
-pub use data_processing::{
-    DATA_PROCESSING_AUDIT_FINALIZATION_TIMEOUT_MS, DataProcessingApplication,
-    DataProcessingBinding, DataProcessingRoute, DataProcessingTaskSummary, PointFeatureBinding,
-    ProcessorHealthSummary,
-};
 pub use edge::EdgeApplication;
 pub use error::ApplicationError;
 pub use measurement_routing::MeasurementRoutingApplication;

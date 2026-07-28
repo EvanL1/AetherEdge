@@ -20,7 +20,7 @@ model_count=$(find "$PACK_MODELS" -maxdepth 1 -type f -name '*.json' | wc -l | t
 [[ "$model_count" == 13 ]] || fail "energy pack must own exactly 13 model JSON files"
 
 knowledge_count=$(find "$PACK_KNOWLEDGE" -maxdepth 1 -type f -name '*.md' | wc -l | tr -d ' ')
-[[ "$knowledge_count" == 5 ]] || fail "energy pack must own exactly 5 knowledge pages"
+[[ "$knowledge_count" == 4 ]] || fail "energy pack must own exactly 4 knowledge pages"
 
 [[ ! -e services/api/assets/calculated_points.sql ]] \
     || fail "core API still owns the Energy homepage calculated-point preset"
@@ -86,13 +86,6 @@ for category in "${FORMAL_ASSET_CATEGORIES[@]}"; do
         || fail "energy ${category} asset index is missing"
 done
 
-if ! rg -q '^  data_processing:[[:space:]]*data-processing/tasks[[:space:]]*$' \
-    packs/energy/pack.yaml; then
-    fail "Pack v1 manifest does not declare the Data Processing task directory"
-fi
-[[ -f packs/energy/data-processing/tasks/index.yaml ]] \
-    || fail "Energy Data Processing task index is missing"
-
 if [[ -e packs/energy/examples/config/automation/rules/battery_soc_management.json ]]; then
     fail "formal energy rule remains embedded under examples/config"
 fi
@@ -117,8 +110,7 @@ for schema in \
     contracts/pack/pack-asset-index.v1.schema.json \
     contracts/pack/mapping-set.v1.schema.json \
     contracts/pack/rule.v1.schema.json \
-    contracts/pack/evaluation-suite.v1.schema.json \
-    contracts/pack/data-processing-task.v1.schema.json; do
+    contracts/pack/evaluation-suite.v1.schema.json; do
     [[ -s "$schema" ]] || fail "Pack asset schema is missing: $schema"
 done
 
