@@ -11,7 +11,6 @@ mod control;
 mod data_processing;
 mod error;
 mod history;
-mod integration;
 mod live_state;
 mod mirror;
 mod outbox;
@@ -56,10 +55,6 @@ pub use data_processing::{
 };
 pub use error::{PortError, PortErrorKind, PortResult};
 pub use history::HistorySink;
-pub use integration::{
-    DelegatedDeviceProvider, IntegrationProjectionChange, IntegrationProjectionQuery,
-    IntegrationProjectionReceipt, IntegrationProjectionSink, IntegrationTopologyGenerationStore,
-};
 pub use live_state::{LiveState, LiveStateWriter};
 pub use mirror::StateMirror;
 pub use outbox::{DurableOutbox, OutboxEntry, OutboxId, OutboxMessage};

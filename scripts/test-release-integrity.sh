@@ -304,7 +304,6 @@ registry_manifests=(
     crates/aether-data-processing/Cargo.toml
     crates/aether-dataplane/Cargo.toml
     crates/aether-domain/Cargo.toml
-    crates/aether-integration-contract/Cargo.toml
     crates/aether-pack/Cargo.toml
     crates/aether-ports/Cargo.toml
     crates/aether-sdk/Cargo.toml

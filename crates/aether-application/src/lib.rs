@@ -12,7 +12,6 @@ mod control;
 mod data_processing;
 mod edge;
 mod error;
-mod integration_synchronizer;
 mod measurement_routing;
 mod outbox_forwarder;
 mod policy;
@@ -48,9 +47,6 @@ pub use data_processing::{
 };
 pub use edge::EdgeApplication;
 pub use error::ApplicationError;
-pub use integration_synchronizer::{
-    IntegrationResyncReason, IntegrationSynchronizationError, IntegrationSynchronizer,
-};
 pub use measurement_routing::MeasurementRoutingApplication;
 pub use outbox_forwarder::{DrainReport, OutboxForwarder};
 pub use policy::SafetyPolicy;

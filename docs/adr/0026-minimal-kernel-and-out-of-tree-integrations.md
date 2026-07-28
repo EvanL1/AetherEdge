@@ -54,7 +54,10 @@ and testkit contracts that downstream Rust compositions can consume.
 5. Home Assistant is a downstream integration rather than kernel source. Its
    implementation is extracted from this repository. Industry-neutral domain
    and application contracts may remain only when they have a kernel consumer
-   independent of Home Assistant.
+   independent of Home Assistant. The uncomposed generic Integration domain
+   model, provider/projection ports, synchronizer, generation store, candidate
+   wire crate, and CloudLink Integration routes are therefore removed together;
+   a future real consumer must introduce its narrow contract downstream first.
 6. SunSpec is not shipped in AetherEdge. Its model catalog, discovery, and
    expansion code belong to a downstream, statically composed Rust IO plugin.
    Standard IO builds reject `sunspec` as unsupported. AetherEdge will add no
@@ -98,7 +101,10 @@ processes.
   integrations remain possible through stable Rust contracts.
 - SunSpec and Home Assistant are no longer capabilities of the standard
   AetherEdge build. Operators needing them use a downstream composition.
-- CloudLink has one process owner instead of parallel IO and Uplink MQTT paths.
+- CloudLink has one process owner instead of parallel IO and Uplink MQTT paths,
+  and carries only its native session, manifest, telemetry, data-loss, spool,
+  acknowledgement, and replay protocol rather than a speculative generic
+  Integration extension.
 - The Rust workspace has no Redis client dependency; an operator-selected
   Redis server alone does not become a kernel capability or live-state plane.
 - Removing unpublished, uncomposed adapters may require recreating them in a

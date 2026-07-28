@@ -75,17 +75,6 @@ components:
     responsibility: Experimental transport-neutral CloudLink v1 strict codec, session binding, canonical business digests, and truthful Runtime Manifest/PointSample mapping
     verify:
       - cargo test -p aether-cloudlink
-  integration_candidate_binding:
-    path: crates/aether-integration-contract
-    responsibility: Strict AetherContracts 0.1.0-alpha.4 candidate Integration v1alpha1 DTO, fixture, context, precision, and caller-supplied provider-neutral projection boundary
-    verify:
-      - cargo test -p aether-integration-contract
-  cloudlink_integration_extension:
-    path: crates/aether-cloudlink/src/integration.rs
-    responsibility: Experimental disabled-by-default Cloud-first Integration topology/observation binding with separate durable streams, atomic topology, observation-boundary partitioning, a 256 KiB complete-payload limit, and no control capability
-    verify:
-      - cargo test -p aether-cloudlink --test integration_extension
-      - cargo test -p aether-cloudlink --test integration_extension_contract
   cloudlink_candidate_contracts:
     path: contracts/cloudlink/v1
     responsibility: Product integration copies and migration proposals for the digest-pinned public AetherContracts CloudLink subset
@@ -117,7 +106,7 @@ components:
       - cargo test -p aether-testkit
   local_store:
     path: libs/aether-store-local
-    responsibility: Zero-external-service state, history, audit, restart-stable integration generations, legacy outbox, and application-ACK-driven CloudLink spools
+    responsibility: Zero-external-service state, history, audit, legacy outbox, and application-ACK-driven CloudLink spools
     verify:
       - cargo test -p aether-store-local
   sqlite_topology_adapter:

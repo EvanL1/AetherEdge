@@ -1,7 +1,6 @@
 //! Strict JSON codec, canonical business digests, and delivery envelopes.
 
 use aether_domain::{PointSample, TimestampMs};
-use aether_integration_contract::IntegrationContractCodec;
 use aether_ports::{
     CloudLinkDurableAck, CloudLinkEnqueue, CloudLinkMessageKind, CloudLinkRecord,
     CloudLinkSessionBinding,
@@ -150,7 +149,6 @@ impl CloudLinkCodec {
         validate_business_payload(message_kind, &payload)?;
         let batch_id = batch_id.into();
         identifier(&batch_id, "batch_id", 128)?;
-        validate_integration_batch_binding(message_kind, &batch_id, &payload)?;
         if expires_at.is_some_and(|expires| expires.get() < created_at.get()) {
             return Err(CloudLinkCodecError::InvalidField {
                 field: "expires_at_ms",
@@ -196,7 +194,6 @@ impl CloudLinkCodec {
         }
         let payload: Value = serde_json::from_slice(record.payload())?;
         validate_business_payload(record.message_kind(), &payload)?;
-        validate_integration_batch_binding(record.message_kind(), record.batch_id(), &payload)?;
         if business_digest(record.message_kind(), &payload)? != record.digest() {
             return Err(CloudLinkCodecError::DigestMismatch);
         }
@@ -511,7 +508,6 @@ impl DeliveryEnvelope {
         }
         let kind = message_kind(&self.message_kind)?;
         validate_business_payload(kind, &self.payload)?;
-        validate_integration_batch_binding(kind, &self.delivery.batch_id, &self.payload)?;
         if business_digest(kind, &self.payload)? != self.delivery.digest {
             return Err(CloudLinkCodecError::DigestMismatch);
         }
@@ -854,46 +850,9 @@ fn validate_business_payload(
         CloudLinkMessageKind::TelemetryBatch => {
             serde_json::from_value::<TelemetryBatch>(payload.clone())?.validate()
         },
-        CloudLinkMessageKind::IntegrationTopologySnapshot => {
-            let bytes = serde_json_canonicalizer::to_vec(payload)
-                .map_err(|source| CloudLinkCodecError::CanonicalJson { source })?;
-            IntegrationContractCodec::decode_topology(&bytes)?;
-            Ok(())
-        },
-        CloudLinkMessageKind::IntegrationObservationBatch => {
-            let bytes = serde_json_canonicalizer::to_vec(payload)
-                .map_err(|source| CloudLinkCodecError::CanonicalJson { source })?;
-            IntegrationContractCodec::decode_observation_batch_wire(&bytes)?;
-            Ok(())
-        },
         CloudLinkMessageKind::DataLoss => {
             serde_json::from_value::<DataLossPayload>(payload.clone())?.validate()
         },
-    }
-}
-
-fn validate_integration_batch_binding(
-    kind: CloudLinkMessageKind,
-    delivery_batch_id: &str,
-    payload: &Value,
-) -> Result<(), CloudLinkCodecError> {
-    let expected = match kind {
-        CloudLinkMessageKind::IntegrationTopologySnapshot => payload
-            .get("snapshot_generation")
-            .and_then(Value::as_str)
-            .map(|generation| format!("topology-{generation}")),
-        CloudLinkMessageKind::IntegrationObservationBatch => payload
-            .get("batch_id")
-            .and_then(Value::as_str)
-            .map(str::to_string),
-        CloudLinkMessageKind::RuntimeManifestReport
-        | CloudLinkMessageKind::TelemetryBatch
-        | CloudLinkMessageKind::DataLoss => return Ok(()),
-    };
-    if expected.as_deref() == Some(delivery_batch_id) {
-        Ok(())
-    } else {
-        Err(CloudLinkCodecError::IntegrationBatchIdMismatch)
     }
 }
 
@@ -920,8 +879,6 @@ fn message_kind(value: &str) -> Result<CloudLinkMessageKind, CloudLinkCodecError
     match value {
         "runtime-manifest-report" => Ok(CloudLinkMessageKind::RuntimeManifestReport),
         "telemetry-batch" => Ok(CloudLinkMessageKind::TelemetryBatch),
-        "integration-topology-snapshot" => Ok(CloudLinkMessageKind::IntegrationTopologySnapshot),
-        "integration-observation-batch" => Ok(CloudLinkMessageKind::IntegrationObservationBatch),
         "data-loss" => Ok(CloudLinkMessageKind::DataLoss),
         other => Err(CloudLinkCodecError::UnsupportedMessage {
             found: other.to_string(),

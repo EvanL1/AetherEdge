@@ -15,7 +15,6 @@ Local adapters for a gateway that must run without external services.
 | `FileOutbox` | crash-recoverable file | production offline store-and-forward |
 | `MemoryCloudLinkSpool` | process-local | deterministic application-ACK/replay conformance |
 | `FileCloudLinkSpool` | crash-recoverable file | experimental CloudLink positions, replay, and loss evidence |
-| `FileIntegrationTopologyGenerationStore` | atomically replaced private file | restart-stable per-integration topology generations |
 
 `MemoryHistoryQuery` and `MemoryCovariateSource` are keyed by the complete
 versioned `BindingIdentity`. They project only requested logical features in
@@ -150,15 +149,6 @@ compaction bounds obsolete acknowledged records in the journal.
 
 Disk durability does not define network delivery. The selected
 `UplinkPublisher` decides when an entry may be acknowledged.
-
-## Integration topology generations
-
-`FileIntegrationTopologyGenerationStore` reserves generation one for the first
-topology digest, returns the same generation for an identical digest, and
-durably increments before returning a changed digest. Gateway and integration
-form the complete counter scope. The adapter uses a process-exclusive lock,
-private replacement files, file synchronization, atomic rename, and parent
-directory synchronization. Corrupt state and `u64` exhaustion fail closed.
 
 ## CloudLink spools
 

@@ -6,7 +6,6 @@ exclude = ["firmware"]
 default-members = [
     "crates/aether-domain",
     "crates/aether-cloudlink",
-    "crates/aether-integration-contract",
     "crates/aether-data-processing",
     "crates/aether-dataplane",
     "crates/aether-ports",
@@ -23,7 +22,6 @@ members = [
     "workspace-hack",
     "crates/aether-domain",
     "crates/aether-cloudlink",
-    "crates/aether-integration-contract",
     "crates/aether-data-processing",
     "crates/aether-dataplane",
     "crates/aether-ports",

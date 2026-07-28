@@ -766,34 +766,6 @@
       "verification": []
     },
     {
-      "id": "edge-crates-aether-integration-contract-readme",
-      "path": "crates/aether-integration-contract/README.md",
-      "canonical_url": "https://docs.aetheriot.dev/crates/aether-integration-contract.md",
-      "title": "aether-integration-contract",
-      "description": "Strict product-side Rust binding for the experimental AetherContracts aether.integration v1alpha1 contract in the 0.1.0-alpha.4 candidate.",
-      "locale": "en",
-      "translation_of": null,
-      "document_role": "reference",
-      "agent_profiles": [
-        "coding-agent",
-        "operator-agent"
-      ],
-      "intents": [
-        "inspect-edge-implementation"
-      ],
-      "implementation_status": "partial",
-      "production_readiness": "not-applicable",
-      "context_sensitivity": "public",
-      "updated": "2026-07-27",
-      "priority": "optional",
-      "media_type": "text/markdown",
-      "capability_refs": [],
-      "preconditions": [],
-      "recovery_route": null,
-      "human_escalation": null,
-      "verification": []
-    },
-    {
       "id": "edge-crates-aether-pack-readme",
       "path": "crates/aether-pack/README.md",
       "canonical_url": "https://docs.aetheriot.dev/crates/aether-pack.md",

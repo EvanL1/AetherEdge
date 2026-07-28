@@ -13,7 +13,6 @@ categories = ["embedded", "network-programming"]
 
 [dependencies]
 aether-domain = { version = "0.0.1", path = "../aether-domain" }
-aether-integration-contract = { version = "0.0.1", path = "../aether-integration-contract" }
 aether-ports = { version = "0.0.1", path = "../aether-ports" }
 async-trait = { workspace = true }
 base64 = "0.22"

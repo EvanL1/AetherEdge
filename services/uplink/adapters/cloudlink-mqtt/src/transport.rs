@@ -62,8 +62,6 @@ impl CloudLinkTransport for MqttCloudLinkTransport {
                 | CloudLinkTransportRoute::HeartbeatUp
                 | CloudLinkTransportRoute::ManifestUp
                 | CloudLinkTransportRoute::TelemetryUp
-                | CloudLinkTransportRoute::IntegrationTopologyUp
-                | CloudLinkTransportRoute::IntegrationObservationsUp
                 | CloudLinkTransportRoute::DataLossUp
         );
         if !allowed {
@@ -76,8 +74,6 @@ impl CloudLinkTransport for MqttCloudLinkTransport {
             message.route(),
             CloudLinkTransportRoute::ManifestUp
                 | CloudLinkTransportRoute::TelemetryUp
-                | CloudLinkTransportRoute::IntegrationTopologyUp
-                | CloudLinkTransportRoute::IntegrationObservationsUp
                 | CloudLinkTransportRoute::DataLossUp
         );
         if durable_route != message.delivery().is_some() {

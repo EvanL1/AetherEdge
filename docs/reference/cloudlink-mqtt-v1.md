@@ -42,6 +42,8 @@ Planned outside this slice:
 - production enrollment/CA/KMS lifecycle;
 - MQTT 5 enhancements and private-broker bridge/site connector;
 - jointly published ACL templates and production enablement;
+- downstream, contract-led delegated-integration protocols when a real
+  composition requires them;
 - alarms and operational telemetry on dedicated CloudLink streams;
 - an explicit expiry-to-data-loss lifecycle for records that expire before a
   cloud receipt; expired content already fails closed and is never offered.
@@ -53,31 +55,6 @@ Deprecated but retained:
 - legacy MQTT device-control topics.
 
 CloudLink v1 exposes no physical control or arbitrary RPC.
-
-## Experimental Integration protocol contract
-
-`aether.cloudlink.integration.v1alpha1` describes Integration topology
-snapshots and observation batches over CloudLink. The standard kernel has no
-runtime source composition for this contract and does not advertise it in the
-Runtime Manifest. A downstream composition must supply the source and pass a
-separate compatibility and safety review before activation.
-
-The extension has two independent durable streams and MQTT routes:
-
-- topology snapshots use `up/integration/topology`;
-- observation batches use `up/integration/observations`.
-
-A topology snapshot is one atomic delivery record and is never fragmented. If
-its complete encoded MQTT payload exceeds 256 KiB, publication fails closed.
-An observation batch is retained unchanged when it fits; otherwise it is split
-only at observation boundaries, so an individual observation is never divided.
-Every resulting batch is independently valid, and every complete MQTT payload,
-including the CloudLink delivery envelope, must fit within 256 KiB.
-
-Both streams reuse the existing application-level durable ACK, replay, stable
-delivery identity, and digest rules. MQTT PUBACK remains transport evidence and
-cannot remove a record. The extension carries read-only Integration projection
-facts and provides no command, arbitrary RPC, or physical-control capability.
 
 ## Compatibility matrix
 
@@ -185,9 +162,9 @@ transports that checksum rather than inventing another composition model.
 
 ## Shared-broker harnesses
 
-The Edge-only integration is disabled unless explicitly enabled. It requires an
-MQTT v3.1.1 broker and deliberately uses a fake Cloud peer, so it is not joint
-interop evidence:
+The Edge-only broker harness is disabled unless explicitly enabled. It requires
+an MQTT v3.1.1 broker and deliberately uses a fake Cloud peer, so it is not
+joint interop evidence:
 
 ```bash
 AETHER_CLOUDLINK_RUN_INTEGRATION=1 \

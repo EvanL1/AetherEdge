@@ -236,7 +236,6 @@ name = "aether-cloudlink"
 version = "0.0.1"
 dependencies = [
  "aether-domain",
- "aether-integration-contract",
  "aether-ports",
  "aether-runtime-catalog",
  "aether-store-local",
@@ -385,17 +384,6 @@ dependencies = [
  "serde_json",
  "tokio",
  "wiremock",
-]
-
-[[package]]
-name = "aether-integration-contract"
-version = "0.0.1"
-dependencies = [
- "aether-domain",
- "serde",
- "serde_json",
- "serde_json_canonicalizer",
- "sha2",
 ]
 
 [[package]]

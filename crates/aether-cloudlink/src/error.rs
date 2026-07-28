@@ -13,24 +13,6 @@ pub enum CloudLinkCodecError {
         /// Contract limit.
         maximum: usize,
     },
-    /// The Integration extension was not enabled by both Edge and Cloud.
-    #[error(
-        "CloudLink Integration requires the runtime declaration and explicit Cloud consumer enablement"
-    )]
-    IntegrationExtensionNotEnabled,
-    /// Configured Integration streams or payload identity changed their binding.
-    #[error("CloudLink Integration stream binding conflicts with its configured identity")]
-    IntegrationStreamBindingConflict,
-    /// An outer delivery batch identity disagrees with the Integration payload.
-    #[error("CloudLink delivery batch identity does not match the Integration payload")]
-    IntegrationBatchIdMismatch,
-    /// The embedded provider-neutral Integration object is invalid.
-    #[error("invalid Aether Integration payload: {source}")]
-    IntegrationContract {
-        /// Strict Integration boundary failure.
-        #[source]
-        source: aether_integration_contract::IntegrationContractError,
-    },
     /// JSON is malformed or violates a closed object shape.
     #[error("invalid strict CloudLink JSON: {source}")]
     InvalidJson {
@@ -116,10 +98,6 @@ impl CloudLinkCodecError {
     pub fn failure_code(&self) -> &'static str {
         match self {
             Self::MessageTooLarge { .. } | Self::TooManySamples { .. } => "FIELD_BOUND",
-            Self::IntegrationExtensionNotEnabled => "UNSUPPORTED_VERSION",
-            Self::IntegrationStreamBindingConflict => "STREAM_BINDING_CONFLICT",
-            Self::IntegrationBatchIdMismatch => "BATCH_ID_MISMATCH",
-            Self::IntegrationContract { source } => source.code().as_str(),
             Self::InvalidJson { source } if source.to_string().contains("unknown field") => {
                 "UNKNOWN_FIELD"
             },
@@ -163,12 +141,6 @@ impl CloudLinkCodecError {
             Self::MessageExpired => "MESSAGE_EXPIRED",
             Self::RuntimeManifestChecksum => "MANIFEST_INVALID",
         }
-    }
-}
-
-impl From<aether_integration_contract::IntegrationContractError> for CloudLinkCodecError {
-    fn from(source: aether_integration_contract::IntegrationContractError) -> Self {
-        Self::IntegrationContract { source }
     }
 }
 

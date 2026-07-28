@@ -17,12 +17,6 @@ session signs them again with its new session binding. The explicit trusted
 connector test profile depends on broker-side attestation and normally omits
 payload authentication.
 
-The experimental Integration protocol routes
-`up/integration/topology` and `up/integration/observations` remain part of the
-candidate topic namespace, but the standard kernel has no source composition
-for them and does not advertise them in its Runtime Manifest. Neither route
-provides physical control.
-
 This package is private implementation below `services/uplink`; it is not a
 kernel extension or an IO dependency. Production session composition remains
 gated by ADR-0017.

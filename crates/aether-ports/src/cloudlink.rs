@@ -22,10 +22,6 @@ pub enum CloudLinkMessageKind {
     RuntimeManifestReport,
     /// A bounded batch of acquisition-owned point facts.
     TelemetryBatch,
-    /// One complete provider-neutral delegated-integration topology replacement.
-    IntegrationTopologySnapshot,
-    /// One provider-neutral delegated-integration observation batch.
-    IntegrationObservationBatch,
     /// Explicit evidence that a requested retained range no longer exists.
     DataLoss,
 }
@@ -37,8 +33,6 @@ impl CloudLinkMessageKind {
         match self {
             Self::RuntimeManifestReport => "runtime-manifest-report",
             Self::TelemetryBatch => "telemetry-batch",
-            Self::IntegrationTopologySnapshot => "integration-topology-snapshot",
-            Self::IntegrationObservationBatch => "integration-observation-batch",
             Self::DataLoss => "data-loss",
         }
     }
@@ -703,10 +697,6 @@ pub enum CloudLinkTransportRoute {
     ManifestUp,
     /// Edge-to-cloud point telemetry.
     TelemetryUp,
-    /// Edge-to-cloud complete delegated-integration topology.
-    IntegrationTopologyUp,
-    /// Edge-to-cloud delegated-integration observations.
-    IntegrationObservationsUp,
     /// Edge-to-cloud data-loss evidence.
     DataLossUp,
     /// Cloud-to-edge durable or heartbeat ACK.

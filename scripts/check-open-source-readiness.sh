@@ -26,7 +26,6 @@ readonly REQUIRED_FILES=(
 
 readonly SDK_SOURCE_PACKAGES=(
     "aether-domain:crates/aether-domain"
-    "aether-integration-contract:crates/aether-integration-contract"
     "aether-cloudlink:crates/aether-cloudlink"
     "aether-dataplane:crates/aether-dataplane"
     "aether-ports:crates/aether-ports"
@@ -53,7 +52,6 @@ readonly REGISTRY_RELEASE_PACKAGES=(
     aether-dataplane
     aether-domain
     aether-edge-sdk
-    aether-integration-contract
     aether-pack
     aether-ports
     aether-shm-bridge
