@@ -174,7 +174,7 @@ mod tests {
         let pool = SqlitePool::connect(&format!("sqlite://{}?mode=rwc", database.display()))
             .await
             .unwrap();
-        common::test_utils::schema::init_automation_schema(&pool)
+        common::site_schema::init_automation_schema(&pool)
             .await
             .unwrap();
         sqlx::query(

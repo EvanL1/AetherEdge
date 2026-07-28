@@ -7,7 +7,7 @@
 //! 4. Handles invalid enum values during import
 
 use anyhow::Result;
-use common::{ComparisonOperator, FourRemote, PointRole};
+use common::{FourRemote, PointRole};
 use std::fs;
 use std::path::PathBuf;
 use std::str::FromStr;
@@ -268,87 +268,6 @@ instances:
     }
 
     println!("Test structure verified for point role mapping import");
-
-    Ok(())
-}
-
-#[tokio::test]
-async fn test_rulesrv_comparison_operator_import() -> Result<()> {
-    let env = TestEnvironment::new()?;
-
-    // Create rules.yaml with ComparisonOperator enums
-    let rules_yaml = r#"
-rules:
-  - rule_id: "temp_high"
-    name: "High Temperature Alert"
-    condition:
-      point_id: 101
-      operator: ">"
-      threshold: 80.0
-    action:
-      type: "alert"
-      message: "Temperature exceeds limit"
-
-  - rule_id: "voltage_range"
-    name: "Voltage Range Check"
-    condition:
-      point_id: 201
-      operator: "between"  # Use valid operator
-      min: 380.0
-      max: 420.0
-    action:
-      type: "log"
-
-  - rule_id: "status_check"
-    name: "Status Equals Check"
-    condition:
-      point_id: 301
-      operator: "=="
-      value: "running"
-    action:
-      type: "notify"
-"#;
-
-    env.write_config_file("rulesrv/rules.yaml", rules_yaml)?;
-
-    // Run aether init and sync
-    env.run_aether(&["init", "rulesrv"])?;
-    env.run_aether(&["sync", "rulesrv"])?;
-
-    // Skip database verification in this test framework
-    // In a real integration test, we would:
-    // 1. Query the rules table
-    // 2. Parse the conditions JSON to extract operators
-    // 3. Verify operators can be parsed to ComparisonOperator enum
-
-    // Test ComparisonOperator parsing directly
-    let test_operators = vec![
-        (">", ComparisonOperator::GreaterThan),
-        ("gt", ComparisonOperator::GreaterThan),
-        ("greater", ComparisonOperator::GreaterThan),
-        ("==", ComparisonOperator::Equal),
-        ("eq", ComparisonOperator::Equal),
-        ("equal", ComparisonOperator::Equal),
-        ("<", ComparisonOperator::LessThan),
-        ("lt", ComparisonOperator::LessThan),
-        (">=", ComparisonOperator::GreaterThanOrEqual),
-        ("gte", ComparisonOperator::GreaterThanOrEqual),
-        ("<=", ComparisonOperator::LessThanOrEqual),
-        ("lte", ComparisonOperator::LessThanOrEqual),
-        ("!=", ComparisonOperator::NotEqual),
-        ("ne", ComparisonOperator::NotEqual),
-        ("between", ComparisonOperator::InRange),
-        ("in", ComparisonOperator::InRange),
-        ("within", ComparisonOperator::InRange),
-    ];
-
-    for (op_str, expected) in test_operators {
-        let parsed = ComparisonOperator::from_str(op_str)
-            .map_err(|e| anyhow::anyhow!("Failed to parse operator {}: {}", op_str, e))?;
-        assert_eq!(parsed, expected, "Operator {} parsed correctly", op_str);
-    }
-
-    println!("Test structure verified for comparison operator import");
 
     Ok(())
 }

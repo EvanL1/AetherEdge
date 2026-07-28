@@ -122,8 +122,6 @@ where
         routes_auth::validate_token,
         common::admin_api::get_log_level,
         common::admin_api::set_log_level,
-        common::admin_api::list_log_files,
-        common::admin_api::view_log_file,
     ),
     components(schemas(
         models::UserCreate,
@@ -259,17 +257,15 @@ fn build_router(state: Arc<AppState>) -> Router {
 
     let api_v1 = Router::new().merge(protected_v1).nest("/auth", auth_routes);
 
-    // /api/admin/* — runtime log control. Must require auth: leaving these
-    // open lets an attacker quietly escalate log verbosity or read log
-    // files. Grouped into its own Router so the require_jwt layer covers
+    // /api/admin/* — runtime log-filter control. Must require auth: leaving
+    // this open lets an attacker quietly escalate log verbosity. Grouped into
+    // its own Router so the require_jwt layer covers
     // any future admin route added inside.
     let admin_routes = Router::new()
         .route(
             "/logs/level",
             get(common::admin_api::get_log_level).post(common::admin_api::set_log_level),
         )
-        .route("/logs/files", get(common::admin_api::list_log_files))
-        .route("/logs/view", get(common::admin_api::view_log_file))
         .layer(axum::middleware::from_fn_with_state(
             Arc::clone(&state),
             middleware_auth::require_jwt,
@@ -322,14 +318,9 @@ async fn main() -> anyhow::Result<()> {
     let cfg = GatewayConfig::from_env()?;
 
     // ── Logging ───────────────────────────────────────────────────────────────
-    let service_info = common::service_bootstrap::ServiceInfo::new(
-        "aether-api",
-        "API Gateway service",
-        cfg.api_port,
-    );
-    common::service_bootstrap::init_logging(&service_info, None)
+    let service_info = common::service_bootstrap::ServiceInfo::new("aether-api", cfg.api_port);
+    common::service_bootstrap::init_logging(&service_info)
         .map_err(|e| anyhow::anyhow!("Failed to init logging: {}", e))?;
-    common::logging::enable_sighup_log_reopen();
     common::service_bootstrap::print_startup_banner(&service_info);
 
     info!("aether-api starting on port {}", cfg.api_port);
@@ -393,7 +384,6 @@ async fn main() -> anyhow::Result<()> {
         })
         .await?;
 
-    common::logging::shutdown_logging_tasks().await;
     info!("api stopped");
     Ok(())
 }
@@ -584,8 +574,6 @@ mod openapi_tests {
             ("/api/v1/auth/validate", "get"),
             ("/api/admin/logs/level", "get"),
             ("/api/admin/logs/level", "post"),
-            ("/api/admin/logs/files", "get"),
-            ("/api/admin/logs/view", "get"),
         ] {
             assert!(
                 specification["paths"][path][method].is_object(),
@@ -616,8 +604,6 @@ mod openapi_tests {
             ("/api/v1/auth/users", "get"),
             ("/api/v1/auth/users/{id}", "get"),
             ("/api/admin/logs/level", "get"),
-            ("/api/admin/logs/files", "get"),
-            ("/api/admin/logs/view", "get"),
         ] {
             assert_eq!(
                 specification["paths"][path][method]["security"][0]["bearer_auth"],

@@ -54,13 +54,13 @@ impl Fixture {
             .connect("sqlite::memory:")
             .await
             .expect("instance database");
-        common::test_utils::schema::init_automation_schema(&pool)
+        common::site_schema::init_automation_schema(&pool)
             .await
             .expect("automation schema");
-        common::test_utils::schema::init_io_schema(&pool)
+        common::site_schema::init_io_schema(&pool)
             .await
             .expect("IO schema");
-        common::test_utils::schema::install_logical_routing_integrity_triggers(&pool)
+        common::site_schema::install_logical_routing_integrity_triggers(&pool)
             .await
             .expect("routing integrity triggers");
         initialize_instance_configuration_revision(&pool)

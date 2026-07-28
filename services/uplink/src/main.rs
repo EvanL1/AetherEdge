@@ -47,14 +47,9 @@ async fn main() -> anyhow::Result<()> {
     let env = Arc::new(EnvConfig::default());
 
     // ── Logging ───────────────────────────────────────────────────────────────
-    let service_info = common::service_bootstrap::ServiceInfo::new(
-        "aether-uplink",
-        "Cloud data-forwarding service",
-        env.api_port,
-    );
-    common::service_bootstrap::init_logging(&service_info, None)
+    let service_info = common::service_bootstrap::ServiceInfo::new("aether-uplink", env.api_port);
+    common::service_bootstrap::init_logging(&service_info)
         .map_err(|e| anyhow::anyhow!("Logging init failed: {}", e))?;
-    common::logging::enable_sighup_log_reopen();
     common::service_bootstrap::print_startup_banner(&service_info);
 
     info!("aether-uplink starting");
@@ -188,6 +183,5 @@ async fn main() -> anyhow::Result<()> {
         })
         .await?;
 
-    common::logging::shutdown_logging_tasks().await;
     Ok(())
 }

@@ -1,22 +1,7 @@
-//! Test database schema utilities
+//! SQLite site-schema authority shared by offline commissioning and local services.
 //!
-//! Provides helper functions to initialize test databases with standard schemas.
-//! This eliminates the need for duplicate CREATE TABLE statements across test files.
-//!
-//! # Usage
-//!
-//! ```rust,ignore
-//! use common::test_utils::schema;
-//! use sqlx::SqlitePool;
-//!
-//! #[tokio::test]
-//! async fn test_something() {
-//!     let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
-//!     schema::init_io_schema(&pool).await.unwrap();
-//!
-//!     // Now use the pool with standard io tables
-//! }
-//! ```
+//! Production bootstrap, `aether sync`, and conformance tests use the same DDL and
+//! initialization functions so test setup cannot drift from deployed databases.
 
 use anyhow::Result;
 use sqlx::SqlitePool;

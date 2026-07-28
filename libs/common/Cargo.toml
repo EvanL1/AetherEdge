@@ -8,7 +8,6 @@ license.workspace = true
 [features]
 default = ["sqlite", "axum", "openapi"]
 sqlite = ["dep:sqlx"]
-cli = ["dep:clap", "dep:reqwest"]
 dependency = ["dep:reqwest"]
 axum = ["dep:axum"]
 openapi = ["dep:utoipa"]
@@ -27,19 +26,15 @@ tracing-subscriber = { workspace = true, features = [
     "json",
     "fmt",
 ] }
-tracing-appender = { workspace = true }
 chrono = { workspace = true, features = ["serde"] }
 anyhow = { workspace = true }
 thiserror = { workspace = true }
-flate2 = { workspace = true }
 csv = { workspace = true }
-futures = { workspace = true }
 axum = { workspace = true, optional = true }
 utoipa = { workspace = true, optional = true }
 sysinfo = "0.32"
 
-# CLI dependencies  
-clap = { workspace = true, features = ["derive", "env", "cargo"], optional = true }
+# Startup dependency health check
 reqwest = { workspace = true, features = ["json"], optional = true }
 
 # SQLite - kept for direct usage in test_utils and service_config

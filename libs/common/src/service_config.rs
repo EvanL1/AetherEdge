@@ -1,10 +1,9 @@
 //! Common configuration structures shared across all services
 //!
 //! This module provides shared types for service configuration including:
-//! - Base configuration structs (ApiConfig, LoggingConfig)
+//! - Base service and API configuration structs
 //! - Validation framework (ConfigValidator, ValidationResult)
-//! - Hot reload infrastructure (ReloadableService, ReloadResult)
-//! - Shared enums (PointRole, InstanceStatus, ResponseStatus, ComparisonOperator)
+//! - Storage/configuration enums used by offline tooling and local services
 
 use aether_schema_macro::Schema;
 use serde::de::DeserializeOwned;
@@ -20,14 +19,13 @@ pub use crate::point_type::PointType;
 #[cfg(feature = "schema")]
 use schemars::JsonSchema;
 
-// Required for ReloadableService trait and GenericValidator
 use anyhow::{Context, Result};
 
 // ============================================================================
 // Default configuration constants
 // ============================================================================
 
-/// Default API bind host (listen on all interfaces)
+/// Default API bind host (loopback only)
 /// Internal service APIs are host-local by default. The authenticated API
 /// gateway opts into a public bind independently.
 pub const DEFAULT_API_HOST: &str = "127.0.0.1";
@@ -115,47 +113,6 @@ pub struct ApiConfig {
 }
 
 // ============================================================================
-// Logging configuration
-// ============================================================================
-
-/// Logging configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(JsonSchema))]
-pub struct LoggingConfig {
-    /// Log level (trace, debug, info, warn, error)
-    #[serde(default = "default_log_level")]
-    pub level: String,
-
-    /// Log directory
-    #[serde(default = "default_log_dir")]
-    pub dir: String,
-
-    /// Log file prefix
-    pub file_prefix: Option<String>,
-
-    /// Log rotation configuration
-    #[serde(default)]
-    pub rotation: Option<LogRotationConfig>,
-}
-
-/// Log rotation configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(JsonSchema))]
-pub struct LogRotationConfig {
-    /// Rotation strategy (daily, size, never)
-    #[serde(default = "default_rotation_strategy")]
-    pub strategy: String,
-
-    /// Maximum file size in MB (for size-based rotation)
-    #[serde(default = "default_max_size_mb")]
-    pub max_size_mb: u64,
-
-    /// Number of log files to retain
-    #[serde(default = "default_max_files")]
-    pub max_files: u32,
-}
-
-// ============================================================================
 // Default value functions
 // ============================================================================
 
@@ -167,52 +124,11 @@ fn default_api_host() -> String {
     DEFAULT_API_HOST.to_string()
 }
 
-fn default_log_level() -> String {
-    env::var("RUST_LOG").unwrap_or_else(|_| "info".to_string())
-}
-
-fn default_log_dir() -> String {
-    "logs".to_string()
-}
-
-fn default_rotation_strategy() -> String {
-    "daily".to_string()
-}
-
-fn default_max_size_mb() -> u64 {
-    100
-}
-
-fn default_max_files() -> u32 {
-    7
-}
-
 // Note: bool_true() is defined in serde_helpers module
 
 // ============================================================================
 // Default implementations
 // ============================================================================
-
-impl Default for LoggingConfig {
-    fn default() -> Self {
-        Self {
-            level: default_log_level(),
-            dir: default_log_dir(),
-            file_prefix: None,
-            rotation: None,
-        }
-    }
-}
-
-impl Default for LogRotationConfig {
-    fn default() -> Self {
-        Self {
-            strategy: default_rotation_strategy(),
-            max_size_mb: default_max_size_mb(),
-            max_files: default_max_files(),
-        }
-    }
-}
 
 // ============================================================================
 // Database Schema Definitions (Shared across services)
@@ -501,115 +417,6 @@ impl<T: DeserializeOwned + ConfigValidator> ConfigValidator for GenericValidator
     }
 }
 
-// ============================================================================
-// Hot Reload Infrastructure
-// ============================================================================
-
-/// Generic reload result for all services
-///
-/// Provides unified response format for hot reload operations across
-/// io, automation, and rules services.
-///
-/// # Type Parameters
-/// - `I`: Item identifier type (e.g., `u16` for channel/instance ID, `String` for rule ID)
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
-pub struct ReloadResult<I> {
-    /// Total number of configuration items in database
-    pub total_count: usize,
-
-    /// IDs of newly added items
-    pub added: Vec<I>,
-
-    /// IDs of updated items (hot-reloaded)
-    pub updated: Vec<I>,
-
-    /// IDs of removed items
-    pub removed: Vec<I>,
-
-    /// Error messages (one per failed operation)
-    /// Format: "{item_id}: {error_message}"
-    pub errors: Vec<String>,
-
-    /// Total reload operation duration in milliseconds
-    pub duration_ms: u64,
-}
-
-impl<I> ReloadResult<I> {
-    /// Check if reload completed without errors
-    pub fn is_success(&self) -> bool {
-        self.errors.is_empty()
-    }
-
-    /// Get total number of successful operations
-    pub fn success_count(&self) -> usize {
-        self.added.len() + self.updated.len() + self.removed.len()
-    }
-
-    /// Get total number of failed operations
-    pub fn error_count(&self) -> usize {
-        self.errors.len()
-    }
-}
-
-impl<I> Default for ReloadResult<I> {
-    fn default() -> Self {
-        Self {
-            total_count: 0,
-            added: Vec::new(),
-            updated: Vec::new(),
-            removed: Vec::new(),
-            errors: Vec::new(),
-            duration_ms: 0,
-        }
-    }
-}
-
-/// Type alias for channel reload result (io)
-pub type ChannelReloadResult = ReloadResult<u32>;
-
-/// Type alias for instance reload result (automation)
-pub type InstanceReloadResult = ReloadResult<u32>;
-
-/// Type alias for rule reload result (rules)
-pub type RuleReloadResult = ReloadResult<String>;
-
-/// Unified hot reload interface for all services
-///
-/// This trait provides a consistent API for reloading service configurations
-/// from SQLite database without restarting the service.
-#[allow(async_fn_in_trait)]
-pub trait ReloadableService {
-    /// Change severity type (e.g., MetadataOnly < NonCritical < Critical)
-    type ChangeType: PartialOrd + Eq + Copy;
-
-    /// Configuration item type
-    type Config: Clone + Serialize + for<'de> Deserialize<'de>;
-
-    /// Reload operation result type
-    type ReloadResult: Serialize + for<'de> Deserialize<'de>;
-
-    /// Reload all configurations from SQLite database
-    async fn reload_from_database(
-        &self,
-        pool: &sqlx::SqlitePool,
-    ) -> anyhow::Result<Self::ReloadResult>;
-
-    /// Analyze configuration change severity
-    fn analyze_changes(
-        &self,
-        old_config: &Self::Config,
-        new_config: &Self::Config,
-    ) -> Self::ChangeType;
-
-    /// Perform hot reload with automatic rollback on failure
-    async fn perform_hot_reload(&self, config: Self::Config) -> anyhow::Result<String>;
-
-    /// Rollback to previous configuration
-    async fn rollback(&self, previous_config: Self::Config) -> anyhow::Result<String>;
-}
-
 /// Helper validation functions
 pub mod helpers {
     use super::*;
@@ -705,47 +512,6 @@ impl ApiConfig {
     }
 }
 
-impl LoggingConfig {
-    /// Validate logging configuration
-    pub fn validate(&self, result: &mut ValidationResult) {
-        // Validate log level
-        let valid_levels = ["trace", "debug", "info", "warn", "error"];
-        if !valid_levels.contains(&self.level.as_str()) {
-            result.add_warning(format!("Unrecognized log level: {}", self.level));
-        }
-
-        // Validate log directory (will be created if doesn't exist, so just warn)
-        if self.dir.is_empty() {
-            result.add_error("Log directory cannot be empty".to_string());
-        }
-
-        // Validate rotation config if present
-        if let Some(rotation) = &self.rotation {
-            rotation.validate(result);
-        }
-    }
-}
-
-impl LogRotationConfig {
-    /// Validate log rotation configuration
-    pub fn validate(&self, result: &mut ValidationResult) {
-        let valid_strategies = ["daily", "size", "never"];
-        if !valid_strategies.contains(&self.strategy.as_str()) {
-            result.add_error(format!("Invalid rotation strategy: {}", self.strategy));
-        }
-
-        if self.strategy == "size" && self.max_size_mb == 0 {
-            result.add_error("Max size for size-based rotation cannot be 0".to_string());
-        }
-
-        if self.max_files == 0 {
-            result.add_warning(
-                "Max files is 0, log rotation will delete old logs immediately".to_string(),
-            );
-        }
-    }
-}
-
 // ============================================================================
 // Shared enum types
 // ============================================================================
@@ -797,186 +563,6 @@ impl fmt::Display for PointRole {
     }
 }
 
-/// Instance status enumeration
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Hash)]
-#[serde(rename_all = "lowercase")]
-#[cfg_attr(feature = "schema", derive(JsonSchema))]
-pub enum InstanceStatus {
-    /// Instance is running normally
-    Running,
-    /// Instance is stopped
-    #[default]
-    Stopped,
-    /// Instance has encountered an error
-    Error,
-    /// Instance is in warning state
-    Warning,
-    /// Instance is disconnected
-    Disconnected,
-}
-
-impl InstanceStatus {
-    /// Convert to string representation
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::Running => "running",
-            Self::Stopped => "stopped",
-            Self::Error => "error",
-            Self::Warning => "warning",
-            Self::Disconnected => "disconnected",
-        }
-    }
-
-    /// Check if instance is healthy (running or warning)
-    pub fn is_healthy(&self) -> bool {
-        matches!(self, Self::Running | Self::Warning)
-    }
-}
-
-impl FromStr for InstanceStatus {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_lowercase().as_str() {
-            "running" | "run" | "active" => Ok(Self::Running),
-            "stopped" | "stop" | "inactive" => Ok(Self::Stopped),
-            "error" | "err" | "failed" => Ok(Self::Error),
-            "warning" | "warn" => Ok(Self::Warning),
-            "disconnected" | "offline" => Ok(Self::Disconnected),
-            _ => Err(format!("Unknown instance status: {}", s)),
-        }
-    }
-}
-
-impl fmt::Display for InstanceStatus {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.as_str())
-    }
-}
-
-/// Comparison operator for rules engine
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Hash)]
-#[cfg_attr(feature = "schema", derive(JsonSchema))]
-pub enum ComparisonOperator {
-    /// Equal to (==)
-    #[serde(rename = "eq")]
-    #[default]
-    Equal,
-    /// Not equal to (!=)
-    #[serde(rename = "ne")]
-    NotEqual,
-    /// Greater than (>)
-    #[serde(rename = "gt")]
-    GreaterThan,
-    /// Greater than or equal to (>=)
-    #[serde(rename = "gte")]
-    GreaterThanOrEqual,
-    /// Less than (<)
-    #[serde(rename = "lt")]
-    LessThan,
-    /// Less than or equal to (<=)
-    #[serde(rename = "lte")]
-    LessThanOrEqual,
-    /// Value is within range (inclusive)
-    #[serde(rename = "in")]
-    InRange,
-    /// Value is outside range (exclusive)
-    #[serde(rename = "not_in")]
-    NotInRange,
-    /// String contains substring
-    #[serde(rename = "contains")]
-    Contains,
-    /// String matches regex pattern
-    #[serde(rename = "matches")]
-    Matches,
-}
-
-impl ComparisonOperator {
-    /// Convert to string representation
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::Equal => "eq",
-            Self::NotEqual => "ne",
-            Self::GreaterThan => "gt",
-            Self::GreaterThanOrEqual => "gte",
-            Self::LessThan => "lt",
-            Self::LessThanOrEqual => "lte",
-            Self::InRange => "in",
-            Self::NotInRange => "not_in",
-            Self::Contains => "contains",
-            Self::Matches => "matches",
-        }
-    }
-
-    /// Get symbol representation
-    pub fn symbol(&self) -> &'static str {
-        match self {
-            Self::Equal => "==",
-            Self::NotEqual => "!=",
-            Self::GreaterThan => ">",
-            Self::GreaterThanOrEqual => ">=",
-            Self::LessThan => "<",
-            Self::LessThanOrEqual => "<=",
-            Self::InRange => "∈",
-            Self::NotInRange => "∉",
-            Self::Contains => "⊃",
-            Self::Matches => "~",
-        }
-    }
-
-    /// Compare two f64 values
-    pub fn compare_f64(&self, left: f64, right: f64) -> bool {
-        match self {
-            Self::Equal => (left - right).abs() < f64::EPSILON,
-            Self::NotEqual => (left - right).abs() >= f64::EPSILON,
-            Self::GreaterThan => left > right,
-            Self::GreaterThanOrEqual => left >= right,
-            Self::LessThan => left < right,
-            Self::LessThanOrEqual => left <= right,
-            _ => false, // InRange and NotInRange need special handling
-        }
-    }
-
-    /// Compare two i64 values
-    pub fn compare_i64(&self, left: i64, right: i64) -> bool {
-        match self {
-            Self::Equal => left == right,
-            Self::NotEqual => left != right,
-            Self::GreaterThan => left > right,
-            Self::GreaterThanOrEqual => left >= right,
-            Self::LessThan => left < right,
-            Self::LessThanOrEqual => left <= right,
-            _ => false, // InRange and NotInRange need special handling
-        }
-    }
-}
-
-impl FromStr for ComparisonOperator {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_lowercase().as_str() {
-            "eq" | "==" | "=" | "equal" => Ok(Self::Equal),
-            "ne" | "!=" | "<>" | "not_equal" => Ok(Self::NotEqual),
-            "gt" | ">" | "greater" => Ok(Self::GreaterThan),
-            "gte" | ">=" | "greater_equal" => Ok(Self::GreaterThanOrEqual),
-            "lt" | "<" | "less" => Ok(Self::LessThan),
-            "lte" | "<=" | "less_equal" => Ok(Self::LessThanOrEqual),
-            "in" | "within" | "between" => Ok(Self::InRange),
-            "not_in" | "outside" | "not_between" => Ok(Self::NotInRange),
-            "contains" | "has" | "includes" => Ok(Self::Contains),
-            "matches" | "~" | "regex" => Ok(Self::Matches),
-            _ => Err(format!("Unknown comparison operator: {}", s)),
-        }
-    }
-}
-
-impl fmt::Display for ComparisonOperator {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.symbol())
-    }
-}
-
 /// FourRemote is an alias for PointType for backward compatibility
 ///
 /// Both represent the same concept: the four remote point types (T/S/C/A)
@@ -1013,25 +599,6 @@ mod tests {
             PointRole::Measurement
         );
         assert!(PointRole::from_str("X").is_err());
-    }
-
-    #[test]
-    fn test_instance_status_methods() {
-        assert!(InstanceStatus::Running.is_healthy());
-        assert!(InstanceStatus::Warning.is_healthy());
-        assert!(!InstanceStatus::Stopped.is_healthy());
-        assert!(!InstanceStatus::Error.is_healthy());
-    }
-
-    #[test]
-    fn test_comparison_operator_compare_methods() {
-        let op = ComparisonOperator::GreaterThan;
-        assert!(op.compare_f64(5.0, 3.0));
-        assert!(!op.compare_f64(3.0, 5.0));
-
-        let op = ComparisonOperator::Equal;
-        assert!(op.compare_i64(42, 42));
-        assert!(!op.compare_i64(42, 43));
     }
 
     #[test]

@@ -17,11 +17,10 @@ use common::service_bootstrap::ServiceInfo;
 use crate::core::config::ConfigManager;
 
 // Re-export common bootstrap functionality
-pub use common::bootstrap_args::ServiceArgs;
 pub use common::bootstrap_system::check_system_requirements;
 
 /// Command-line arguments for io
-#[derive(Parser, Clone)]
+#[derive(Parser)]
 #[command(
     name = "aether-io",
     version = env!("CARGO_PKG_VERSION"),
@@ -29,17 +28,9 @@ pub use common::bootstrap_system::check_system_requirements;
     long_about = None
 )]
 pub struct Args {
-    /// Log level (trace, debug, info, warn, error)
-    #[arg(short = 'l', long, default_value = "info")]
-    pub log_level: String,
-
     /// Bind address for API server
     #[arg(short = 'b', long)]
     pub bind_address: Option<String>,
-
-    /// Enable debug mode
-    #[arg(short = 'd', long)]
-    pub debug: bool,
 
     /// Disable colored output
     #[arg(long)]
@@ -50,58 +41,11 @@ pub struct Args {
     pub validate: bool,
 }
 
-impl From<Args> for ServiceArgs {
-    fn from(args: Args) -> Self {
-        ServiceArgs {
-            log_level: args.log_level,
-            bind_address: args.bind_address,
-            debug: args.debug,
-            no_color: args.no_color,
-            validate: args.validate,
-            ..ServiceArgs::default()
-        }
-    }
-}
-
-/// Initialize logging system with command-line arguments
-///
-/// Wraps common functionality with service-specific configuration.
-/// Log root directory priority:
-/// 1. AETHER_LOG_DIR environment variable
-/// 2. logging_config.dir from SQLite config
-/// 3. Default "logs"
-pub fn initialize_logging(
-    args: &ServiceArgs,
-    service_info: &ServiceInfo,
-    logging_config: Option<&common::LoggingConfig>,
-) -> Result<()> {
-    // Load environment variables from .env file in development mode
+/// Initialize console-first service logging.
+pub fn initialize_logging(service_info: &ServiceInfo) -> Result<()> {
     common::service_bootstrap::load_development_env();
-
-    // Initialize log root directory from config or environment
-    let config_dir = logging_config.map(|c| c.dir.as_str());
-    common::logging::init_log_root(config_dir);
-
-    // Use common arg parsing
-    let console_level = args.parse_log_level();
-
-    // Get log directory with service name subdirectory
-    let log_dir = common::logging::get_log_root().join(&service_info.name);
-
-    let log_config = common::logging::LogConfig {
-        service_name: service_info.name.clone(),
-        log_dir,
-        console_level,
-        file_level: tracing::Level::DEBUG,
-        enable_json: false,
-        max_log_files: 30,
-        enable_api_log: true,
-        api_log_level: tracing::Level::INFO,
-    };
-
-    common::logging::init_with_config(log_config)
-        .map_err(|error| anyhow::anyhow!("failed to initialize logging: {error}"))?;
-    Ok(())
+    common::service_bootstrap::init_logging(service_info)
+        .map_err(|error| anyhow::anyhow!("failed to initialize logging: {error}"))
 }
 
 /// Validate configuration from SQLite database

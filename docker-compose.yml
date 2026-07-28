@@ -108,7 +108,6 @@ services:
       - AETHER_UPLINK_CONTROL_TOKEN=${AETHER_UPLINK_CONTROL_TOKEN:?AETHER_UPLINK_CONTROL_TOKEN must be set; generate at least 32 random bytes}
       - RUST_LOG=${RUST_LOG:-info}
       - AETHER_DB_PATH=/app/data/aether.db
-      - AETHER_LOG_DIR=/app/logs
       - ENABLE_SHARED_MEMORY=${ENABLE_SHARED_MEMORY:-true}
       - AETHER_M2C_SOCKET=/shm/rtdb/aether-m2c.sock
       - AETHER_AUTOMATION_POINT_WATCH_SOCKET=/shm/rtdb/aether-point-watch-automation.sock
@@ -117,7 +116,6 @@ services:
     volumes:
       - ${AETHER_BASE_PATH:-./data}/config:/app/config:ro
       - ${AETHER_BASE_PATH:-./data}:/app/data:rw
-      - ${AETHER_LOG_PATH:-./logs}:/app/logs
       - /dev/shm:/shm/rtdb:rw  # SHM read + independent event bitmap/UDS
     logging:
       driver: json-file
@@ -140,12 +138,10 @@ services:
       - API_HOST=127.0.0.1
       - AETHER_DB_PATH=/app/data/aether.db
       - AETHER_HISTORY_DB_PATH=/app/data/aether-history.db
-      - AETHER_LOG_DIR=/app/logs
       - NO_PROXY=*
       - no_proxy=*
     volumes:
       - ${AETHER_BASE_PATH:-./data}:/app/data:rw
-      - ${AETHER_LOG_PATH:-./logs}:/app/logs
       - /dev/shm:/shm/rtdb:rw
     logging:
       driver: json-file
@@ -172,12 +168,10 @@ services:
       - AETHER_ALLOW_PUBLIC_REGISTRATION=${AETHER_ALLOW_PUBLIC_REGISTRATION:-false}
       - ACCESS_TOKEN_EXPIRE_MINUTES=${ACCESS_TOKEN_EXPIRE_MINUTES:-30}
       - REFRESH_TOKEN_EXPIRE_DAYS=${REFRESH_TOKEN_EXPIRE_DAYS:-7}
-      - AETHER_LOG_DIR=/app/logs
       - NO_PROXY=*
       - no_proxy=*
     volumes:
       - ${AETHER_BASE_PATH:-./data}:/app/data:rw
-      - ${AETHER_LOG_PATH:-./logs}:/app/logs
     logging:
       driver: json-file
       options:
@@ -196,7 +190,6 @@ services:
       - API_PORT=6006
       - API_HOST=127.0.0.1
       - AETHER_DB_PATH=/app/data/aether.db
-      - AETHER_LOG_DIR=/app/logs
       - AETHER_UPLINK_OUTBOX_PATH=/app/data/uplink.outbox
       - AETHER_UPLINK_OUTBOX_CAPACITY=${AETHER_UPLINK_OUTBOX_CAPACITY:-10000}
       - AETHER_UPLINK_CONTROL_TOKEN=${AETHER_UPLINK_CONTROL_TOKEN:?AETHER_UPLINK_CONTROL_TOKEN must be set; generate at least 32 random bytes}
@@ -206,7 +199,6 @@ services:
       # CERT_DIR 默认 /app/config/cert，宿主机通过下方 volume 挂载证书目录
     volumes:
       - ${AETHER_BASE_PATH:-./data}:/app/data:rw
-      - ${AETHER_LOG_PATH:-./logs}:/app/logs
       - /dev/shm:/shm/rtdb:rw
       - ${AETHER_BASE_PATH:-./data}/cert:/app/config/cert:rw  # TLS 证书目录（固定挂载点）
     logging:
@@ -227,13 +219,11 @@ services:
       - SERVICE_PORT=6007
       - API_HOST=127.0.0.1
       - AETHER_DB_PATH=/app/data/aether.db
-      - AETHER_LOG_DIR=/app/logs
       - AETHER_UPLINK_URL=${AETHER_UPLINK_URL:-http://127.0.0.1:6006}
       - NO_PROXY=*
       - no_proxy=*
     volumes:
       - ${AETHER_BASE_PATH:-./data}:/app/data:rw
-      - ${AETHER_LOG_PATH:-./logs}:/app/logs
       - /dev/shm:/shm/rtdb:rw
     logging:
       driver: json-file

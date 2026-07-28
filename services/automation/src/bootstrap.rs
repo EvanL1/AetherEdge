@@ -4,7 +4,7 @@
 //! database connections, and component setup.
 
 use crate::config::AutomationConfig;
-use common::bootstrap_args::ServiceArgs;
+use common::bootstrap_args::database_path;
 use common::bootstrap_database::setup_sqlite_pool;
 use common::bootstrap_system::{SystemRequirements, check_system_requirements_with};
 use common::service_bootstrap::{ServiceInfo, get_service_port};
@@ -27,11 +27,7 @@ use aether_store_local::SqliteAuditSink;
 
 /// Initialize service info for unified bootstrap
 pub fn create_service_info() -> ServiceInfo {
-    ServiceInfo::new(
-        "aether-automation",
-        "Model Service - Instance & Routing Management",
-        6002,
-    )
+    ServiceInfo::new("aether-automation", 6002)
 }
 
 /// Initialize logging and environment
@@ -40,7 +36,7 @@ pub fn init_environment(service_info: &ServiceInfo) -> Result<()> {
     common::service_bootstrap::load_development_env();
 
     // Initialize logging using service_bootstrap (config not loaded yet, use env/default)
-    common::service_bootstrap::init_logging(service_info, None).map_err(|e| {
+    common::service_bootstrap::init_logging(service_info).map_err(|e| {
         AutomationError::ConfigError(format!("Failed to initialize logging: {}", e))
     })?;
 
@@ -48,7 +44,6 @@ pub fn init_environment(service_info: &ServiceInfo) -> Result<()> {
     common::service_bootstrap::print_startup_banner(service_info);
 
     // Enable SIGHUP-triggered log reopen for long-running processes
-    common::logging::enable_sighup_log_reopen();
 
     info!("Automation starting");
 
@@ -57,7 +52,7 @@ pub fn init_environment(service_info: &ServiceInfo) -> Result<()> {
 
 /// Load configuration from SQLite database
 pub async fn load_configuration(service_info: &ServiceInfo) -> Result<AutomationConfig> {
-    let db_path = ServiceArgs::default().get_db_path("automation");
+    let db_path = database_path();
 
     if !std::path::Path::new(&db_path).exists() {
         error!("DB not found: {}", db_path);
@@ -153,7 +148,7 @@ fn validate_configuration(config: &AutomationConfig) -> Result<()> {
 
 /// Wrapper for SQLite setup with automation defaults
 async fn setup_sqlite() -> Result<SqlitePool> {
-    let db_path = ServiceArgs::default().get_db_path("automation");
+    let db_path = database_path();
     info!("SQLite: {}", db_path);
     setup_sqlite_pool(&db_path)
         .await
@@ -354,7 +349,7 @@ pub async fn load_products(
     )
     .execute(sqlite_pool)
     .await?;
-    common::test_utils::schema::initialize_configuration_revisions(sqlite_pool).await?;
+    common::site_schema::initialize_configuration_revisions(sqlite_pool).await?;
     crate::instance_configuration::initialize_instance_configuration_revision(sqlite_pool).await?;
 
     info!(

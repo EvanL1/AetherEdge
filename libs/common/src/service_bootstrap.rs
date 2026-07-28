@@ -3,8 +3,8 @@
 //! Provides common initialization functionality for all AetherEdge services,
 //! including startup banners, logging initialization, and environment setup.
 
-use crate::logging::{self, LogConfig};
-use tracing::{Level, debug, info};
+use crate::logging;
+use tracing::info;
 
 /// Service metadata for startup
 pub struct ServiceInfo {
@@ -12,19 +12,16 @@ pub struct ServiceInfo {
     pub name: String,
     /// Service version from Cargo.toml
     pub version: String,
-    /// Service description
-    pub description: String,
     /// Default port
     pub default_port: u16,
 }
 
 impl ServiceInfo {
     /// Create new service info
-    pub fn new(name: impl Into<String>, description: impl Into<String>, default_port: u16) -> Self {
+    pub fn new(name: impl Into<String>, default_port: u16) -> Self {
         Self {
             name: name.into(),
             version: env!("CARGO_PKG_VERSION").to_string(),
-            description: description.into(),
             default_port,
         }
     }
@@ -41,48 +38,9 @@ pub fn print_startup_banner(service: &ServiceInfo) {
     );
 }
 
-/// Initialize logging for a service with standard configuration
-///
-/// # Arguments
-/// * `service` - Service metadata
-/// * `logging_config` - Optional logging configuration from SQLite config
-///
-/// Log root directory priority:
-/// 1. AETHER_LOG_DIR environment variable
-/// 2. logging_config.dir from SQLite config
-/// 3. Default "logs"
-pub fn init_logging(
-    service: &ServiceInfo,
-    logging_config: Option<&crate::LoggingConfig>,
-) -> anyhow::Result<()> {
-    // Initialize log root directory from config or environment
-    let config_dir = logging_config.map(|c| c.dir.as_str());
-    crate::logging::init_log_root(config_dir);
-
-    // Check RUST_LOG environment variable for log level
-    let console_level = std::env::var("RUST_LOG")
-        .ok()
-        .and_then(|s| s.parse::<Level>().ok())
-        .unwrap_or(Level::INFO);
-
-    // Get log directory with service name subdirectory
-    let log_dir = crate::logging::get_log_root().join(&service.name);
-
-    let log_config = LogConfig {
-        service_name: service.name.clone(),
-        log_dir,
-        file_level: Level::DEBUG,
-        console_level,
-        enable_json: false,
-        max_log_files: 30,
-        enable_api_log: true,
-        api_log_level: Level::INFO,
-    };
-
-    // Initialize the logging system
-    logging::init_with_config(log_config).map_err(|e| anyhow::anyhow!("{}", e))?;
-
-    Ok(())
+/// Initialize console-first tracing for a service.
+pub fn init_logging(service: &ServiceInfo) -> anyhow::Result<()> {
+    logging::init(&service.name).map_err(|error| anyhow::anyhow!("{error}"))
 }
 
 /// Load environment variables in development mode
@@ -116,52 +74,6 @@ pub fn load_development_env() {
     }
 
     // No-op in release builds - production environments should set environment variables externally
-}
-
-/// Get service configuration path from environment or default
-pub fn get_config_path(service: &ServiceInfo) -> String {
-    // Try service-specific environment variable first
-    let env_var = format!("{}_DB_PATH", service.name.to_uppercase());
-
-    if let Ok(path) = std::env::var(&env_var) {
-        return path;
-    }
-
-    // Try DATABASE_DIR for all services
-    if let Ok(dir) = std::env::var("DATABASE_DIR") {
-        return format!("{}/{}.db", dir, service.name);
-    }
-
-    // Default path
-    format!("data/{}.db", service.name)
-}
-
-/// Standard service startup sequence
-pub async fn bootstrap_service(service: ServiceInfo) -> anyhow::Result<String> {
-    // Load development environment
-    load_development_env();
-
-    // Initialize logging (config not loaded yet, use env/default)
-    init_logging(&service, None)?;
-
-    // Print startup banner
-    print_startup_banner(&service);
-
-    // Get configuration path
-    let config_path = get_config_path(&service);
-
-    // Check if database exists
-    if !std::path::Path::new(&config_path).exists() {
-        anyhow::bail!(
-            "Configuration database not found at: {}\nPlease run: aether sync {}",
-            config_path,
-            service.name
-        );
-    }
-
-    debug!("Config: {}", config_path);
-
-    Ok(config_path)
 }
 
 /// Helper to get service port from configuration or environment
@@ -201,16 +113,8 @@ mod tests {
 
     #[test]
     fn test_service_info_creation() {
-        let service = ServiceInfo::new("test_service", "Test Service", 8080);
+        let service = ServiceInfo::new("test_service", 8080);
         assert_eq!(service.name, "test_service");
-        assert_eq!(service.description, "Test Service");
         assert_eq!(service.default_port, 8080);
-    }
-
-    #[test]
-    fn test_get_config_path_default() {
-        let service = ServiceInfo::new("testservice", "Test", 8080);
-        let path = get_config_path(&service);
-        assert_eq!(path, "data/testservice.db");
     }
 }

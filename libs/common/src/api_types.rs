@@ -292,72 +292,6 @@ impl<T> PaginatedResponse<T> {
     }
 }
 
-/// Pagination request parameters
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "openapi", derive(ToSchema))]
-pub struct PaginationParams {
-    /// Page number (0-indexed)
-    #[serde(default)]
-    pub page: usize,
-    /// Items per page
-    #[serde(default = "crate::serde_helpers::page_size")]
-    pub page_size: usize,
-    /// Sort field
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub sort_by: Option<String>,
-    /// Sort order
-    #[serde(default)]
-    pub sort_order: SortOrder,
-}
-
-/// Sort order
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default)]
-#[cfg_attr(feature = "openapi", derive(ToSchema))]
-#[serde(rename_all = "lowercase")]
-pub enum SortOrder {
-    #[default]
-    Asc,
-    Desc,
-}
-
-// ============================================================================
-// Time Range Filter
-// ============================================================================
-
-/// Time range filter
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TimeRange {
-    /// Start time (ISO 8601)
-    pub start: Option<chrono::DateTime<chrono::Utc>>,
-    /// End time (ISO 8601)
-    pub end: Option<chrono::DateTime<chrono::Utc>>,
-}
-
-impl TimeRange {
-    /// Create a time range for the last N hours
-    pub fn last_hours(hours: i64) -> Self {
-        let end = chrono::Utc::now();
-        let start = end - chrono::Duration::hours(hours);
-        Self {
-            start: Some(start),
-            end: Some(end),
-        }
-    }
-
-    /// Create a time range for today
-    pub fn today() -> Self {
-        let now = chrono::Utc::now();
-        let start = now
-            .date_naive()
-            .and_hms_opt(0, 0, 0)
-            .map(|dt| chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(dt, chrono::Utc));
-        Self {
-            start,
-            end: Some(now),
-        }
-    }
-}
-
 // ============================================================================
 // Service Health & Status Models
 // ============================================================================
@@ -447,16 +381,5 @@ mod tests {
         assert_eq!(paginated.total_pages, 20);
         assert!(paginated.has_next);
         assert!(!paginated.has_previous);
-    }
-
-    #[test]
-    fn test_time_range() {
-        let range = TimeRange::last_hours(24);
-        assert!(range.start.is_some());
-        assert!(range.end.is_some());
-
-        if let (Some(start), Some(end)) = (range.start, range.end) {
-            assert!(start < end);
-        }
     }
 }

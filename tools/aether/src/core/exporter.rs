@@ -332,8 +332,6 @@ impl ConfigExporter {
                 "service.port" | "api_port" | "port" => {
                     config.api.port = value.parse().unwrap_or(6000)
                 },
-                "log_level" => config.logging.level = value,
-                "log_file_prefix" => config.logging.file_prefix = Some(value),
                 _ => {},
             }
         }

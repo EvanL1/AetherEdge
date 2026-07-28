@@ -18,6 +18,8 @@ use aether_auth_jwt::AccessTokenAuthenticator;
 use crate::core::channels::ChannelManager;
 
 // Import handler modules
+use common::admin_api::{get_log_level, set_log_level};
+
 use crate::api::{
     handlers::health::*,
     handlers::{
@@ -25,7 +27,6 @@ use crate::api::{
         mapping_handlers::*, point_handlers::*, protocol_handlers::*,
     },
 };
-use common::admin_api::{get_log_level, list_log_files, set_log_level, view_log_file};
 
 /// Global service start time storage
 static SERVICE_START_TIME: OnceLock<DateTime<Utc>> = OnceLock::new();
@@ -121,8 +122,6 @@ impl AppState {
         // Admin endpoints
         common::admin_api::set_log_level,
         common::admin_api::get_log_level,
-        common::admin_api::list_log_files,
-        common::admin_api::view_log_file
     ),
     components(
         schemas(
@@ -278,8 +277,6 @@ fn create_api_routes_with_boundary(
             "/api/admin/logs/level",
             get(get_log_level).post(set_log_level),
         )
-        .route("/api/admin/logs/files", get(list_log_files))
-        .route("/api/admin/logs/view", get(view_log_file))
         .layer(axum::Extension(channel_management));
     #[cfg(feature = "openapi")]
     let router = router.route("/openapi.json", get(openapi_document));

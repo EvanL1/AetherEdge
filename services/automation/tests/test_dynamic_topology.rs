@@ -24,10 +24,10 @@ async fn create_topology_pool() -> sqlx::SqlitePool {
         .connect("sqlite::memory:")
         .await
         .expect("open topology database");
-    common::test_utils::schema::init_automation_schema(&pool)
+    common::site_schema::init_automation_schema(&pool)
         .await
         .expect("automation schema");
-    common::test_utils::schema::init_io_schema(&pool)
+    common::site_schema::init_io_schema(&pool)
         .await
         .expect("IO schema");
     for statement in [

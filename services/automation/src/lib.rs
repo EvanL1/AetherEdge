@@ -57,7 +57,6 @@ pub mod instance_manager;
 mod instance_data;
 mod instance_routing;
 pub mod product_loader;
-pub mod reload;
 pub mod routes;
 pub mod routing_loader;
 

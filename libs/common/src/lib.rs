@@ -4,6 +4,8 @@ pub mod point_type;
 pub mod service_config;
 pub mod service_ports;
 #[cfg(feature = "sqlite")]
+pub mod site_schema;
+#[cfg(feature = "sqlite")]
 pub mod sqlite;
 
 // Common modules
@@ -12,9 +14,8 @@ pub mod api_types;
 pub mod automation_config;
 pub mod config_loader;
 pub mod io_config;
-pub mod log_rotation;
 pub mod logging;
-pub mod serde_helpers;
+mod serde_helpers;
 pub mod service_bootstrap;
 pub mod shutdown;
 pub mod system_metrics;
@@ -28,10 +29,6 @@ pub use service_config::{
     // Config types
     ApiConfig,
     BaseServiceConfig,
-    // Reload
-    ChannelReloadResult,
-    // Enums
-    ComparisonOperator,
     // Validation
     ConfigValidator,
     // Constants
@@ -44,15 +41,9 @@ pub use service_config::{
     ENV_RULES_URL,
     FourRemote,
     GenericValidator,
-    InstanceReloadResult,
     LOCALHOST_HOST,
-    LogRotationConfig,
-    LoggingConfig,
     PointRole,
     PointType,
-    ReloadResult,
-    ReloadableService,
-    RuleReloadResult,
     SERVICE_CONFIG_TABLE,
     SYNC_METADATA_TABLE,
     // Database types
@@ -75,11 +66,8 @@ pub use api_types::{
     ErrorResponse,
     HealthStatus,
     PaginatedResponse,
-    PaginationParams,
     ServiceStatus,
-    SortOrder,
     SuccessResponse,
-    TimeRange,
 };
 
 // Re-export AppError when axum feature is enabled
@@ -95,22 +83,8 @@ pub mod bootstrap_args;
 pub mod bootstrap_database;
 pub mod bootstrap_system;
 
-// Test utilities (for use in test code only)
-pub mod test_utils;
-
 // Re-export common dependencies
 pub use anyhow;
 pub use serde;
 pub use serde_json;
 pub use tokio;
-
-// Re-export CLI dependencies when cli feature is enabled
-#[cfg(feature = "cli")]
-pub use clap;
-
-// Re-export clap derive macros separately for proper macro resolution
-#[cfg(feature = "cli")]
-pub use clap::{Args, Parser, Subcommand, ValueEnum};
-
-#[cfg(feature = "cli")]
-pub use reqwest;

@@ -75,7 +75,6 @@ pub use channel_mutator::{ChannelRuntimeLifecycle, SqliteChannelMutator};
 pub use error::{ErrorExt, IoError, Result};
 
 // Re-export core functionality
-pub use core::bootstrap::ServiceArgs;
 pub use core::channels::ChannelManager;
 pub use core::config::ConfigManager;
 

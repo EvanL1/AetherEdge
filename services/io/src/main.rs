@@ -40,19 +40,11 @@ use aether_store_local::{load_channel_routes, load_physical_topology};
 async fn main() -> anyhow::Result<()> {
     // Parse arguments and initialize
     let args = Args::parse();
-    let service_args = args.clone().into();
 
-    let service_info = ServiceInfo::new(
-        "aether-io",
-        "Industrial Communication Service - Multi-Protocol Support",
-        DEFAULT_PORT,
-    );
+    let service_info = ServiceInfo::new("aether-io", DEFAULT_PORT);
 
-    // Bootstrap: logging (API logging enabled by default), banner, system checks
-    // Note: Config not loaded yet, use AETHER_LOG_DIR env or default
-    bootstrap::initialize_logging(&service_args, &service_info, None)?;
-    // Enable SIGHUP-triggered log reopen
-    common::logging::enable_sighup_log_reopen();
+    // Bootstrap console logging, banner, and system checks.
+    bootstrap::initialize_logging(&service_info)?;
     if !args.no_color {
         common::service_bootstrap::print_startup_banner(&service_info);
     }
@@ -66,7 +58,7 @@ async fn main() -> anyhow::Result<()> {
     }
 
     // Load configuration from unified database
-    let db_path = service_args.get_db_path("aether-io");
+    let db_path = common::bootstrap_args::database_path();
     info!(
         "Loading configuration from unified SQLite database: {}",
         db_path

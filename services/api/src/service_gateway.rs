@@ -426,10 +426,6 @@ mod tests {
         assert!(validate_relative_path("//attacker.invalid/path").is_err());
         assert!(validate_relative_path("api/%2e%2e/secrets").is_err());
         assert!(is_internal_admin_path(
-            ServiceName::Io,
-            "api/admin/logs/view"
-        ));
-        assert!(is_internal_admin_path(
             ServiceName::Automation,
             "api/admin/logs/level"
         ));

@@ -45,14 +45,9 @@ async fn main() -> anyhow::Result<()> {
     let env = Arc::new(EnvConfig::default());
 
     // ── Logging ───────────────────────────────────────────────────────────────
-    let service_info = common::service_bootstrap::ServiceInfo::new(
-        "aether-history",
-        "Historical data service",
-        env.api_port,
-    );
-    common::service_bootstrap::init_logging(&service_info, None)
+    let service_info = common::service_bootstrap::ServiceInfo::new("aether-history", env.api_port);
+    common::service_bootstrap::init_logging(&service_info)
         .map_err(|e| anyhow::anyhow!("Failed to init logging: {}", e))?;
-    common::logging::enable_sighup_log_reopen();
     common::service_bootstrap::print_startup_banner(&service_info);
 
     info!("aether-history starting");
@@ -156,6 +151,5 @@ async fn main() -> anyhow::Result<()> {
         })
         .await?;
 
-    common::logging::shutdown_logging_tasks().await;
     Ok(())
 }

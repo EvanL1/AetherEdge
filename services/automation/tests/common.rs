@@ -171,7 +171,7 @@ impl TestEnv {
 }
 
 async fn init_test_schema(pool: &SqlitePool) -> Result<()> {
-    common::test_utils::schema::init_automation_schema(pool).await?;
+    common::site_schema::init_automation_schema(pool).await?;
     sqlx::query(
         r#"
         CREATE TABLE IF NOT EXISTS calculations (

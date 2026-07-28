@@ -1764,6 +1764,34 @@
       "implementation_status": "partial",
       "production_readiness": "not-applicable",
       "context_sensitivity": "internal",
+      "updated": "2026-07-28",
+      "priority": "optional",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-docs-adr-0033-console-first-shared-service-kernel",
+      "path": "docs/adr/0033-console-first-shared-service-kernel.md",
+      "canonical_url": "https://github.com/EvanL1/AetherEdge/blob/main/docs/adr/0033-console-first-shared-service-kernel.md",
+      "title": "ADR-0033: Keep the shared service kernel console-first",
+      "description": "Accepted and implemented on 2026-07-28.",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "decision",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "inspect-edge-implementation"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "not-applicable",
+      "context_sensitivity": "internal",
       "updated": "2026-07-18",
       "priority": "optional",
       "media_type": "text/markdown",

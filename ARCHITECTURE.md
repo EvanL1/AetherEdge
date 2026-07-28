@@ -21,6 +21,7 @@ rules are defined in:
 - [ADR-0030: Separate CLI from host supervision](docs/adr/0030-separate-cli-from-host-supervision.md)
 - [ADR-0031: Offline physical point topology](docs/adr/0031-offline-physical-point-topology.md)
 - [ADR-0032: Retire zero-consumer runtime compatibility planes](docs/adr/0032-retire-zero-consumer-runtime-compatibility.md)
+- [ADR-0033: Keep the shared service kernel console-first](docs/adr/0033-console-first-shared-service-kernel.md)
 - [Target repository layout](docs/architecture/target-layout.md)
 - [AI invariants](ai/invariants.md)
 - [Capability safety policy](ai/safety-policy.yaml)
@@ -74,6 +75,10 @@ plane, and typed SHM port adapters. In particular:
   live in `aether-pack`, SunSpec material is absent from the kernel, T/S/C/A
   configuration representation lives at the `common` adapter boundary, and
   firmware-only codecs and ABI primitives stay in the nested firmware workspace.
+- `common` is an unpublished shared service kernel, not a compatibility layer.
+  Process tracing is console-first and host-supervised; only governed IO channel
+  diagnostics may write dedicated files. Offline commissioning, runtime startup,
+  and tests share the explicit `common::site_schema` SQLite authority.
 - Domain models and knowledge are absent by default. Automation and MCP load
   them only from manifest-validated Packs explicitly selected by
   `<AETHER_CONFIG_PATH>/global.yaml`; `packs: []` is the safe empty kernel.

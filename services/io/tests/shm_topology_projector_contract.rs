@@ -19,7 +19,7 @@ async fn pool() -> sqlx::SqlitePool {
         .connect("sqlite::memory:")
         .await
         .expect("in-memory SQLite");
-    common::test_utils::schema::init_io_schema(&pool)
+    common::site_schema::init_io_schema(&pool)
         .await
         .expect("I/O schema");
     pool

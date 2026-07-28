@@ -213,7 +213,7 @@ async fn existing_instance_with_an_inactive_product_fails_startup_validation() {
     let pool = sqlx::SqlitePool::connect("sqlite::memory:")
         .await
         .expect("SQLite pool");
-    common::test_utils::schema::init_automation_schema(&pool)
+    common::site_schema::init_automation_schema(&pool)
         .await
         .expect("automation schema");
     sqlx::query(
@@ -236,7 +236,7 @@ async fn empty_site_accepts_an_empty_product_library() {
     let pool = sqlx::SqlitePool::connect("sqlite::memory:")
         .await
         .expect("SQLite pool");
-    common::test_utils::schema::init_automation_schema(&pool)
+    common::site_schema::init_automation_schema(&pool)
         .await
         .expect("automation schema");
     let library = aether_pack::ProductLibrary::load(None).expect("empty product library");

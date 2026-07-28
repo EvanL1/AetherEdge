@@ -40,8 +40,7 @@ use crate::api::single_point_handlers::{
 };
 
 use crate::api::property_handlers::{delete_property, upsert_property};
-
-use common::admin_api::{get_log_level, list_log_files, set_log_level, view_log_file};
+use common::admin_api::{get_log_level, set_log_level};
 
 // Service-local OpenAPI document consumed by the gateway-owned Swagger UI.
 #[cfg(feature = "openapi")]
@@ -85,8 +84,6 @@ use common::admin_api::{get_log_level, list_log_files, set_log_level, view_log_f
         // Admin endpoints
         common::admin_api::set_log_level,
         common::admin_api::get_log_level,
-        common::admin_api::list_log_files,
-        common::admin_api::view_log_file
     ),
     components(
         schemas(
@@ -228,13 +225,11 @@ pub fn create_routes(state: Arc<AppState>) -> Router {
         .route("/api/products/{product_name}/points", get(get_product_points))
         // Cloud sync endpoints
         .route("/api/instances/export", get(export_instances))
-        // Admin endpoints (log level + file access)
+        // Host-local dynamic log filter
         .route(
             "/api/admin/logs/level",
             get(get_log_level).post(set_log_level),
         )
-        .route("/api/admin/logs/files", get(list_log_files))
-        .route("/api/admin/logs/view", get(view_log_file))
         // Apply HTTP request logging middleware
         .layer(axum::middleware::from_fn(common::logging::http_request_logger))
         .layer(DefaultBodyLimit::max(1024 * 1024)) // 1 MB request body limit
@@ -342,8 +337,6 @@ mod openapi_tests {
             "/health",
             "/api/instances/{id}/children",
             "/api/topology",
-            "/api/admin/logs/files",
-            "/api/admin/logs/view",
             "/api/rules/{id}/variables",
         ] {
             assert!(paths.contains_key(path), "missing OpenAPI path: {path}");
@@ -365,7 +358,7 @@ mod openapi_tests {
             })
             .count();
         assert_eq!(
-            operation_count, 44,
+            operation_count, 42,
             "OpenAPI operation count changed; re-audit Router parity before updating this contract"
         );
     }

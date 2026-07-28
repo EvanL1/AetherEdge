@@ -84,8 +84,8 @@ under `packs/energy/examples/config/`. Annotated:
 ```
 config.template/
 ├── global.yaml                 # Shared settings: active Packs, API bind
-│                               # host, log level/rotation, rule scheduler
-│                               # tick interval (rules.tick_ms, default 100)
+│                               # host, and rule scheduler tick interval
+│                               # (rules.tick_ms, default 100)
 ├── runtime-manifest.json       # Generated, checksummed build composition;
 │                               # never inferred or edited by site setup
 ├── io/

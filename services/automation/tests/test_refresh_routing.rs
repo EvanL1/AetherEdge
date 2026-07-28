@@ -7,7 +7,6 @@
 
 use aether_automation::instance_manager::InstanceManager;
 use aether_automation::product_loader::ProductLoader;
-use common::ReloadableService;
 use sqlx::SqlitePool;
 use std::sync::Arc;
 use tempfile::TempDir;
@@ -21,7 +20,7 @@ async fn create_test_db() -> (TempDir, SqlitePool) {
     let db_path = tmp.path().join("test.db");
     let url = format!("sqlite://{}?mode=rwc", db_path.display());
     let pool = SqlitePool::connect(&url).await.unwrap();
-    common::test_utils::schema::init_automation_schema(&pool)
+    common::site_schema::init_automation_schema(&pool)
         .await
         .unwrap();
     (tmp, pool)
@@ -129,25 +128,4 @@ async fn test_refresh_routing_concurrent_calls() {
 
     assert!(r1.is_ok(), "task 1 panicked: {:?}", r1.err());
     assert!(r2.is_ok(), "task 2 panicked: {:?}", r2.err());
-}
-
-/// Reloading from SQLite must rebuild process-local derived state without an
-/// RTDB mirror. A name inserted directly into the database becomes available
-/// through the manager after reload.
-#[tokio::test]
-async fn reload_from_database_rebuilds_name_cache() {
-    let (_tmp, pool) = create_test_db().await;
-    let manager = make_manager(pool.clone());
-
-    sqlx::query(
-        "INSERT INTO instances (instance_id, instance_name, product_name) VALUES (7, 'pump_7', 'Battery')",
-    )
-    .execute(&pool)
-    .await
-    .unwrap();
-
-    let result = manager.reload_from_database(&pool).await.unwrap();
-
-    assert_eq!(result.total_count, 1);
-    assert_eq!(manager.get_instance_id("pump_7").await.unwrap(), 7);
 }

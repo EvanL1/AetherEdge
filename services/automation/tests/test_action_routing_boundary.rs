@@ -47,10 +47,10 @@ impl RoutingFixture {
             .connect("sqlite::memory:")
             .await
             .expect("open routing database");
-        common::test_utils::schema::init_automation_schema(&pool)
+        common::site_schema::init_automation_schema(&pool)
             .await
             .expect("automation schema");
-        common::test_utils::schema::init_io_schema(&pool)
+        common::site_schema::init_io_schema(&pool)
             .await
             .expect("IO schema");
         Self::with_pool(pool).await
@@ -63,17 +63,17 @@ impl RoutingFixture {
             .await
             .expect("open degraded routing database");
         for statement in [
-            common::test_utils::schema::CHANNELS_TABLE,
-            common::test_utils::schema::ADJUSTMENT_POINTS_TABLE,
-            common::test_utils::schema::INSTANCES_TABLE,
-            common::test_utils::schema::ACTION_ROUTING_TABLE,
+            common::site_schema::CHANNELS_TABLE,
+            common::site_schema::ADJUSTMENT_POINTS_TABLE,
+            common::site_schema::INSTANCES_TABLE,
+            common::site_schema::ACTION_ROUTING_TABLE,
         ] {
             sqlx::query(statement)
                 .execute(&pool)
                 .await
                 .expect("minimal schema");
         }
-        common::test_utils::schema::initialize_configuration_revisions(&pool)
+        common::site_schema::initialize_configuration_revisions(&pool)
             .await
             .expect("logical-routing revision");
         Self::with_pool(pool).await

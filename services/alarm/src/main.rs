@@ -34,14 +34,9 @@ async fn main() -> anyhow::Result<()> {
     let cfg = AlarmConfig::default();
 
     // ── Logging ──────────────────────────────────────────────────────────────
-    let service_info = common::service_bootstrap::ServiceInfo::new(
-        "aether-alarm",
-        "Alarm monitoring service",
-        cfg.api_port,
-    );
-    common::service_bootstrap::init_logging(&service_info, None)
+    let service_info = common::service_bootstrap::ServiceInfo::new("aether-alarm", cfg.api_port);
+    common::service_bootstrap::init_logging(&service_info)
         .map_err(|e| anyhow::anyhow!("Failed to init logging: {}", e))?;
-    common::logging::enable_sighup_log_reopen();
     common::service_bootstrap::print_startup_banner(&service_info);
 
     info!("aether-alarm starting on port {}", cfg.api_port);
@@ -172,7 +167,6 @@ async fn main() -> anyhow::Result<()> {
         })
         .await?;
 
-    common::logging::shutdown_logging_tasks().await;
     info!("alarm stopped");
     Ok(())
 }

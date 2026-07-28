@@ -181,7 +181,7 @@ mod tests {
                 "/hisApi/data/query": { "get": {} },
                 "/hisApi/storage": { "put": {} },
                 "/ping": { "get": {} },
-                "/api/admin/logs/files": { "get": {} }
+                "/api/admin/logs/level": { "get": {} }
             }
         });
 
@@ -190,7 +190,7 @@ mod tests {
         assert!(document["paths"]["/data/query"].is_object());
         assert!(document["paths"]["/storage"].is_object());
         assert!(document["paths"]["/ping"].is_null());
-        assert!(document["paths"]["/api/admin/logs/files"].is_null());
+        assert!(document["paths"]["/api/admin/logs/level"].is_null());
         assert_eq!(document["servers"][0]["url"], "/api/v1/history");
     }
 
@@ -200,7 +200,7 @@ mod tests {
             "paths": {
                 "/health": { "get": {} },
                 "/api/channels": { "get": {} },
-                "/api/admin/logs/files": { "get": {} }
+                "/api/admin/logs/level": { "get": {} }
             }
         });
 
@@ -208,7 +208,7 @@ mod tests {
 
         assert!(document["paths"]["/health"].is_object());
         assert!(document["paths"]["/api/channels"].is_object());
-        assert!(document["paths"]["/api/admin/logs/files"].is_null());
+        assert!(document["paths"]["/api/admin/logs/level"].is_null());
         assert_eq!(document["servers"][0]["url"], "/api/v1/io");
     }
 }

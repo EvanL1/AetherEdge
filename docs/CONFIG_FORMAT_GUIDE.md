@@ -47,14 +47,7 @@ config/
 api:
   host: "127.0.0.1"          # 内部进程 API 仅本机访问；远程请求走 aether-api
 
-# 日志配置
-logging:
-  level: "info"              # trace, debug, info, warn, error
-  dir: "logs"
-  rotation:
-    strategy: "daily"        # daily, size
-    max_size_mb: 100
-    max_files: 7
+# 服务日志写入标准输出；级别由 RUST_LOG 设置，采集与轮转由 systemd/Docker 管理。
 
 # 规则引擎配置
 rules:

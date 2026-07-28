@@ -571,6 +571,38 @@ fn io_point_topology_is_offline_only() {
 }
 
 #[test]
+fn shared_service_kernel_stays_console_first() {
+    let root = workspace_metadata().workspace_root;
+    for (relative, forbidden) in [
+        ("libs/common/Cargo.toml", "tracing-appender"),
+        ("libs/common/Cargo.toml", "flate2"),
+        ("libs/common/src/lib.rs", "test_utils"),
+        ("libs/common/src/lib.rs", "log_rotation"),
+        ("libs/common/src/service_config.rs", "ReloadableService"),
+        ("libs/common/src/logging.rs", "DailyRollingWriter"),
+        ("libs/common/src/admin_api.rs", "list_log_files"),
+        ("libs/common/src/admin_api.rs", "view_log_file"),
+        ("services/io/src/api/routes.rs", "/api/admin/logs/files"),
+        ("services/io/src/api/routes.rs", "/api/admin/logs/view"),
+        ("services/automation/src/routes.rs", "/api/admin/logs/files"),
+        ("services/automation/src/routes.rs", "/api/admin/logs/view"),
+        ("services/history/src/routes.rs", "/api/admin/logs/files"),
+        ("services/uplink/src/routes.rs", "/api/admin/logs/files"),
+        ("services/alarm/src/routes.rs", "/api/admin/logs/files"),
+        ("services/api/src/main.rs", "/logs/files"),
+        ("services/automation/src/lib.rs", "pub mod reload;"),
+        ("config.template/global.yaml", "logging:"),
+    ] {
+        let source = fs::read_to_string(root.join(relative))
+            .unwrap_or_else(|error| panic!("failed to read {relative}: {error}"));
+        assert!(
+            !source.contains(forbidden),
+            "{relative} restored retired shared service surface {forbidden}"
+        );
+    }
+}
+
+#[test]
 fn zero_consumer_runtime_compatibility_planes_stay_retired() {
     let root = workspace_metadata().workspace_root;
     for (relative, forbidden) in [

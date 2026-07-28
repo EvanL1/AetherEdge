@@ -61,8 +61,6 @@ pub fn create_routes(state: Arc<AppState>) -> Router {
         .route("/alarmApi/call-data", post(call_data))
         // Admin API (shared endpoints from common lib)
         .route("/api/admin/logs/level", get(common::admin_api::get_log_level).post(common::admin_api::set_log_level))
-        .route("/api/admin/logs/files", get(common::admin_api::list_log_files))
-        .route("/api/admin/logs/view", get(common::admin_api::view_log_file))
         .with_state(state);
 
     #[cfg(feature = "openapi")]
@@ -105,8 +103,6 @@ async fn openapi_document() -> Json<utoipa::openapi::OpenApi> {
         call_data,
         common::admin_api::get_log_level,
         common::admin_api::set_log_level,
-        common::admin_api::list_log_files,
-        common::admin_api::view_log_file,
     ),
     components(schemas(
         AlertRule,
@@ -218,8 +214,6 @@ mod openapi_tests {
         for (path, method) in [
             ("/api/admin/logs/level", "get"),
             ("/api/admin/logs/level", "post"),
-            ("/api/admin/logs/files", "get"),
-            ("/api/admin/logs/view", "get"),
         ] {
             assert!(
                 specification["paths"][path][method].is_object(),
@@ -250,7 +244,7 @@ mod openapi_tests {
                     .count()
             })
             .sum::<usize>();
-        assert_eq!(operation_count, 23, "Router/OpenAPI operation drift");
+        assert_eq!(operation_count, 21, "Router/OpenAPI operation drift");
 
         assert!(
             specification["components"]["securitySchemes"]["bearer_auth"].is_object(),

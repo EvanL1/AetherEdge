@@ -120,7 +120,6 @@ impl IoSqliteLoader {
         Ok(AppConfig {
             service,
             api,
-            logging: crate::core::config::LoggingConfig::default(),
             channels,
         })
     }
