@@ -96,10 +96,6 @@ the gateway OpenAPI document. Public registration is disabled unless explicitly
 enabled. The required `JWT_SECRET_KEY` must contain at least 32 bytes and must
 be managed outside source control.
 
-The gateway WebSocket is also authenticated. Its documented `?token=...`
-fallback is accepted only for an actual WebSocket upgrade; REST query-string
-tokens are rejected. WebSocket control writes are not supported.
-
 The gateway requires an access JWT before forwarding any namespace request.
 The owning service then applies operation-specific authorization:
 
@@ -155,8 +151,8 @@ Most business handlers return the shared success envelope:
 { "success": true, "data": { "...": "..." }, "metadata": { "...": "..." } }
 ```
 
-`metadata` is omitted when empty. Health probes, service banners, WebSocket
-upgrades and CSV exports intentionally use their own representations.
+`metadata` is omitted when empty. Health probes, service banners, and CSV
+exports intentionally use their own representations.
 
 Error responses are still migrating and may use one of these compatibility
 shapes:

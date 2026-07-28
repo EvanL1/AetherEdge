@@ -16,7 +16,6 @@ pub struct AlarmConfig {
     pub db_path: String,
     /// Monitoring check interval in seconds
     pub data_fetch_interval: u64,
-    pub api_url: String,
     pub uplink_url: String,
 }
 
@@ -61,8 +60,6 @@ impl Default for AlarmConfig {
                 .ok()
                 .and_then(|s| s.parse().ok())
                 .unwrap_or(5),
-            api_url: env::var("AETHER_API_URL")
-                .unwrap_or_else(|_| "http://localhost:6005".to_string()),
             uplink_url: env::var("AETHER_UPLINK_URL")
                 .unwrap_or_else(|_| "http://localhost:6006".to_string()),
         }

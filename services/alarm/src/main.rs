@@ -5,7 +5,7 @@
 //! - Active alerts (`/alarmApi/alerts`)
 //! - Alert event history (`/alarmApi/alert-events`)
 //! - Background monitoring loop (reads SHM, triggers/recovers alerts)
-//! - HTTP broadcasts to api (6005) and uplink (6006)
+//! - Alarm publication to uplink (6006)
 
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -69,7 +69,7 @@ async fn main() -> anyhow::Result<()> {
         .timeout(std::time::Duration::from_secs(5))
         .build()?;
 
-    let broadcaster = Broadcaster::new(http_client, cfg.api_url.clone(), cfg.uplink_url.clone());
+    let broadcaster = Broadcaster::new(http_client, cfg.uplink_url.clone());
 
     // ── Governed alarm command boundary ──────────────────────────────────────
     let access_authenticator = Arc::new(

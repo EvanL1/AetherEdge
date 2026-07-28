@@ -197,7 +197,7 @@ cargo add aether-edge-sdk --features local-runtime
 | `aether-automation` | Instance、规则与经审计的控制分发 |
 | `aether-alarm` | 告警计算与生命周期 |
 | `aether-history` | 嵌入式历史与可选历史适配器 |
-| `aether-api` | 经认证的远程 application API 与 WebSocket |
+| `aether-api` | 经认证的无头 application 网关 |
 | `aether-uplink` | 持久 legacy Cloud/MQTT 交付和实验性 CloudLink 基础 |
 
 ```text

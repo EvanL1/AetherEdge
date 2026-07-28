@@ -51,6 +51,12 @@ const RETIRED_ROOT_PATHS: &[&str] = &[
     "crates/aether-application/src/data_processing.rs",
     "services/api/src/data_processing_runtime.rs",
     "services/api/src/routes_data_processing.rs",
+    "services/api/src/live_values.rs",
+    "services/api/src/ws.rs",
+    "services/api/src/routes_broadcast.rs",
+    "services/api/src/routes_config.rs",
+    "services/api/src/routes_homepage.rs",
+    "services/api/src/routes_network.rs",
     "libs/aether-store-local/src/data_processing.rs",
     "libs/aether-store-local/src/snapshot_covariates.rs",
     "packs/energy/data-processing",
@@ -62,6 +68,8 @@ const RETIRED_ROOT_PATHS: &[&str] = &[
     "docs/concepts/data-processing-flow.md",
     "docs/guides/data-processors.md",
     "docs/reference/data-processing-contracts.md",
+    "docs/websocket-rule-monitor-api.md",
+    "packs/energy/examples/config/api",
     "crates/aether-application/src/integration_synchronizer.rs",
     "crates/aether-domain/src/integration.rs",
     "crates/aether-ports/src/integration.rs",
@@ -594,6 +602,19 @@ fn core_and_gateway_do_not_select_forbidden_sdk_or_adapter_edges() {
     let routing = workspace.package("aether-routing");
     if production_dependencies(routing).any(|dependency| dependency.name == "sqlx") {
         violations.push("aether-routing depends on the concrete SQLite client".to_string());
+    }
+    let api = workspace.package("aether-api");
+    for forbidden in [
+        "aether-dataplane",
+        "aether-routing",
+        "aether-shm-bridge",
+        "aether-store-local",
+    ] {
+        if has_production_workspace_dependency(workspace, api, forbidden) {
+            violations.push(format!(
+                "headless aether-api selects forbidden live-state adapter {forbidden}"
+            ));
+        }
     }
     let local_store = workspace.package("aether-store-local");
     for required in ["aether-routing", "aether-shm-bridge"] {

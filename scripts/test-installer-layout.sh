@@ -887,10 +887,8 @@ grep -Fq -- 'AETHER_ALLOW_PUBLIC_REGISTRATION=${AETHER_ALLOW_PUBLIC_REGISTRATION
     || fail "aether-api public registration is not explicitly deny-by-default"
 grep -Fq -- 'user: "${HOST_UID:-1000}:${HOST_GID:-1000}"' <<< "$api_compose_section" \
     || fail "aether-api is not running with the ordinary host user/group"
-grep -Fq -- '/etc/systemd/network:/etc/systemd/network:ro' <<< "$api_compose_section" \
-    || fail "aether-api network configuration mount is not read-only"
-if grep -Eq '/var/run/docker\.sock|/opt/AetherEdge:/opt/AetherEdge' <<< "$api_compose_section"; then
-    fail "aether-api still has a privileged Docker or installation-root mount"
+if grep -Eq '/etc/systemd/network|/dev/shm|/shm/rtdb|/var/run/docker\.sock|/opt/AetherEdge:/opt/AetherEdge' <<< "$api_compose_section"; then
+    fail "headless aether-api still has a host-management or SHM mount"
 fi
 assert_not_contains "$DOCKER_INSTALLER" 'chgrp docker /etc/systemd/network'
 assert_not_contains "$DOCKER_INSTALLER" 'chmod g+w /etc/systemd/network'

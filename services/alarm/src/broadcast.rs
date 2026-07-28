@@ -1,4 +1,4 @@
-//! HTTP broadcast to api (6005) and uplink (6006)
+//! Alarm publication to the uplink owner (6006).
 
 use chrono::Utc;
 use reqwest::Client;
@@ -11,17 +11,12 @@ use crate::models::AlertRule;
 #[derive(Clone)]
 pub struct Broadcaster {
     client: Client,
-    api_url: String,
     uplink_url: String,
 }
 
 impl Broadcaster {
-    pub fn new(client: Client, api_url: String, uplink_url: String) -> Self {
-        Self {
-            client,
-            api_url,
-            uplink_url,
-        }
+    pub fn new(client: Client, uplink_url: String) -> Self {
+        Self { client, uplink_url }
     }
 
     pub async fn send_alarm_triggered(&self, alert_id: i64, rule: &AlertRule, current_value: f64) {
@@ -109,37 +104,19 @@ impl Broadcaster {
     }
 
     async fn broadcast_all(&self, payload: &Value) {
-        let urls = [
-            format!("{}/api/v1/broadcast", self.api_url),
-            format!("{}/netApi/alarm/broadcast", self.uplink_url),
-        ];
-
-        let futures = urls.iter().map(|url| {
-            let url = url.clone();
-            let client = self.client.clone();
-            let payload = payload.clone();
-            async move {
-                match client
-                    .post(&url)
-                    .json(&payload)
-                    .timeout(std::time::Duration::from_secs(3))
-                    .send()
-                    .await
-                {
-                    Ok(resp) if resp.status().is_success() => {
-                        debug!("Broadcast ok: {}", url);
-                    },
-                    Ok(resp) => {
-                        warn!("Broadcast failed: {} status={}", url, resp.status());
-                    },
-                    Err(e) => {
-                        warn!("Broadcast error: {} err={}", url, e);
-                    },
-                }
-            }
-        });
-
-        futures::future::join_all(futures).await;
+        let url = format!("{}/netApi/alarm/broadcast", self.uplink_url);
+        match self
+            .client
+            .post(&url)
+            .json(payload)
+            .timeout(std::time::Duration::from_secs(3))
+            .send()
+            .await
+        {
+            Ok(response) if response.status().is_success() => debug!("Broadcast ok: {url}"),
+            Ok(response) => warn!("Broadcast failed: {url} status={}", response.status()),
+            Err(error) => warn!("Broadcast error: {url} err={error}"),
+        }
     }
 
     /// Broadcast all currently active alerts (used by /call-data endpoint)

@@ -73,7 +73,6 @@ Use the narrowest document that answers the task. The catalog covers every agent
 - [Experimental CloudLink MQTT v1 edge contract](https://docs.aetheriot.dev/reference/cloudlink-mqtt-v1.md): This document describes the experimental CloudLink candidate. The public AetherContracts v0.1.0-alpha.3 release is the sole authority, and AetherEdge and AetherCloud commit the same digest-pinned consumer lock. The current claim is…
 - [HTTP API](https://docs.aetheriot.dev/reference/http-api.md): The single remote gateway, service-local OpenAPI, authentication, and compatibility conventions
 - [MCP Tools Reference](https://docs.aetheriot.dev/reference/mcp-tools.md): All MCP tools grouped by domain, with parameters and write-safety markers
-- [Legacy rule-monitor WebSocket API](https://github.com/EvanL1/AetherEdge/blob/main/docs/websocket-rule-monitor-api.md): Historical rule-monitoring interface retained for compatibility lookup.
 - [AetherEdge](https://github.com/EvanL1/AetherEdge/blob/main/README.md): Repository overview, current product status, installation paths, architecture boundaries, and development entry points.
 
 ## Compatibility and Status
@@ -128,6 +127,7 @@ Use the narrowest document that answers the task. The catalog covers every agent
 - [ADR-0026: Keep integrations outside the minimal edge kernel](https://github.com/EvanL1/AetherEdge/blob/main/docs/adr/0026-minimal-kernel-and-out-of-tree-integrations.md): Accepted on 2026-07-27. This decision supersedes the in-repository extension ownership selected by ADR-0020 and decision 4 of ADR-0025. It narrows, but does not otherwise replace, ADR-0017: CloudLink remains experimental until that ADR's…
 - [ADR-0027: Keep only the distribution-owned physical protocol set](https://github.com/EvanL1/AetherEdge/blob/main/docs/adr/0027-minimal-physical-protocol-set.md): Accepted on 2026-07-27.
 - [ADR-0028: Move derived-data processing downstream](https://github.com/EvanL1/AetherEdge/blob/main/docs/adr/0028-move-derived-data-processing-downstream.md): Accepted and implemented on 2026-07-28. Supersedes ADR-0009.
+- [ADR-0029: Keep the remote application boundary headless](https://github.com/EvanL1/AetherEdge/blob/main/docs/adr/0029-headless-remote-application-boundary.md): Accepted and implemented on 2026-07-28.
 - [Control Strategies as Rules (Moved)](https://github.com/EvanL1/AetherEdge/blob/main/docs/domain/control-strategies.md): Compatibility pointer to the Energy Pack knowledge page
 - [Energy Storage Primer (Moved)](https://github.com/EvanL1/AetherEdge/blob/main/docs/domain/ess-primer.md): Compatibility pointer to the Energy Pack knowledge page
 - [Power Forecasting (Moved)](https://github.com/EvanL1/AetherEdge/blob/main/docs/domain/power-forecasting.md): Compatibility pointer to the downstream AetherEMS knowledge page

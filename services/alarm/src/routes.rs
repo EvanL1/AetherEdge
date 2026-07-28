@@ -683,8 +683,8 @@ async fn update_rule(
 /// Delete an alarm rule.
 ///
 /// Cascade behavior: any active alerts produced by this rule are first
-/// resolved with reason "rule deleted" (stored as the Chinese literal "规则被删除"; broadcast to the WebSocket so the UI
-/// clears them), then the `alert_rule` row is removed. `alert_event` rows
+/// resolved with reason "rule deleted" (stored as the Chinese literal "规则被删除"
+/// and published to uplink), then the `alert_rule` row is removed. `alert_event` rows
 /// (the historical event log) are kept — they reference the rule by id
 /// only and survive deletion for audit.
 #[utoipa::path(delete, path = "/alarmApi/rules/{id}", tag = "Rules",
@@ -883,9 +883,8 @@ async fn get_alert(State(state): State<Arc<AppState>>, Path(id): Path<i64>) -> i
 /// Operator-driven recovery for the case where the underlying condition has
 /// cleared but the polling loop hasn't seen the new value yet (or the rule's
 /// data source is broken). Moves the row from `alert` → `alert_event`,
-/// captures the current value as `recovery_value`, and broadcasts a
-/// `send_alarm_recovery` event with reason "manually resolved" to the
-/// WebSocket so the UI clears.
+/// captures the current value as `recovery_value`, and publishes a
+/// `send_alarm_recovery` event with reason "manually resolved" to uplink.
 ///
 /// The recovery is permanent for this alert id; if the underlying condition
 /// is still true, the next monitor tick will create a NEW alert with a new
@@ -1128,12 +1127,9 @@ async fn manual_check_rule(
     }
 }
 
-/// Rebroadcast all currently active alerts to the WebSocket.
+/// Republish all currently active alerts to uplink.
 ///
-/// Doesn't change any state — re-publishes the current active alert set on
-/// the broadcast channel and refreshes the alarm-count counter. Used when a
-/// frontend client reconnects or wakes up after sleep and needs to catch up
-/// without polling individual endpoints.
+/// Doesn't change alarm state; it refreshes the alarm-count publication.
 #[utoipa::path(post, path = "/alarmApi/call-data", tag = "Monitor",
     responses((status = 200, description = "Broadcast all active alerts")))]
 async fn call_data(State(state): State<Arc<AppState>>) -> impl IntoResponse {
@@ -1545,7 +1541,6 @@ mod tests {
         let broadcaster = crate::broadcast::Broadcaster::new(
             reqwest::Client::new(),
             "http://127.0.0.1:1".to_string(),
-            "http://127.0.0.1:1".to_string(),
         );
         let alarm_store = Arc::new(crate::alarm_rule_mutation::SqliteAlarmRuleMutator::new(
             db.clone(),
@@ -1558,7 +1553,6 @@ mod tests {
             live_values: Arc::new(NoLiveValues),
             broadcaster: crate::broadcast::Broadcaster::new(
                 reqwest::Client::new(),
-                config.api_url.clone(),
                 config.uplink_url.clone(),
             ),
             monitor_status: Arc::new(tokio::sync::RwLock::new(MonitorStatus {

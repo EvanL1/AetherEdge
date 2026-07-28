@@ -39,7 +39,7 @@ processor belong to the independent
 | aether-io | aetherems:latest | Communication service (privileged, mounts `/dev` for field buses) |
 | aether-automation | aetherems:latest | Model service and rule engine |
 | aether-history | aetherems:latest | SHM sampler with embedded SQLite history by default |
-| aether-api | aetherems:latest | REST API, WebSocket, JWT auth |
+| aether-api | aetherems:latest | Headless REST application gateway and JWT auth |
 | aether-uplink | aetherems:latest | MQTT cloud uplink, TLS certificates |
 | aether-alarm | aetherems:latest | Alarm rules and notifications |
 
@@ -176,12 +176,11 @@ command. Sign in as `admin`, change the password immediately, then remove the
 bootstrap variable. Anonymous registration remains disabled unless
 `AETHER_ALLOW_PUBLIC_REGISTRATION=true` is explicitly set.
 
-The API container runs as `HOST_UID:HOST_GID`. It has neither the Docker socket
-nor the installation root mounted, and `/etc/systemd/network` is read-only.
-Consequently host-network mutation requests fail closed. Remote runtime
-upgrade is not supported; installing another release requires the explicit
-fresh-deployment workflow above rather than expanding the API process's
-authority.
+The API container runs as `HOST_UID:HOST_GID`. It has no Docker socket,
+installation-root, host-network-configuration, or SHM mount. Browser dashboard,
+host-network mutation, configuration archive, process supervision, and remote
+upgrade endpoints are not kernel capabilities. Installing another release uses
+the explicit fresh-deployment workflow above.
 
 ## Pack-only artifact
 

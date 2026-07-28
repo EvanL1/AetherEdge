@@ -15,12 +15,6 @@ disabled: installing or inspecting this pack must not contact a device or run a
 control rule. Commissioning must supply site-specific addresses and explicitly
 enable each selected instance, channel, and rule.
 
-The legacy energy-dashboard calculated-point preset is retained at
-[`examples/config/api/calculated_points.sql`](examples/config/api/calculated_points.sql)
-only as an AetherEMS distribution migration and commissioning asset. The Kernel
-does not compile or auto-import it; Pack installation and activation do not
-execute it, and the generic homepage reset always returns to zero points.
-
 Runtime activation is a single shared `global.yaml` entry consumed by both
 automation and MCP:
 

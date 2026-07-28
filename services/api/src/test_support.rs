@@ -1,8 +1,5 @@
-use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
-use aether_ports::PortResult;
-use aether_shm_bridge::SlotSnapshot;
 use axum::http::{HeaderMap, HeaderValue, header};
 use dashmap::DashMap;
 use sqlx::sqlite::SqlitePoolOptions;
@@ -10,42 +7,10 @@ use sqlx::sqlite::SqlitePoolOptions;
 use crate::auth::create_access_token;
 use crate::config::GatewayConfig;
 use crate::db;
-use crate::live_values::GatewayValueSource;
 use crate::models::{RoleInfo, UserWithRole};
 use crate::state::AppState;
-use crate::ws::WsHub;
 
 pub(crate) const TEST_JWT_SECRET: &str = "0123456789abcdef0123456789abcdef";
-
-struct EmptyGatewayValueSource;
-
-impl GatewayValueSource for EmptyGatewayValueSource {
-    fn read_group(
-        &self,
-        _source: &str,
-        _owner_id: i64,
-        _data_type: &str,
-    ) -> PortResult<BTreeMap<String, SlotSnapshot>> {
-        Ok(BTreeMap::new())
-    }
-
-    fn read_formula(&self, _formula: &str) -> PortResult<Option<SlotSnapshot>> {
-        Ok(None)
-    }
-
-    fn watched_slots(
-        &self,
-        _source: &str,
-        _owner_ids: &[i64],
-        _data_types: &[String],
-    ) -> PortResult<BTreeSet<usize>> {
-        Ok(BTreeSet::new())
-    }
-
-    fn watched_formula_slot(&self, _formula: &str) -> PortResult<Option<usize>> {
-        Ok(None)
-    }
-}
 
 pub(crate) async fn app_state() -> Arc<AppState> {
     app_state_with_public_registration(false).await
@@ -71,12 +36,10 @@ pub(crate) async fn app_state_with_public_registration(
         allow_public_registration,
         ..GatewayConfig::default()
     };
-    let ws_hub = WsHub::new(Arc::new(EmptyGatewayValueSource), database.clone());
 
     Arc::new(AppState {
         db: database,
         config: Arc::new(config),
-        ws_hub,
         refresh_tokens: DashMap::new(),
         service_client: reqwest::Client::new(),
     })

@@ -95,7 +95,7 @@ A generated remote client must therefore:
 
 - call those gateway-prefixed capabilities only through authenticated `aether-api` on port 6005;
 - use the running gateway's OpenAPI contract to generate types and requests;
-- use its authenticated WebSocket contract for live updates when available;
+- poll bounded authenticated query capabilities for live updates;
 - report an unavailable use case instead of proxying an internal port;
 - keep credentials out of source control, URLs, logs, and browser persistence not designed for
   secrets.

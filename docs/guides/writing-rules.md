@@ -170,7 +170,7 @@ boundary rather than adding a simulation adapter to the production IO process:
    `actions_succeeded`, where success means local command-plane acceptance.
    Read back the corresponding measurements to verify physical behavior. The
    detailed execution path and action outcomes remain persisted locally in
-   SQLite `rule_history` for API and WebSocket readers.
+   SQLite `rule_history` for authenticated API readers.
 
 4. Once the branch selection and written values look right, re-target the
    rule's actions at the production instance and enable it.

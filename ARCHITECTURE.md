@@ -17,6 +17,7 @@ rules are defined in:
 - [ADR-0026: Minimal kernel and out-of-tree integrations](docs/adr/0026-minimal-kernel-and-out-of-tree-integrations.md)
 - [ADR-0027: Minimal physical protocol set](docs/adr/0027-minimal-physical-protocol-set.md)
 - [ADR-0028: Move derived-data processing downstream](docs/adr/0028-move-derived-data-processing-downstream.md)
+- [ADR-0029: Headless remote application boundary](docs/adr/0029-headless-remote-application-boundary.md)
 - [Target repository layout](docs/architecture/target-layout.md)
 - [AI invariants](ai/invariants.md)
 - [Capability safety policy](ai/safety-policy.yaml)
@@ -52,9 +53,10 @@ plane, and typed SHM port adapters. In particular:
   client or mirror implementation. PostgreSQL is not a default dependency; the
   History service retains an explicitly selected migration backend while its
   extraction decision remains separate.
-- `aether-alarm`, `aether-api`, `aether-history`, and `aether-uplink` discover logical points from
-  SQLite and read current values directly from SHM. `aether-alarm` and
-  `aether-api` also own isolated PointWatch bitmaps and UDS listeners.
+- `aether-alarm`, `aether-history`, and `aether-uplink` discover logical points
+  from SQLite and read current values directly from SHM. `aether-alarm` owns an
+  isolated PointWatch bitmap and UDS listener. The headless `aether-api` does
+  not attach to SHM; remote reads use the authenticated application gateway.
 - `aether-history` uses embedded SQLite history by default; PostgreSQL/TimescaleDB are
   enabled with the `postgres-storage` feature. `aether-uplink` retains its durable
   local outbox before MQTT.

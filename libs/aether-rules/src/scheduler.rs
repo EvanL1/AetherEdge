@@ -616,7 +616,7 @@ impl RuleScheduler {
                         .get_logger(outcome.rule_id, &outcome.rule_name);
                     logger.log_execution(&result, &result.variable_values);
 
-                    // Persist locally for API/WebSocket diagnostics.
+                    // Persist locally for authenticated API diagnostics.
                     self.write_rule_exec(outcome.rule_id, &outcome.rule_name, &result)
                         .await;
 

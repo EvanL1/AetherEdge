@@ -1,7 +1,7 @@
 use anyhow::Result;
 use sqlx::{Row, SqlitePool};
 
-use crate::models::{CalculatedPoint, Role, RoleInfo, UserRow, UserWithRole};
+use crate::models::{Role, RoleInfo, UserRow, UserWithRole};
 
 // ── Schema ────────────────────────────────────────────────────────────────────
 
@@ -39,25 +39,6 @@ pub async fn create_tables(pool: &SqlitePool) -> Result<()> {
         .execute(pool)
         .await?;
 
-    sqlx::query(
-        "CREATE TABLE IF NOT EXISTS calculated_points (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name VARCHAR(100) NOT NULL,
-            formula TEXT,
-            unit VARCHAR(50),
-            imgurl VARCHAR(500),
-            description TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )",
-    )
-    .execute(pool)
-    .await?;
-
-    sqlx::query("CREATE INDEX IF NOT EXISTS idx_calculated_points_name ON calculated_points(name)")
-        .execute(pool)
-        .await?;
-
     Ok(())
 }
 
@@ -77,13 +58,6 @@ pub async fn init_roles(pool: &SqlitePool) -> Result<()> {
         .await?;
     }
 
-    Ok(())
-}
-
-/// Retained as an explicit bootstrap hook while the Kernel default remains
-/// industry-neutral. Domain distributions may provision their own points at a
-/// composition root, but the core API never imports them automatically.
-pub async fn init_calculated_points(_pool: &SqlitePool) -> Result<()> {
     Ok(())
 }
 
@@ -241,180 +215,4 @@ pub async fn get_all_users_with_roles(pool: &SqlitePool) -> Result<Vec<UserWithR
     .await?;
 
     Ok(rows.into_iter().map(row_to_user_with_role).collect())
-}
-
-// ── Calculated Points ─────────────────────────────────────────────────────────
-
-pub async fn get_all_calculated_points(
-    pool: &SqlitePool,
-    offset: i64,
-    limit: i64,
-    name_filter: Option<&str>,
-) -> Result<(Vec<CalculatedPoint>, i64)> {
-    if let Some(filter) = name_filter {
-        let like = format!("%{}%", filter);
-        let total: i64 =
-            sqlx::query_scalar("SELECT COUNT(*) FROM calculated_points WHERE name LIKE ?")
-                .bind(&like)
-                .fetch_one(pool)
-                .await?;
-
-        let items = sqlx::query_as::<_, CalculatedPoint>(
-            "SELECT * FROM calculated_points WHERE name LIKE ? ORDER BY id LIMIT ? OFFSET ?",
-        )
-        .bind(&like)
-        .bind(limit)
-        .bind(offset)
-        .fetch_all(pool)
-        .await?;
-
-        Ok((items, total))
-    } else {
-        let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM calculated_points")
-            .fetch_one(pool)
-            .await?;
-
-        let items = sqlx::query_as::<_, CalculatedPoint>(
-            "SELECT * FROM calculated_points ORDER BY id LIMIT ? OFFSET ?",
-        )
-        .bind(limit)
-        .bind(offset)
-        .fetch_all(pool)
-        .await?;
-
-        Ok((items, total))
-    }
-}
-
-pub async fn get_calculated_point_by_id(
-    pool: &SqlitePool,
-    point_id: i64,
-) -> Result<Option<CalculatedPoint>> {
-    Ok(
-        sqlx::query_as::<_, CalculatedPoint>("SELECT * FROM calculated_points WHERE id = ?")
-            .bind(point_id)
-            .fetch_optional(pool)
-            .await?,
-    )
-}
-
-pub async fn update_calculated_point(
-    pool: &SqlitePool,
-    point_id: i64,
-    name: Option<&str>,
-    formula: Option<&str>,
-    unit: Option<&str>,
-    imgurl: Option<&str>,
-    description: Option<&str>,
-) -> Result<u64> {
-    let mut fields: Vec<&str> = Vec::new();
-
-    if name.is_some() {
-        fields.push("name = ?");
-    }
-    if formula.is_some() {
-        fields.push("formula = ?");
-    }
-    if unit.is_some() {
-        fields.push("unit = ?");
-    }
-    if imgurl.is_some() {
-        fields.push("imgurl = ?");
-    }
-    if description.is_some() {
-        fields.push("description = ?");
-    }
-
-    if fields.is_empty() {
-        return Ok(0);
-    }
-
-    fields.push("updated_at = CURRENT_TIMESTAMP");
-    let sql = format!(
-        "UPDATE calculated_points SET {} WHERE id = ?",
-        fields.join(", ")
-    );
-
-    let mut q = sqlx::query(&sql);
-    if let Some(v) = name {
-        q = q.bind(v);
-    }
-    if let Some(v) = formula {
-        q = q.bind(v);
-    }
-    if let Some(v) = unit {
-        q = q.bind(v);
-    }
-    if let Some(v) = imgurl {
-        q = q.bind(v);
-    }
-    if let Some(v) = description {
-        q = q.bind(v);
-    }
-    q = q.bind(point_id);
-
-    let result = q.execute(pool).await?;
-    Ok(result.rows_affected())
-}
-
-pub async fn reset_calculated_points(pool: &SqlitePool) -> Result<i64> {
-    sqlx::query("DELETE FROM calculated_points")
-        .execute(pool)
-        .await?;
-
-    Ok(0)
-}
-
-#[cfg(test)]
-mod calculated_point_defaults_tests {
-    use sqlx::sqlite::SqlitePoolOptions;
-
-    use super::*;
-
-    async fn empty_database() -> SqlitePool {
-        let pool = SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect("sqlite::memory:")
-            .await
-            .expect("open isolated API database");
-        create_tables(&pool).await.expect("create API tables");
-        pool
-    }
-
-    #[tokio::test]
-    async fn empty_database_initialization_keeps_calculated_points_empty() {
-        let pool = empty_database().await;
-
-        init_calculated_points(&pool)
-            .await
-            .expect("initialize calculated points");
-
-        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM calculated_points")
-            .fetch_one(&pool)
-            .await
-            .expect("count calculated points");
-        assert_eq!(count, 0);
-    }
-
-    #[tokio::test]
-    async fn reset_clears_calculated_points_without_restoring_domain_defaults() {
-        let pool = empty_database().await;
-        sqlx::query(
-            "INSERT INTO calculated_points (name, formula, unit) VALUES ('Derived signal', '1+1', '1')",
-        )
-        .execute(&pool)
-        .await
-        .expect("insert calculated point");
-
-        let remaining_count = reset_calculated_points(&pool)
-            .await
-            .expect("reset calculated points");
-
-        assert_eq!(remaining_count, 0);
-        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM calculated_points")
-            .fetch_one(&pool)
-            .await
-            .expect("count calculated points");
-        assert_eq!(count, 0);
-    }
 }

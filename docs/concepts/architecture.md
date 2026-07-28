@@ -24,10 +24,10 @@ they are not architecture boundaries of the edge kernel.
                  ┌──────────────┬──────────┼──────────────┐
                  ▼              ▼          ▼              ▼
           aether-alarm(:6007) aether-history(:6004) aether-api(:6005) aether-uplink(:6006)
-          SHM + own event  SHM sampling  SHM + own event  SHM sampling
-          bitmap / UDS     SQLite history bitmap / UDS    durable outbox
+          SHM + own event  SHM sampling  auth gateway     SHM sampling
+          bitmap / UDS     SQLite history local HTTP      durable outbox
                  │              │          │              │
-                 └─ local HTTP ─┘          └─ WebSocket   └─ MQTT cloud
+                 └──────── local application APIs ────────┘
 
   SQLite aether.db ───── configuration/discovery for every process
   SQLite history.db ──── default local historian store
@@ -53,7 +53,7 @@ used as tooling fallbacks when runtime configuration does not override them.
 | aether-io | 6001 | Communication service — explicitly compiled maintained drivers (Modbus, IEC 61850, MQTT, HTTP, raw CAN, GPIO, Aether-485), channel management, sole writer of telemetry into shared memory |
 | aether-automation | 6002 | Model service — product definitions, device instances, rule engine execution |
 | aether-history | 6004 | Historical data service — embedded SQLite by default; optional PostgreSQL / TimescaleDB via `postgres-storage` |
-| aether-api | 6005 | API gateway — unified REST API, WebSocket push to browsers, JWT authentication |
+| aether-api | 6005 | Headless API gateway — JWT authentication and fixed application-service routes |
 | aether-uplink | 6006 | Network service — MQTT broker integration for the cloud uplink, TLS certificate management |
 | aether-alarm | 6007 | Alarm service — alarm rules, alarm events, notifications |
 | TimescaleDB | 5432 | Optional time-series database for historical data, runtime-configured through aether-history |
@@ -66,13 +66,13 @@ qualification uses the current cross-process stress and soak gates.
 
 | Path | Mechanism | Latency class |
 |------|-----------|---------------|
-| aether-io → all consumers (live data) | Shared-memory write; each consumer resolves configured slots from SQLite | ~10 ns per point into SHM |
-| aether-io → aether-automation/aether-alarm/aether-api (point-change hints) | Independently filtered PointWatch bitmap + UDS per consumer | bounded, sub-millisecond local event path; polling repairs drops |
+| aether-io → automation/alarm/history/uplink (live data) | Shared-memory write; each consumer resolves configured slots from SQLite | ~10 ns per point into SHM |
+| aether-io → aether-automation/aether-alarm (point-change hints) | Independently filtered PointWatch bitmap + UDS per consumer | bounded, sub-millisecond local event path; polling repairs drops |
 | aether-automation → aether-io (control commands) | Shared-memory write plus UDS notification (`ShmCommandListener` on the aether-io side) | sub-millisecond; ~215 µs P50 including rule evaluation (measured) |
 | aether-io → device (protocol write) | Field bus (Modbus, IEC 104, etc.) | +5–10 ms; dominates the physical control loop |
-| aether-alarm → aether-api, aether-uplink | HTTP (targets configured via `AETHER_API_URL` / `AETHER_UPLINK_URL`) | local HTTP |
+| aether-alarm → aether-uplink | HTTP (target configured via `AETHER_UPLINK_URL`) | local HTTP |
 | aether-uplink → cloud | Legacy MQTT by default; experimental broker-neutral CloudLink MQTT v1 is opt-in | network |
-| aether-api → generated/downstream clients | Authenticated HTTP and WebSocket | network |
+| aether-api → generated/downstream clients | Authenticated HTTP | network |
 | all services ↔ SQLite | In-process configuration discovery (`AETHER_DB_PATH`); aether-history uses a separate embedded history file | local |
 
 The UDS notification channel reconnects automatically with exponential backoff

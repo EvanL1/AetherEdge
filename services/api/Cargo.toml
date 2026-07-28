@@ -12,19 +12,12 @@ path = "src/main.rs"
 [dependencies]
 # Local libraries
 common = { path = "../../libs/common", default-features = false, features = ["sqlite", "axum"] }
-aether-domain = { path = "../../crates/aether-domain" }
-aether-ports = { path = "../../crates/aether-ports" }
-aether-application = { path = "../../crates/aether-application" }
-aether-shm-bridge = { path = "../../libs/aether-shm-bridge" }
-aether-routing = { path = "../../libs/aether-routing" }
-aether-store-local = { path = "../../libs/aether-store-local", features = ["sqlite-audit", "sqlite-routing"] }
 
 # Async runtime
 tokio = { workspace = true }
-tokio-util = { workspace = true }
 
 # Web framework
-axum = { workspace = true, features = ["ws", "multipart"] }
+axum = { workspace = true }
 tower-http = { workspace = true, features = ["cors"] }
 
 # Logging
@@ -33,7 +26,6 @@ tracing = { workspace = true }
 # Serialization
 serde = { workspace = true }
 serde_json = { workspace = true }
-serde_yml = { workspace = true }
 
 # Database
 sqlx = { workspace = true }
@@ -43,11 +35,9 @@ anyhow = { workspace = true }
 
 # Utilities
 chrono = { workspace = true }
-futures = { workspace = true }
 dashmap = { workspace = true }
 uuid = { workspace = true }
 bytes = { workspace = true }
-arc-swap = "1.7"
 reqwest = { workspace = true }
 
 # JWT authentication
@@ -56,9 +46,6 @@ jsonwebtoken = "9"
 # Password hashing (bcrypt - frontend sends MD5, backend stores bcrypt(MD5))
 bcrypt = "0.15"
 md-5 = "0.10"
-
-# ZIP for config export/import
-zip = "2"
 
 # OpenAPI / Swagger UI
 utoipa = { workspace = true }
@@ -71,7 +58,6 @@ openapi = ["common/openapi"]
 swagger-ui = ["openapi", "dep:utoipa-swagger-ui"]
 
 [dev-dependencies]
-tempfile = { workspace = true }
 tower = { workspace = true }
 
 [lints]

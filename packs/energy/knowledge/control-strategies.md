@@ -182,7 +182,7 @@ read it, instead of implicit in write ordering.
 What a strategy author can rely on:
 
 - **Every execution is recorded.** Results are persisted in local SQLite
-  `rule_history` and exposed to subscribed clients over WebSocket, so you can
+  `rule_history` and exposed through authenticated API queries, so you can
   watch a strategy's decisions live and audit the recent past without an
   external database.
 - **Offline targets skip, they do not queue.** If an action targets an instance

@@ -15,7 +15,7 @@ audit evidence. Access to an HTTP route or MCP tool is never device authority.
 ## Use the public application boundary
 
 Remote clients connect only to authenticated `aether-api:6005` routes and the
-gateway WebSocket. IO, automation, history, uplink, and alarm process ports are
+gateway REST API. IO, automation, history, uplink, and alarm process ports are
 internal loopback interfaces. Do not expose them, proxy them from a product UI,
 or bypass the application API by writing SHM, SQLite, Pack files, or an
 external mirror.

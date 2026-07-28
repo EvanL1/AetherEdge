@@ -23,6 +23,13 @@ readonly RUNTIME_SOURCE_DIRS=(
     services/uplink
     services/alarm
 )
+readonly SHM_RUNTIME_SOURCE_DIRS=(
+    services/io
+    services/automation
+    services/history
+    services/uplink
+    services/alarm
+)
 
 dependency_tree=$(mktemp)
 trap 'rm -f "$dependency_tree"' EXIT
@@ -65,13 +72,17 @@ for source_dir in "${RUNTIME_SOURCE_DIRS[@]}"; do
     fi
 done
 
-for source_dir in "${RUNTIME_SOURCE_DIRS[@]}"; do
+for source_dir in "${SHM_RUNTIME_SOURCE_DIRS[@]}"; do
     manifest="$source_dir/Cargo.toml"
     if ! rg -q '^aether-(rtdb-shm|shm-bridge)[[:space:]]*=' "$manifest"; then
         echo "ERROR: $manifest does not depend on the authoritative SHM data plane" >&2
         exit 1
     fi
 done
+if rg -q '^aether-(dataplane|routing|shm-bridge|store-local)[[:space:]]*=' services/api/Cargo.toml; then
+    echo "ERROR: headless aether-api restored a direct SHM/live-state adapter" >&2
+    exit 1
+fi
 
 if ! command -v openssl >/dev/null 2>&1; then
     echo "ERROR: openssl is required to generate ephemeral Compose test credentials" >&2

@@ -278,7 +278,7 @@ AETHER_ACCESS_TOKEN='<Admin 或 Engineer JWT>' \
 > **注意**：没有独立的"测试"/"仅评估不执行"命令——`execute` 就是真实执行。
 > 命令响应中的“成功”表示本地命令平面已接受，不代表物理设备已执行或达到目标值；应读取对应测点验证。
 > 详细 `execution_path` 和每个动作的结果持久化在本地 SQLite `rule_history` 中，并可由
-> aether-api 的 rule WebSocket 订阅读取。
+> aether-api 的认证查询接口读取。
 
 **示例：**
 

@@ -532,11 +532,8 @@ mod tests {
             .await
             .expect("enable production foreign-key behavior");
         db::create_tables(&pool).await.expect("alarm schema");
-        let broadcaster = Broadcaster::new(
-            reqwest::Client::new(),
-            "http://127.0.0.1:9".to_string(),
-            "http://127.0.0.1:9".to_string(),
-        );
+        let broadcaster =
+            Broadcaster::new(reqwest::Client::new(), "http://127.0.0.1:9".to_string());
         (SqliteAlarmRuleMutator::new(pool.clone(), broadcaster), pool)
     }
 

@@ -1138,7 +1138,7 @@ pub async fn scheduler_reload(
 /// Get rule variables for monitoring
 ///
 /// Returns all variable definitions from a rule's nodes, which can be used
-/// for WebSocket monitoring to display real-time variable values.
+/// for authenticated monitoring queries to display variable values.
 #[cfg_attr(feature = "openapi", utoipa::path(
     get,
     path = "/api/rules/{id}/variables",

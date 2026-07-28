@@ -162,7 +162,7 @@ AetherEdge/
 │   │   └── Cargo.toml
 │   │
 ├── history/             # 历史数据服务 - 默认 SQLite，PostgreSQL 可选 (Rust)
-│   ├── api/     # API 网关 (WebSocket, JWT, Rust)
+│   ├── api/     # 无头应用网关 (HTTP, JWT, Rust)
 │   ├── uplink/         # 网络服务 (MQTT, Rust)
 │   └── alarm/       # 告警管理 (Rust)
 │

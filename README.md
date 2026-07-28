@@ -215,7 +215,7 @@ reference energy-domain implementation of this model.
 | `aether-automation` | Instances, rules, and audited control dispatch |
 | `aether-alarm` | Alarm evaluation and lifecycle |
 | `aether-history` | Embedded history and optional history adapters |
-| `aether-api` | Authenticated remote application API and WebSocket |
+| `aether-api` | Authenticated headless application gateway |
 | `aether-uplink` | Durable legacy Cloud/MQTT delivery and experimental CloudLink foundation |
 
 ```text

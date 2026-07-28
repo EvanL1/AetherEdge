@@ -126,11 +126,6 @@ const englishMetadataOverrides = {
     description:
       'Pre-split operational notes retained as optional history and not a current runbook or architecture authority.',
   },
-  'docs/websocket-rule-monitor-api.md': {
-    title: 'Legacy rule-monitor WebSocket API',
-    description:
-      'Historical rule-monitoring interface retained for compatibility lookup.',
-  },
 };
 const governanceMetadataOverrides = {
   'docs/guides/ai-assistants.md': {

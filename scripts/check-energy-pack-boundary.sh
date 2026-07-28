@@ -5,7 +5,6 @@ set -euo pipefail
 readonly RETIRED_MODEL_CRATE="libs/aether-model"
 readonly PACK_MODELS="packs/energy/models"
 readonly PACK_KNOWLEDGE="packs/energy/knowledge"
-readonly ENERGY_HOMEPAGE_PRESET="packs/energy/examples/config/api/calculated_points.sql"
 readonly FORMAL_ASSET_CATEGORIES=(mappings rules evaluations)
 
 fail() {
@@ -23,12 +22,9 @@ knowledge_count=$(find "$PACK_KNOWLEDGE" -maxdepth 1 -type f -name '*.md' | wc -
 [[ "$knowledge_count" == 4 ]] || fail "energy pack must own exactly 4 knowledge pages"
 
 [[ ! -e services/api/assets/calculated_points.sql ]] \
-    || fail "core API still owns the Energy homepage calculated-point preset"
-[[ -s "$ENERGY_HOMEPAGE_PRESET" ]] \
-    || fail "Energy Pack homepage commissioning preset is missing"
-preset_point_count=$(rg -c '^\(' "$ENERGY_HOMEPAGE_PRESET" || true)
-[[ "$preset_point_count" == 19 ]] \
-    || fail "Energy Pack homepage commissioning preset must preserve exactly 19 legacy points"
+    || fail "core API restored the retired homepage calculated-point preset"
+[[ ! -e packs/energy/examples/config/api ]] \
+    || fail "Energy Pack restored the downstream console homepage preset"
 
 if sed '/^#\[cfg(test)\]/,$d' services/api/src/db.rs | rg -n \
     'include_(str|bytes)!\([^)]*calculated_points|INSERT[[:space:]]+INTO[[:space:]]+calculated_points|PV Energy|Diesel Energy|Saving Billing|icon-(pv|diesel|ess)-energy|\bSOC\b' \

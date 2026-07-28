@@ -22,7 +22,7 @@ The six public runtime identities are:
 | `aether-automation` | Instances, rules, and action orchestration | `automation` |
 | `aether-alarm` | Alarm rules, state, and lifecycle | `alarm` |
 | `aether-history` | Historical sampling, queries, and storage adapters | `history` |
-| `aether-api` | Management REST API, WebSocket, and authentication | `api` |
+| `aether-api` | Headless application gateway and authentication | `api` |
 | `aether-uplink` | MQTT/cloud connectivity and offline forwarding | `uplink` |
 
 The canonical name is used without aliases for Cargo package and binary

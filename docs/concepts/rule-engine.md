@@ -135,7 +135,7 @@ record to local durable and observable surfaces:
 
 - to a per-rule log file, so each rule has an independent, greppable history;
 - to SQLite `rule_history`, which keeps the structured execution result and
-  error for API/WebSocket consumers.
+  error for authenticated API consumers.
 
 Neither rule execution nor result observation requires an external database.
 

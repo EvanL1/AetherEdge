@@ -154,7 +154,7 @@ services:
         max-file: "3"
     restart: unless-stopped
 
-  # API Gateway - API 网关、WebSocket、认证 (端口 6005)
+  # API Gateway - 无头应用网关与认证 (端口 6005)
   aether-api:
     image: aetherems:latest
     container_name: aether-api
@@ -173,14 +173,11 @@ services:
       - ACCESS_TOKEN_EXPIRE_MINUTES=${ACCESS_TOKEN_EXPIRE_MINUTES:-30}
       - REFRESH_TOKEN_EXPIRE_DAYS=${REFRESH_TOKEN_EXPIRE_DAYS:-7}
       - AETHER_LOG_DIR=/app/logs
-      - NETWORK_CONFIG_DIR=/etc/systemd/network
       - NO_PROXY=*
       - no_proxy=*
     volumes:
       - ${AETHER_BASE_PATH:-./data}:/app/data:rw
       - ${AETHER_LOG_PATH:-./logs}:/app/logs
-      - /dev/shm:/shm/rtdb:rw
-      - /etc/systemd/network:/etc/systemd/network:ro  # Read-only discovery; mutation requires a future privileged helper
     logging:
       driver: json-file
       options:
@@ -231,7 +228,6 @@ services:
       - API_HOST=127.0.0.1
       - AETHER_DB_PATH=/app/data/aether.db
       - AETHER_LOG_DIR=/app/logs
-      - AETHER_API_URL=${AETHER_API_URL:-http://127.0.0.1:6005}
       - AETHER_UPLINK_URL=${AETHER_UPLINK_URL:-http://127.0.0.1:6006}
       - NO_PROXY=*
       - no_proxy=*

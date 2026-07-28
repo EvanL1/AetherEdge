@@ -172,10 +172,7 @@ async fn main() -> anyhow::Result<()> {
                     .map(std::path::PathBuf::from)
                     .unwrap_or_else(|_| point_watch_socket_from_shm(&shm_path, "automation"));
                 let mut targets = vec![(Arc::new(automation_bitmap), automation_socket)];
-                for (consumer, variable) in [
-                    ("alarm", "AETHER_ALARM_POINT_WATCH_SOCKET"),
-                    ("api", "AETHER_API_POINT_WATCH_SOCKET"),
-                ] {
+                for (consumer, variable) in [("alarm", "AETHER_ALARM_POINT_WATCH_SOCKET")] {
                     match SubscriptionBitmap::open_or_create(&bitmap_path_for_consumer(
                         &shm_path, consumer,
                     )) {

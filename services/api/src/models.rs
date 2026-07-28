@@ -157,25 +157,6 @@ pub struct AuthStatsData {
 
 #[allow(dead_code)] // OpenAPI-only compatibility schema.
 #[derive(Debug, ToSchema)]
-pub struct HomepagePageData {
-    pub items: Vec<CalculatedPoint>,
-    pub total: i64,
-    pub page: i64,
-    pub limit: i64,
-    pub pages: i64,
-}
-
-#[allow(dead_code)] // OpenAPI-only compatibility schema.
-#[derive(Debug, ToSchema)]
-pub struct HomepageResetData {
-    /// Number of homepage point definitions after reset; always zero.
-    pub remaining_count: i64,
-    /// Confirms that reset does not import domain-specific defaults.
-    pub note: String,
-}
-
-#[allow(dead_code)] // OpenAPI-only compatibility schema.
-#[derive(Debug, ToSchema)]
 pub struct UserUpdateSuccess {
     pub success: bool,
     pub message: String,
@@ -190,39 +171,4 @@ pub struct RefreshTokenInfo {
     pub user_id: i64,
     pub username: String,
     pub expires_at: i64,
-}
-
-// ── Calculated Points ─────────────────────────────────────────────────────────
-
-#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow, ToSchema)]
-pub struct CalculatedPoint {
-    pub id: i64,
-    pub name: String,
-    pub formula: Option<String>,
-    pub unit: Option<String>,
-    pub imgurl: Option<String>,
-    pub description: Option<String>,
-    pub created_at: Option<String>,
-    pub updated_at: Option<String>,
-}
-
-#[derive(Debug, Deserialize, ToSchema)]
-pub struct CalculatedPointUpdate {
-    pub name: Option<String>,
-    pub formula: Option<String>,
-    pub unit: Option<String>,
-    pub imgurl: Option<String>,
-    pub description: Option<String>,
-}
-
-// ── Network Config ────────────────────────────────────────────────────────────
-
-#[derive(Debug, Serialize, Deserialize, ToSchema)]
-pub struct NetworkConfig {
-    pub dhcp: bool,
-    pub ip: String,
-    pub subnet_mask: String,
-    pub gateway: String,
-    pub dns1: String,
-    pub dns2: String,
 }

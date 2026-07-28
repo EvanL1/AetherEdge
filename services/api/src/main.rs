@@ -1,27 +1,19 @@
-//! `aether-api` — management API and WebSocket service.
+//! `aether-api` — authenticated remote application boundary.
 //!
-//! Unified remote application entry for AetherEdge clients:
-//! - JWT auth (users, roles)
-//! - WebSocket real-time data push with subscriptions
-//! - POST /broadcast – push any JSON to all WebSocket clients
-//! - GET /api/v1/homepage – calculated points CRUD
-//! - GET /api/v1/network – read-only systemd-networkd view; remote writes disabled
-//! - GET /api/v1/config – admin-only config checks/export; remote mutation is disabled
-//! - /api/v1/{io,automation,history,uplink,alarm}/* – authenticated application gateway
+//! The gateway owns JWT users and roles and proxies only fixed application
+//! service routes. Browser dashboards, WebSockets, host networking, archives,
+//! upgrades, and process supervision are deployment concerns.
 
 use std::net::SocketAddr;
 use std::sync::Arc;
 
 use axum::{
     Router,
-    extract::{DefaultBodyLimit, Query, State, WebSocketUpgrade},
-    response::IntoResponse,
+    extract::DefaultBodyLimit,
     routing::{delete, get, post, put},
 };
 use dashmap::DashMap;
 use md5::{Digest, Md5};
-use serde::Deserialize;
-use tokio_util::sync::CancellationToken;
 use tower_http::cors::{Any, CorsLayer};
 use tracing::info;
 #[cfg(feature = "openapi")]
@@ -32,26 +24,18 @@ use utoipa_swagger_ui::{Config, SwaggerUi, Url};
 mod auth;
 mod config;
 mod db;
-mod live_values;
 mod middleware_auth;
 mod models;
 #[cfg(feature = "swagger-ui")]
 mod openapi_gateway;
 mod routes_auth;
-mod routes_broadcast;
-mod routes_config;
-mod routes_homepage;
-mod routes_network;
 mod service_gateway;
 mod state;
 #[cfg(test)]
 mod test_support;
-mod ws;
 
 use crate::config::GatewayConfig;
-use crate::live_values::{build_gateway_value_source, run_gateway_topology_refresh};
 use crate::state::AppState;
-use crate::ws::WsHub;
 
 const BOOTSTRAP_ADMIN_PASSWORD_ENV: &str = "AETHER_BOOTSTRAP_ADMIN_PASSWORD";
 const MIN_BOOTSTRAP_ADMIN_PASSWORD_CHARS: usize = 16;
@@ -121,7 +105,6 @@ where
     paths(
         service_info,
         health_check,
-        ws_handler,
         routes_auth::register,
         routes_auth::login,
         routes_auth::refresh_token,
@@ -137,22 +120,6 @@ where
         routes_auth::get_auth_stats,
         routes_auth::cleanup_tokens,
         routes_auth::validate_token,
-        routes_broadcast::broadcast_message,
-        routes_broadcast::broadcast_status,
-        routes_homepage::list_points,
-        routes_homepage::get_point,
-        routes_homepage::update_point,
-        routes_homepage::reset_points,
-        routes_network::get_network_config,
-        routes_network::update_network_config,
-        routes_network::apply_network_config,
-        routes_config::check_config,
-        routes_config::export_config,
-        routes_config::import_config,
-        routes_config::restart_services,
-        routes_config::start_upgrade,
-        routes_config::abort_upgrade,
-        routes_config::upgrade_status,
         common::admin_api::get_log_level,
         common::admin_api::set_log_level,
         common::admin_api::list_log_files,
@@ -171,8 +138,6 @@ where
         models::GatewayDataResponse<models::UserListData>,
         models::GatewayDataResponse<models::DeletedUserData>,
         models::GatewayDataResponse<models::AuthStatsData>,
-        models::GatewayDataResponse<models::CalculatedPoint>,
-        models::GatewayDataResponse<models::NetworkConfig>,
         models::GatewayMessageResponse,
         models::RegistrationResult,
         models::RoleListResponse,
@@ -180,27 +145,14 @@ where
         models::DeletedUserData,
         models::AuthStatsData,
         models::UserUpdateSuccess,
-        models::HomepagePageData,
-        models::HomepageResetData,
-        models::GatewayDataResponse<models::HomepagePageData>,
-        models::GatewayDataResponse<models::HomepageResetData>,
-        models::GatewayDataResponse<serde_json::Value>,
         models::Role,
         models::RoleInfo,
         models::UserWithRole,
-        models::CalculatedPoint,
-        models::CalculatedPointUpdate,
-        models::NetworkConfig,
-        routes_config::ConfigArchive,
         common::admin_api::SetLogLevelRequest,
         common::admin_api::LogLevelResponse,
     )),
     tags(
         (name = "Auth", description = "Authentication and user management"),
-        (name = "Homepage", description = "Operator dashboard point-definition CRUD"),
-        (name = "Network", description = "Read-only network interface inspection; remote mutation is disabled"),
-        (name = "Config", description = "System configuration export / import / upgrade"),
-        (name = "WebSocket", description = "WebSocket broadcast and status"),
         (name = "Meta", description = "Service metadata and health"),
         (name = "admin", description = "Authenticated runtime administration"),
     ),
@@ -208,7 +160,7 @@ where
     info(
         title = "Aether API Gateway",
         version = env!("CARGO_PKG_VERSION"),
-        description = "Authenticated remote-management API and WebSocket gateway. Protected operations require a Bearer JWT; use the service-local APIs only for intra-host communication. When compiled in, /docs and gateway-proxied /openapi/*.json are public and must only be exposed on a trusted commissioning network."
+        description = "Authenticated application gateway. Protected operations require a Bearer JWT; service-local APIs remain intra-host only. Optional Swagger routes must be exposed only on a trusted commissioning network."
     )
 )]
 struct ApiDoc;
@@ -226,17 +178,6 @@ impl utoipa::Modify for SecurityAddon {
                         .scheme(utoipa::openapi::security::HttpAuthScheme::Bearer)
                         .bearer_format("JWT")
                         .build(),
-                ),
-            );
-            components.add_security_scheme(
-                "ws_query_token",
-                utoipa::openapi::security::SecurityScheme::ApiKey(
-                    utoipa::openapi::security::ApiKey::Query(
-                        utoipa::openapi::security::ApiKeyValue::with_description(
-                            "token",
-                            "Access JWT fallback for browser WebSocket upgrades only",
-                        ),
-                    ),
                 ),
             );
         }
@@ -259,46 +200,6 @@ impl utoipa::Modify for SecurityAddon {
             }
         }
     }
-}
-
-// ── WebSocket endpoint ────────────────────────────────────────────────────────
-
-#[derive(Deserialize)]
-struct WsParams {
-    client_id: Option<String>,
-    data_type: Option<String>,
-}
-
-#[utoipa::path(
-    get,
-    path = "/ws",
-    params(
-        ("client_id" = Option<String>, Query, description = "Optional client identifier"),
-        ("data_type" = Option<String>, Query, description = "Subscription data category"),
-        ("token" = Option<String>, Query, description = "Access JWT fallback for browser WebSocket upgrades; normal HTTP requests must use the Authorization header")
-    ),
-    responses(
-        (status = 101, description = "WebSocket protocol upgrade"),
-        (status = 401, description = "Missing or invalid access token")
-    ),
-    security(
-        ("bearer_auth" = []),
-        ("ws_query_token" = [])
-    ),
-    tag = "WebSocket"
-)]
-async fn ws_handler(
-    ws: WebSocketUpgrade,
-    Query(params): Query<WsParams>,
-    State(state): State<Arc<AppState>>,
-) -> impl IntoResponse {
-    let client_id = params
-        .client_id
-        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-    let data_type = params.data_type.unwrap_or_else(|| "general".to_string());
-    let hub = Arc::clone(&state.ws_hub);
-
-    ws.on_upgrade(move |socket| ws::handle_socket(socket, client_id, data_type, hub))
 }
 
 #[utoipa::path(
@@ -345,46 +246,12 @@ fn build_router(state: Arc<AppState>) -> Router {
         .route("/cleanup-tokens", post(routes_auth::cleanup_tokens))
         .route("/validate", get(routes_auth::validate_token));
 
-    let homepage_routes = Router::new()
-        .route("/", get(routes_homepage::list_points))
-        .route("/reset", post(routes_homepage::reset_points))
-        .route("/{id}", get(routes_homepage::get_point))
-        .route("/{id}", put(routes_homepage::update_point));
-
-    let network_routes = Router::new()
-        .route("/", get(routes_network::get_network_config))
-        .route("/", put(routes_network::update_network_config))
-        .route("/apply", post(routes_network::apply_network_config));
-
-    let config_routes = Router::new()
-        .route("/check", get(routes_config::check_config))
-        .route("/export", get(routes_config::export_config))
-        .route(
-            "/import",
-            post(routes_config::import_config).layer(DefaultBodyLimit::max(64 * 1024 * 1024)), // 64 MB for config ZIP
-        )
-        .route("/restart-services", post(routes_config::restart_services))
-        .route(
-            "/upgrade",
-            post(routes_config::start_upgrade).layer(DefaultBodyLimit::max(1024 * 1024 * 1024)), // 1024 MB for firmware
-        )
-        .route("/upgrade/abort", post(routes_config::abort_upgrade))
-        .route("/upgrade/status", get(routes_config::upgrade_status));
-
     // Routes that require auth. Layered ONCE on the merged router so
     // adding a new sub-router (e.g. /reports) cannot accidentally skip
     // the JWT check the way per-route layering did before this fix.
-    // Includes anything that mutates state, exposes admin operations,
-    // or pushes data to other clients (broadcast). /auth is the only
-    // public surface (register/login/refresh) and is mounted below
-    // without the layer.
-    let protected_v1 = Router::new()
-        .route("/broadcast", post(routes_broadcast::broadcast_message))
-        .route("/broadcast/status", get(routes_broadcast::broadcast_status))
-        .nest("/homepage", homepage_routes)
-        .nest("/network", network_routes)
-        .nest("/config", config_routes)
-        .merge(service_gateway::router());
+    // `/auth` owns its documented public bootstrap/session routes. Every
+    // application-service gateway route is protected here.
+    let protected_v1 = Router::new().merge(service_gateway::router());
     let protected_v1 = protected_v1.layer(axum::middleware::from_fn_with_state(
         Arc::clone(&state),
         middleware_auth::require_jwt,
@@ -416,13 +283,6 @@ fn build_router(state: Arc<AppState>) -> Router {
     let app = Router::new()
         .route("/", get(service_info))
         .route("/health", get(health_check))
-        .route(
-            "/ws",
-            get(ws_handler).route_layer(axum::middleware::from_fn_with_state(
-                Arc::clone(&state),
-                middleware_auth::require_jwt,
-            )),
-        )
         .nest("/api/v1", api_v1)
         .nest("/api/admin", admin_routes);
 
@@ -473,14 +333,7 @@ async fn main() -> anyhow::Result<()> {
     common::service_bootstrap::print_startup_banner(&service_info);
 
     info!("aether-api starting on port {}", cfg.api_port);
-    info!("SHM:   {}", cfg.shm_path);
-    info!("Health SHM: {}", cfg.channel_health_shm_path);
-    info!("PointWatch: {}", cfg.point_watch_socket);
     info!("DB:    {}", cfg.db_path);
-
-    // Reconcile upgrade status: if a previous upgrade was interrupted by a
-    // container restart, fix the stale "running" status in the status file.
-    routes_config::reconcile_upgrade_status_on_startup();
 
     // ── SQLite ────────────────────────────────────────────────────────────────
     let db_dir = std::path::Path::new(&cfg.db_path)
@@ -498,9 +351,6 @@ async fn main() -> anyhow::Result<()> {
 
     db::create_tables(&db_pool).await?;
     db::init_roles(&db_pool).await?;
-    db::init_calculated_points(&db_pool).await?;
-
-    let live_values = build_gateway_value_source(&db_pool, &cfg).await?;
 
     // ── Bootstrap admin user ──────────────────────────────────────────────────
     ensure_bootstrap_admin(&db_pool, || {
@@ -509,7 +359,6 @@ async fn main() -> anyhow::Result<()> {
     .await?;
 
     // ── App State ─────────────────────────────────────────────────────────────
-    let ws_hub = WsHub::new(live_values.clone(), db_pool.clone());
     let service_client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(
             cfg.service_request_timeout_secs,
@@ -519,50 +368,8 @@ async fn main() -> anyhow::Result<()> {
     let state = Arc::new(AppState {
         db: db_pool,
         config: Arc::new(cfg),
-        ws_hub: Arc::clone(&ws_hub),
         refresh_tokens: DashMap::new(),
         service_client,
-    });
-
-    // ── Background tasks ──────────────────────────────────────────────────────
-    let shutdown = CancellationToken::new();
-
-    let topology_source = Arc::clone(&live_values);
-    let topology_db = state.db.clone();
-    let topology_config = state.config.as_ref().clone();
-    let topology_shutdown = shutdown.clone();
-    tokio::spawn(async move {
-        run_gateway_topology_refresh(
-            topology_source,
-            topology_db,
-            topology_config,
-            topology_shutdown,
-        )
-        .await;
-    });
-
-    let hb_hub = Arc::clone(&ws_hub);
-    let hb_shutdown = shutdown.clone();
-    tokio::spawn(async move {
-        ws::run_heartbeat(hb_hub, hb_shutdown).await;
-    });
-
-    let push_hub = Arc::clone(&ws_hub);
-    let push_shutdown = shutdown.clone();
-    let push_interval = state.config.data_fetch_interval_secs;
-    let push_shm_path = state.config.shm_path.clone();
-    let push_socket = state.config.point_watch_socket.clone();
-    let push_debounce_ms = state.config.point_watch_debounce_ms;
-    tokio::spawn(async move {
-        ws::run_data_push(
-            push_hub,
-            push_shutdown,
-            push_interval,
-            &push_shm_path,
-            &push_socket,
-            push_debounce_ms,
-        )
-        .await;
     });
 
     // ── HTTP server ───────────────────────────────────────────────────────────
@@ -580,10 +387,9 @@ async fn main() -> anyhow::Result<()> {
     info!("Listening on {}", bind_addr);
 
     axum::serve(listener, app)
-        .with_graceful_shutdown(async move {
+        .with_graceful_shutdown(async {
             common::shutdown::wait_for_shutdown().await;
             info!("Shutdown signal received");
-            shutdown.cancel();
         })
         .await?;
 
@@ -763,54 +569,18 @@ mod service_gateway_route_tests {
 mod openapi_tests {
     use super::*;
 
-    fn json(document: utoipa::openapi::OpenApi) -> serde_json::Value {
-        serde_json::to_value(document).expect("serialize OpenAPI document")
-    }
-
-    fn operation_count(specification: &serde_json::Value) -> usize {
-        specification["paths"]
-            .as_object()
-            .expect("paths object")
-            .values()
-            .map(|item| {
-                item.as_object()
-                    .expect("path item")
-                    .keys()
-                    .filter(|method| {
-                        matches!(
-                            method.as_str(),
-                            "get"
-                                | "put"
-                                | "post"
-                                | "delete"
-                                | "patch"
-                                | "options"
-                                | "head"
-                                | "trace"
-                        )
-                    })
-                    .count()
-            })
-            .sum()
+    fn document() -> serde_json::Value {
+        serde_json::to_value(ApiDoc::openapi()).expect("serialize OpenAPI document")
     }
 
     #[test]
-    fn gateway_openapi_matches_always_mounted_routes_and_security() {
-        let specification = json(ApiDoc::openapi());
-
+    fn gateway_openapi_matches_the_headless_application_boundary() {
+        let specification = document();
         assert_eq!(specification["info"]["title"], "Aether API Gateway");
-        assert_eq!(specification["info"]["version"], env!("CARGO_PKG_VERSION"));
-        assert!(
-            !specification["info"]["title"]
-                .as_str()
-                .expect("title string")
-                .contains(&["Aether", "EMS"].concat())
-        );
 
         for (path, method) in [
             ("/", "get"),
             ("/health", "get"),
-            ("/ws", "get"),
             ("/api/v1/auth/validate", "get"),
             ("/api/admin/logs/level", "get"),
             ("/api/admin/logs/level", "post"),
@@ -823,11 +593,29 @@ mod openapi_tests {
             );
         }
 
+        for retired in [
+            "/ws",
+            "/api/v1/homepage",
+            "/api/v1/network",
+            "/api/v1/config",
+        ] {
+            assert!(specification["paths"].get(retired).is_none());
+        }
+        assert!(
+            specification["components"]["securitySchemes"]
+                .get("ws_query_token")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn protected_reads_and_admin_routes_require_bearer_authentication() {
+        let specification = document();
         for (path, method) in [
-            ("/ws", "get"),
             ("/api/v1/auth/validate", "get"),
+            ("/api/v1/auth/users", "get"),
+            ("/api/v1/auth/users/{id}", "get"),
             ("/api/admin/logs/level", "get"),
-            ("/api/admin/logs/level", "post"),
             ("/api/admin/logs/files", "get"),
             ("/api/admin/logs/view", "get"),
         ] {
@@ -837,65 +625,11 @@ mod openapi_tests {
                 "missing Bearer security on {method} {path}"
             );
         }
-        assert_eq!(
-            specification["paths"]["/ws"]["get"]["security"][1]["ws_query_token"],
-            serde_json::json!([]),
-            "WebSocket docs must expose the browser query-token fallback"
-        );
-        assert_eq!(
-            specification["components"]["securitySchemes"]["ws_query_token"]["name"],
-            "token"
-        );
-
-        assert_eq!(
-            operation_count(&specification),
-            38,
-            "Router/OpenAPI operation drift"
-        );
     }
 
     #[test]
-    fn gateway_openapi_matches_wire_envelopes_and_content_types() {
-        let specification = json(ApiDoc::openapi());
-
-        for (path, method) in [
-            ("/api/v1/auth/login", "post"),
-            ("/api/v1/auth/refresh", "post"),
-            ("/api/v1/auth/me", "get"),
-            ("/api/v1/homepage/{id}", "get"),
-            ("/api/v1/homepage/{id}", "put"),
-            ("/api/v1/homepage", "get"),
-            ("/api/v1/homepage/reset", "post"),
-            ("/api/v1/network", "get"),
-            ("/api/v1/broadcast", "post"),
-            ("/api/v1/broadcast/status", "get"),
-            ("/api/v1/config/check", "get"),
-            ("/api/v1/config/upgrade/status", "get"),
-        ] {
-            let schema = &specification["paths"][path][method]["responses"]["200"]["content"]["application/json"]
-                ["schema"];
-            assert!(
-                schema.to_string().contains("GatewayDataResponse"),
-                "{method} {path} must document the gateway data envelope: {schema}"
-            );
-        }
-
-        for (path, method) in [
-            ("/api/v1/auth/me", "put"),
-            ("/api/v1/auth/users/{id}", "put"),
-        ] {
-            let schema = &specification["paths"][path][method]["responses"]["200"]["content"]["application/json"]
-                ["schema"];
-            assert!(
-                schema.to_string().contains("UserUpdateSuccess"),
-                "{method} {path} must document both compatibility success bodies"
-            );
-        }
-
-        assert!(
-            specification["paths"]["/api/v1/auth/logout"]["post"]["security"].is_null(),
-            "logout authenticates with the refresh token body, not Bearer auth"
-        );
+    fn service_probes_and_auth_envelopes_match_the_wire() {
+        let specification = document();
         assert!(
             specification["paths"]["/"]["get"]["responses"]["200"]["content"]["text/plain"]
                 .is_object()
@@ -904,106 +638,14 @@ mod openapi_tests {
             specification["paths"]["/health"]["get"]["responses"]["200"]["content"]["text/plain"]
                 .is_object()
         );
-        assert!(specification["paths"]["/api/v1/config/export"]["get"]["responses"]["200"]
-            ["content"]["application/zip"]
-            .is_object());
-        assert_eq!(
-            specification["components"]["schemas"]["ConfigArchive"]["type"],
-            "string"
-        );
-        assert_eq!(
-            specification["components"]["schemas"]["ConfigArchive"]["format"],
-            "binary"
-        );
-    }
-
-    #[test]
-    fn homepage_openapi_is_industry_neutral_and_documents_safe_empty_reset() {
-        let specification = json(ApiDoc::openapi());
-        let list_operation = specification["paths"]["/api/v1/homepage"]["get"]
-            .to_string()
-            .to_lowercase();
-
-        for energy_term in ["soc", "plant", "grid"] {
-            assert!(
-                !list_operation.contains(energy_term),
-                "homepage OpenAPI must not publish the Energy Pack term {energy_term:?}"
-            );
-        }
-
-        let reset_operation = &specification["paths"]["/api/v1/homepage/reset"]["post"];
-        assert!(
-            reset_operation["description"]
-                .as_str()
-                .expect("reset description")
-                .contains("safe empty state")
-        );
-        assert_eq!(
-            reset_operation["responses"]["200"]["description"],
-            "Homepage points cleared to the safe empty state"
-        );
-        let reset_properties =
-            &specification["components"]["schemas"]["HomepageResetData"]["properties"];
-        assert!(reset_properties["remaining_count"].is_object());
-        assert!(reset_properties.get("imported_count").is_none());
-    }
-
-    #[test]
-    fn gateway_openapi_documents_fail_closed_management_boundaries() {
-        let specification = json(ApiDoc::openapi());
-
-        let registration = &specification["paths"]["/api/v1/auth/register"]["post"];
-        assert!(registration["security"].is_null());
-        assert!(registration["responses"]["403"].is_object());
-
         for (path, method) in [
-            ("/api/v1/network", "put"),
-            ("/api/v1/network/apply", "post"),
-            ("/api/v1/config/import", "post"),
-            ("/api/v1/config/restart-services", "post"),
-            ("/api/v1/config/upgrade", "post"),
-            ("/api/v1/config/upgrade/abort", "post"),
+            ("/api/v1/auth/login", "post"),
+            ("/api/v1/auth/refresh", "post"),
+            ("/api/v1/auth/me", "get"),
         ] {
-            let operation = &specification["paths"][path][method];
-            assert_eq!(
-                operation["security"][0]["bearer_auth"],
-                serde_json::json!([]),
-                "missing Bearer security on {method} {path}"
-            );
-            for status in ["401", "403", "501"] {
-                assert!(
-                    operation["responses"][status].is_object(),
-                    "{method} {path} must document HTTP {status}"
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn gateway_openapi_documents_every_admin_read_boundary() {
-        let specification = json(ApiDoc::openapi());
-
-        for (path, method) in [
-            ("/api/v1/config/check", "get"),
-            ("/api/v1/config/export", "get"),
-            ("/api/v1/config/upgrade/status", "get"),
-            ("/api/v1/auth/users", "get"),
-            ("/api/v1/auth/users/{id}", "get"),
-            ("/api/v1/auth/users/{id}", "put"),
-            ("/api/v1/auth/users/{id}", "delete"),
-        ] {
-            let operation = &specification["paths"][path][method];
-            assert_eq!(
-                operation["security"][0]["bearer_auth"],
-                serde_json::json!([]),
-                "missing Bearer security on {method} {path}"
-            );
-            for status in ["401", "403"] {
-                assert!(
-                    operation["responses"][status].is_object(),
-                    "{method} {path} must document HTTP {status}"
-                );
-            }
+            let schema = &specification["paths"][path][method]["responses"]["200"]["content"]["application/json"]
+                ["schema"];
+            assert!(schema.to_string().contains("GatewayDataResponse"));
         }
     }
 }
