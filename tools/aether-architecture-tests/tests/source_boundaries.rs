@@ -651,6 +651,61 @@ fn zero_consumer_runtime_compatibility_planes_stay_retired() {
 }
 
 #[test]
+fn zero_consumer_service_aliases_stay_retired() {
+    let root = workspace_metadata().workspace_root;
+
+    for retired in [
+        "services/history/src/backend_influx.rs",
+        "services/automation/src/api/cloud_sync.rs",
+    ] {
+        assert!(
+            !root.join(retired).exists(),
+            "retired zero-consumer service module was restored at {retired}"
+        );
+    }
+
+    for (relative, forbidden) in [
+        ("services/history/src/main.rs", "backend_influx"),
+        ("services/history/src/routes.rs", "influxdb"),
+        ("services/history/src/routes.rs", "Influx"),
+        ("services/history/src/models.rs", "influxdb"),
+        ("services/history/src/models.rs", "Influx"),
+        (
+            "services/automation/src/routes.rs",
+            ".route(\"/api/instances/list\"",
+        ),
+        (
+            "services/automation/src/routes.rs",
+            ".route(\"/api/instances/search\"",
+        ),
+        (
+            "services/automation/src/routes.rs",
+            ".route(\"/api/instances/export\"",
+        ),
+        ("services/automation/src/lib.rs", "pub mod cloud_sync"),
+        (
+            "services/uplink/src/routes.rs",
+            ".route(\"/netApi/inst-sync\"",
+        ),
+        ("services/io/Cargo.toml", "swagger-ui = [\"openapi\"]"),
+        (
+            "services/automation/Cargo.toml",
+            "swagger-ui = [\"openapi\"]",
+        ),
+        ("services/history/Cargo.toml", "swagger-ui = [\"openapi\"]"),
+        ("services/uplink/Cargo.toml", "swagger-ui = [\"openapi\"]"),
+        ("services/alarm/Cargo.toml", "swagger-ui = [\"openapi\"]"),
+    ] {
+        let source = fs::read_to_string(root.join(relative))
+            .unwrap_or_else(|error| panic!("failed to read {relative}: {error}"));
+        assert!(
+            !source.contains(forbidden),
+            "{relative} restored retired zero-consumer service surface {forbidden}"
+        );
+    }
+}
+
+#[test]
 fn io_composition_matches_the_runtime_manifest_authority() {
     let root = workspace_metadata().workspace_root;
     for retired in [

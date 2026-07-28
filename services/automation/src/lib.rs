@@ -14,10 +14,8 @@ pub mod api {
     //! - health
     //! - single point APIs
     //! - admin (log level management)
-    //! - cloud sync (cloud-edge synchronization)
     pub mod action_routing_boundary;
     pub mod admin_handlers;
-    pub mod cloud_sync;
     pub mod global_routing_handlers;
     pub mod health_handlers;
     pub mod instance_management_handlers;

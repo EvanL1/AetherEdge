@@ -5,8 +5,8 @@ use crate::models::{DataPoint, DataStats, HistoryRecord, QueryRangeParams, Serie
 
 /// Uniform interface for all historical-data storage backends.
 ///
-/// Implement this trait to add a new backend (TimescaleDB, PostgreSQL,
-/// InfluxDB, etc.) without touching the rest of the service.
+/// Implemented by embedded SQLite and the optional PostgreSQL/TimescaleDB
+/// adapters selected by the history composition root.
 #[async_trait]
 pub trait StorageBackend: Send + Sync + 'static {
     /// Short identifier string, e.g. `"sqlite"` or `"postgres"`.

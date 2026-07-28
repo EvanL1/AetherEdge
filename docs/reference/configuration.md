@@ -169,7 +169,6 @@ gates):
 | `HOST_UID` | `1000` | User id for container processes; must match the host user to avoid file-permission issues |
 | `HOST_GID` | `1000` | Group id for container processes; pairs with `HOST_UID` |
 | `DIALOUT_GID` | `20` | Dialout group id for serial-port access (Linux only) |
-| `INFLUXDB_URL`, `INFLUXDB_ORG`, `INFLUXDB_BUCKET`, `INFLUXDB_TOKEN`, `INFLUXDB_PASSWORD` | unset | Optional InfluxDB history adapter only; unused by the default runtime |
 | `AETHER_API_URL` | `http://localhost:6005` | API gateway base URL for the `aether` CLI data plane and MCP; the only remote application boundary |
 | `AETHER_IO_URL` | `http://127.0.0.1:6001` | Loopback io base URL used by the automation service's io calls; not read by the CLI |
 | `AETHER_SHM_PATH` | platform-selected tmpfs path | Canonical authoritative point-state segment shared by io and read-only consumers |

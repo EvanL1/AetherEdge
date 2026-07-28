@@ -481,7 +481,6 @@ pub struct StorageTestRequest {
     ///
     /// - `postgres` — standard PostgreSQL
     /// - `timescaledb` — PostgreSQL + TimescaleDB extension (same connection params as postgres)
-    /// - `influxdb` — InfluxDB (reserved; not yet implemented)
     #[schema(example = "timescaledb")]
     pub backend: String,
 
@@ -491,7 +490,7 @@ pub struct StorageTestRequest {
 
     /// Database port.
     ///
-    /// Default: `5432` for PostgreSQL / TimescaleDB; `8086` for InfluxDB.
+    /// Default: `5432` for PostgreSQL / TimescaleDB.
     #[schema(example = 5432, minimum = 1, maximum = 65535)]
     pub port: Option<u16>,
 
@@ -509,11 +508,7 @@ pub struct StorageTestRequest {
 impl StorageTestRequest {
     /// Friendly `host:port` string for log / response messages.
     pub fn addr(&self) -> String {
-        let default_port = match self.backend.as_str() {
-            "influxdb" => 8086,
-            _ => 5432,
-        };
-        format!("{}:{}", self.host, self.port.unwrap_or(default_port))
+        format!("{}:{}", self.host, self.port.unwrap_or(5432))
     }
 
     /// Build a PostgreSQL DSN pointing at the always-present `postgres`

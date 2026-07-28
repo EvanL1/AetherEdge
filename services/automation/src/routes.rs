@@ -15,7 +15,6 @@ use utoipa::OpenApi;
 use crate::app_state::AppState;
 
 // Import handlers from api module
-use crate::api::cloud_sync::export_instances;
 use crate::api::health_handlers::health_check;
 use crate::api::product_handlers::{get_product_points, list_products};
 
@@ -25,7 +24,7 @@ use crate::api::instance_management_handlers::{
 };
 use crate::api::instance_query_handlers::{
     get_instance, get_instance_children, get_instance_data, get_instance_points, get_topology_tree,
-    list_instances, list_instances_slim, search_instances,
+    list_instances,
 };
 
 use crate::api::global_routing_handlers::{
@@ -49,8 +48,6 @@ use common::admin_api::{get_log_level, set_log_level};
     paths(
         crate::api::health_handlers::health_check,
         crate::api::instance_query_handlers::list_instances,
-        crate::api::instance_query_handlers::list_instances_slim,
-        crate::api::instance_query_handlers::search_instances,
         crate::api::instance_management_handlers::create_instance,
         crate::api::instance_query_handlers::get_instance,
         crate::api::instance_management_handlers::update_instance,
@@ -79,8 +76,6 @@ use common::admin_api::{get_log_level, set_log_level};
         crate::api::global_routing_handlers::get_routing_by_channel_handler,
         crate::api::product_handlers::list_products,
         crate::api::product_handlers::get_product_points,
-        // Cloud sync endpoints
-        crate::api::cloud_sync::export_instances,
         // Admin endpoints
         common::admin_api::set_log_level,
         common::admin_api::get_log_level,
@@ -106,7 +101,7 @@ use common::admin_api::{get_log_level, set_log_level};
     ),
     tags(
         (name = "automation", description = "Instance, topology, routing, and action orchestration"),
-        (name = "instances", description = "Instance import and export"),
+        (name = "instances", description = "Instance lifecycle and configuration"),
         (name = "products", description = "Product template management (read-only)"),
         (name = "admin", description = "Administration and service management")
     ),
@@ -168,8 +163,6 @@ pub fn create_routes(state: Arc<AppState>) -> Router {
             "/api/instances/revision",
             get(get_instance_configuration_revision),
         )
-        .route("/api/instances/list", get(list_instances_slim))
-        .route("/api/instances/search", get(search_instances))
         .route(
             "/api/instances/{id}",
             get(get_instance)
@@ -223,8 +216,6 @@ pub fn create_routes(state: Arc<AppState>) -> Router {
         // Product management endpoints (read-only)
         .route("/api/products", get(list_products))
         .route("/api/products/{product_name}/points", get(get_product_points))
-        // Cloud sync endpoints
-        .route("/api/instances/export", get(export_instances))
         // Host-local dynamic log filter
         .route(
             "/api/admin/logs/level",
@@ -342,9 +333,19 @@ mod openapi_tests {
             assert!(paths.contains_key(path), "missing OpenAPI path: {path}");
         }
 
-        assert!(!paths.contains_key("/api/instances/{id}/sync"));
-        assert!(!paths.contains_key("/api/instances/sync/all"));
-        assert!(!paths.contains_key("/api/routing/instances/{id}"));
+        for retired in [
+            "/api/instances/list",
+            "/api/instances/search",
+            "/api/instances/export",
+            "/api/instances/{id}/sync",
+            "/api/instances/sync/all",
+            "/api/routing/instances/{id}",
+        ] {
+            assert!(
+                !paths.contains_key(retired),
+                "retired path restored: {retired}"
+            );
+        }
 
         let operation_count = paths
             .values()
@@ -358,7 +359,7 @@ mod openapi_tests {
             })
             .count();
         assert_eq!(
-            operation_count, 42,
+            operation_count, 39,
             "OpenAPI operation count changed; re-audit Router parity before updating this contract"
         );
     }

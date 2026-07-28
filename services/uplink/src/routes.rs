@@ -17,7 +17,6 @@ use crate::db_config;
 #[cfg(feature = "openapi")]
 use crate::models::SystemMetrics;
 use crate::models::{AlarmBroadcastRequest, CertUploadForm, NetConfig};
-use crate::mqtt::do_inst_sync;
 use crate::state::AppState;
 use crate::uplink::enqueue_json;
 
@@ -42,8 +41,6 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/netApi/certificate/upload", post(cert_upload))
         .route("/netApi/certificate/info", get(cert_info))
         .route("/netApi/certificate/{cert_type}", delete(cert_delete))
-        // Device sync
-        .route("/netApi/inst-sync", post(inst_sync_push))
         // Admin API (shared endpoints from common lib)
         .route("/api/admin/logs/level", get(common::admin_api::get_log_level).post(common::admin_api::set_log_level))
         .with_state(state);
@@ -72,7 +69,6 @@ async fn openapi_document() -> Json<utoipa::openapi::OpenApi> {
         health,
         alarm_broadcast,
         alarm_config,
-        inst_sync_push,
         mqtt_get_config,
         mqtt_update_config,
         mqtt_status,
@@ -151,7 +147,8 @@ mod openapi_tests {
                     .count()
             })
             .sum::<usize>();
-        assert_eq!(operation_count, 16, "Router/OpenAPI operation drift");
+        assert_eq!(operation_count, 15, "Router/OpenAPI operation drift");
+        assert!(specification["paths"]["/netApi/inst-sync"].is_null());
     }
 
     #[test]
@@ -657,41 +654,4 @@ async fn cert_delete(
             Json(json!({"success": false, "message": e.to_string()})),
         )),
     }
-}
-
-// ============================================================================
-// Device sync
-// ============================================================================
-
-/// 主动向平台发送设备列表同步消息（inst-sync-reply）。
-///
-/// msgId 自动设为当前毫秒级时间戳，数据从 automation 实时拉取。
-#[utoipa::path(post, path = "/netApi/inst-sync", tag = "MQTT",
-    responses(
-        (status = 200, description = "已发布 inst-sync-reply"),
-        (status = 503, description = "MQTT 未连接或 automation 不可达"),
-    ))]
-async fn inst_sync_push(
-    State(state): State<Arc<AppState>>,
-) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    let msg_id = chrono::Utc::now().timestamp_millis().to_string();
-
-    // Locally triggered, so there is no caller trace context to preserve. The
-    // gateway does not mint one (ADR-0016).
-    do_inst_sync(Arc::clone(&state), Some(msg_id.clone()), None)
-        .await
-        .map(|_| {
-            Json(json!({
-                "success": true,
-                "message": "inst-sync-reply published",
-                "data": { "msgId": msg_id }
-            }))
-        })
-        .map_err(|e| {
-            error!("inst-sync-push failed: {}", e);
-            (
-                StatusCode::SERVICE_UNAVAILABLE,
-                Json(json!({"success": false, "message": e.to_string()})),
-            )
-        })
 }

@@ -38,13 +38,6 @@ fn build_instance_from_row(row: InstanceRow) -> Result<Instance> {
     })
 }
 
-/// Escape SQL LIKE metacharacters (`%`, `_`, `\`) so user input is treated as literal text.
-fn escape_like(s: &str) -> String {
-    s.replace('\\', "\\\\")
-        .replace('%', "\\%")
-        .replace('_', "\\_")
-}
-
 /// Instance Manager handles runtime instance lifecycle
 pub struct InstanceManager {
     pub(crate) pool: SqlitePool,
@@ -139,8 +132,8 @@ impl InstanceManager {
     }
 
     /// Bulk variant of `fetch_properties` — one query for all instances, then
-    /// group by `instance_id`. Used by `list_instances_paginated` /
-    /// `search_instances` / `get_children` to avoid N+1.
+    /// group by `instance_id`. Used by `list_instances_paginated` and
+    /// `get_children` to avoid N+1.
     pub(crate) async fn fetch_properties_batch(
         &self,
         instances: &[(u32, String)],
@@ -385,53 +378,6 @@ impl InstanceManager {
                ORDER BY instance_id ASC
                LIMIT ? OFFSET ?"#,
         )
-        .bind(product_name)
-        .bind(product_name)
-        .bind(page_size as i64)
-        .bind(offset as i64)
-        .fetch_all(&self.pool)
-        .await?;
-
-        let mut instances = rows
-            .into_iter()
-            .map(build_instance_from_row)
-            .collect::<Result<Vec<_>>>()?;
-        self.attach_properties_batch(&mut instances).await?;
-
-        Ok((u32::try_from(total).unwrap_or(u32::MAX), instances))
-    }
-
-    /// Search instances by name with fuzzy matching
-    ///
-    /// Uses SQL `? IS NULL OR product_name = ?` pattern to handle optional filter
-    /// in a single query without Rust-side branching.
-    pub async fn search_instances(
-        &self,
-        keyword: &str,
-        product_name: Option<&str>,
-        page: u32,
-        page_size: u32,
-    ) -> Result<(u32, Vec<Instance>)> {
-        let offset = (page - 1) * page_size;
-        let like_pattern = format!("%{}%", escape_like(keyword));
-
-        let (total,): (i64,) = sqlx::query_as(
-            "SELECT COUNT(*) FROM instances WHERE instance_name LIKE ? ESCAPE '\\' AND (? IS NULL OR product_name = ?)",
-        )
-        .bind(&like_pattern)
-        .bind(product_name)
-        .bind(product_name)
-        .fetch_one(&self.pool)
-        .await?;
-
-        let rows: Vec<InstanceRow> = sqlx::query_as(
-            r#"SELECT instance_id, instance_name, product_name, parent_id, created_at
-               FROM instances
-               WHERE instance_name LIKE ? ESCAPE '\' AND (? IS NULL OR product_name = ?)
-               ORDER BY instance_id ASC
-               LIMIT ? OFFSET ?"#,
-        )
-        .bind(&like_pattern)
         .bind(product_name)
         .bind(product_name)
         .bind(page_size as i64)

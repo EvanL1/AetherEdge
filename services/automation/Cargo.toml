@@ -60,8 +60,6 @@ default = ["sqlite", "openapi"]
 sqlite = []
 # Service-local OpenAPI is consumed by the gateway-owned Swagger UI.
 openapi = ["common/openapi"]
-# Deprecated build-compatibility alias; Swagger UI is gateway-only.
-swagger-ui = ["openapi"]
 
 [lints]
 workspace = true

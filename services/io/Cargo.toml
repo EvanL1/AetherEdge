@@ -101,8 +101,6 @@ http = ["json-mapping", "dep:reqwest"]  # HTTP protocol (polling + webhook, JSON
 iec61850 = []  # IEC 61850 MMS protocol (TCP/ISO transport, pure Rust implementation)
 tracing-support = []
 openapi = []
-# Deprecated build-compatibility alias; Swagger UI is gateway-only.
-swagger-ui = ["openapi"]
 
 [lints]
 workspace = true
