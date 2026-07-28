@@ -2,12 +2,12 @@
 
 ## Status
 
-Accepted on 2026-07-11. The installation-context, fail-safe default,
-read-only setup plan, explicit plan apply, fresh-install refusal, health-check,
-and release-integrity clauses are implemented. In-place runtime upgrade and
-legacy installation/database import are explicitly unsupported. Commissioning
-plans, application-level configuration snapshots, and hosted documentation are
-follow-up work governed by the same boundaries.
+Accepted on 2026-07-11. Partially superseded by
+[ADR-0030](0030-separate-cli-from-host-supervision.md), which retired the CLI
+setup, host-supervision, and aggregate-doctor wrappers while preserving
+installer-owned safe activation, fresh-install refusal, health endpoints, and
+release integrity. In-place runtime upgrade and legacy installation/database
+import remain unsupported.
 
 ## Context
 

@@ -64,11 +64,13 @@ browser, cloud connectivity, or an LLM.
 Run the first health gate:
 
 ```bash
-aether doctor
+systemctl status aether.target
+curl --fail http://127.0.0.1:6005/health
+aether shm info
 ```
 
-Success means the six services, SQLite, configuration, and authoritative SHM
-plane are healthy while the site remains uncommissioned. Continue with
+Success means the six services, remote gateway, and authoritative SHM plane are
+healthy while the site remains uncommissioned. Continue with
 [Getting Started](../guides/getting-started.md) for installation and bootstrap
 identity details.
 

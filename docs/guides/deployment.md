@@ -213,7 +213,7 @@ failed activation preserves the previous configuration and removes the newly
 published version.
 
 This command does not restart services or commission the Pack. Plan any
-maintenance restart separately, then run `aether doctor`; enabling channels,
+maintenance restart separately, then verify supervisor and health endpoints; enabling channels,
 instances, rules, processors, or physical control remains a distinct audited
 commissioning action. The repository can build and test this local format, but
 does not yet claim an independently published/signed Kernel artifact, Pack
@@ -288,21 +288,10 @@ systemctl status aether.target
 journalctl -u aether-io -f
 ```
 
-`aether services` and `aether doctor` auto-detect this mode — see
-[CLI Reference: aether services](../reference/cli.md#aether-services) and
-[aether doctor](../reference/cli.md#aether-doctor) — with no flag needed.
-Detection (`tools/aether/src/deploy_mode.rs`) checks for both
-`/etc/systemd/system/aether.target` and `systemctl` on PATH; if either is
-missing it falls back to the Docker Compose code path. In systemd mode,
-`aether services start/stop/restart/status` pass canonical service names such
-as `aether-io` directly to `systemctl <verb>` (or use `aether.target` when no service is named), and
-`aether services logs <service>` shells out to
-`journalctl -u <service>`. `aether services build/pull/clean` all
-error in this mode — there are no container images in a bare-metal install,
-and the `.run` package is not an in-place upgrader. `aether services refresh
---smart` degrades to a plain `systemctl restart`, printing a note that
-`--smart` has no effect, since there's no image to diff against. Redis is not
-part of the default health contract; operators who enable Redis can inspect its unit or profile independently.
+Systemd is the sole bare-metal supervisor. Use canonical unit names directly
+with `systemctl` and `journalctl`; the application CLI does not wrap host
+supervision. Redis is not part of the default health contract, and operators
+who enable it inspect its unit independently.
 
 None of the six Rust service units declares `Requires=aether-redis.service`.
 The default target starts and keeps its SHM/SQLite work independently; an
@@ -367,23 +356,24 @@ Other state:
 
 ## Service management on device
 
-The installed `aether` CLI wraps Docker Compose for day-to-day operations:
+Use the deployment's native supervisor:
 
 ```bash
-aether services start      # start one or more services (or all)
-aether services stop       # stop services
-aether services status     # container status
-aether services refresh    # recreate containers from the installed composition
-aether services logs       # view service logs
+# Container installation
+docker compose -f /opt/AetherEdge/docker-compose.yml ps
+docker compose -f /opt/AetherEdge/docker-compose.yml restart aether-io
+docker compose -f /opt/AetherEdge/docker-compose.yml logs -f aether-io
 
-aether doctor              # Docker, core services, SQLite, config files,
-                           # shared memory
+# Bare-metal installation
+systemctl status aether.target
+systemctl restart aether-io.service
+journalctl -u aether-io.service -f
+
+curl --fail http://127.0.0.1:6005/health
 ```
 
-`aether services refresh` recreates containers from the composition and image
-set already installed on the device. It is a same-release recovery operation,
-not a supported path for replacing the installed release. See [Getting
-Started](getting-started.md) for what a healthy `aether doctor` run covers.
+Restarting the installed same-release composition is recovery, not a supported
+release replacement path.
 
 ## Related pages
 

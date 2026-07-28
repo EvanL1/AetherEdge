@@ -253,7 +253,7 @@ impl AutomationError {
                 "Add the missing configuration to config/automation/ and run 'aether sync'".to_string()
             ),
             Self::DatabaseError(_) => Some(
-                "Run 'aether doctor' to check database status. Try 'aether init' if database is missing".to_string()
+                "Check the service health endpoint and database path. Try 'aether init' if the database is missing".to_string()
             ),
             Self::InstanceNotFound(_) => Some(
                 "Use GET /api/instances to list available instances, or create a new one with POST /api/instances".to_string()

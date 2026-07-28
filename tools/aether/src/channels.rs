@@ -571,7 +571,7 @@ impl ChannelClient {
             Ok(response.json().await?)
         } else {
             Err(anyhow::anyhow!(
-                "Failed to get channels: {} - ensure io is running (aether services start)",
+                "Failed to get channels: {} - ensure aether-io is running",
                 response.status()
             ))
         }

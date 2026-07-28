@@ -31,6 +31,12 @@ fn cli_rejects_retired_ungoverned_mutation_subcommands() {
         &["net", "mqtt", "disconnect"],
         &["net", "cert", "upload"],
         &["net", "cert", "delete"],
+        &["setup"],
+        &["services", "status"],
+        &["logs", "list"],
+        &["doctor"],
+        &["top"],
+        &["shm", "top"],
     ];
 
     for arguments in retired {

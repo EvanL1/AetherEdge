@@ -7,12 +7,8 @@ mod alarms;
 mod api_client;
 mod channels;
 mod core;
-mod deploy_mode;
-mod doctor;
 mod history;
 mod install_context;
-mod logs;
-mod logs_tui;
 mod mcp;
 mod mcp_docs;
 mod models;
@@ -21,13 +17,8 @@ mod output;
 mod pack_artifact;
 mod routing;
 mod rules;
-mod services;
-mod setup;
 mod shm;
-mod shm_dashboard;
 mod templates;
-mod top;
-mod top_draw;
 mod transport_security;
 mod utils;
 
@@ -47,11 +38,10 @@ use std::path::{Path, PathBuf};
 #[command(
     long_about = "AetherEdge commissioning, application, and operations CLI
 
-Safe first run:
-  aether setup                              Plan a safe-empty site without writing
-  aether setup apply --plan-id <PLAN_ID>    Apply that exact unchanged plan
-  aether services start                     Start the six-service runtime
-  aether doctor                             Prove services, SQLite, config, and SHM health
+Safe local bootstrap:
+  aether init                               Apply schema migrations
+  aether sync --dry-run                     Validate offline configuration
+  aether sync --confirmed                   Apply while runtime owners are stopped
 
 Prove observation before control (export AETHER_ACCESS_TOKEN first):
   aether channels list --json               Confirm the initial channel set is empty
@@ -107,15 +97,6 @@ struct Cli {
 #[derive(Subcommand)]
 enum Commands {
     // === Configuration Management Commands ===
-    /// Plan or apply a conservative first-run setup
-    #[command(
-        about = "Plan a safe first-run setup; persistent changes require an unchanged plan ID"
-    )]
-    Setup {
-        #[command(subcommand)]
-        command: Option<setup::SetupCommand>,
-    },
-
     /// Apply all configuration to SQLite while runtime owners are stopped
     Sync {
         /// Validate only, don't write to database (dry run)
@@ -193,33 +174,11 @@ enum Commands {
         command: routing::RoutingCommands,
     },
 
-    /// Manage Docker services
-    #[command(about = "Start, stop, and manage AetherEdge services")]
-    Services {
-        #[command(subcommand)]
-        command: services::ServiceCommands,
-    },
-
-    /// Manage logs
-    #[command(about = "Log level control and log file viewer")]
-    Logs {
-        #[command(subcommand)]
-        command: logs::LogCommands,
-    },
-
     /// Shared memory operations (interactive REPL)
     #[command(about = "Zero-latency shared memory CLI (like mysql-cli)")]
     Shm {
         #[command(subcommand)]
         command: Option<shm::ShmCommands>,
-    },
-
-    /// System health check and diagnostics
-    #[command(about = "Check system health and diagnose issues")]
-    Doctor {
-        /// Show detailed information (response times, etc.)
-        #[arg(short, long)]
-        verbose: bool,
     },
 
     /// Inspect channel templates
@@ -251,10 +210,6 @@ enum Commands {
         #[command(subcommand)]
         command: history::HistoryCommands,
     },
-
-    /// Interactive TUI dashboard for real-time monitoring
-    #[command(about = "Interactive TUI dashboard for real-time monitoring")]
-    Top,
 
     /// Verify and inspect the feature-exact kernel runtime manifest
     #[command(about = "Verify and inspect the installed kernel runtime manifest")]
@@ -343,8 +298,6 @@ async fn run(cli: Cli) -> Result<()> {
     )?;
     let config_path = install_paths.config_directory;
     let db_path = install_paths.data_directory;
-    let install_mode = install_paths.install_mode;
-
     if !json && matches!(cli.command, Commands::Init { .. }) && !cli.no_color {
         print_banner();
         println!(
@@ -357,12 +310,6 @@ async fn run(cli: Cli) -> Result<()> {
 
     match cli.command {
         // Configuration management commands
-        Commands::Setup { command } => {
-            if host.is_some() {
-                eprintln!("warning: --host is ignored for 'setup' (local filesystem operation)");
-            }
-            setup::handle(command, &config_path, &db_path, json).await?;
-        },
         Commands::Sync {
             dry_run,
             force,
@@ -441,35 +388,11 @@ async fn run(cli: Cli) -> Result<()> {
             let urls = mcp::BaseUrls::from_api_base(&api_base_url(host));
             routing::handle_command(command, &urls.automation, json).await?;
         },
-        Commands::Services { command } => {
-            let mode = deploy_mode::DeployMode::detect(install_mode.as_deref())?;
-            if host.is_some() {
-                eprintln!(
-                    "warning: --host is ignored for 'services' (local operation, {})",
-                    if mode == deploy_mode::DeployMode::Systemd {
-                        "systemd"
-                    } else {
-                        "Docker"
-                    }
-                );
-            }
-            if json {
-                eprintln!("warning: --json is not supported for 'services' command");
-            }
-            services::handle_command(command, mode).await?;
-        },
-        Commands::Logs { command } => {
-            logs::handle_command(command, json, host).await?;
-        },
         Commands::Shm { command } => {
             if json {
                 eprintln!("warning: --json is not supported for 'shm' command");
             }
             shm::handle_command(command, &db_path).await?;
-        },
-        Commands::Doctor { verbose } => {
-            let mode = deploy_mode::DeployMode::detect(install_mode.as_deref())?;
-            doctor::run_doctor(config_path, db_path, mode, verbose, json).await?;
         },
         Commands::Templates { command } => {
             let urls = mcp::BaseUrls::from_api_base(&api_base_url(host));
@@ -486,10 +409,6 @@ async fn run(cli: Cli) -> Result<()> {
         Commands::History { command } => {
             let urls = mcp::BaseUrls::from_api_base(&api_base_url(host));
             history::handle_command(command, &urls.history, json).await?;
-        },
-        Commands::Top => {
-            let urls = mcp::BaseUrls::from_api_base(&api_base_url(host));
-            top::run_top(&urls.io, &urls.automation).await?;
         },
         Commands::RuntimeManifest { path } => {
             if host.is_some() {
@@ -1180,9 +1099,18 @@ mod cli_tests {
     #[test]
     fn root_help_leads_with_the_safe_commissioning_journey() {
         let help = Cli::command().render_long_help().to_string();
-        assert!(help.contains("Safe first run:"));
+        assert!(help.contains("Safe local bootstrap:"));
+        assert!(help.contains("aether sync --confirmed"));
         assert!(help.contains("Prove observation before control"));
         assert!(help.contains("--expected-revision <REVISION> --confirmed"));
         assert!(!help.contains("aether rules enable 1"));
+        for retired in [
+            "aether setup",
+            "aether services",
+            "aether doctor",
+            "aether top",
+        ] {
+            assert!(!help.contains(retired));
+        }
     }
 }

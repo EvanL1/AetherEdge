@@ -22,12 +22,10 @@ use rustyline::highlight::Highlighter;
 use rustyline::hint::Hinter;
 use rustyline::validate::Validator;
 use rustyline::{Editor, Helper};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
-
-use crate::shm_dashboard::run_dashboard;
 
 /// Clap subcommands (for one-shot mode)
 #[derive(Subcommand)]
@@ -50,9 +48,6 @@ pub enum ShmCommands {
         #[arg(short, long, default_value = "500")]
         interval_ms: u64,
     },
-
-    /// Real-time TUI dashboard (like htop)
-    Top,
 }
 
 /// Parsed shared memory key
@@ -360,37 +355,6 @@ impl ShmRuntimeView {
         }
     }
 
-    pub(crate) fn named_keys(&self) -> Vec<ShmKey> {
-        let mut keys = BTreeMap::<String, ShmKey>::new();
-        for (instance_id, point_id, _) in self.routing.measurement_routes() {
-            let key = ShmKey::Instance {
-                instance_id,
-                point_type: 0,
-                point_id,
-            };
-            keys.insert(key.to_string(), key);
-        }
-        for (instance_id, point_id, _) in self.routing.action_routes() {
-            let key = ShmKey::Instance {
-                instance_id,
-                point_type: 1,
-                point_id,
-            };
-            keys.insert(key.to_string(), key);
-        }
-        if let Some(manifest) = self.reader.manifest() {
-            for (_, address) in manifest.iter_physical_points() {
-                let key = ShmKey::Channel {
-                    channel_id: address.channel_id().get(),
-                    point_type: model_point_type(address.kind()),
-                    point_id: address.point_id().get(),
-                };
-                keys.insert(key.to_string(), key);
-            }
-        }
-        keys.into_values().collect()
-    }
-
     pub(crate) fn instance_ids(&self) -> Vec<u32> {
         let mut instance_ids = BTreeSet::new();
         instance_ids.extend(
@@ -437,15 +401,6 @@ fn point_kind(point_type: PointType) -> PointKind {
         PointType::Signal => PointKind::Status,
         PointType::Control => PointKind::Command,
         PointType::Adjustment => PointKind::Action,
-    }
-}
-
-fn model_point_type(kind: PointKind) -> PointType {
-    match kind {
-        PointKind::Telemetry => PointType::Telemetry,
-        PointKind::Status => PointType::Signal,
-        PointKind::Command => PointType::Control,
-        PointKind::Action => PointType::Adjustment,
     }
 }
 
@@ -501,7 +456,6 @@ async fn handle_single_command(cmd: ShmCommands, data_directory: &Path) -> Resul
             let parsed = parse_key(&key)?;
             watch_key(&reader, &parsed, interval_ms)?;
         },
-        ShmCommands::Top => run_dashboard(data_directory).await?,
     }
 
     Ok(())
@@ -765,7 +719,6 @@ fn print_help() {
 #[allow(clippy::disallowed_methods)] // Test code - unwrap is acceptable
 mod tests {
     use super::*;
-    use std::collections::BTreeSet;
     use std::sync::Arc;
 
     use aether_dataplane::SlotWriter;
@@ -853,18 +806,6 @@ mod tests {
             Some(12.5)
         );
         assert_eq!(get_value(&view, &action).expect("read action"), Some(7.5));
-        assert_eq!(
-            view.named_keys()
-                .into_iter()
-                .map(|key| key.to_string())
-                .collect::<BTreeSet<_>>(),
-            BTreeSet::from([
-                "ch:7:A:0".to_owned(),
-                "ch:7:T:0".to_owned(),
-                "inst:9:A:5".to_owned(),
-                "inst:9:M:4".to_owned(),
-            ])
-        );
     }
 
     #[test]

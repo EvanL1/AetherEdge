@@ -101,7 +101,6 @@ fn validate_absolute_directory(
 pub(crate) struct ResolvedInstallPaths {
     pub(crate) config_directory: PathBuf,
     pub(crate) data_directory: PathBuf,
-    pub(crate) install_mode: Option<String>,
 }
 
 pub(crate) struct InstallPathSources<'source> {
@@ -181,7 +180,6 @@ pub(crate) fn resolve_install_paths_from_sources(
     ResolvedInstallPaths {
         config_directory: make_absolute(config_directory, sources.working_directory),
         data_directory: make_absolute(data_directory, sources.working_directory),
-        install_mode: sources.install_context.map(|context| context.mode.clone()),
     }
 }
 
@@ -257,7 +255,6 @@ mod tests {
             command_line_config_directory
         );
         assert_eq!(resolved_paths.data_directory, command_line_data_directory);
-        assert_eq!(resolved_paths.install_mode.as_deref(), Some("systemd"));
     }
 
     #[test]
@@ -332,7 +329,6 @@ mod tests {
             root_directory.join("data/config")
         );
         assert_eq!(resolved_paths.data_directory, root_directory.join("data"));
-        assert_eq!(resolved_paths.install_mode, None);
     }
 
     #[test]

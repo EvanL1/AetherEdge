@@ -289,8 +289,6 @@ pub struct ConfigSyncer {
     db_path: PathBuf,
     /// When true, DELETE all rows before INSERT (full replace). Default: false (UPSERT).
     force: bool,
-    /// Require site-level entities to remain empty until this sync commits.
-    require_empty_site: bool,
 }
 
 impl ConfigSyncer {
@@ -300,20 +298,12 @@ impl ConfigSyncer {
             config_path: config_path.as_ref().to_path_buf(),
             db_path: db_path.as_ref().to_path_buf(),
             force: false,
-            require_empty_site: false,
         }
     }
 
     /// Set force mode: DELETE all rows before INSERT (destructive full replace)
     pub fn with_force(mut self, force: bool) -> Self {
         self.force = force;
-        self
-    }
-
-    /// Reserve the SQLite writer lock and reject commissioned rows before any
-    /// configuration writes. This guard is intended only for first-run setup.
-    pub fn requiring_empty_site(mut self) -> Self {
-        self.require_empty_site = true;
         self
     }
 
@@ -332,11 +322,7 @@ impl ConfigSyncer {
             ))
             .await
             .context("Failed to connect to unified configuration database")?;
-        let mut tx = if self.require_empty_site {
-            pool.begin_with("BEGIN IMMEDIATE").await?
-        } else {
-            pool.begin().await?
-        };
+        let mut tx = pool.begin().await?;
 
         if self.force {
             let action_route_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM action_routing")
@@ -359,19 +345,6 @@ impl ConfigSyncer {
                 .await?;
         }
 
-        if self.require_empty_site {
-            for table in ["channels", "instances", "rules"] {
-                let count: i64 = sqlx::query_scalar(&format!("SELECT COUNT(*) FROM {table}"))
-                    .fetch_one(&mut *tx)
-                    .await?;
-                if count != 0 {
-                    anyhow::bail!(
-                        "setup requires an empty site, but {table} contains {count} row(s)"
-                    );
-                }
-            }
-        }
-
         let global = self.sync_global_in_transaction(&mut tx).await?;
         let io = self.sync_io_in_transaction(&mut tx).await?;
         let automation = self.sync_automation_in_transaction(&mut tx).await?;
@@ -391,19 +364,6 @@ impl ConfigSyncer {
                 .collect::<Vec<_>>()
                 .join("; ");
             anyhow::bail!("Configuration errors in {service}: {details}");
-        }
-
-        if self.require_empty_site {
-            for table in ["channels", "instances", "rules"] {
-                let count: i64 = sqlx::query_scalar(&format!("SELECT COUNT(*) FROM {table}"))
-                    .fetch_one(&mut *tx)
-                    .await?;
-                if count != 0 {
-                    anyhow::bail!(
-                        "setup requires an empty site, but the synced configuration would leave {count} row(s) in {table}"
-                    );
-                }
-            }
         }
 
         // `aether sync` is an explicitly confirmed, service-stopped import,
@@ -1968,61 +1928,6 @@ channels:
         assert_eq!(global_value, "commissioned");
         assert_eq!(channel_count, 1);
         assert_eq!(automation_sync_count, 1);
-    }
-
-    #[tokio::test]
-    async fn empty_site_guard_rejects_commissioned_rows_before_any_sync_write() {
-        let workspace = TempDir::new().unwrap();
-        let config_path = workspace.path().join("config");
-        let database_path = workspace.path().join("data");
-        fs::create_dir_all(config_path.join("io")).unwrap();
-        fs::create_dir_all(config_path.join("automation")).unwrap();
-        fs::write(config_path.join("global.yaml"), "api:\n  host: 127.0.0.1\n").unwrap();
-        fs::write(config_path.join("io/io.yaml"), "channels: []\n").unwrap();
-        fs::write(
-            config_path.join("automation/automation.yaml"),
-            "auto_load_instances: false\n",
-        )
-        .unwrap();
-        fs::write(
-            config_path.join("automation/instances.yaml"),
-            "instances: []\n",
-        )
-        .unwrap();
-
-        let database_file = database_path.join("aether.db");
-        schema::init_database(&database_file).await.unwrap();
-        let pool = connect_to_database(&database_file).await;
-        sqlx::query(
-            "INSERT INTO channels (channel_id, name, protocol, enabled, config) \
-             VALUES (99, 'concurrent-channel', 'modbus_tcp', 1, '{}')",
-        )
-        .execute(&pool)
-        .await
-        .unwrap();
-        pool.close().await;
-
-        let error = ConfigSyncer::new(&config_path, &database_path)
-            .requiring_empty_site()
-            .sync_all()
-            .await
-            .unwrap_err();
-        assert!(error.to_string().contains("channels contains 1 row"));
-
-        let pool = connect_to_database(&database_file).await;
-        let channel_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM channels")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-        let sync_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM sync_metadata")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-        assert_eq!(channel_count, 1);
-        assert_eq!(
-            sync_count, 0,
-            "guard failure must roll back all sync writes"
-        );
     }
 
     #[tokio::test]

@@ -147,7 +147,6 @@ aether shm get ch:1001:T:101
 aether shm get inst:9:M:101
 aether shm watch ch:1001:T:101
 aether shm info
-aether shm top
 aether models instances data 9         # remote-capable SHM-backed API
 ```
 
@@ -157,13 +156,12 @@ aether routing list                    # channel→instance routing table
 aether routing get <channel_id>
 ```
 
-### Service & System Health
+### Service and host health
 ```bash
-aether doctor                          # full system health check
-aether services status
-aether logs list
-aether logs view <service> -n 100
-aether logs tail <service> --grep ERROR
+curl --fail http://127.0.0.1:6005/health
+systemctl status aether.target         # bare metal
+journalctl -u aether-io.service        # bare metal logs
+docker compose ps                      # container deployment
 ```
 
 ## Intent → Command Mapping
@@ -182,7 +180,7 @@ aether logs tail <service> --grep ERROR
 | "过去一天数据" | `aether history query inst:9:M 101 --from <yesterday-iso> --json` |
 | "同时查多个点" | `aether history batch --series inst:9:M,101 --series inst:12:M,201 --from <iso> --json` |
 | "SHM 实时值" | `aether models instances data 9 --json` |
-| "系统健康？" | `aether doctor --json` |
+| "API 健康？" | `curl --fail http://127.0.0.1:6005/health` |
 | "规则执行结果" | `aether rules executions <id> --json` |
 
 ## Multi-step Pattern

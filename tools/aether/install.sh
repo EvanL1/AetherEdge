@@ -209,9 +209,9 @@ main() {
 
     echo ""
     echo "Verify: aether --version"
-    echo "Plan a safe local first run: aether setup"
+    echo "Validate offline configuration: aether sync --dry-run"
     echo "Runtime note: this CLI installer does not install service binaries, images, or Compose."
-    echo "Install the AetherEdge .run package before using 'aether services' on a new host."
+    echo "Install the AetherEdge .run package before operating a new host runtime."
 }
 
 main "$@"

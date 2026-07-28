@@ -179,7 +179,7 @@ values stop updating — their timestamps go stale. A point that has *never*
 been acquired is a NaN sentinel in shared memory, not a zero; see
 [Data Model](../concepts/data-model.md) for why unavailability is a
 first-class value. For a whole-system pass — services up, SQLite readable,
-shared memory attached — run `aether doctor`.
+shared memory attached — check the six service health endpoints and `aether shm info`.
 
 ## Related pages
 

@@ -76,13 +76,14 @@ device, enable a rule, or install a domain solution.
 
 ### 2. Establish identity and prove the empty runtime
 
-Start with the local health gate:
+Start with the host supervisor and gateway health endpoint:
 
 ```bash
-aether doctor
+systemctl status aether.target
+curl --fail http://127.0.0.1:6005/health
 ```
 
-A healthy first boot has six healthy services and valid SHM. Sign in with the
+A healthy first boot has six active services and a healthy gateway. Sign in with the
 private bootstrap credential, change that password immediately, create a
 dedicated account for normal operation, and export its signed
 `AETHER_ACCESS_TOKEN`. Then prove that nothing was commissioned implicitly:

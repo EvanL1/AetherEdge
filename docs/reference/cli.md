@@ -1,15 +1,16 @@
 ---
 title: CLI Reference
-description: Every aether command - services, sync, doctor, channels, rules, and more
+description: Current offline commissioning, application, Pack, SHM, and MCP commands
 updated: 2026-07-28
 ---
 
 # CLI Reference
 
-`aether` (version 0.5.0) is the unified management tool for Aether. It covers
-configuration management (`setup`, `sync`, `status`, `init`, `export`) and service
-operations (`channels`, `models`, `rules`, `services`, `logs`, and more).
-Every section below is generated from the binary's own `--help` output.
+`aether` is the offline commissioning and authenticated application client. It
+covers configuration (`sync`, `status`, `init`, `export`), application groups,
+Pack/runtime artifacts, one-shot SHM reads, and MCP. Host setup, process
+supervision, logs, aggregate diagnostics, and TUI dashboards use installer or
+standard operating-system tooling instead.
 
 ```
 Usage: aether [OPTIONS] <COMMAND>
@@ -46,47 +47,6 @@ With `--json`, results are written to stdout as a `{success, ...}` envelope
 to stderr. The `mcp` command is the exception: it speaks MCP JSON-RPC over
 stdio, so `--json` does not change its output. The help output declares no
 environment variables; host and path defaults come from the flags above.
-
-## aether setup
-
-Plan or apply the conservative first-run configuration. With no subcommand,
-`setup` is identical to `setup plan` and is persistently read-only.
-
-```
-Usage: aether setup [COMMAND]
-
-Commands:
-  plan   Recompute and print the read-only setup plan
-  apply  Apply an unchanged safe plan after explicit confirmation
-```
-
-```bash
-# Human-readable, read-only plan
-aether setup
-
-# Structured plan for an AI agent or script
-aether --json setup
-
-# The only persistent setup operation
-aether setup apply --plan-id <PLAN_ID>
-```
-
-The SHA-256 plan ID binds the target paths, safe-file fingerprints, detected
-extra files, and SQLite state. Apply recomputes it before writing and rejects
-a stale ID. Site states are:
-
-| State | Meaning | Apply behavior |
-|-------|---------|----------------|
-| `fresh` | No configuration or local database exists | Creates only the four safe empty files and local SQLite state |
-| `safe_partial` | An exact subset of the safe files/database exists | Preserves existing files and creates only missing safe state |
-| `safe_ready` | Safe empty configuration is already synchronized | Successful no-op |
-| `existing` | A complete custom or commissioned site was detected | Refused; zero writes |
-| `blocked` | A partial custom, unreadable, or unrecognized site was detected | Refused; zero writes and explicit blockers |
-
-Even a successful apply reports `ready: false`: it never starts services,
-enables devices or rules, performs physical control, or installs a domain
-pack. Continue with `aether services start` and `aether doctor`; device
-commissioning is a separate audited operation.
 
 ## aether runtime-manifest
 
@@ -749,231 +709,6 @@ AETHER_ACCESS_TOKEN='<signed access JWT>' \
 Measurement routing remains part of the explicitly confirmed offline
 configuration import until it has the same governed online revision contract.
 
-### services start
-
-Start one or more Aether services.
-
-```
-Usage: aether services start [OPTIONS] [SERVICES]...
-```
-
-```bash
-aether services start aether-io aether-automation
-```
-
-### services stop
-
-Stop one or more Aether services.
-
-```
-Usage: aether services stop [OPTIONS] [SERVICES]...
-```
-
-```bash
-aether services stop
-```
-
-### services restart
-
-Restart one or more Aether services.
-
-```
-Usage: aether services restart [OPTIONS] [SERVICES]...
-```
-
-```bash
-aether services restart aether-io
-```
-
-### services status
-
-Display status of Aether services.
-
-```
-Usage: aether services status [OPTIONS] [SERVICES]...
-```
-
-```bash
-aether services status --json
-```
-
-### services logs
-
-View logs for Aether services.
-
-```
-Usage: aether services logs [OPTIONS] <SERVICE>
-```
-
-| Flag | Description |
-|------|-------------|
-| `-f, --follow` | Follow log output |
-| `-n, --tail <TAIL>` | Number of lines to show from the end (default: 100) |
-
-```bash
-aether services logs aether-io --follow --tail 200
-```
-
-### services build
-
-Build Docker images for services.
-
-```
-Usage: aether services build [OPTIONS] [SERVICES]...
-```
-
-```bash
-aether services build aether-io
-```
-
-### services pull
-
-Pull latest Docker images.
-
-```
-Usage: aether services pull [OPTIONS]
-```
-
-```bash
-aether services pull
-```
-
-### services clean
-
-Clean up Docker volumes and networks.
-
-```
-Usage: aether services clean [OPTIONS]
-```
-
-| Flag | Description |
-|------|-------------|
-| `--volumes` | Also remove volumes (long form only; `-v` is the global verbose flag) |
-
-```bash
-aether services clean --volumes
-```
-
-### services refresh
-
-Force recreate containers with latest images.
-
-```
-Usage: aether services refresh [OPTIONS] [SERVICES]...
-```
-
-| Flag | Description |
-|------|-------------|
-| `-p, --pull` | Also pull latest images before recreating |
-| `-s, --smart` | Use smart mode (only recreate if an image changed; stateful optional services remain explicit) |
-
-```bash
-aether services refresh --pull --smart
-```
-
-## aether logs
-
-Log level control and log file viewer.
-
-```
-Usage: aether logs [OPTIONS] <COMMAND>
-```
-
-### logs level
-
-Set log level for a service. Positional arguments: `<SERVICE>` (io,
-automation, all) and `<LEVEL>` (trace, debug, info, warn, error) or a full filter
-spec such as `"info,io=debug"`.
-
-```
-Usage: aether logs level [OPTIONS] <SERVICE> <LEVEL>
-```
-
-```bash
-aether logs level all debug
-```
-
-### logs get
-
-Get current log level for a service (aether-io, aether-automation, all).
-
-```
-Usage: aether logs get [OPTIONS] <SERVICE>
-```
-
-```bash
-aether logs get aether-io
-```
-
-### logs list
-
-List log files on disk (default: today). The service filter is optional.
-
-```
-Usage: aether logs list [OPTIONS] [SERVICE]
-```
-
-| Flag | Description |
-|------|-------------|
-| `-d, --date <DATE>` | Date in `YYYYMMDD` format (default: today) |
-
-```bash
-aether logs list aether-io --date 20260709
-```
-
-### logs view
-
-View recent lines from a service log file (aether-io, aether-automation,
-aether-history, aether-uplink,
-alarm, api).
-
-```
-Usage: aether logs view [OPTIONS] <SERVICE>
-```
-
-| Flag | Description |
-|------|-------------|
-| `-n, --lines <LINES>` | Number of lines from end (default: 50) |
-| `--api` | Show API access log instead of main log |
-| `-g, --grep <GREP>` | Filter lines containing this pattern (case-insensitive) |
-
-```bash
-aether logs view aether-io -n 100 --grep ERROR
-```
-
-### logs tail
-
-Tail a service log file in real-time.
-
-```
-Usage: aether logs tail [OPTIONS] <SERVICE>
-```
-
-| Flag | Description |
-|------|-------------|
-| `--api` | Show API access log instead of main log |
-| `-g, --grep <GREP>` | Filter lines containing this pattern (case-insensitive) |
-
-```bash
-aether logs tail aether-automation --grep ERROR
-```
-
-### logs ui
-
-Open interactive log viewer with scroll, search, and follow.
-
-```
-Usage: aether logs ui [OPTIONS] <SERVICE>
-```
-
-| Flag | Description |
-|------|-------------|
-| `--api` | Show API access log instead of main log |
-
-```bash
-aether logs ui aether-io
-```
-
 ## aether shm
 
 Zero-latency shared memory CLI (like mysql-cli). The subcommand is optional;
@@ -1023,31 +758,6 @@ Usage: aether shm watch [OPTIONS] <KEY>
 
 ```bash
 aether shm watch ch:1001:T:101 --interval-ms 200
-```
-
-### shm top
-
-Real-time TUI dashboard (like htop).
-
-```
-Usage: aether shm top [OPTIONS]
-```
-
-```bash
-aether shm top
-```
-
-## aether doctor
-
-Check system health and diagnose issues. For this command, `-v, --verbose`
-shows detailed information (response times, etc.).
-
-```
-Usage: aether doctor [OPTIONS]
-```
-
-```bash
-aether doctor --verbose
 ```
 
 ## aether templates
@@ -1422,19 +1132,6 @@ Usage: aether history batch [OPTIONS] --from <FROM>
 ```bash
 aether history batch --series inst:9:M,101 --series inst:9:M,102 \
   --from 2026-05-01T00:00:00Z --limit 500
-```
-
-## aether top
-
-Interactive TUI dashboard for real-time monitoring. No command-specific
-flags.
-
-```
-Usage: aether top [OPTIONS]
-```
-
-```bash
-aether top
 ```
 
 ## aether mcp

@@ -92,6 +92,15 @@ const RETIRED_ROOT_PATHS: &[&str] = &[
     "services/io/src/protocols/sunspec/model.rs",
     "services/io/src/protocols/sunspec/models",
     "services/io/src/protocols/sunspec/types.rs",
+    "tools/aether/src/setup.rs",
+    "tools/aether/src/services.rs",
+    "tools/aether/src/doctor.rs",
+    "tools/aether/src/logs.rs",
+    "tools/aether/src/logs_tui.rs",
+    "tools/aether/src/top.rs",
+    "tools/aether/src/top_draw.rs",
+    "tools/aether/src/shm_dashboard.rs",
+    "tools/aether/src/deploy_mode.rs",
 ];
 const RETIRED_EXTERNAL_RUST_DEPENDENCIES: &[&str] = &["bb8", "bb8-redis", "redis"];
 const RETIRED_IO_PROTOCOLS: &[&str] = &[
@@ -602,6 +611,14 @@ fn core_and_gateway_do_not_select_forbidden_sdk_or_adapter_edges() {
     let routing = workspace.package("aether-routing");
     if production_dependencies(routing).any(|dependency| dependency.name == "sqlx") {
         violations.push("aether-routing depends on the concrete SQLite client".to_string());
+    }
+    let cli = workspace.package("aether");
+    for forbidden in ["crossterm", "ratatui"] {
+        if production_dependencies(cli).any(|dependency| dependency.name == forbidden) {
+            violations.push(format!(
+                "headless aether CLI restored retired TUI dependency {forbidden}"
+            ));
+        }
     }
     let api = workspace.package("aether-api");
     for forbidden in [

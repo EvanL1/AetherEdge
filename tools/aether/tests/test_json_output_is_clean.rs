@@ -64,32 +64,6 @@ fn invalid_json_validation_is_one_error_envelope_and_exits_nonzero() {
 }
 
 #[test]
-fn unhealthy_json_doctor_is_one_error_envelope_and_exits_nonzero() {
-    let workspace = TempDir::new().expect("create temporary workspace");
-    let config_path = workspace.path().join("missing-config");
-    let data_path = workspace.path().join("missing-data");
-
-    let exe = env!("CARGO_BIN_EXE_aether");
-    let output = Command::new(exe)
-        .args([
-            "--json",
-            "--config-path",
-            config_path.to_str().expect("UTF-8 config path"),
-            "--db-path",
-            data_path.to_str().expect("UTF-8 data path"),
-            "doctor",
-        ])
-        .output()
-        .expect("run aether doctor");
-
-    assert!(!output.status.success());
-    let stdout = String::from_utf8(output.stdout).expect("stdout was not UTF-8");
-    let parsed: serde_json::Value = serde_json::from_str(&stdout)
-        .unwrap_or_else(|error| panic!("expected one JSON envelope: {error}\n{stdout}"));
-    assert_eq!(parsed.get("success"), Some(&serde_json::Value::Bool(false)));
-}
-
-#[test]
 fn json_sync_reports_offline_atomic_desired_state_semantics() {
     let workspace = TempDir::new().expect("create temporary workspace");
     let data_path = workspace.path().join("data");

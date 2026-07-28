@@ -384,7 +384,7 @@ capabilities: {}
 
         let resources = doc_resources(&active).expect("dynamic documentation catalog");
 
-        assert_eq!(resources.len(), 12);
+        assert_eq!(resources.len(), 11);
         assert!(
             resources
                 .iter()

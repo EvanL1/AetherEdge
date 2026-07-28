@@ -18,6 +18,7 @@ rules are defined in:
 - [ADR-0027: Minimal physical protocol set](docs/adr/0027-minimal-physical-protocol-set.md)
 - [ADR-0028: Move derived-data processing downstream](docs/adr/0028-move-derived-data-processing-downstream.md)
 - [ADR-0029: Headless remote application boundary](docs/adr/0029-headless-remote-application-boundary.md)
+- [ADR-0030: Separate CLI from host supervision](docs/adr/0030-separate-cli-from-host-supervision.md)
 - [Target repository layout](docs/architecture/target-layout.md)
 - [AI invariants](ai/invariants.md)
 - [Capability safety policy](ai/safety-policy.yaml)

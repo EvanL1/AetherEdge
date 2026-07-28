@@ -68,11 +68,11 @@ Two related commands are easy to confuse with sync:
   Any existing site configuration makes the fresh-only installer fail before
   it writes. Containers mount the new directory at `/app/config/`; the
   installer does not merge, upgrade, or import operator-owned configuration.
-  In a development checkout, `aether setup` plans and activates only the four
-  site-authored safe files under `./data/config` and initializes
-  `./data/aether.db` after the returned plan ID is explicitly applied. The
-  developer must then provide the explicit composition manifest described
-  below; setup never guesses which IO features were compiled.
+  In a development checkout, copy `config.template/` only into a new
+  `./data/config`, run `aether init`, validate with `aether sync --dry-run`, and
+  apply with `aether sync --confirmed` while runtime owners are stopped. The
+  developer must provide the explicit composition manifest below; the CLI
+  never guesses which IO features were compiled.
 
 ## Directory layout
 

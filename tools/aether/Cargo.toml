@@ -59,10 +59,6 @@ colored = { workspace = true }
 # Interactive REPL
 rustyline = "15"
 
-# TUI dashboard
-ratatui = "0.29"
-crossterm = "0.28"
-
 # HTTP client
 reqwest = { workspace = true }
 

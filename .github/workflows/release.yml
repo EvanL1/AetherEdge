@@ -495,7 +495,8 @@ jobs:
           scp AetherEdge-<arch>-${VERSION}.run user@device:/tmp/
           chmod +x /tmp/AetherEdge-<arch>-${VERSION}.run
           sudo /tmp/AetherEdge-<arch>-${VERSION}.run
-          aether doctor
+          systemctl status aether.target
+          curl --fail http://127.0.0.1:6005/health
 
           # Aether CLI only
           # Linux/macOS archives use tar; Windows publishes a .zip archive.

@@ -97,17 +97,6 @@ impl AetherCore {
         syncer.sync_all().await
     }
 
-    /// Apply the safe first-run configuration only while the database remains
-    /// uncommissioned under the same SQLite writer transaction.
-    pub async fn sync_empty_site(&self) -> Result<Vec<(&'static str, SyncResult)>> {
-        self.require_write_mode()?;
-
-        ConfigSyncer::new(&self.config_path, &self.db_path)
-            .requiring_empty_site()
-            .sync_all()
-            .await
-    }
-
     /// Export configuration from database to files
     pub async fn export(
         &self,

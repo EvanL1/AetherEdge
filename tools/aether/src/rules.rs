@@ -281,7 +281,7 @@ impl RuleClient {
             Ok(response.json().await?)
         } else {
             Err(anyhow::anyhow!(
-                "Failed to list rules: {} - ensure automation is running (aether services start)",
+                "Failed to list rules: {} - ensure aether-automation is running",
                 response.status()
             ))
         }

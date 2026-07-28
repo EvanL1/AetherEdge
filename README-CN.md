@@ -70,13 +70,14 @@ sudo ./AetherEdge-<arch>-<version>.run
 
 ### 2. 建立身份并证明空 Runtime
 
-先执行本地健康门禁：
+先检查宿主监督器和网关健康端点：
 
 ```bash
-aether doctor
+systemctl status aether.target
+curl --fail http://127.0.0.1:6005/health
 ```
 
-健康的首次启动应当有六个健康服务和有效 SHM。使用私有 bootstrap 凭据登录后
+健康的首次启动应当有六个活动服务和健康网关。使用私有 bootstrap 凭据登录后
 立即修改密码，为日常运维创建独立账号，并导出该账号的签名
 `AETHER_ACCESS_TOKEN`。然后证明系统没有隐式投运任何对象：
 

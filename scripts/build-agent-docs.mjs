@@ -81,11 +81,6 @@ const englishMetadataOverrides = {
     description:
       'Repository overview, current product status, installation paths, architecture boundaries, and development entry points.',
   },
-  'docs/AETHER_CLI_GUIDE.md': {
-    title: 'Legacy CLI guide',
-    description:
-      'Migration-period CLI guide retained for historical lookup; the current CLI reference remains authoritative.',
-  },
   'docs/API_REFERENCE.md': {
     title: 'Legacy API reference entry',
     description:

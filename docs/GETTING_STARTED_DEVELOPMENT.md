@@ -51,11 +51,12 @@ pnpm --version
 git clone https://github.com/EvanL1/AetherEdge.git
 cd AetherEdge
 
-# 2. 生成并应用 fail-safe 空站点计划（无需外部数据库）
+# 2. 准备并应用 fail-safe 空配置（无需外部数据库）
 cargo build --release -p aether
-./target/release/aether --json setup
-# 审阅 JSON 后，把 data.plan_id 原样填入：
-./target/release/aether setup apply --plan-id <PLAN_ID>
+mkdir -p data && cp -R config.template data/config
+./target/release/aether init
+./target/release/aether sync --dry-run
+./target/release/aether sync --confirmed
 
 # 3. 运行测试验证环境
 cargo test --workspace
@@ -98,11 +99,11 @@ cargo build --release --workspace
 ### 步骤 3：初始化全新开发站点
 
 ```bash
-# 默认 setup 只读；源码默认路径已对齐 Compose 的 ./data/config 挂载
-./target/release/aether --json setup
-
-# 审阅计划后应用同一 ID
-./target/release/aether setup apply --plan-id <PLAN_ID>
+# 仅在全新路径复制 fail-safe 模板；默认路径对齐 Compose 挂载
+mkdir -p data && cp -R config.template data/config
+./target/release/aether init
+./target/release/aether sync --dry-run
+./target/release/aether sync --confirmed
 ```
 
 ### 步骤 4：启动完整组合（可选）
@@ -116,8 +117,10 @@ docker compose up -d
 docker compose --profile redis up -d
 docker compose --profile postgres-storage up -d
 
-# 验收本地六进程、SQLite 与 SHM writer heartbeat
-./target/release/aether doctor
+# 验收 supervisor、网关与 SHM writer heartbeat
+docker compose ps
+curl --fail http://127.0.0.1:6005/health
+./target/release/aether shm info
 ```
 
 ### 步骤 5：运行测试
@@ -237,12 +240,12 @@ vim data/config/io/io.yaml
 # 2. 验证配置（不实际同步）
 ./target/release/aether sync --dry-run
 
-# 3. 停止配置 owner，再同步到数据库
-./target/release/aether services stop aether-io aether-automation
-./target/release/aether sync
+# 3. 使用 host supervisor 停止配置 owner，再确认同步到数据库
+systemctl stop aether-io aether-automation
+./target/release/aether sync --confirmed
 
 # 4. 重新启动；新 desired state 在启动时投影到 runtime
-./target/release/aether services start aether-io aether-automation
+systemctl start aether-io aether-automation
 ```
 
 ### 数据库操作
@@ -256,7 +259,9 @@ vim data/config/io/io.yaml
 
 # 仅重建可丢弃的本地开发站点（绝不要用于已投运数据）
 rm -rf data
-./target/release/aether --json setup
+mkdir -p data && cp -R config.template data/config
+./target/release/aether init
+./target/release/aether sync --confirmed
 # 审阅后使用 JSON 中的新 plan ID 执行 setup apply
 ```
 
@@ -376,7 +381,7 @@ aether --json doctor
 ## 下一步
 
 - 阅读 [API 参考文档](./API_REFERENCE.md) 了解所有 API
-- 阅读 [Aether CLI 指南](./AETHER_CLI_GUIDE.md) 掌握管理工具
+- 阅读 [Aether CLI 参考](./reference/cli.md) 掌握管理工具
 - 阅读 [配置格式指南](./CONFIG_FORMAT_GUIDE.md) 理解配置系统
 - 查看 `CLAUDE.md` 了解代码规范和约束
 

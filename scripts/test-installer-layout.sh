@@ -941,8 +941,8 @@ done
 
 echo "Testing user-facing Docker paths match the installed layout..."
 assert_not_contains "$ROOT_DIR/.env.example" 'AETHER_CONFIG_PATH=/opt/AetherEdge/config'
-assert_contains "$ROOT_DIR/docs/AETHER_CLI_GUIDE.md" '/etc/aether/install.yaml'
-assert_contains "$ROOT_DIR/docs/AETHER_CLI_GUIDE.md" '/opt/AetherEdge/data/config'
+assert_contains "$ROOT_DIR/docs/guides/deployment.md" '/etc/aether/install.yaml'
+assert_contains "$ROOT_DIR/docs/guides/deployment.md" '/opt/AetherEdge/data/config'
 assert_contains "$ROOT_DIR/docs/guides/deployment.md" '`AETHER_INSTALL_DIR` overrides'
 
 echo "Testing the AetherEdge distribution remains headless..."
@@ -955,8 +955,7 @@ for headless_owner in \
     "$ROOT_DIR/scripts/build-static-deps.sh" \
     "$ROOT_DIR/scripts/install-baremetal.sh" \
     "$ROOT_DIR/scripts/install.sh" \
-    "$ROOT_DIR/scripts/offline/build-docker-arm64.sh" \
-    "$ROOT_DIR/tools/aether/src/services.rs"; do
+    "$ROOT_DIR/scripts/offline/build-docker-arm64.sh"; do
     if grep -En 'aether-apps|apps/(dist|nginx)|FRONTEND_INCLUDED|INCLUDE_FRONTEND|INCLUDE_NGINX' \
         "$headless_owner"; then
         fail "AetherEdge distribution still owns EMS console integration: $headless_owner"

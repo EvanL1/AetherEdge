@@ -290,7 +290,7 @@ aether sync --check --detailed
 aether sync
 
 # 验证系统状态
-aether doctor
+curl --fail http://127.0.0.1:6005/health
 ```
 
 ### Q: 如何备份配置？

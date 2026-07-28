@@ -2,7 +2,8 @@
 
 ## Status
 
-Accepted.
+Accepted. The local setup, service-supervision, doctor, log, and TUI exceptions
+were later retired by [ADR-0030](0030-separate-cli-from-host-supervision.md).
 
 ## Context
 
