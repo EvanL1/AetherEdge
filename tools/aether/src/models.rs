@@ -4,7 +4,6 @@
 
 use anyhow::Result;
 use clap::Subcommand;
-use tracing::info;
 
 pub mod client;
 pub mod csv_loader;
@@ -54,43 +53,11 @@ pub enum InstanceCommands {
         product: Option<String>,
     },
 
-    /// Create a new instance
-    #[command(about = "Create a new device instance from a product template")]
-    Create {
-        /// Product name
-        product: String,
-        /// Instance name
-        name: String,
-        /// Properties in key=value format
-        #[arg(short, long, value_parser = parse_property)]
-        props: Vec<(String, String)>,
-    },
-
     /// Get instance details
     #[command(about = "Show detailed information about an instance")]
     Get {
         /// Instance name
         name: String,
-    },
-
-    /// Update an instance
-    #[command(about = "Update instance properties")]
-    Update {
-        /// Instance name
-        name: String,
-        /// Properties to update in key=value format
-        #[arg(short, long, value_parser = parse_property)]
-        props: Vec<(String, String)>,
-    },
-
-    /// Delete an instance
-    #[command(about = "Delete a device instance")]
-    Delete {
-        /// Instance name
-        name: String,
-        /// Force deletion without confirmation
-        #[arg(short, long)]
-        force: bool,
     },
 
     /// Get instance runtime data
@@ -118,17 +85,6 @@ pub enum InstanceCommands {
         #[arg(long)]
         confirmed: bool,
     },
-}
-
-fn parse_property(s: &str) -> Result<(String, String), String> {
-    let parts: Vec<&str> = s.splitn(2, '=').collect();
-    if parts.len() != 2 {
-        return Err(format!(
-            "Invalid property format: '{}'. Expected key=value",
-            s
-        ));
-    }
-    Ok((parts[0].to_string(), parts[1].to_string()))
 }
 
 pub async fn handle_command(cmd: ModelCommands, base_url: &str, json: bool) -> Result<()> {
@@ -188,19 +144,6 @@ async fn handle_instance_command(cmd: InstanceCommands, base_url: &str, json: bo
                 println!("Instances: {}", serde_json::to_string_pretty(&instances)?);
             }
         },
-        InstanceCommands::Create {
-            product,
-            name,
-            props,
-        } => {
-            let props_map: std::collections::HashMap<String, String> = props.into_iter().collect();
-            client.create_instance(&product, &name, props_map).await?;
-            if json {
-                crate::output::print_ok();
-            } else {
-                info!("Instance '{}' created", name);
-            }
-        },
         InstanceCommands::Get { name } => {
             let instance = client.get_instance(&name).await?;
             if json {
@@ -211,34 +154,6 @@ async fn handle_instance_command(cmd: InstanceCommands, base_url: &str, json: bo
                     name,
                     serde_json::to_string_pretty(&instance)?
                 );
-            }
-        },
-        InstanceCommands::Update { name, props } => {
-            let props_map: std::collections::HashMap<String, String> = props.into_iter().collect();
-            client.update_instance(&name, props_map).await?;
-            if json {
-                crate::output::print_ok();
-            } else {
-                info!("Instance '{}' updated", name);
-            }
-        },
-        InstanceCommands::Delete { name, force } => {
-            // In json mode, skip interactive confirmation (agents can't prompt)
-            if !force && !json {
-                println!("Delete instance '{}'? [y/N]", name);
-                let mut input = String::new();
-                std::io::stdin().read_line(&mut input)?;
-                if !input.trim().eq_ignore_ascii_case("y") {
-                    println!("Cancelled");
-                    return Ok(());
-                }
-            }
-
-            client.delete_instance(&name).await?;
-            if json {
-                crate::output::print_ok();
-            } else {
-                info!("Instance '{}' deleted", name);
             }
         },
         InstanceCommands::Data {

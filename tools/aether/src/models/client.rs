@@ -2,7 +2,6 @@
 
 use anyhow::Result;
 use serde_json::Value;
-use std::collections::HashMap;
 
 crate::api_client::authenticated_api_client!(pub(crate) ModelClient);
 
@@ -95,75 +94,6 @@ impl ModelClient {
         }
     }
 
-    #[allow(clippy::disallowed_methods)] // json! macro internally uses unwrap (safe for known valid JSON)
-    pub async fn create_instance(
-        &self,
-        product: &str,
-        name: &str,
-        props: HashMap<String, String>,
-    ) -> Result<()> {
-        // The gateway treats every non-GET method as a governed mutation; the
-        // CLI invocation itself is the operator's confirmation for this
-        // service-level unguarded operation.
-        let request = self
-            .client
-            .post(format!("{}/api/instances", self.base_url))
-            .header("x-aether-confirmed", "true")
-            .json(&serde_json::json!({
-                "product": product,
-                "name": name,
-                "properties": props
-            }));
-        let response = self.apply_auth(request)?.send().await?;
-
-        if response.status().is_success() {
-            Ok(())
-        } else {
-            Err(anyhow::anyhow!(
-                "Failed to create instance: {}",
-                response.status()
-            ))
-        }
-    }
-
-    #[allow(clippy::disallowed_methods)] // json! macro internally uses unwrap (safe for known valid JSON)
-    pub async fn update_instance(&self, name: &str, props: HashMap<String, String>) -> Result<()> {
-        let request = self
-            .client
-            .put(format!("{}/api/instances/{}", self.base_url, name))
-            .header("x-aether-confirmed", "true")
-            .json(&serde_json::json!({
-                "properties": props
-            }));
-        let response = self.apply_auth(request)?.send().await?;
-
-        if response.status().is_success() {
-            Ok(())
-        } else {
-            Err(anyhow::anyhow!(
-                "Failed to update instance: {}",
-                response.status()
-            ))
-        }
-    }
-
-    pub async fn delete_instance(&self, name: &str) -> Result<()> {
-        let request = self
-            .client
-            .delete(format!("{}/api/instances/{}", self.base_url, name))
-            .header("x-aether-confirmed", "true");
-        let response = self.apply_auth(request)?.send().await?;
-
-        if response.status().is_success() {
-            Ok(())
-        } else {
-            Err(anyhow::anyhow!(
-                "Failed to delete instance: {}",
-                response.status()
-            ))
-        }
-    }
-
     /// automation's `ActionRequest` takes a numeric point ID encoded as a string.
     ///
     /// A successful response means the local command plane accepted the
@@ -251,43 +181,6 @@ mod tests {
                 .all(|request| !request.headers.contains_key("authorization")),
             "tokenless reads must not carry an authorization header"
         );
-    }
-
-    #[tokio::test]
-    async fn instance_writes_send_the_gateway_confirmation_header() {
-        let server = MockServer::start().await;
-        Mock::given(method("POST"))
-            .and(path("/api/instances"))
-            .and(header("x-aether-confirmed", "true"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
-            .expect(1)
-            .mount(&server)
-            .await;
-        Mock::given(method("PUT"))
-            .and(path("/api/instances/pump-1"))
-            .and(header("x-aether-confirmed", "true"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
-            .expect(1)
-            .mount(&server)
-            .await;
-        Mock::given(method("DELETE"))
-            .and(path("/api/instances/pump-1"))
-            .and(header("x-aether-confirmed", "true"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
-            .expect(1)
-            .mount(&server)
-            .await;
-
-        let client = ModelClient::without_access_token(&server.uri());
-        client
-            .create_instance("pump", "pump-1", std::collections::HashMap::new())
-            .await
-            .unwrap();
-        client
-            .update_instance("pump-1", std::collections::HashMap::new())
-            .await
-            .unwrap();
-        client.delete_instance("pump-1").await.unwrap();
     }
 
     #[test]

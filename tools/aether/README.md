@@ -92,7 +92,6 @@ Docker Compose runtime and fails if that composition is not present.
 | `aether channels update <id> ... --expected-revision <rev> --confirmed` | Update desired channel configuration with mandatory compare-and-set |
 | `aether channels enable\|disable <id> --expected-revision <rev> --confirmed` | Change desired runtime lifecycle with mandatory compare-and-set |
 | `aether channels delete <id> --expected-revision <rev> --confirmed` | Delete a channel with mandatory compare-and-set; `--force` only skips the prompt and action-route references fail with a conflict |
-| `aether channels write <id> --type T\|S ...` | Inject supervised simulation telemetry |
 | `aether channels reload --confirmed` | Reconcile all channel runtimes through `io.channel.reconcile`; requires `AETHER_ACCESS_TOKEN` and must not be retried automatically |
 | `aether channels health` | Service health check |
 | `aether models instances action ... --confirmed` | Submit the only supported external device command to the local command plane; requires explicit confirmation and `AETHER_ACCESS_TOKEN` from an Admin/Engineer session |
@@ -103,9 +102,6 @@ Docker Compose runtime and fails if that composition is not present.
 |---------|-------------|
 | `aether templates list` | List channel configuration templates |
 | `aether templates get <id>` | Template details |
-| `aether templates snapshot <ch_id>` | Snapshot channel as reusable template |
-| `aether templates apply <tpl_id> <ch_id>` | Apply template to target channel |
-| `aether templates delete <id>` | Delete template |
 
 ### Models (aether-automation)
 
@@ -113,9 +109,14 @@ Docker Compose runtime and fails if that composition is not present.
 |---------|-------------|
 | `aether models products list` | List active Pack and site product types |
 | `aether models instances list` | List device instances |
-| `aether models instances create <product> <name>` | Create device instance |
 | `aether models instances get <name>` | Instance details |
-| `aether models instances delete <name>` | Delete instance |
+| `aether models instances data <id>` | Read the current SHM-backed instance view |
+
+Point topology, instance configuration, measurement routing, template changes,
+uplink settings, certificates, and simulation input have no partial online CLI
+mutation path. Use validated offline configuration and host-managed certificate
+files with runtime owners stopped. This prevents CLI-only writes from bypassing
+the application capability and audit catalog.
 
 ### Rules (aether-automation)
 

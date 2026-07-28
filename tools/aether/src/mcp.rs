@@ -3,8 +3,7 @@
 //! Read-only tools are always registered. `--allow-write` adds only high-risk
 //! commands that already pass through transport-neutral application
 //! capability, authorization, confirmation, and audit policy. Ungoverned
-//! management mutations remain available through their compatibility CLI/HTTP
-//! surfaces but are deliberately absent from MCP `tools/list`.
+//! compatibility mutations are absent from both the CLI and MCP catalog.
 //!
 //! Every tool calls exactly one client method and passes the result through
 //! `to_call_result`, which maps `Ok` onto `CallToolResult::structured` and
@@ -552,19 +551,6 @@ impl AetherMcp {
     }
 }
 
-#[cfg(test)]
-#[derive(Deserialize, schemars::JsonSchema)]
-struct ChannelsWriteParams {
-    /// Channel ID
-    channel_id: u32,
-    /// Simulation point type: T | S
-    point_type: String,
-    /// Point ID (numeric or semantic)
-    id: String,
-    /// Value to write
-    value: f64,
-}
-
 #[derive(Deserialize, schemars::JsonSchema)]
 struct ChannelsCreateParams {
     /// Channel name
@@ -613,17 +599,6 @@ struct ChannelMutationIdParams {
 struct ChannelsReconcileParams {
     /// Explicitly confirms this high-risk, non-idempotent runtime reconciliation.
     confirmed: bool,
-}
-
-#[cfg(test)]
-#[derive(Deserialize, schemars::JsonSchema)]
-struct ChannelsPointsBatchParams {
-    /// Channel ID
-    channel_id: u32,
-    /// {"create":[...],"update":[...],"delete":[...]} -- the JSON body
-    /// verbatim, not a file path (unlike the CLI's --file flag: the MCP
-    /// client has no access to the aether-mcp host's filesystem).
-    body: Value,
 }
 
 #[derive(Deserialize, schemars::JsonSchema)]
@@ -729,31 +704,6 @@ struct RoutingActionSetEnabledParams {
     enabled: bool,
     /// Explicitly confirms this high-risk physical topology change.
     confirmed: bool,
-}
-
-#[cfg(test)]
-#[derive(Deserialize, schemars::JsonSchema)]
-struct NetMqttConfigSetParams {
-    /// Complete NetConfig object (partial updates are not supported by uplink)
-    config: Value,
-}
-
-#[cfg(test)]
-#[derive(Deserialize, schemars::JsonSchema)]
-struct NetCertUploadParams {
-    /// Certificate role: ca_cert | client_cert | client_key
-    cert_type: String,
-    /// Path to the certificate file ON THE MACHINE RUNNING `aether mcp`
-    /// (.pem/.crt/.key/.cer/.p12/.pfx, max 1 MB) -- not a path on the
-    /// MCP client's machine.
-    file_path: String,
-}
-
-#[cfg(test)]
-#[derive(Deserialize, schemars::JsonSchema)]
-struct NetCertDeleteParams {
-    /// Certificate role: ca_cert | client_cert | client_key
-    cert_type: String,
 }
 
 #[tool_router(router = write_router)]
@@ -1045,93 +995,6 @@ impl AetherMcp {
                 .set_action_route_enabled(p.instance_id, p.action_point_id, p.enabled, p.confirmed)
                 .await,
         )
-    }
-}
-
-// Preserve direct wrapper coverage for management mutations that are not yet
-// explicitly mapped into the production MCP write catalog. Some already have
-// governed HTTP boundaries; none is registered merely because a wrapper
-// exists.
-#[cfg(test)]
-#[tool_router(router = legacy_write_test_router)]
-impl AetherMcp {
-    #[tool(
-        description = "Inject a simulated T/S value into the acquisition SHM plane. This does not command a device, but downstream rules and alarms treat it as telemetry.",
-        annotations(read_only_hint = false)
-    )]
-    async fn channels_write(
-        &self,
-        Parameters(p): Parameters<ChannelsWriteParams>,
-    ) -> CallToolResult {
-        to_call_result(
-            self.channels
-                .write_point(p.channel_id, &p.point_type, &p.id, p.value)
-                .await,
-        )
-    }
-
-    #[tool(
-        description = "Batch create/update/delete points on a channel. `body` is {\"create\":[...],\"update\":[...],\"delete\":[...]}.",
-        annotations(read_only_hint = false)
-    )]
-    async fn channels_points_batch(
-        &self,
-        Parameters(p): Parameters<ChannelsPointsBatchParams>,
-    ) -> CallToolResult {
-        to_call_result(self.points.points_batch(p.channel_id, &p.body).await)
-    }
-
-    #[tool(
-        description = "Replace uplink's configuration (full NetConfig object -- partial updates are not supported)",
-        annotations(read_only_hint = false)
-    )]
-    async fn net_mqtt_config_set(
-        &self,
-        Parameters(p): Parameters<NetMqttConfigSetParams>,
-    ) -> CallToolResult {
-        to_call_result(self.net.mqtt_config_set(&p.config).await)
-    }
-
-    #[tool(
-        description = "Reconnect the MQTT client",
-        annotations(read_only_hint = false)
-    )]
-    async fn net_mqtt_reconnect(&self) -> CallToolResult {
-        to_call_result(self.net.mqtt_reconnect().await)
-    }
-
-    #[tool(
-        description = "Disconnect the MQTT client",
-        annotations(read_only_hint = false)
-    )]
-    async fn net_mqtt_disconnect(&self) -> CallToolResult {
-        to_call_result(self.net.mqtt_disconnect().await)
-    }
-
-    #[tool(
-        description = "Upload a TLS certificate file (max 1 MB) from a path on the machine running aether mcp -- NOT a path on the MCP client's machine",
-        annotations(read_only_hint = false)
-    )]
-    async fn net_cert_upload(
-        &self,
-        Parameters(p): Parameters<NetCertUploadParams>,
-    ) -> CallToolResult {
-        to_call_result(
-            self.net
-                .cert_upload(&p.cert_type, Path::new(&p.file_path))
-                .await,
-        )
-    }
-
-    #[tool(
-        description = "Delete a TLS certificate by role",
-        annotations(read_only_hint = false)
-    )]
-    async fn net_cert_delete(
-        &self,
-        Parameters(p): Parameters<NetCertDeleteParams>,
-    ) -> CallToolResult {
-        to_call_result(self.net.cert_delete(&p.cert_type).await)
     }
 }
 
@@ -2173,34 +2036,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn channels_write_posts_the_flattened_body() {
-        let server = MockServer::start().await;
-        Mock::given(method("POST"))
-            .and(path("/api/channels/1001/write"))
-            .and(body_json(
-                serde_json::json!({ "type": "T", "id": "5", "value": 50.0 }),
-            ))
-            .respond_with(
-                ResponseTemplate::new(200).set_body_json(serde_json::json!({ "success": true })),
-            )
-            .expect(1)
-            .mount(&server)
-            .await;
-
-        let mcp = write_mcp(&server.uri());
-        let result = mcp
-            .channels_write(Parameters(ChannelsWriteParams {
-                channel_id: 1001,
-                point_type: "T".to_string(),
-                id: "5".to_string(),
-                value: 50.0,
-            }))
-            .await;
-
-        assert_ne!(result.is_error, Some(true), "{result:?}");
-    }
-
-    #[tokio::test]
     async fn channels_create_posts_the_new_channel_body() {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
@@ -2483,30 +2318,6 @@ mod tests {
             "{results:?}"
         );
         assert!(server.received_requests().await.unwrap().is_empty());
-    }
-
-    #[tokio::test]
-    async fn channels_points_batch_posts_the_body_verbatim() {
-        let server = MockServer::start().await;
-        Mock::given(method("POST"))
-            .and(path("/api/channels/1001/points/batch"))
-            .and(body_json(
-                serde_json::json!({ "delete": [{ "point_id": 3 }] }),
-            ))
-            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
-            .expect(1)
-            .mount(&server)
-            .await;
-
-        let mcp = write_mcp(&server.uri());
-        let result = mcp
-            .channels_points_batch(Parameters(ChannelsPointsBatchParams {
-                channel_id: 1001,
-                body: serde_json::json!({ "delete": [{ "point_id": 3 }] }),
-            }))
-            .await;
-
-        assert_ne!(result.is_error, Some(true), "{result:?}");
     }
 
     #[tokio::test]
@@ -3033,130 +2844,6 @@ mod tests {
                 confirmed: true,
             }))
             .await;
-        assert_ne!(result.is_error, Some(true), "{result:?}");
-    }
-
-    #[tokio::test]
-    async fn net_mqtt_config_set_posts_the_body_verbatim() {
-        let server = MockServer::start().await;
-        Mock::given(method("POST"))
-            .and(path("/mqtt/config"))
-            .and(body_json(
-                serde_json::json!({ "host": "new", "port": 1883 }),
-            ))
-            .respond_with(
-                ResponseTemplate::new(200).set_body_json(serde_json::json!({ "success": true })),
-            )
-            .expect(1)
-            .mount(&server)
-            .await;
-
-        let mcp = write_mcp(&server.uri());
-        let result = mcp
-            .net_mqtt_config_set(Parameters(NetMqttConfigSetParams {
-                config: serde_json::json!({ "host": "new", "port": 1883 }),
-            }))
-            .await;
-
-        assert_ne!(result.is_error, Some(true), "{result:?}");
-    }
-
-    #[tokio::test]
-    async fn net_mqtt_reconnect_and_disconnect_hit_their_own_paths() {
-        let reconnect_server = MockServer::start().await;
-        Mock::given(method("POST"))
-            .and(path("/mqtt/reconnect"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
-            .expect(1)
-            .mount(&reconnect_server)
-            .await;
-        let mcp = write_mcp(&reconnect_server.uri());
-        let result = mcp.net_mqtt_reconnect().await;
-        assert_ne!(result.is_error, Some(true), "{result:?}");
-
-        let disconnect_server = MockServer::start().await;
-        Mock::given(method("POST"))
-            .and(path("/mqtt/disconnect"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
-            .expect(1)
-            .mount(&disconnect_server)
-            .await;
-        let mcp = write_mcp(&disconnect_server.uri());
-        let result = mcp.net_mqtt_disconnect().await;
-        assert_ne!(result.is_error, Some(true), "{result:?}");
-    }
-
-    #[tokio::test]
-    async fn net_cert_upload_reads_the_file_and_posts_multipart() {
-        let server = MockServer::start().await;
-        Mock::given(method("POST"))
-            .and(path("/certificate/upload"))
-            .and(wiremock::matchers::header_regex(
-                "content-type",
-                "^multipart/form-data; boundary=",
-            ))
-            .and(wiremock::matchers::body_string_contains(
-                "name=\"cert_type\"",
-            ))
-            .and(wiremock::matchers::body_string_contains("client_key"))
-            .respond_with(
-                ResponseTemplate::new(200).set_body_json(serde_json::json!({ "success": true })),
-            )
-            .expect(1)
-            .mount(&server)
-            .await;
-
-        let dir = tempfile::tempdir().unwrap();
-        let cert_path = dir.path().join("ca.pem");
-        std::fs::write(&cert_path, b"-----BEGIN CERTIFICATE-----\n").unwrap();
-
-        let mcp = write_mcp(&server.uri());
-        let result = mcp
-            .net_cert_upload(Parameters(NetCertUploadParams {
-                cert_type: "client_key".to_string(),
-                file_path: cert_path.to_string_lossy().to_string(),
-            }))
-            .await;
-
-        assert_ne!(result.is_error, Some(true), "{result:?}");
-    }
-
-    #[tokio::test]
-    async fn net_cert_upload_reports_a_missing_file_as_a_visible_tool_error() {
-        let mcp = write_mcp("http://127.0.0.1:1");
-        let result = mcp
-            .net_cert_upload(Parameters(NetCertUploadParams {
-                cert_type: "ca_cert".to_string(),
-                file_path: "/nonexistent/ca.pem".to_string(),
-            }))
-            .await;
-
-        assert_eq!(result.is_error, Some(true));
-        let text = result
-            .content
-            .iter()
-            .find_map(|c| c.as_text().map(|t| t.text.clone()))
-            .expect("expected text content");
-        assert!(text.contains("/nonexistent/ca.pem"), "{text}");
-    }
-
-    #[tokio::test]
-    async fn net_cert_delete_uses_the_cert_type_in_the_path() {
-        let server = MockServer::start().await;
-        Mock::given(method("DELETE"))
-            .and(path("/certificate/client_key"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
-            .expect(1)
-            .mount(&server)
-            .await;
-
-        let mcp = write_mcp(&server.uri());
-        let result = mcp
-            .net_cert_delete(Parameters(NetCertDeleteParams {
-                cert_type: "client_key".to_string(),
-            }))
-            .await;
-
         assert_ne!(result.is_error, Some(true), "{result:?}");
     }
 

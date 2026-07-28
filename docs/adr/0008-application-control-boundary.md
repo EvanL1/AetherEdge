@@ -105,6 +105,16 @@ aether-automation, and aether-io.
     headers. Each owning service continues to enforce its application policy;
     the gateway is a transport consolidation boundary, not an authorization
     bypass.
+15. The first-party CLI and MCP catalog do not preserve mutation wrappers that
+    lack an application capability, authenticated actor, explicit confirmation,
+    audit policy, or revision contract. Direct simulation writes, point CRUD,
+    instance CRUD, generic measurement-routing writes, template mutation,
+    uplink configuration, and certificate mutation wrappers are removed.
+    Complete point, instance, measurement-routing, template, and uplink
+    configuration remains available through validated, explicitly confirmed
+    offline import; certificate material remains host-managed deployment input.
+    Runtime owners stay stopped during those changes. A narrow online mutation
+    may return only with a governed application contract.
 
 ## Consequences
 

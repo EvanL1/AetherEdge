@@ -1,7 +1,7 @@
 ---
 title: CLI Reference
 description: Every aether command - services, sync, doctor, channels, rules, and more
-updated: 2026-07-12
+updated: 2026-07-28
 ---
 
 # CLI Reference
@@ -16,6 +16,15 @@ Usage: aether [OPTIONS] <COMMAND>
 ```
 
 Use `aether <command> --help` for the same information at the terminal.
+
+Online mutation commands are exposed only when they map to a governed
+application capability with explicit authentication, confirmation, audit, and
+revision semantics. Point topology, instance configuration, measurement
+routing, templates, uplink configuration, certificates, and simulation input
+remain deployment concerns: use commissioned configuration and host-managed
+certificate files, validate configuration with `aether sync --dry-run`, stop
+the runtime owners, then apply with `aether sync --confirmed` where applicable.
+Their former direct HTTP compatibility subcommands are intentionally absent.
 
 ## Global flags
 
@@ -401,27 +410,6 @@ Usage: aether channels unmapped-points [OPTIONS] <CHANNEL_ID>
 aether channels unmapped-points 1001
 ```
 
-### channels write
-
-Inject a simulated telemetry or signal value into the acquisition SHM plane.
-This command accepts only T/S points; real C/A device commands must use
-`aether models instances action` so routing, confirmation, and audit cannot be
-bypassed.
-
-```
-Usage: aether channels write [OPTIONS] --type <POINT_TYPE> --id <ID> --value <VALUE> <CHANNEL_ID>
-```
-
-| Flag | Description |
-|------|-------------|
-| `--type <POINT_TYPE>` | Simulation point type: `T` \| `S` |
-| `--id <ID>` | Point ID (numeric or semantic) |
-| `--value <VALUE>` | Value to write |
-
-```bash
-aether channels write 1001 --type T --id 3 --value 42.5
-```
-
 ### channels points list
 
 List points (grouped by T/S/C/A).
@@ -436,78 +424,6 @@ Usage: aether channels points list [OPTIONS] <CHANNEL_ID>
 
 ```bash
 aether channels points list 1001 --type T
-```
-
-### channels points add
-
-Add a point to a channel. Positional arguments: `<CHANNEL_ID>` `<POINT_TYPE>`
-(T telemetry, S signal, C control, A adjustment) `<POINT_ID>`.
-
-```
-Usage: aether channels points add [OPTIONS] --name <NAME> <CHANNEL_ID> <POINT_TYPE> <POINT_ID>
-```
-
-| Flag | Description |
-|------|-------------|
-| `--name <NAME>` | Signal name |
-| `--unit <UNIT>` | Unit (e.g., V, A, kW) |
-| `--scale <SCALE>` | Scale factor |
-| `--description <DESCRIPTION>` | Description |
-| `--data-type <DATA_TYPE>` | Data type (default: float32 for T/A, bool for S/C) |
-
-```bash
-aether channels points add 1001 T 101 --name voltage --unit V --scale 0.1
-```
-
-### channels points update
-
-Update a point's attributes.
-
-```
-Usage: aether channels points update [OPTIONS] <CHANNEL_ID> <POINT_TYPE> <POINT_ID>
-```
-
-| Flag | Description |
-|------|-------------|
-| `--name <NAME>` | Signal name |
-| `--unit <UNIT>` | Unit |
-| `--scale <SCALE>` | Scale factor |
-| `--description <DESCRIPTION>` | Description |
-
-```bash
-aether channels points update 1001 T 101 --scale 0.01
-```
-
-### channels points remove
-
-Remove a point from a channel.
-
-```
-Usage: aether channels points remove [OPTIONS] <CHANNEL_ID> <POINT_TYPE> <POINT_ID>
-```
-
-| Flag | Description |
-|------|-------------|
-| `-f, --force` | Force deletion without confirmation |
-
-```bash
-aether channels points remove 1001 T 101 --force
-```
-
-### channels points batch
-
-Batch create/update/delete points from a JSON file.
-
-```
-Usage: aether channels points batch [OPTIONS] --file <FILE> <CHANNEL_ID>
-```
-
-| Flag | Description |
-|------|-------------|
-| `--file <FILE>` | Path to a JSON file: `{"create":[],"update":[],"delete":[]}` |
-
-```bash
-aether channels points batch 1001 --file points.json
 ```
 
 ### channels points mapping
@@ -583,23 +499,6 @@ Usage: aether models instances list [OPTIONS]
 aether models instances list --product battery
 ```
 
-### models instances create
-
-Create a new device instance from a product template. Positional arguments:
-`<PRODUCT>` `<NAME>`.
-
-```
-Usage: aether models instances create [OPTIONS] <PRODUCT> <NAME>
-```
-
-| Flag | Description |
-|------|-------------|
-| `-p, --props <PROPS>` | Properties in `key=value` format |
-
-```bash
-aether models instances create battery bat-01 --props capacity=100
-```
-
 ### models instances get
 
 Show detailed information about an instance.
@@ -610,41 +509,6 @@ Usage: aether models instances get [OPTIONS] <NAME>
 
 ```bash
 aether models instances get bat-01
-```
-
-### models instances update
-
-Update instance properties.
-
-```
-Usage: aether models instances update [OPTIONS] <NAME>
-```
-
-| Flag | Description |
-|------|-------------|
-| `-p, --props <PROPS>` | Properties to update in `key=value` format |
-
-```bash
-aether models instances update bat-01 --props capacity=120
-```
-
-### models instances delete
-
-Delete a device instance.
-
-The command fails closed while the instance owns a physical action route;
-delete or migrate that route with the governed routing command first.
-
-```
-Usage: aether models instances delete [OPTIONS] <NAME>
-```
-
-| Flag | Description |
-|------|-------------|
-| `-f, --force` | Force deletion without confirmation |
-
-```bash
-aether models instances delete bat-01 --force
 ```
 
 ### models instances data
@@ -882,100 +746,8 @@ AETHER_ACCESS_TOKEN='<signed access JWT>' \
 ```
 
 `upsert` accepts `--disabled` to commission a route without activating it.
-The older `routing create --point-type a ... --confirmed` form remains a
-compatibility alias for enabled upsert.
-
-### routing create
-
-Create a single routing entry for an instance.
-
-```
-Usage: aether routing create [OPTIONS] --point-type <POINT_TYPE> --point-id <POINT_ID> --channel-id <CHANNEL_ID> --four-remote <FOUR_REMOTE> --channel-point-id <CHANNEL_POINT_ID> <INSTANCE_ID>
-```
-
-| Flag | Description |
-|------|-------------|
-| `-t, --point-type <POINT_TYPE>` | Point type: `m` (measurement) or `a` (action) |
-| `-p, --point-id <POINT_ID>` | Instance point ID |
-| `--channel-id <CHANNEL_ID>` | Channel ID |
-| `-r, --four-remote <FOUR_REMOTE>` | Four-remote type: `t` (telemetry), `s` (signal), `c` (control), `a` (adjustment) |
-| `-P, --channel-point-id <CHANNEL_POINT_ID>` | Channel point ID |
-| `--confirmed` | Explicitly confirm an action route that changes a physical command target; requires `AETHER_ACCESS_TOKEN` |
-
-```bash
-aether routing create 9 --point-type m --point-id 101 \
-  --channel-id 1001 --four-remote t --channel-point-id 101
-
-AETHER_ACCESS_TOKEN='<signed access JWT>' aether routing create 9 \
-  --point-type a --point-id 1 --channel-id 1001 \
-  --four-remote c --channel-point-id 7 --confirmed
-```
-
-### routing batch
-
-Batch upsert routing from JSON file or stdin.
-
-The compatibility batch accepts measurement entries only. Action entries fail
-closed until a governed batch application command is available; create action
-routes one at a time with `routing create ... --point-type a --confirmed`.
-
-```
-Usage: aether routing batch [OPTIONS] --file <FILE> <INSTANCE_ID>
-```
-
-| Flag | Description |
-|------|-------------|
-| `--file <FILE>` | Path to JSON file with routing entries (use `-` for stdin) |
-
-```bash
-aether routing batch 9 --file routing.json
-```
-
-### routing delete-instance
-
-Delete all routing for an instance. Takes the instance name, not the numeric
-ID.
-
-```
-Usage: aether routing delete-instance [OPTIONS] <INSTANCE_NAME>
-```
-
-| Flag | Description |
-|------|-------------|
-| `-f, --force` | Skip confirmation |
-| `--confirmed` | Confirm deletion of physical action routes; requires `AETHER_ACCESS_TOKEN` |
-
-```bash
-AETHER_ACCESS_TOKEN='<signed access JWT>' \
-  aether routing delete-instance bat-01 --force --confirmed
-```
-
-### routing delete-channel
-
-Delete all routing for a channel.
-
-```
-Usage: aether routing delete-channel [OPTIONS] <CHANNEL_ID>
-```
-
-| Flag | Description |
-|------|-------------|
-| `-f, --force` | Skip confirmation |
-| `--confirmed` | Confirm deletion of physical action routes; requires `AETHER_ACCESS_TOKEN` |
-
-```bash
-AETHER_ACCESS_TOKEN='<signed access JWT>' \
-  aether routing delete-channel 1001 --force --confirmed
-```
-
-## aether services
-
-Start, stop, and manage Aether services. All service arguments are optional;
-omitting them targets all services.
-
-```
-Usage: aether services [OPTIONS] <COMMAND>
-```
+Measurement routing remains part of the explicitly confirmed offline
+configuration import until it has the same governed online revision contract.
 
 ### services start
 
@@ -1314,65 +1086,6 @@ Usage: aether templates get [OPTIONS] <ID>
 aether templates get 3
 ```
 
-### templates snapshot
-
-Snapshot a channel's configuration as a reusable template.
-
-```
-Usage: aether templates snapshot [OPTIONS] --name <NAME> <CHANNEL_ID>
-```
-
-| Flag | Description |
-|------|-------------|
-| `-n, --name <NAME>` | Template name |
-| `-d, --description <DESCRIPTION>` | Template description |
-
-```bash
-aether templates snapshot 1001 --name pcs-modbus-template
-```
-
-### templates apply
-
-Apply a template to a target channel.
-
-```
-Usage: aether templates apply [OPTIONS] <TEMPLATE_ID> <CHANNEL_ID>
-```
-
-| Flag | Description |
-|------|-------------|
-| `--clear` | Clear existing points before applying |
-| `--slave-id <SLAVE_ID>` | Override slave ID for Modbus |
-
-```bash
-aether templates apply 3 1002 --clear --slave-id 2
-```
-
-### templates delete
-
-Delete a channel template.
-
-```
-Usage: aether templates delete [OPTIONS] <ID>
-```
-
-| Flag | Description |
-|------|-------------|
-| `-f, --force` | Force deletion without confirmation |
-
-```bash
-aether templates delete 3 --force
-```
-
-## aether alarms
-
-Manage alarm rules (create/update/delete/enable/disable); query alerts,
-events, and statistics.
-
-```
-Usage: aether alarms [OPTIONS] <COMMAND>
-```
-
 ### alarms list
 
 List currently active alerts.
@@ -1610,46 +1323,6 @@ Usage: aether net mqtt config [OPTIONS]
 aether net mqtt config
 ```
 
-### net mqtt config-set
-
-Replace uplink configuration from a JSON file (full `NetConfig` object).
-
-```
-Usage: aether net mqtt config-set [OPTIONS] --file <FILE>
-```
-
-| Flag | Description |
-|------|-------------|
-| `--file <FILE>` | Path to a JSON file containing the complete `NetConfig` object |
-
-```bash
-aether net mqtt config-set --file netconfig.json
-```
-
-### net mqtt reconnect
-
-Reconnect the MQTT client.
-
-```
-Usage: aether net mqtt reconnect [OPTIONS]
-```
-
-```bash
-aether net mqtt reconnect
-```
-
-### net mqtt disconnect
-
-Disconnect the MQTT client.
-
-```
-Usage: aether net mqtt disconnect [OPTIONS]
-```
-
-```bash
-aether net mqtt disconnect
-```
-
 ### net cert info
 
 Show installed TLS certificate info.
@@ -1660,45 +1333,6 @@ Usage: aether net cert info [OPTIONS]
 
 ```bash
 aether net cert info
-```
-
-### net cert delete
-
-Delete a TLS certificate by type.
-
-```
-Usage: aether net cert delete [OPTIONS] <CERT_TYPE>
-```
-
-`<CERT_TYPE>` possible values: `ca_cert`, `client_cert`, `client_key`.
-
-```bash
-aether net cert delete client_cert
-```
-
-### net cert upload
-
-Upload a TLS certificate file (max 1 MB). Accepted extensions: `.pem` `.crt`
-`.key` `.cer` `.p12` `.pfx`.
-
-```
-Usage: aether net cert upload [OPTIONS] --type <CERT_TYPE> <FILE>
-```
-
-| Flag | Description |
-|------|-------------|
-| `--type <CERT_TYPE>` | Certificate role [possible values: `ca_cert`, `client_cert`, `client_key`] |
-
-```bash
-aether net cert upload ca.pem --type ca_cert
-```
-
-## aether history
-
-Query historical sensor data (latest values, time-range queries).
-
-```
-Usage: aether history [OPTIONS] <COMMAND>
 ```
 
 ### history latest

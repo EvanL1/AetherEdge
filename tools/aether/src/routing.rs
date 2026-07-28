@@ -6,37 +6,6 @@ use anyhow::Result;
 use clap::{Subcommand, ValueEnum};
 use serde_json::Value;
 
-/// Point type: M (measurement) or A (action)
-#[derive(Clone, ValueEnum, serde::Serialize)]
-pub(crate) enum PointType {
-    /// Measurement point
-    M,
-    /// Action point
-    A,
-}
-
-impl std::fmt::Display for PointType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            PointType::M => write!(f, "M"),
-            PointType::A => write!(f, "A"),
-        }
-    }
-}
-
-/// Four-remote type: T (telemetry), S (signal), C (control), A (adjustment)
-#[derive(Clone, ValueEnum, serde::Serialize)]
-pub(crate) enum FourRemote {
-    /// Telemetry
-    T,
-    /// Signal
-    S,
-    /// Control
-    C,
-    /// Adjustment
-    A,
-}
-
 /// Physical point types valid as action-command destinations.
 #[derive(Clone, ValueEnum, serde::Serialize)]
 pub(crate) enum ActionFourRemote {
@@ -111,17 +80,6 @@ pub enum ActionRoutingCommands {
     },
 }
 
-impl std::fmt::Display for FourRemote {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            FourRemote::T => write!(f, "T"),
-            FourRemote::S => write!(f, "S"),
-            FourRemote::C => write!(f, "C"),
-            FourRemote::A => write!(f, "A"),
-        }
-    }
-}
-
 #[derive(Subcommand)]
 pub enum RoutingCommands {
     /// List routing configurations
@@ -138,63 +96,6 @@ pub enum RoutingCommands {
     Action {
         #[command(subcommand)]
         command: ActionRoutingCommands,
-    },
-
-    /// Create a single routing entry for an instance
-    Create {
-        /// Instance ID
-        instance_id: u32,
-        /// Point type: M (measurement) or A (action)
-        #[arg(short = 't', long = "point-type", value_enum)]
-        point_type: PointType,
-        /// Instance point ID
-        #[arg(short = 'p', long = "point-id")]
-        point_id: u32,
-        /// Channel ID
-        #[arg(long = "channel-id")]
-        channel_id: u32,
-        /// Four-remote type: T (telemetry), S (signal), C (control), A (adjustment)
-        #[arg(short = 'r', long = "four-remote", value_enum)]
-        four_remote: FourRemote,
-        /// Channel point ID
-        #[arg(short = 'P', long = "channel-point-id")]
-        channel_point_id: u32,
-        /// Explicitly confirm a physical command-topology change (required for A routes)
-        #[arg(long)]
-        confirmed: bool,
-    },
-
-    /// Batch upsert routing from JSON file or stdin
-    Batch {
-        /// Instance ID
-        instance_id: u32,
-        /// Path to JSON file with routing entries (use '-' for stdin)
-        #[arg(long)]
-        file: String,
-    },
-
-    /// Delete all routing for an instance
-    DeleteInstance {
-        /// Instance name
-        instance_name: String,
-        /// Skip confirmation
-        #[arg(short, long)]
-        force: bool,
-        /// Explicitly confirm deletion of physical action routes
-        #[arg(long)]
-        confirmed: bool,
-    },
-
-    /// Delete all routing for a channel
-    DeleteChannel {
-        /// Channel ID
-        channel_id: u32,
-        /// Skip confirmation
-        #[arg(short, long)]
-        force: bool,
-        /// Explicitly confirm deletion of physical action routes
-        #[arg(long)]
-        confirmed: bool,
     },
 }
 
@@ -296,135 +197,9 @@ pub async fn handle_command(cmd: RoutingCommands, base_url: &str, json: bool) ->
                 println!("Action routing: {}", serde_json::to_string_pretty(&result)?);
             }
         },
-        RoutingCommands::Create {
-            instance_id,
-            point_type,
-            point_id,
-            channel_id,
-            four_remote,
-            channel_point_id,
-            confirmed,
-        } => {
-            let result = match point_type {
-                PointType::A => {
-                    client
-                        .upsert_action_route(
-                            instance_id,
-                            point_id,
-                            channel_id,
-                            &four_remote.to_string(),
-                            channel_point_id,
-                            true,
-                            confirmed,
-                        )
-                        .await?
-                },
-                PointType::M => {
-                    let entry = serde_json::json!({
-                        "point_type": "M",
-                        "point_id": point_id,
-                        "channel_id": channel_id,
-                        "four_remote": four_remote,
-                        "channel_point_id": channel_point_id,
-                    });
-                    client.create_routing(instance_id, entry).await?
-                },
-            };
-            if json {
-                crate::output::print_success(&result);
-            } else {
-                println!(
-                    "Routing created for instance {}: {}",
-                    instance_id,
-                    serde_json::to_string_pretty(&result)?
-                );
-            }
-        },
-        RoutingCommands::Batch { instance_id, file } => {
-            let content = if file == "-" {
-                let mut buf = String::new();
-                std::io::Read::read_to_string(&mut std::io::stdin(), &mut buf)?;
-                buf
-            } else {
-                std::fs::read_to_string(&file)
-                    .map_err(|e| anyhow::anyhow!("Failed to read {}: {}", file, e))?
-            };
-            let entries: Value = serde_json::from_str(&content)
-                .map_err(|e| anyhow::anyhow!("Invalid JSON in routing file: {}", e))?;
-            if entries
-                .as_array()
-                .is_some_and(|items| items.iter().any(is_action_routing_entry))
-            {
-                anyhow::bail!(
-                    "action-routing batch writes are disabled until the governed batch command is available; use `aether routing create ... --point-type a --confirmed`"
-                );
-            }
-            let result = client.batch_routing(instance_id, entries).await?;
-            if json {
-                crate::output::print_success(&result);
-            } else {
-                println!("Batch routing upserted for instance {}", instance_id);
-                println!("{}", serde_json::to_string_pretty(&result)?);
-            }
-        },
-        RoutingCommands::DeleteInstance {
-            instance_name,
-            force,
-            confirmed,
-        } => {
-            let mut confirmed = confirmed;
-            if !force && !json {
-                println!("Delete all routing for instance '{}'? [y/N]", instance_name);
-                let mut input = String::new();
-                std::io::stdin().read_line(&mut input)?;
-                if !input.trim().eq_ignore_ascii_case("y") {
-                    println!("Cancelled");
-                    return Ok(());
-                }
-                confirmed = true;
-            }
-            client
-                .delete_instance_routing(&instance_name, confirmed)
-                .await?;
-            if json {
-                crate::output::print_ok();
-            } else {
-                println!("Routing deleted for instance '{}'", instance_name);
-            }
-        },
-        RoutingCommands::DeleteChannel {
-            channel_id,
-            force,
-            confirmed,
-        } => {
-            let mut confirmed = confirmed;
-            if !force && !json {
-                println!("Delete all routing for channel {}? [y/N]", channel_id);
-                let mut input = String::new();
-                std::io::stdin().read_line(&mut input)?;
-                if !input.trim().eq_ignore_ascii_case("y") {
-                    println!("Cancelled");
-                    return Ok(());
-                }
-                confirmed = true;
-            }
-            client.delete_channel_routing(channel_id, confirmed).await?;
-            if json {
-                crate::output::print_ok();
-            } else {
-                println!("Routing deleted for channel {}", channel_id);
-            }
-        },
     }
 
     Ok(())
-}
-
-fn is_action_routing_entry(value: &Value) -> bool {
-    value
-        .get("point_type")
-        .and_then(Value::as_str)
-        .is_some_and(|point_type| point_type.eq_ignore_ascii_case("A"))
 }
 
 // HTTP client for routing management
@@ -482,59 +257,6 @@ impl RoutingClient {
             Err(anyhow::anyhow!(
                 "Failed to list routing for channel {}: {} - {}",
                 id,
-                status,
-                text
-            ))
-        }
-    }
-
-    async fn create_routing(&self, instance_id: u32, entries: Value) -> Result<Value> {
-        // The gateway treats every non-GET method as a governed mutation; the
-        // CLI invocation itself is the operator's confirmation for this
-        // service-level unguarded operation.
-        let request = self
-            .client
-            .post(format!(
-                "{}/api/instances/{}/routing",
-                self.base_url, instance_id
-            ))
-            .header("x-aether-confirmed", "true")
-            .json(&entries);
-        let response = self.apply_auth(request)?.send().await?;
-
-        if response.status().is_success() {
-            Ok(response.json().await?)
-        } else {
-            let status = response.status();
-            let text = response.text().await.unwrap_or_default();
-            Err(anyhow::anyhow!(
-                "Failed to create routing for instance {}: {} - {}",
-                instance_id,
-                status,
-                text
-            ))
-        }
-    }
-
-    async fn batch_routing(&self, instance_id: u32, entries: Value) -> Result<Value> {
-        let request = self
-            .client
-            .put(format!(
-                "{}/api/instances/{}/routing",
-                self.base_url, instance_id
-            ))
-            .header("x-aether-confirmed", "true")
-            .json(&entries);
-        let response = self.apply_auth(request)?.send().await?;
-
-        if response.status().is_success() {
-            Ok(response.json().await?)
-        } else {
-            let status = response.status();
-            let text = response.text().await.unwrap_or_default();
-            Err(anyhow::anyhow!(
-                "Failed to batch upsert routing for instance {}: {} - {}",
-                instance_id,
                 status,
                 text
             ))
@@ -633,58 +355,6 @@ impl RoutingClient {
         }
     }
 
-    async fn delete_instance_routing(&self, name: &str, confirmed: bool) -> Result<()> {
-        self.require_routing_management_auth(confirmed)?;
-        let request = self
-            .client
-            .delete(format!(
-                "{}/api/routing/instances/{}?confirm=true",
-                self.base_url, name
-            ))
-            .header("x-request-id", uuid::Uuid::new_v4().to_string())
-            .header("x-aether-confirmed", "true");
-        let response = self.apply_auth(request)?.send().await?;
-
-        if response.status().is_success() {
-            Ok(())
-        } else {
-            let status = response.status();
-            let text = response.text().await.unwrap_or_default();
-            Err(anyhow::anyhow!(
-                "Failed to delete routing for instance '{}': {} - {}",
-                name,
-                status,
-                text
-            ))
-        }
-    }
-
-    async fn delete_channel_routing(&self, id: u32, confirmed: bool) -> Result<()> {
-        self.require_routing_management_auth(confirmed)?;
-        let request = self
-            .client
-            .delete(format!(
-                "{}/api/routing/channels/{}?confirm=true",
-                self.base_url, id
-            ))
-            .header("x-request-id", uuid::Uuid::new_v4().to_string())
-            .header("x-aether-confirmed", "true");
-        let response = self.apply_auth(request)?.send().await?;
-
-        if response.status().is_success() {
-            Ok(())
-        } else {
-            let status = response.status();
-            let text = response.text().await.unwrap_or_default();
-            Err(anyhow::anyhow!(
-                "Failed to delete routing for channel {}: {} - {}",
-                id,
-                status,
-                text
-            ))
-        }
-    }
-
     fn require_routing_management_auth(&self, confirmed: bool) -> Result<()> {
         self.require_governed_auth(
             confirmed,
@@ -699,7 +369,7 @@ impl RoutingClient {
 mod tests {
     use super::{ActionRoutingCommands, RoutingClient, RoutingCommands};
     use clap::Parser;
-    use wiremock::matchers::{body_json, header, header_exists, method, path, query_param};
+    use wiremock::matchers::{body_json, header, header_exists, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     #[tokio::test]
@@ -738,35 +408,6 @@ mod tests {
                 .all(|request| !request.headers.contains_key("authorization")),
             "tokenless reads must not carry an authorization header"
         );
-    }
-
-    #[tokio::test]
-    async fn measurement_routing_writes_send_the_gateway_confirmation_header() {
-        let server = MockServer::start().await;
-        Mock::given(method("POST"))
-            .and(path("/api/instances/7/routing"))
-            .and(header("x-aether-confirmed", "true"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
-            .expect(1)
-            .mount(&server)
-            .await;
-        Mock::given(method("PUT"))
-            .and(path("/api/instances/7/routing"))
-            .and(header("x-aether-confirmed", "true"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
-            .expect(1)
-            .mount(&server)
-            .await;
-
-        let client = RoutingClient::without_access_token(&server.uri());
-        client
-            .create_routing(7, serde_json::json!({"point_type": "M"}))
-            .await
-            .expect("create routing");
-        client
-            .batch_routing(7, serde_json::json!([]))
-            .await
-            .expect("batch routing");
     }
 
     #[test]
@@ -849,27 +490,5 @@ mod tests {
                 .expect("received requests")
                 .is_empty()
         );
-    }
-
-    #[tokio::test]
-    async fn scoped_delete_uses_bearer_confirmation_and_correlation() {
-        let server = MockServer::start().await;
-        Mock::given(method("DELETE"))
-            .and(path("/api/routing/channels/3"))
-            .and(query_param("confirm", "true"))
-            .and(header("authorization", "Bearer signed-access-token"))
-            .and(header("x-aether-confirmed", "true"))
-            .and(header_exists("x-request-id"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
-            .expect(1)
-            .mount(&server)
-            .await;
-
-        let client = RoutingClient::with_access_token(&server.uri(), "signed-access-token")
-            .expect("routing client");
-        client
-            .delete_channel_routing(3, true)
-            .await
-            .expect("governed channel delete");
     }
 }

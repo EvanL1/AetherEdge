@@ -171,15 +171,12 @@ aether channels list
 # 查看通道状态
 aether channels status <channel_id>
 
-# 注入 T/S 仿真值（仅在 io 显式设置 AETHER_ALLOW_SIMULATION_WRITES=true 时可用）
-aether channels write <channel_id> --type T --id <point_id> --value <value>
-
 # 真实设备命令统一走实例 action（含签名身份、路由、确认与审计）
 AETHER_ACCESS_TOKEN='<signed access JWT>' \
   aether models instances action <instance_id> --point-id <point_id> --value <value> --confirmed
 
-# 重新加载通道配置
-aether channels reload
+# 通过治理后的应用能力协调通道运行时
+AETHER_ACCESS_TOKEN='<signed access JWT>' aether channels reload --confirmed
 
 # 检查服务健康状态
 aether channels health
@@ -190,9 +187,6 @@ aether channels health
 ```bash
 # 查看通道 1 状态
 aether channels status 1
-
-# 注入通道 1 的遥测仿真值
-aether channels write 1 --type T --id 10 --value 50.5
 
 # 通过实例动作下发真实设备命令
 AETHER_ACCESS_TOKEN='<signed access JWT>' \
@@ -235,38 +229,25 @@ aether models instances list
 # 按产品类型筛选
 aether models instances list --product PCS
 
-# 创建新实例
-aether models instances create <product> <name> [--props key=value...]
-
 # 获取实例详情
 aether models instances get <name>
 
-# 更新实例属性
-aether models instances update <name> --props key=value...
-
-# 删除实例
-aether models instances delete <name>
-aether models instances delete <name> --force  # 跳过确认
-
 # 获取实例运行时数据
-aether models instances data <name>
-aether models instances data <name> --point-type M  # 仅测量点
-aether models instances data <name> --point-type A  # 仅动作点
+aether models instances data <instance_id>
+aether models instances data <instance_id> --point-type M  # 仅测量点
+aether models instances data <instance_id> --point-type A  # 仅动作点
 ```
+
+实例、测量路由和点拓扑变更通过配置文件完成：先运行
+`aether sync --dry-run`，停止运行时 owner，再使用
+`aether sync --confirmed` 原子应用。CLI 不再保留绕过应用能力、修订和审计策略的
+部分在线 mutation。
 
 **示例：**
 
 ```bash
-# 创建 PCS 实例
-aether models instances create PCS pcs_01 \
-  --props rated_power=500.0 \
-  --props manufacturer=Sungrow
-
-# 更新实例属性
-aether models instances update pcs_01 --props rated_power=600.0
-
 # 查看实例运行时数据
-aether models instances data pcs_01
+aether models instances data 2
 ```
 
 ### rules - 规则管理

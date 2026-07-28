@@ -121,20 +121,16 @@ The bridge is an instance plus routing:
 2. **Map channel points to instance points.** Routing wires a channel point
    to an instance point: telemetry and signal points feed instance
    measurement points (M, the `route:c2m` table), and instance action
-   points (A) drive channel control and adjustment points (`route:m2c`). Entries can
-   be created through the CLI:
+   points (A) drive channel control and adjustment points (`route:m2c`). Author
+   instances and measurement routes in the commissioned automation
+   configuration. For one online physical action route, use the authenticated,
+   explicitly confirmed `aether routing action upsert` command.
 
-   ```bash
-   aether routing create 1 --point-type M --point-id 9 \
-     --channel-id 1 --four-remote T --channel-point-id 101
-   ```
-
-   which submits the governed routing command through `aether-api`, or in bulk
-   with `aether routing batch`.
-
-3. **Run `aether sync`** if the instance or routing was authored in YAML.
-   Sync validates the configuration and writes it into SQLite, where the
-   services load it; `--dry-run` validates without writing.
+3. **Validate and apply offline configuration.** Run `aether sync --dry-run`,
+   stop the runtime owners, then run `aether sync --confirmed`. Sync validates
+   the complete configuration and writes it into SQLite, where the services
+   load it. There is intentionally no partial CLI mutation for instance,
+   measurement-routing, or point-topology configuration.
 
 4. **Verify.** Two checks, one per side of the bridge:
 

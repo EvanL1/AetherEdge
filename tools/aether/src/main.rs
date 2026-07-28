@@ -222,8 +222,8 @@ enum Commands {
         verbose: bool,
     },
 
-    /// Manage channel templates
-    #[command(about = "Manage channel configuration templates")]
+    /// Inspect channel templates
+    #[command(about = "Inspect channel configuration templates")]
     Templates {
         #[command(subcommand)]
         command: templates::TemplateCommands,
@@ -238,8 +238,8 @@ enum Commands {
         command: alarms::AlarmCommands,
     },
 
-    /// Manage uplink: MQTT connection/config and TLS certificates
-    #[command(about = "Manage MQTT connection, uplink config, and TLS certificates")]
+    /// Inspect uplink MQTT and TLS state
+    #[command(about = "Inspect MQTT connection, uplink config, and TLS certificates")]
     Net {
         #[command(subcommand)]
         command: net::NetCommands,
