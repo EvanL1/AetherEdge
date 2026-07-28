@@ -39,40 +39,17 @@ const CONFIRMATION_HEADER: &str = "x-aether-confirmed";
 const REQUEST_ID_HEADER: &str = "x-request-id";
 const EXPECTED_REVISION_HEADER: &str = "x-aether-expected-revision";
 
-/// HTTP-owned references needed to invoke the channel application command.
-///
-/// The unavailable form is used by the legacy route factory and fails closed.
-/// Production composition must construct the governed form explicitly.
+/// HTTP-owned references needed to invoke the governed channel applications.
 #[derive(Clone)]
 pub struct ChannelManagementHttpBoundary {
-    inner: Option<GovernedChannelManagement>,
-}
-
-#[derive(Clone)]
-struct GovernedChannelManagement {
     application: Arc<ChannelManagementApplication>,
-    reconciliation: Option<Arc<ChannelReconciliationApplication>>,
+    reconciliation: Arc<ChannelReconciliationApplication>,
     access_authenticator: Arc<AccessTokenAuthenticator>,
 }
 
 impl ChannelManagementHttpBoundary {
-    /// Creates the production HTTP boundary over the shared application API.
-    #[must_use]
-    pub fn governed(
-        application: Arc<ChannelManagementApplication>,
-        access_authenticator: Arc<AccessTokenAuthenticator>,
-    ) -> Self {
-        Self {
-            inner: Some(GovernedChannelManagement {
-                application,
-                reconciliation: None,
-                access_authenticator,
-            }),
-        }
-    }
-
-    /// Creates a production boundary over both desired-state mutation and
-    /// runtime reconciliation application commands.
+    /// Creates the production boundary over desired-state mutation and runtime
+    /// reconciliation application commands.
     #[must_use]
     pub fn governed_with_reconciliation(
         application: Arc<ChannelManagementApplication>,
@@ -80,18 +57,10 @@ impl ChannelManagementHttpBoundary {
         access_authenticator: Arc<AccessTokenAuthenticator>,
     ) -> Self {
         Self {
-            inner: Some(GovernedChannelManagement {
-                application,
-                reconciliation: Some(reconciliation),
-                access_authenticator,
-            }),
+            application,
+            reconciliation,
+            access_authenticator,
         }
-    }
-
-    /// Creates a fail-closed compatibility boundary.
-    #[must_use]
-    pub const fn unavailable() -> Self {
-        Self { inner: None }
     }
 
     pub(super) async fn mutate(
@@ -99,12 +68,6 @@ impl ChannelManagementHttpBoundary {
         headers: &HeaderMap,
         mutation: ChannelMutation,
     ) -> Result<ChannelMutationAcceptance, AppError> {
-        let governed = self.inner.as_ref().ok_or_else(|| {
-            http_error(
-                StatusCode::SERVICE_UNAVAILABLE,
-                "Channel-management application boundary is unavailable",
-            )
-        })?;
         let authorization = headers
             .get(header::AUTHORIZATION)
             .and_then(|value| value.to_str().ok());
@@ -116,15 +79,14 @@ impl ChannelManagementHttpBoundary {
             .and_then(|value| value.to_str().ok())
             .is_some_and(|value| value.trim().eq_ignore_ascii_case("true"));
         let timestamp = chrono::Utc::now().timestamp_millis().max(0) as u64;
-        let invocation = governed.access_authenticator.invocation(
+        let invocation = self.access_authenticator.invocation(
             authorization,
             request_id,
             confirmed,
             TimestampMs::new(timestamp),
         );
 
-        governed
-            .application
+        self.application
             .mutate(invocation.context(), mutation)
             .await
             .map_err(application_error)
@@ -135,18 +97,6 @@ impl ChannelManagementHttpBoundary {
         headers: &HeaderMap,
         scope: ChannelReconciliationScope,
     ) -> Result<ChannelReconciliationAcceptance, AppError> {
-        let governed = self.inner.as_ref().ok_or_else(|| {
-            http_error(
-                StatusCode::SERVICE_UNAVAILABLE,
-                "Channel-reconciliation application boundary is unavailable",
-            )
-        })?;
-        let application = governed.reconciliation.as_ref().ok_or_else(|| {
-            http_error(
-                StatusCode::SERVICE_UNAVAILABLE,
-                "Channel-reconciliation application boundary is unavailable",
-            )
-        })?;
         let authorization = headers
             .get(header::AUTHORIZATION)
             .and_then(|value| value.to_str().ok());
@@ -156,14 +106,14 @@ impl ChannelManagementHttpBoundary {
             .and_then(|value| value.to_str().ok())
             .is_some_and(|value| value.trim().eq_ignore_ascii_case("true"));
         let timestamp = chrono::Utc::now().timestamp_millis().max(0) as u64;
-        let invocation = governed.access_authenticator.invocation(
+        let invocation = self.access_authenticator.invocation(
             authorization,
             Some(request_id),
             confirmed,
             TimestampMs::new(timestamp),
         );
 
-        application
+        self.reconciliation
             .reconcile(invocation.context(), scope)
             .await
             .map_err(reconciliation_application_error)

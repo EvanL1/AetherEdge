@@ -287,28 +287,12 @@ async fn recording_channel_router_with_audit(
     mutator: Arc<RecordingChannelMutator>,
     audit: Arc<dyn AuditSink>,
 ) -> Router {
-    let pool = create_test_sqlite_pool().await;
-    let channel_manager = Arc::new(
-        ChannelManager::new(
-            crate::test_utils::create_test_shm_handle(),
-            crate::test_utils::create_test_routing_cache(),
-        )
-        .unwrap(),
-    );
-    let application = Arc::new(aether_application::ChannelManagementApplication::new(
+    recording_channel_applications_router(
         mutator,
+        RecordingChannelReconciler::successful(reconciliation_items()),
         audit,
-        aether_application::SafetyPolicy,
-    ));
-    let authenticator = Arc::new(
-        aether_auth_jwt::AccessTokenAuthenticator::new(TEST_JWT_SECRET)
-            .expect("valid test access-token secret"),
-    );
-    create_api_routes_with_boundary(
-        channel_manager,
-        pool,
-        ChannelManagementHttpBoundary::governed(application, authenticator),
     )
+    .await
 }
 
 async fn recording_reconciliation_router(
@@ -1251,211 +1235,10 @@ async fn test_get_channel_status_valid_id() {
 }
 
 // ========================================================================
-// Phase 3: Channel Control Endpoint Tests
-// ========================================================================
-
-fn governed_channel_control_request(
-    operation: &str,
-    authenticated: bool,
-    confirmed: bool,
-    request_id: Option<&str>,
-) -> Request<Body> {
-    let mut request = Request::builder()
-        .uri("/api/channels/1001/control")
-        .method("POST")
-        .header("content-type", "application/json")
-        .header("x-aether-confirmed", confirmed.to_string());
-    if authenticated {
-        request = request.header("authorization", format!("Bearer {ADMIN_ACCESS_TOKEN}"));
-    }
-    if let Some(request_id) = request_id {
-        request = request.header("x-request-id", request_id);
-    }
-    request
-        .body(Body::from(
-            serde_json::json!({"operation": operation}).to_string(),
-        ))
-        .unwrap()
-}
-
-#[tokio::test]
-async fn channel_control_forwards_start_stop_and_restart_to_governed_applications() {
-    let mutator = RecordingChannelMutator::successful(None);
-    let reconciler = RecordingChannelReconciler::successful(vec![ChannelReconciliationItem::new(
-        aether_domain::ChannelId::new(1001),
-        ChannelDesiredStateObservation::present(ChannelRevision::new(9), true),
-        ChannelRuntimeProjection::Active,
-    )]);
-    let app = recording_channel_applications_router(
-        Arc::clone(&mutator),
-        Arc::clone(&reconciler),
-        Arc::new(aether_store_local::MemoryAuditSink::new()),
-    )
-    .await;
-
-    for (operation, enabled, revision, projection) in [
-        ("start", Some(true), Some(1), "active"),
-        ("stop", Some(false), Some(1), "stopped"),
-        ("restart", Some(true), Some(9), "active"),
-    ] {
-        let response = app
-            .clone()
-            .oneshot(governed_channel_control_request(
-                operation,
-                true,
-                true,
-                Some(TEST_REQUEST_ID),
-            ))
-            .await
-            .unwrap();
-        assert_eq!(response.status(), StatusCode::OK, "{operation}");
-        let payload = extract_json(response).await;
-        assert_eq!(payload["success"], true);
-        assert_eq!(payload["data"]["channel_id"], 1001);
-        assert_eq!(payload["data"]["request_id"], TEST_REQUEST_ID);
-        assert_eq!(payload["data"]["operation"], operation);
-        assert_eq!(
-            payload["data"]["desired_revision"],
-            revision.map_or(serde_json::Value::Null, serde_json::Value::from)
-        );
-        assert_eq!(
-            payload["data"]["desired_enabled"],
-            enabled.map_or(serde_json::Value::Null, serde_json::Value::from)
-        );
-        assert_eq!(payload["data"]["runtime_projection"], projection);
-        assert_eq!(payload["data"]["reconciliation_required"], false);
-        assert_eq!(payload["data"]["completion_audit"]["status"], "recorded");
-        assert_eq!(payload["data"]["retryable"], false);
-    }
-
-    let mutations = mutator.mutations();
-    assert_eq!(mutations.len(), 2);
-    assert_eq!(mutations[0].kind(), ChannelMutationKind::Enable);
-    assert_eq!(
-        mutations[0].channel_id(),
-        Some(aether_domain::ChannelId::new(1001))
-    );
-    assert!(matches!(
-        &mutations[0],
-        ChannelMutation::SetEnabled { enabled: true, .. }
-    ));
-    assert_eq!(mutations[1].kind(), ChannelMutationKind::Disable);
-    assert!(matches!(
-        &mutations[1],
-        ChannelMutation::SetEnabled { enabled: false, .. }
-    ));
-    assert_eq!(
-        reconciler.scopes(),
-        vec![ChannelReconciliationScope::One(
-            aether_domain::ChannelId::new(1001)
-        )]
-    );
-}
-
-#[tokio::test]
-async fn channel_control_requires_auth_confirmation_and_uuid_before_side_effects() {
-    let mutator = RecordingChannelMutator::successful(None);
-    let reconciler = RecordingChannelReconciler::successful(reconciliation_items());
-    let app = recording_channel_applications_router(
-        Arc::clone(&mutator),
-        Arc::clone(&reconciler),
-        Arc::new(aether_store_local::MemoryAuditSink::new()),
-    )
-    .await;
-
-    for (request, expected) in [
-        (
-            governed_channel_control_request("start", false, true, Some(TEST_REQUEST_ID)),
-            StatusCode::FORBIDDEN,
-        ),
-        (
-            governed_channel_control_request("stop", true, false, Some(TEST_REQUEST_ID)),
-            StatusCode::UNPROCESSABLE_ENTITY,
-        ),
-        (
-            governed_channel_control_request("restart", true, true, None),
-            StatusCode::BAD_REQUEST,
-        ),
-        (
-            governed_channel_control_request("start", true, true, Some("not-a-uuid")),
-            StatusCode::BAD_REQUEST,
-        ),
-        (
-            governed_channel_control_request("invalid", true, true, Some(TEST_REQUEST_ID)),
-            StatusCode::BAD_REQUEST,
-        ),
-    ] {
-        let response = app.clone().oneshot(request).await.unwrap();
-        assert_eq!(response.status(), expected);
-    }
-
-    assert!(mutator.mutations().is_empty());
-    assert!(reconciler.scopes().is_empty());
-}
-
-#[tokio::test]
-async fn channel_control_terminal_audit_failure_is_accepted_and_sanitized() {
-    let mutator = RecordingChannelMutator::successful(None);
-    let reconciler = RecordingChannelReconciler::successful(reconciliation_items());
-    let app = recording_channel_applications_router(
-        Arc::clone(&mutator),
-        reconciler,
-        Arc::new(TerminalAuditFailure),
-    )
-    .await;
-
-    let response = app
-        .oneshot(governed_channel_control_request(
-            "start",
-            true,
-            true,
-            Some(TEST_REQUEST_ID),
-        ))
-        .await
-        .unwrap();
-    assert_eq!(response.status(), StatusCode::OK);
-    let payload = extract_json(response).await;
-    assert_eq!(payload["data"]["completion_audit"]["status"], "incomplete");
-    assert_eq!(payload["data"]["retryable"], false);
-    assert!(!payload.to_string().contains("terminal audit unavailable"));
-    assert_eq!(mutator.mutation_count(), 1);
-}
-
-#[tokio::test]
-async fn legacy_router_fails_closed_for_channel_control() {
-    let channel_manager = Arc::new(
-        ChannelManager::new(
-            crate::test_utils::create_test_shm_handle(),
-            crate::test_utils::create_test_routing_cache(),
-        )
-        .unwrap(),
-    );
-    let app = create_api_routes(channel_manager, create_test_sqlite_pool().await);
-
-    for operation in ["start", "restart"] {
-        let response = app
-            .clone()
-            .oneshot(governed_channel_control_request(
-                operation,
-                true,
-                true,
-                Some(TEST_REQUEST_ID),
-            ))
-            .await
-            .unwrap();
-        assert_eq!(
-            response.status(),
-            StatusCode::SERVICE_UNAVAILABLE,
-            "{operation}"
-        );
-    }
-}
-
-// ========================================================================
 // Phase 4: Command Send Endpoint Tests
 // ========================================================================
 // ========================================================================
-// Phase 5: Legacy Tests
+// Phase 5: Route Composition Tests
 // ========================================================================
 
 #[tokio::test]
@@ -1470,14 +1253,6 @@ async fn test_api_routes_with_shm() {
     let _app = create_test_api_routes(channel_manager).await;
     // Basic test to ensure the SHM-only route graph compiles.
     // Test passes if code compiles
-}
-
-#[test]
-fn test_api_routes_compile() {
-    // Verify the public route factory exposes only SHM-backed runtime state
-    // plus SQLite configuration.
-    use super::*;
-    let _ = create_api_routes as fn(Arc<ChannelManager>, sqlx::SqlitePool) -> Router;
 }
 
 // ========================================================================
@@ -1832,24 +1607,6 @@ async fn test_set_channel_disabled() {
             || response.status() == StatusCode::NOT_FOUND
             || response.status() == StatusCode::INTERNAL_SERVER_ERROR
     );
-}
-
-#[tokio::test]
-async fn legacy_router_fails_closed_for_channel_reconciliation() {
-    let channel_manager = Arc::new(
-        ChannelManager::new(
-            crate::test_utils::create_test_shm_handle(),
-            crate::test_utils::create_test_routing_cache(),
-        )
-        .unwrap(),
-    );
-    let app = create_api_routes(channel_manager, create_test_sqlite_pool().await);
-
-    let response = app
-        .oneshot(governed_reconciliation_request("/api/channels/reconcile"))
-        .await
-        .unwrap();
-    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
 }
 
 // ========================================================================
@@ -3234,41 +2991,6 @@ async fn degraded_and_terminal_audit_incomplete_are_explicit_non_retryable_accep
     }
 }
 
-#[tokio::test]
-async fn legacy_route_constructor_fails_closed_for_channel_mutations() {
-    let pool = create_test_sqlite_pool().await;
-    let manager = Arc::new(
-        ChannelManager::new(
-            crate::test_utils::create_test_shm_handle(),
-            crate::test_utils::create_test_routing_cache(),
-        )
-        .unwrap(),
-    );
-    let app = create_api_routes(manager, pool.clone());
-    let response = app
-        .oneshot(governed_channel_request(
-            "POST",
-            "/api/channels",
-            Some(json!({
-                "channel_id": 91,
-                "name": "Must Not Be Created",
-                "protocol": "modbus_tcp",
-                "parameters": {}
-            })),
-            true,
-            true,
-            None,
-        ))
-        .await
-        .unwrap();
-    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
-    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM channels WHERE channel_id = 91")
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-    assert_eq!(count, 0);
-}
-
 // ========================================================================
 // OpenAPI Spec Completeness Tests
 // ========================================================================
@@ -3374,23 +3096,21 @@ mod openapi_tests {
     }
 
     #[test]
-    fn retired_browser_discovery_aliases_stay_out_of_the_io_contract() {
+    fn retired_io_aliases_stay_out_of_the_contract() {
         let spec = spec();
         let paths = spec["paths"].as_object().expect("OpenAPI paths object");
         for retired in [
             "/api/protocols",
             "/api/channels/list",
             "/api/channels/search",
+            "/api/channels/{id}/control",
             "/api/points",
             "/api/channels/{channel_id}/T/points/{point_id}",
             "/api/channels/{channel_id}/S/points/{point_id}",
             "/api/channels/{channel_id}/C/points/{point_id}",
             "/api/channels/{channel_id}/A/points/{point_id}",
         ] {
-            assert!(
-                !paths.contains_key(retired),
-                "retired IO query alias {retired}"
-            );
+            assert!(!paths.contains_key(retired), "retired IO alias {retired}");
         }
         assert_path_methods(paths, "/api/channels", &["get", "post"]);
         assert_path_methods(paths, "/api/channels/{id}/points", &["get"]);
@@ -3715,96 +3435,6 @@ mod openapi_tests {
     }
 
     #[test]
-    fn channel_control_openapi_is_a_governed_application_contract() {
-        let spec = spec();
-        let operation = spec
-            .pointer("/paths/~1api~1channels~1{id}~1control/post")
-            .expect("channel control operation");
-
-        assert!(operation["security"][0].get("bearer_auth").is_some());
-        for header in ["x-request-id", "x-aether-confirmed"] {
-            let parameter = operation["parameters"]
-                .as_array()
-                .and_then(|parameters| {
-                    parameters.iter().find(|parameter| {
-                        parameter["name"] == header && parameter["in"] == "header"
-                    })
-                })
-                .unwrap_or_else(|| panic!("channel control must document {header}"));
-            assert_eq!(parameter["required"], true, "{header}");
-            if header == "x-request-id" {
-                assert_eq!(parameter["schema"]["format"], "uuid");
-            }
-        }
-        let channel_id = operation["parameters"]
-            .as_array()
-            .and_then(|parameters| {
-                parameters
-                    .iter()
-                    .find(|parameter| parameter["name"] == "id" && parameter["in"] == "path")
-            })
-            .expect("channel control ID");
-        assert_eq!(channel_id["schema"]["maximum"], 9999);
-
-        for status in [
-            "200", "400", "403", "404", "409", "422", "500", "503", "504",
-        ] {
-            assert!(
-                operation.pointer(&format!("/responses/{status}")).is_some(),
-                "channel control must document HTTP {status}"
-            );
-        }
-        let response_ref = operation
-            .pointer("/responses/200/content/application~1json/schema/$ref")
-            .and_then(serde_json::Value::as_str)
-            .expect("typed channel control response");
-        assert!(response_ref.ends_with("ChannelControlResponse"));
-        let request_ref = operation
-            .pointer("/requestBody/content/application~1json/schema/$ref")
-            .and_then(serde_json::Value::as_str)
-            .expect("typed channel control request");
-        assert!(request_ref.ends_with("ChannelOperation"));
-        let operation_kind_ref = spec
-            .pointer("/components/schemas/ChannelOperation/properties/operation/$ref")
-            .and_then(serde_json::Value::as_str)
-            .expect("strongly typed channel operation enum");
-        assert!(operation_kind_ref.ends_with("ChannelOperationKind"));
-        let operation_values = spec
-            .pointer("/components/schemas/ChannelOperationKind/enum")
-            .and_then(serde_json::Value::as_array)
-            .expect("channel operation enum values");
-        assert_eq!(operation_values.len(), 3);
-        for (actual, expected) in operation_values.iter().zip(["start", "stop", "restart"]) {
-            assert_eq!(actual, expected);
-        }
-
-        let accepted = operation
-            .pointer("/responses/200/description")
-            .and_then(serde_json::Value::as_str)
-            .expect("channel control acceptance semantics");
-        assert!(accepted.contains("non-idempotent"));
-        assert!(accepted.contains("do not retry automatically"));
-
-        let receipt = spec
-            .pointer("/components/schemas/ChannelControlResult/properties")
-            .expect("channel control receipt schema");
-        for field in [
-            "channel_id",
-            "request_id",
-            "operation",
-            "desired_revision",
-            "desired_enabled",
-            "runtime_projection",
-            "reconciliation_required",
-            "completion_audit",
-            "retryable",
-        ] {
-            assert!(receipt.get(field).is_some(), "receipt is missing {field}");
-        }
-        assert_eq!(receipt["request_id"]["format"], "uuid");
-    }
-
-    #[test]
     fn test_openapi_operations_only_use_declared_tags() {
         let spec = spec();
         let declared: std::collections::HashSet<&str> = spec["tags"]
@@ -3854,7 +3484,7 @@ mod openapi_tests {
             .sum::<usize>();
 
         assert_eq!(
-            operation_count, 20,
+            operation_count, 19,
             "HTTP operation count changed; re-audit Router/OpenAPI parity before updating this guard"
         );
     }

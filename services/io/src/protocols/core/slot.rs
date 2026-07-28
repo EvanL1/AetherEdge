@@ -14,7 +14,6 @@
 //!
 //! - [`AtomicBoolStore`]: Lock-free boolean storage for GPIO DO states
 //! - [`SlotStore`]: Single-writer store for cached CAN data
-//! - [`ShardedSlotStore`]: Multi-writer store for event-driven adapters
 
 use std::collections::HashMap;
 use std::sync::RwLock;
@@ -81,32 +80,6 @@ impl AtomicBoolStore {
         if let Some(&idx) = self.index.get(&pin_id) {
             self.states[idx].store(value, Ordering::Release);
         }
-    }
-
-    /// Get all pin states as a vector of (pin_id, state) pairs.
-    pub fn get_all(&self) -> Vec<(u32, bool)> {
-        self.index
-            .iter()
-            .map(|(&pin_id, &idx)| (pin_id, self.states[idx].load(Ordering::Acquire)))
-            .collect()
-    }
-
-    /// Get the number of pins in the store.
-    #[inline]
-    pub fn len(&self) -> usize {
-        self.states.len()
-    }
-
-    /// Check if the store is empty.
-    #[inline]
-    pub fn is_empty(&self) -> bool {
-        self.states.is_empty()
-    }
-
-    /// Check if a pin ID exists in the store.
-    #[inline]
-    pub fn contains(&self, pin_id: u32) -> bool {
-        self.index.contains_key(&pin_id)
     }
 }
 
@@ -181,14 +154,6 @@ impl DataSlot {
             )
         })
     }
-
-    /// Get the current version counter.
-    ///
-    /// Useful for change detection without reading the full value.
-    #[inline]
-    pub fn version(&self) -> u64 {
-        self.version.load(Ordering::Acquire)
-    }
 }
 
 impl Default for DataSlot {
@@ -257,17 +222,6 @@ impl SlotStore {
         }
     }
 
-    /// Create a new store for Telemetry points (convenience).
-    pub fn telemetry(point_ids: &[u32]) -> Self {
-        Self::from_points(point_ids, PointType::Telemetry)
-    }
-
-    /// Get a reference to a data slot by point ID.
-    #[inline]
-    pub fn get(&self, point_id: u32) -> Option<&DataSlot> {
-        self.index.get(&point_id).map(|&idx| &self.slots[idx])
-    }
-
     /// Update a single point's value.
     pub fn update(&self, point_id: u32, value: Value, quality: Quality) {
         if let Some(&idx) = self.index.get(&point_id) {
@@ -287,168 +241,6 @@ impl SlotStore {
             }
         }
         batch
-    }
-
-    /// Get the number of slots in the store.
-    #[inline]
-    pub fn len(&self) -> usize {
-        self.slots.len()
-    }
-
-    /// Check if the store is empty.
-    #[inline]
-    pub fn is_empty(&self) -> bool {
-        self.slots.is_empty()
-    }
-
-    /// Check if a point ID exists in the store.
-    #[inline]
-    pub fn contains(&self, point_id: u32) -> bool {
-        self.index.contains_key(&point_id)
-    }
-
-    /// Get all point IDs in the store.
-    pub fn point_ids(&self) -> &[u32] {
-        &self.point_ids
-    }
-}
-
-// ============================================================================
-// ShardedSlotStore - Multi-writer store with sharding
-// ============================================================================
-
-/// Sharded slot store for multi-writer scenarios.
-///
-/// Divides slots into shards to reduce lock contention.
-/// Suitable for adapters where multiple sources may write concurrently.
-///
-/// # Sharding Strategy
-///
-/// Points are distributed across shards based on `point_id % shard_count`.
-/// Each shard has its own lock, so concurrent writes to different shards
-/// don't block each other.
-#[derive(Debug)]
-pub struct ShardedSlotStore {
-    /// Sharded storage: each shard is independently locked
-    shards: Vec<RwLock<Vec<DataSlot>>>,
-    /// point_id -> (shard_idx, slot_idx_within_shard)
-    index: HashMap<u32, (usize, usize)>,
-    /// Reverse mapping per shard: slot_idx -> point_id
-    shard_point_ids: Vec<Vec<u32>>,
-    /// Number of shards
-    shard_count: usize,
-    /// SCADA point type for all points in this store
-    point_type: PointType,
-}
-
-impl ShardedSlotStore {
-    /// Create a new sharded store with specified point type.
-    ///
-    /// # Arguments
-    ///
-    /// * `point_ids` - List of all point IDs
-    /// * `shard_count` - Number of shards (typically CPU core count or fixed like 16)
-    /// * `point_type` - SCADA point type for all points
-    pub fn new(point_ids: &[u32], shard_count: usize, point_type: PointType) -> Self {
-        let shard_count = shard_count.max(1);
-
-        // Pre-calculate shard assignments
-        let mut shard_points: Vec<Vec<u32>> = vec![Vec::new(); shard_count];
-        for &point_id in point_ids {
-            let shard_idx = (point_id as usize) % shard_count;
-            shard_points[shard_idx].push(point_id);
-        }
-
-        // Build shards and index
-        let mut index = HashMap::with_capacity(point_ids.len());
-        let mut shards = Vec::with_capacity(shard_count);
-        let mut shard_point_ids = Vec::with_capacity(shard_count);
-
-        for (shard_idx, points) in shard_points.into_iter().enumerate() {
-            let mut slots = Vec::with_capacity(points.len());
-            let mut ids = Vec::with_capacity(points.len());
-
-            for (slot_idx, point_id) in points.into_iter().enumerate() {
-                index.insert(point_id, (shard_idx, slot_idx));
-                slots.push(DataSlot::new());
-                ids.push(point_id);
-            }
-
-            shards.push(RwLock::new(slots));
-            shard_point_ids.push(ids);
-        }
-
-        Self {
-            shards,
-            index,
-            shard_point_ids,
-            shard_count,
-            point_type,
-        }
-    }
-
-    /// Update a single point's value.
-    ///
-    /// Only locks the shard containing this point.
-    pub fn update(&self, point_id: u32, value: Value, quality: Quality) {
-        if let Some(&(shard_idx, slot_idx)) = self.index.get(&point_id) {
-            let shard = self.shards[shard_idx]
-                .read()
-                .unwrap_or_else(|e| e.into_inner());
-            shard[slot_idx].update(value, quality);
-        }
-    }
-
-    /// Read a single point's value.
-    pub fn read(&self, point_id: u32) -> Option<(Value, Quality, i64, u64)> {
-        if let Some(&(shard_idx, slot_idx)) = self.index.get(&point_id) {
-            let shard = self.shards[shard_idx]
-                .read()
-                .unwrap_or_else(|e| e.into_inner());
-            shard[slot_idx].read()
-        } else {
-            None
-        }
-    }
-
-    /// Export all data as a DataBatch.
-    pub fn export_all(&self) -> DataBatch {
-        let total_capacity: usize = self.shard_point_ids.iter().map(|v| v.len()).sum();
-        let mut batch = DataBatch::with_capacity(total_capacity);
-        let now = Utc::now();
-        for (shard_idx, shard) in self.shards.iter().enumerate() {
-            let slots = shard.read().unwrap_or_else(|e| e.into_inner());
-            for (slot_idx, slot) in slots.iter().enumerate() {
-                let pid = self.shard_point_ids[shard_idx][slot_idx];
-                if let Some(point) = slot_to_point(slot, pid, self.point_type, now) {
-                    batch.add(point);
-                }
-            }
-        }
-        batch
-    }
-
-    /// Get the number of slots across all shards.
-    pub fn len(&self) -> usize {
-        self.index.len()
-    }
-
-    /// Check if the store is empty.
-    #[inline]
-    pub fn is_empty(&self) -> bool {
-        self.index.is_empty()
-    }
-
-    /// Check if a point ID exists in the store.
-    #[inline]
-    pub fn contains(&self, point_id: u32) -> bool {
-        self.index.contains_key(&point_id)
-    }
-
-    /// Get the number of shards.
-    #[inline]
-    pub fn shard_count(&self) -> usize {
-        self.shard_count
     }
 }
 
@@ -510,10 +302,6 @@ mod tests {
     fn test_atomic_bool_store() {
         let store = AtomicBoolStore::from_pins(&[1, 2, 3]);
 
-        assert_eq!(store.len(), 3);
-        assert!(store.contains(1));
-        assert!(!store.contains(99));
-
         // Initial values are false
         assert_eq!(store.get(1), Some(false));
         assert_eq!(store.get(2), Some(false));
@@ -527,21 +315,15 @@ mod tests {
         store.set(1, false);
         assert_eq!(store.get(1), Some(false));
         assert_eq!(store.get(2), Some(true));
-
-        // Get all
-        let all = store.get_all();
-        assert_eq!(all.len(), 3);
     }
 
     #[test]
     fn test_data_slot() {
         let slot = DataSlot::new();
 
-        assert_eq!(slot.version(), 0);
         assert!(slot.read().is_none());
 
         slot.update(Value::Float(42.5), Quality::Good);
-        assert_eq!(slot.version(), 1);
 
         let (value, quality, _ts, version) = slot.read().unwrap();
         assert_eq!(value, Value::Float(42.5));
@@ -550,7 +332,6 @@ mod tests {
 
         // Update again
         slot.update(Value::Integer(100), Quality::Uncertain);
-        assert_eq!(slot.version(), 2);
 
         let (value, quality, _ts, version) = slot.read().unwrap();
         assert_eq!(value, Value::Integer(100));
@@ -562,18 +343,10 @@ mod tests {
     fn test_slot_store() {
         let store = SlotStore::from_points(&[10, 20, 30], PointType::Telemetry);
 
-        assert_eq!(store.len(), 3);
-        assert!(store.contains(10));
-        assert!(!store.contains(99));
-
         // Update single
         store.update(10, Value::Float(1.0), Quality::Good);
         store.update(20, Value::Float(2.0), Quality::Good);
         store.update(30, Value::Float(30.0), Quality::Good);
-
-        let slot = store.get(10).unwrap();
-        let (value, _, _, _) = slot.read().unwrap();
-        assert_eq!(value, Value::Float(1.0));
 
         // Export
         let batch = store.export_all();
@@ -582,33 +355,5 @@ mod tests {
         for point in batch.iter() {
             assert_eq!(point.point_type, PointType::Telemetry);
         }
-    }
-
-    #[test]
-    fn test_sharded_slot_store() {
-        let store = ShardedSlotStore::new(&[1, 2, 3, 4, 5, 6, 7, 8], 4, PointType::Signal);
-
-        assert_eq!(store.len(), 8);
-        assert_eq!(store.shard_count(), 4);
-        assert!(store.contains(1));
-        assert!(!store.contains(99));
-
-        // Update and read
-        store.update(1, Value::Float(1.0), Quality::Good);
-        store.update(5, Value::Float(5.0), Quality::Good);
-
-        let (value, quality, _, _) = store.read(1).unwrap();
-        assert_eq!(value, Value::Float(1.0));
-        assert_eq!(quality, Quality::Good);
-
-        let (value, _, _, _) = store.read(5).unwrap();
-        assert_eq!(value, Value::Float(5.0));
-
-        // Non-existent
-        assert!(store.read(99).is_none());
-
-        // Export
-        let batch = store.export_all();
-        assert_eq!(batch.len(), 2); // Only 2 points have values
     }
 }

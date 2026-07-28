@@ -23,5 +23,5 @@ pub use file_logging::{ChannelFileLogHandler, FileLogLevel};
 pub use json_mapper::{JsonMapper, JsonMappingConfig};
 pub use point::*;
 pub use quality::*;
-pub use slot::{AtomicBoolStore, DataSlot, ShardedSlotStore, SlotStore};
+pub use slot::{AtomicBoolStore, DataSlot, SlotStore};
 pub use traits::*;

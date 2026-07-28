@@ -4,6 +4,7 @@
 
 mod support;
 
+use aether_ports::{AuditSink, ChannelMutator, ChannelReconciler};
 use anyhow::Result;
 use axum::{
     body::Body,
@@ -14,6 +15,7 @@ use serde_json::json;
 use std::sync::Arc;
 use tower::ServiceExt;
 
+const TEST_JWT_SECRET: &str = "0123456789abcdef0123456789abcdef";
 const ADMIN_ACCESS_TOKEN: &str = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyX2lkIjo3LCJyb2xlIjoiQWRtaW4iLCJ0eXBlIjoiYWNjZXNzIiwiaWF0IjoxNzAwMDAwMDAwLCJleHAiOjQxMDI0NDQ4MDB9.JtjQvDBo7j0bLOxwed6yC9-M9qFCloc4H2Dt0LjzF9E";
 
 /// Create test SQLite database with required schema (including point tables)
@@ -194,7 +196,36 @@ async fn create_test_app_with_pool(pool: sqlx::SqlitePool) -> Result<axum::Route
         support::create_test_shm_handle(),
         Arc::new(aether_routing::ChannelRoutingCache::new()),
     )?);
-    Ok(aether_io::api::routes::create_api_routes(manager, pool))
+    let adapter = Arc::new(aether_io::SqliteChannelMutator::new(
+        pool.clone(),
+        Arc::clone(&manager),
+    ));
+    let mutator: Arc<dyn ChannelMutator> = adapter.clone();
+    let reconciler: Arc<dyn ChannelReconciler> = adapter;
+    let audit: Arc<dyn AuditSink> = Arc::new(aether_store_local::MemoryAuditSink::new());
+    let management = Arc::new(aether_application::ChannelManagementApplication::new(
+        mutator,
+        Arc::clone(&audit),
+        aether_application::SafetyPolicy,
+    ));
+    let reconciliation = Arc::new(aether_application::ChannelReconciliationApplication::new(
+        reconciler,
+        audit,
+        aether_application::SafetyPolicy,
+    ));
+    let authenticator = Arc::new(
+        aether_auth_jwt::AccessTokenAuthenticator::new(TEST_JWT_SECRET)
+            .expect("valid test access-token secret"),
+    );
+    Ok(
+        aether_io::api::routes::create_api_routes_with_channel_applications(
+            manager,
+            pool,
+            management,
+            reconciliation,
+            authenticator,
+        ),
+    )
 }
 
 async fn make_request(

@@ -86,8 +86,7 @@ impl AppState {
         crate::api::handlers::channel_handlers::get_channel_detail_handler,
         crate::api::handlers::channel_handlers::get_channel_status,
 
-        // Control operations
-        crate::api::handlers::control_handlers::control_channel,
+        // Per-channel protocol diagnostics
         crate::api::handlers::control_handlers::set_channel_log_level,
 
         // Point information
@@ -121,11 +120,6 @@ impl AppState {
             crate::dto::PointCounts,
             crate::dto::ChannelListQuery,
             crate::dto::PaginatedResponse<crate::dto::ChannelStatusResponse>,
-            crate::dto::ChannelOperation,
-            crate::dto::ChannelOperationKind,
-            crate::dto::ChannelControlOperationResult,
-            crate::dto::ChannelControlResult,
-            crate::dto::ChannelControlResponse,
             crate::dto::ChannelCreateRequest,
             crate::dto::ChannelConfigUpdateRequest,
             crate::dto::ChannelEnabledRequest,
@@ -188,18 +182,6 @@ async fn openapi_document() -> axum::Json<utoipa::openapi::OpenApi> {
     axum::Json(IoApiDoc::openapi())
 }
 
-/// Create the API router over authoritative SHM and SQLite configuration.
-pub fn create_api_routes(
-    channel_manager: Arc<ChannelManager>,
-    sqlite_pool: sqlx::SqlitePool,
-) -> Router {
-    create_api_routes_with_boundary(
-        channel_manager,
-        sqlite_pool,
-        ChannelManagementHttpBoundary::unavailable(),
-    )
-}
-
 /// Create the production API router with governed channel desired-state and
 /// runtime-reconciliation application commands explicitly composed by the
 /// service binary.
@@ -239,7 +221,6 @@ fn create_api_routes_with_boundary(
         .route("/api/channels/{id}/reconcile", post(reconcile_channel_handler))
         .route("/api/channels/{id}", get(get_channel_detail_handler).put(update_channel_handler).delete(delete_channel_handler))
         .route("/api/channels/{id}/status", get(get_channel_status))
-        .route("/api/channels/{id}/control", post(control_channel))
         .route("/api/channels/{id}/enabled", axum::routing::put(set_channel_enabled_handler))
         .route("/api/channels/{id}/logging", axum::routing::put(set_channel_log_level))
         .route("/api/channels/{id}/points", get(get_channel_points_handler))

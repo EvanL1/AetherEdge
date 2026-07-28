@@ -25,65 +25,6 @@ pub const DEFAULT_MAX_BATCH_SIZE: u16 = 64;
 /// Default maximum gap between registers to allow merging
 pub const DEFAULT_MAX_GAP: u16 = 10;
 
-/// Default reconnect cooldown in milliseconds (60 seconds)
-pub const DEFAULT_RECONNECT_COOLDOWN_MS: u64 = 60_000;
-
-/// Default maximum reconnect attempts (0 = unlimited)
-pub const DEFAULT_MAX_RECONNECT_ATTEMPTS: u32 = 0;
-
-/// Default consecutive zero-data cycles before triggering reconnect
-pub const DEFAULT_ZERO_DATA_THRESHOLD: u32 = 5;
-
-// ============================================================================
-// ReconnectConfig
-// ============================================================================
-
-/// Reconnect configuration for automatic connection recovery.
-#[derive(Debug, Clone)]
-pub struct ReconnectConfig {
-    /// Cooldown period after disconnect before reconnect attempts (in ms)
-    pub cooldown_ms: u64,
-    /// Maximum reconnect attempts (0 = unlimited)
-    pub max_attempts: u32,
-    /// Consecutive zero-data polling cycles before triggering reconnect
-    pub zero_data_threshold: u32,
-}
-
-impl Default for ReconnectConfig {
-    fn default() -> Self {
-        Self {
-            cooldown_ms: DEFAULT_RECONNECT_COOLDOWN_MS,
-            max_attempts: DEFAULT_MAX_RECONNECT_ATTEMPTS,
-            zero_data_threshold: DEFAULT_ZERO_DATA_THRESHOLD,
-        }
-    }
-}
-
-impl ReconnectConfig {
-    /// Create a new reconnect configuration.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Set cooldown period.
-    pub fn with_cooldown_ms(mut self, ms: u64) -> Self {
-        self.cooldown_ms = ms;
-        self
-    }
-
-    /// Set maximum reconnect attempts.
-    pub fn with_max_attempts(mut self, attempts: u32) -> Self {
-        self.max_attempts = attempts;
-        self
-    }
-
-    /// Set zero-data threshold.
-    pub fn with_zero_data_threshold(mut self, threshold: u32) -> Self {
-        self.zero_data_threshold = threshold;
-        self
-    }
-}
-
 // ============================================================================
 // ConnectionMode
 // ============================================================================
@@ -256,8 +197,6 @@ pub struct ModbusChannelConfig {
     pub max_batch_size: u16,
     /// Maximum gap between registers to allow merging (default: 10)
     pub max_gap: u16,
-    /// Reconnect configuration
-    pub reconnect: ReconnectConfig,
 }
 
 impl ModbusChannelConfig {
@@ -275,7 +214,6 @@ impl ModbusChannelConfig {
             points: Vec::new(),
             max_batch_size: DEFAULT_MAX_BATCH_SIZE,
             max_gap: DEFAULT_MAX_GAP,
-            reconnect: ReconnectConfig::default(),
         }
     }
 
@@ -292,7 +230,6 @@ impl ModbusChannelConfig {
             points: Vec::new(),
             max_batch_size: DEFAULT_MAX_BATCH_SIZE,
             max_gap: DEFAULT_MAX_GAP,
-            reconnect: ReconnectConfig::default(),
         }
     }
 
@@ -323,12 +260,6 @@ impl ModbusChannelConfig {
     /// Set maximum gap for merging consecutive registers.
     pub fn with_max_gap(mut self, gap: u16) -> Self {
         self.max_gap = gap;
-        self
-    }
-
-    /// Set reconnect configuration.
-    pub fn with_reconnect(mut self, config: ReconnectConfig) -> Self {
-        self.reconnect = config;
         self
     }
 }

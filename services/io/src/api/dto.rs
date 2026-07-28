@@ -123,23 +123,6 @@ pub fn create_health_status(
     }
 }
 
-/// Governed channel lifecycle operation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum ChannelOperationKind {
-    Start,
-    Stop,
-    Restart,
-}
-
-/// Channel operation request.
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct ChannelOperation {
-    /// Governed operation: `start`, `stop`, or `restart`.
-    #[schema(example = "restart")]
-    pub operation: ChannelOperationKind,
-}
-
 /// Channel creation request
 ///
 /// - `channel_id` is optional; when omitted, the lowest ID in `1..10000` not
@@ -372,51 +355,6 @@ pub struct ChannelReconciliationResponse {
     pub metadata: HashMap<String, serde_json::Value>,
 }
 
-/// Channel lifecycle operation accepted by the compatibility control route.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum ChannelControlOperationResult {
-    Start,
-    Stop,
-    Restart,
-}
-
-/// Unified receipt for governed start, stop, and restart operations.
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct ChannelControlResult {
-    #[schema(maximum = 9999)]
-    pub channel_id: u32,
-    #[schema(format = "uuid")]
-    pub request_id: String,
-    pub operation: ChannelControlOperationResult,
-    /// Desired-state revision observed after the operation. This can be null
-    /// when a reconciliation observes an absent channel without a tombstone.
-    #[schema(minimum = 1, maximum = 9223372036854775807_i64)]
-    pub desired_revision: Option<u64>,
-    /// Desired enabled state observed after the operation, or null when the
-    /// authoritative channel definition is absent.
-    pub desired_enabled: Option<bool>,
-    pub runtime_projection: ChannelRuntimeProjectionResult,
-    pub reconciliation_required: bool,
-    pub completion_audit: ChannelCompletionAudit,
-    /// Lifecycle operations can reconnect a protocol session and are never
-    /// safe for automatic retry.
-    #[schema(default = false, example = false)]
-    pub retryable: bool,
-    pub message: String,
-}
-
-/// Standard successful lifecycle-control response shown by Swagger UI.
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct ChannelControlResponse {
-    #[schema(default = true, example = true)]
-    pub success: bool,
-    pub data: ChannelControlResult,
-    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
-    #[schema(value_type = Object)]
-    pub metadata: HashMap<String, serde_json::Value>,
-}
-
 /// Complete channel details (configuration + runtime status + statistics)
 /// Uses ChannelConfig to eliminate field duplication
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -595,26 +533,6 @@ mod tests {
         assert!(serialized.contains("healthy"));
         assert!(serialized.contains("7200"));
         assert!(serialized.contains("aether-io"));
-    }
-
-    #[test]
-    fn test_channel_operation_deserialization() {
-        let json_data = r#"{"operation": "start"}"#;
-        let operation: ChannelOperation = serde_json::from_str(json_data).unwrap();
-        assert_eq!(operation.operation, ChannelOperationKind::Start);
-
-        let json_data = r#"{"operation": "stop"}"#;
-        let operation: ChannelOperation = serde_json::from_str(json_data).unwrap();
-        assert_eq!(operation.operation, ChannelOperationKind::Stop);
-
-        let json_data = r#"{"operation": "restart"}"#;
-        let operation: ChannelOperation = serde_json::from_str(json_data).unwrap();
-        assert_eq!(operation.operation, ChannelOperationKind::Restart);
-
-        assert!(
-            serde_json::from_str::<ChannelOperation>(r#"{"operation": "invalid"}"#).is_err(),
-            "unsupported lifecycle operations must be rejected by the typed DTO"
-        );
     }
 
     #[test]

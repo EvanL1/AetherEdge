@@ -1876,6 +1876,34 @@
       "implementation_status": "partial",
       "production_readiness": "not-applicable",
       "context_sensitivity": "internal",
+      "updated": "2026-07-28",
+      "priority": "optional",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-docs-adr-0037-single-governed-io-composition",
+      "path": "docs/adr/0037-single-governed-io-composition.md",
+      "canonical_url": "https://github.com/EvanL1/AetherEdge/blob/main/docs/adr/0037-single-governed-io-composition.md",
+      "title": "ADR-0037: Keep one governed IO composition",
+      "description": "Accepted and implemented on 2026-08-19.",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "decision",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "inspect-edge-implementation"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "not-applicable",
+      "context_sensitivity": "internal",
       "updated": "2026-07-18",
       "priority": "optional",
       "media_type": "text/markdown",

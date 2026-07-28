@@ -41,7 +41,6 @@ use async_trait::async_trait;
 use super::modbus_client::ModbusClientWrapper;
 pub use super::modbus_config::{
     ConnectionMode, ModbusChannelConfig, ModbusChannelParamsConfig, ModbusMappingConfig,
-    ReconnectConfig,
 };
 use super::modbus_logging::create_packet_callback;
 
@@ -964,36 +963,6 @@ mod tests {
         let channel = ModbusChannel::new(config, 1, "test".to_string()).with_polling_interval(500);
 
         assert_eq!(channel.polling_interval_ms, 500);
-    }
-
-    #[test]
-    fn test_reconnect_config_defaults() {
-        let config = ReconnectConfig::default();
-
-        assert_eq!(config.cooldown_ms, 60_000);
-        assert_eq!(config.max_attempts, 0);
-        assert_eq!(config.zero_data_threshold, 5);
-    }
-
-    #[test]
-    fn test_reconnect_config_builder() {
-        let config = ReconnectConfig::new()
-            .with_cooldown_ms(30_000)
-            .with_max_attempts(10)
-            .with_zero_data_threshold(3);
-
-        assert_eq!(config.cooldown_ms, 30_000);
-        assert_eq!(config.max_attempts, 10);
-        assert_eq!(config.zero_data_threshold, 3);
-    }
-
-    #[test]
-    fn test_modbus_channel_with_reconnect() {
-        let reconnect = ReconnectConfig::new().with_cooldown_ms(10_000);
-        let config = ModbusChannelConfig::tcp("127.0.0.1:502").with_reconnect(reconnect);
-
-        let channel = ModbusChannel::new(config, 1, "test".to_string());
-        assert_eq!(channel.config.reconnect.cooldown_ms, 10_000);
     }
 
     #[test]

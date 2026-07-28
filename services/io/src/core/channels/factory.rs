@@ -40,7 +40,7 @@ use crate::protocols::core::error::Result;
 use crate::protocols::gateway::ChannelRuntime;
 
 #[cfg(feature = "modbus")]
-use crate::protocols::adapters::modbus::{ModbusChannel, ModbusChannelConfig, ReconnectConfig};
+use crate::protocols::adapters::modbus::{ModbusChannel, ModbusChannelConfig};
 #[cfg(feature = "modbus")]
 use crate::protocols::core::point::PointConfig;
 
@@ -190,9 +190,7 @@ pub fn create_modbus_channel(
 
     let address = format!("{}:{}", host, port);
 
-    let mut config = ModbusChannelConfig::tcp(&address)
-        .with_points(point_configs)
-        .with_reconnect(ReconnectConfig::default());
+    let mut config = ModbusChannelConfig::tcp(&address).with_points(point_configs);
 
     // Apply custom I/O timeout if provided
     if let Some(timeout_ms) = io_timeout_ms {
@@ -229,9 +227,7 @@ pub fn create_modbus_rtu_channel(
 ) -> Box<dyn ChannelRuntime> {
     use std::time::Duration;
 
-    let mut config = ModbusChannelConfig::rtu(device, baud_rate)
-        .with_points(point_configs)
-        .with_reconnect(ReconnectConfig::default());
+    let mut config = ModbusChannelConfig::rtu(device, baud_rate).with_points(point_configs);
 
     // Apply custom I/O timeout if provided
     if let Some(timeout_ms) = io_timeout_ms {

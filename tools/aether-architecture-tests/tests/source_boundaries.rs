@@ -721,6 +721,8 @@ fn io_composition_matches_the_runtime_manifest_authority() {
     let routes =
         fs::read_to_string(root.join("services/io/src/api/routes.rs")).expect("read IO routes");
     for retired in [
+        "pub fn create_api_routes(",
+        "/api/channels/{id}/control",
         "/api/protocols",
         "/api/channels/list",
         "/api/channels/search",
@@ -733,6 +735,29 @@ fn io_composition_matches_the_runtime_manifest_authority() {
         assert!(
             !routes.contains(retired),
             "IO restored duplicate browser/discovery route {retired}"
+        );
+    }
+
+    for (relative, retired) in [
+        (
+            "services/io/src/api/handlers/channel_management_handlers.rs",
+            "fn unavailable",
+        ),
+        (
+            "services/io/src/api/handlers/channel_management_handlers.rs",
+            "inner: Option<GovernedChannelManagement>",
+        ),
+        (
+            "services/io/src/protocols/adapters/modbus_config.rs",
+            "ReconnectConfig",
+        ),
+        ("services/io/src/protocols/core/slot.rs", "ShardedSlotStore"),
+    ] {
+        let source = fs::read_to_string(root.join(relative))
+            .unwrap_or_else(|error| panic!("failed to read {relative}: {error}"));
+        assert!(
+            !source.contains(retired),
+            "{relative} restored retired IO compatibility implementation {retired}"
         );
     }
 

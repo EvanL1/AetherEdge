@@ -535,7 +535,7 @@ async fn main() -> anyhow::Result<()> {
 
     // The loopback service publishes /openapi.json; only aether-api owns the
     // externally reachable Swagger UI.
-    // Note: HTTP request logging middleware is applied in create_api_routes()
+    // HTTP request logging middleware is applied by the API composition root.
 
     let socket = tokio::net::TcpSocket::new_v4()
         .map_err(|e| IoError::ConnectionError(format!("Failed to create socket: {}", e)))?;
