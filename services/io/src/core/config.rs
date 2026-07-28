@@ -56,7 +56,7 @@ pub use types::{
 };
 
 // Re-export common configuration types
-pub use common::{ApiConfig, BaseServiceConfig, FourRemote};
+pub use common::{ApiConfig, BaseServiceConfig};
 
 // Legacy aliases for backward compatibility
 pub type AppConfig = IoConfig;

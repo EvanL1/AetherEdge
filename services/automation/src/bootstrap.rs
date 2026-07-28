@@ -6,8 +6,7 @@
 use crate::config::AutomationConfig;
 use common::bootstrap_args::database_path;
 use common::bootstrap_database::setup_sqlite_pool;
-use common::bootstrap_system::{SystemRequirements, check_system_requirements_with};
-use common::service_bootstrap::{ServiceInfo, get_service_port};
+use common::service_bootstrap::ServiceInfo;
 use common::sqlite::ServiceConfigLoader;
 use common::{ApiConfig, BaseServiceConfig, DEFAULT_API_HOST};
 use sqlx::SqlitePool;
@@ -48,6 +47,16 @@ pub fn init_environment(service_info: &ServiceInfo) -> Result<()> {
     info!("Automation starting");
 
     Ok(())
+}
+
+fn resolve_service_port(config_port: u16, default_port: u16) -> u16 {
+    if config_port == 0 || config_port == default_port {
+        return std::env::var("SERVICE_PORT")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(default_port);
+    }
+    config_port
 }
 
 /// Load configuration from SQLite database
@@ -118,7 +127,7 @@ pub async fn load_configuration(service_info: &ServiceInfo) -> Result<Automation
     debug!("Config loaded");
 
     // Apply configuration priority: DB > ENV > Default
-    config.api.port = get_service_port(config.api.port, service_info);
+    config.api.port = resolve_service_port(config.api.port, service_info.default_port);
 
     // Perform runtime validation
     validate_configuration(&config)?;
@@ -486,6 +495,31 @@ pub async fn validate_routing_integrity(sqlite_pool: &SqlitePool) -> Result<()> 
     Ok(())
 }
 
+async fn wait_for_io(
+    health_url: &str,
+    timeout: std::time::Duration,
+) -> std::result::Result<(), String> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(3))
+        .build()
+        .map_err(|error| format!("failed to create HTTP client: {error}"))?;
+    let started = std::time::Instant::now();
+    loop {
+        match client.get(health_url).send().await {
+            Ok(response) if response.status().is_success() => return Ok(()),
+            Ok(response) => warn!(status = %response.status(), "aether-io is not ready"),
+            Err(error) => warn!(%error, "aether-io is not ready"),
+        }
+        if started.elapsed() > timeout {
+            return Err(format!(
+                "aether-io did not become ready within {}s at {health_url}",
+                timeout.as_secs()
+            ));
+        }
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+    }
+}
+
 /// Create application state with all initialized components
 pub async fn create_app_state(service_info: &ServiceInfo) -> Result<Arc<AppState>> {
     // Initialize environment
@@ -494,24 +528,9 @@ pub async fn create_app_state(service_info: &ServiceInfo) -> Result<Arc<AppState
     // Wait for io to be healthy before opening SHM (io must create the SHM file first)
     let io_base = common::io_url();
     let io_health = format!("{io_base}/health");
-    if let Err(e) = common::dependency::wait_for_dependency(
-        "aether-io",
-        &io_health,
-        std::time::Duration::from_secs(30),
-    )
-    .await
-    {
+    if let Err(e) = wait_for_io(&io_health, std::time::Duration::from_secs(30)).await {
         warn!("io health check failed: {e}. Continuing startup (SHM may be unavailable).");
     }
-
-    // Check system requirements
-    let requirements = SystemRequirements {
-        min_cpu_cores: 2,
-        min_memory_mb: 512,
-        recommended_cpu_cores: 4,
-        recommended_memory_mb: 1024,
-    };
-    check_system_requirements_with(requirements).print_summary();
 
     // Load configuration
     let config = Arc::new(load_configuration(service_info).await?);

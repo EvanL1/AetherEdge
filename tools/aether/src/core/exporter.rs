@@ -12,7 +12,7 @@ use std::sync::Arc;
 use tracing::{debug, info};
 
 // Cross-platform config DTOs shared with the services through `common`.
-use common::automation_config::{AutomationConfig, RuleConfig, RuleCore, RulesConfig};
+use common::automation_config::AutomationConfig;
 use common::io_config::{ChannelConfig, ChannelCore, IoConfig};
 
 /// CSV column headers for point exports
@@ -74,7 +74,6 @@ impl ConfigExporter {
             "global" => self.export_global(output_dir).await?,
             "aether-io" => self.export_io(output_dir).await?,
             "aether-automation" => self.export_automation(output_dir).await?,
-            "rules" => self.export_rules(output_dir).await?,
             _ => {
                 return Err(anyhow::anyhow!("Unknown service: {}", service));
             },
@@ -211,22 +210,6 @@ impl ConfigExporter {
             }
         }
 
-        // Export channel templates
-        let templates = self.export_channel_templates().await?;
-        if !templates.is_empty() {
-            let templates_dir = output_dir.join("templates");
-            std::fs::create_dir_all(&templates_dir)?;
-            for (name, template_json) in &templates {
-                let safe_name = name.replace(['/', '\\', ' '], "_");
-                let json_path = templates_dir.join(format!("{}.json", safe_name));
-                std::fs::write(&json_path, serde_json::to_string_pretty(template_json)?)?;
-                result
-                    .files_exported
-                    .push(format!("templates/{}.json", safe_name));
-                result.records_exported += 1;
-            }
-        }
-
         Ok(result)
     }
 
@@ -284,31 +267,6 @@ impl ConfigExporter {
         let rules = self.export_rules_as_json(&rules_dir).await?;
         result.files_exported.extend(rules.files_exported);
         result.records_exported += rules.records_exported;
-
-        Ok(result)
-    }
-
-    async fn export_rules(&self, output_dir: &Path) -> Result<ExportResult> {
-        let mut result = ExportResult::default();
-
-        // Export service configuration
-        let service_config = self.export_rules_config().await?;
-        let yaml_path = output_dir.join("rules.yaml");
-        let yaml_content = serde_yml::to_string(&service_config)?;
-        std::fs::write(&yaml_path, yaml_content)?;
-        result.files_exported.push("rules.yaml".to_string());
-
-        // Export rules list
-        let rules_list = self.export_rules_list().await?;
-        if !rules_list.is_empty() {
-            let rules_count = rules_list.len(); // Get length before move
-            let rules_yaml = output_dir.join("rules_list.yaml");
-            let rules_map: BTreeMap<String, Vec<RuleConfig>> =
-                BTreeMap::from_iter([("rules".to_string(), rules_list)]); // Move, not clone
-            std::fs::write(&rules_yaml, serde_yml::to_string(&rules_map)?)?;
-            result.files_exported.push("rules_list.yaml".to_string());
-            result.records_exported += rules_count;
-        }
 
         Ok(result)
     }
@@ -656,105 +614,6 @@ impl ConfigExporter {
         }
 
         Ok(mappings)
-    }
-
-    // Helper methods for rules export
-    async fn export_rules_config(&self) -> Result<RulesConfig> {
-        let mut config = RulesConfig::default();
-
-        let rows = sqlx::query("SELECT key, value FROM service_config")
-            .fetch_all(&self.pool)
-            .await?;
-
-        for row in rows {
-            let key: String = row.try_get("key")?;
-            let value: String = row.try_get("value")?;
-
-            match key.as_str() {
-                "service_name" => config.service.name = value,
-                "api_host" => config.api.host = value,
-                "service.port" | "api_port" | "port" => {
-                    config.api.port = value
-                        .parse()
-                        .unwrap_or(common::service_ports::AUTOMATION_PORT)
-                },
-                // execution_interval and batch_size are deprecated
-                "execution_interval" | "batch_size" => {},
-                _ => {},
-            }
-        }
-
-        Ok(config)
-    }
-
-    async fn export_rules_list(&self) -> Result<Vec<RuleConfig>> {
-        let mut rules_list = Vec::new();
-
-        let rows =
-            sqlx::query("SELECT id, name, description, flow_json, enabled, priority FROM rules")
-                .fetch_all(&self.pool)
-                .await?;
-
-        for row in rows {
-            let id: i64 = row.try_get("id")?;
-            let name: String = row.try_get("name")?;
-            let description: Option<String> = row.try_get("description")?;
-            let flow_json_str: String = row.try_get("flow_json")?;
-            let enabled: bool = row.try_get("enabled")?;
-            let priority: i64 = row.try_get("priority")?;
-
-            // Parse flow_json string to serde_json::Value
-            let flow_json = serde_json::from_str(&flow_json_str).unwrap_or(serde_json::Value::Null);
-
-            let rule = RuleConfig {
-                core: RuleCore {
-                    id,
-                    name,
-                    description,
-                    enabled,
-                    priority: u32::try_from(priority).unwrap_or(0),
-                },
-                flow_json,
-            };
-
-            rules_list.push(rule);
-        }
-
-        Ok(rules_list)
-    }
-
-    async fn export_channel_templates(&self) -> Result<Vec<(String, serde_json::Value)>> {
-        let rows = sqlx::query(
-            "SELECT template_id, name, description, protocol, points_snapshot, mappings_snapshot, source_channel_id
-             FROM channel_templates ORDER BY template_id",
-        )
-        .fetch_all(&self.pool)
-        .await?;
-
-        let mut templates = Vec::new();
-        for row in rows {
-            let name: String = row.try_get("name")?;
-            let description: Option<String> = row.try_get("description")?;
-            let protocol: String = row.try_get("protocol")?;
-            let points_snapshot: String = row.try_get("points_snapshot")?;
-            let mappings_snapshot: String = row.try_get("mappings_snapshot")?;
-            let source_channel_id: Option<i64> = row.try_get("source_channel_id")?;
-
-            let template = serde_json::json!({
-                "name": name,
-                "description": description,
-                "protocol": protocol,
-                "points_snapshot": serde_json::from_str::<serde_json::Value>(&points_snapshot)
-                    .unwrap_or(serde_json::Value::Null),
-                "mappings_snapshot": serde_json::from_str::<serde_json::Value>(&mappings_snapshot)
-                    .unwrap_or(serde_json::Value::Null),
-                "source_channel_id": source_channel_id,
-            });
-
-            templates.push((name, template));
-        }
-
-        Ok(templates)
     }
 
     async fn export_rules_as_json(&self, rules_dir: &Path) -> Result<ExportResult> {

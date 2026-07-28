@@ -22,7 +22,6 @@ pub mod factory; // Protocol client factory: create_*_channel() functions
 pub use types::{ChannelCommand, ChannelStatus, ConnectionState};
 
 // Re-export other types from local modules
-pub use crate::core::config::FourRemote;
 pub use channel_entry::{ChannelEntry, ChannelMetadata, ChannelStats};
 pub use channel_manager::ChannelManager;
 pub use shm_listener::ShmCommandListener;

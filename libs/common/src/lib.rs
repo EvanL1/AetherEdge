@@ -12,17 +12,12 @@ pub mod sqlite;
 pub mod admin_api;
 pub mod api_types;
 pub mod automation_config;
-pub mod config_loader;
 pub mod io_config;
 pub mod logging;
 mod serde_helpers;
 pub mod service_bootstrap;
 pub mod shutdown;
 pub mod system_metrics;
-pub mod validation;
-
-// Re-export commonly used csv types (previously in csv.rs module)
-pub use csv::{Reader, ReaderBuilder, StringRecord, Writer, WriterBuilder};
 
 // Re-export commonly used service_config types at crate root for convenience
 pub use service_config::{
@@ -33,27 +28,13 @@ pub use service_config::{
     ConfigValidator,
     // Constants
     DEFAULT_API_HOST,
-    DEFAULT_AUTOMATION_URL,
-    DEFAULT_IO_URL,
-    DEFAULT_RULES_URL,
-    ENV_AUTOMATION_URL,
-    ENV_IO_URL,
-    ENV_RULES_URL,
-    FourRemote,
-    GenericValidator,
-    LOCALHOST_HOST,
     PointRole,
     PointType,
     SERVICE_CONFIG_TABLE,
     SYNC_METADATA_TABLE,
-    // Database types
-    ServiceConfigRecord,
-    SyncMetadataRecord,
     ValidationLevel,
     ValidationResult,
     automation_url,
-    // Helpers
-    helpers,
     // URL resolver functions
     io_url,
 };
@@ -74,14 +55,9 @@ pub use api_types::{
 #[cfg(feature = "axum")]
 pub use api_types::AppError;
 
-// Startup dependency checker
-#[cfg(feature = "dependency")]
-pub mod dependency;
-
 // Bootstrap modules
 pub mod bootstrap_args;
 pub mod bootstrap_database;
-pub mod bootstrap_system;
 
 // Re-export common dependencies
 pub use anyhow;

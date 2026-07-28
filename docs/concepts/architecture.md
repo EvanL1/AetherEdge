@@ -105,13 +105,11 @@ atomically renamed over their canonical paths. Existing consumers keep the
 old inode until their periodic identity check reopens the new generation, and
 their subscription bitmaps are not truncated:
 
-1. During startup, aether-automation calls
-   `common::dependency::wait_for_dependency("aether-io", <aether-io>/health, 30s)`
-   (`services/automation/src/bootstrap.rs`). The helper
-   (`libs/common/src/dependency.rs`) polls the health URL every 2 seconds
-   until it returns HTTP 2xx or the timeout expires. If aether-io is still not
-   healthy after 30 seconds, aether-automation logs a warning and continues
-   starting — with shared memory possibly unavailable until aether-io comes up.
+1. During startup, aether-automation polls `<aether-io>/health` from its
+   composition root (`services/automation/src/bootstrap.rs`) every 2 seconds
+   for up to 30 seconds. If aether-io is still not healthy, automation logs a
+   warning and continues starting, with shared memory possibly unavailable
+   until aether-io comes up.
 2. When aether-automation opens live state,
    `ShmReadTopologyGeneration` checks both physical headers and the commit
    witness. A hash, slot count, epoch, or writer-generation mismatch remains

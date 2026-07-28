@@ -4,7 +4,7 @@
 //! - `MeasurementRoutingRow`, `ActionRoutingRow` - CSV/API request structures
 //! - `MeasurementRouting`, `ActionRouting` - Database records (sqlx::FromRow)
 
-use common::FourRemote;
+use common::PointType;
 use serde::{Deserialize, Serialize};
 
 /// CSV row structure for measurement routing (T/S → M)
@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MeasurementRoutingRow {
     pub channel_id: Option<i32>,
-    pub channel_type: Option<FourRemote>, // T or S only, None if unbound
+    pub channel_type: Option<PointType>, // T or S only, None if unbound
     pub channel_point_id: Option<u32>,
     pub measurement_id: u32,
 }
@@ -25,7 +25,7 @@ pub struct MeasurementRoutingRow {
 pub struct ActionRoutingRow {
     pub action_id: u32,
     pub channel_id: Option<i32>,
-    pub channel_type: Option<FourRemote>, // C or A only, None if unbound
+    pub channel_type: Option<PointType>, // C or A only, None if unbound
     pub channel_point_id: Option<u32>,
 }
 

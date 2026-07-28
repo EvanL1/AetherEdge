@@ -40,7 +40,6 @@ members = [
     "libs/aether-routing",
     "libs/aether-runtime-catalog",
     "libs/aether-rules",
-    "libs/aether-schema-macro",
     "services/alarm",
     "services/api",
     "services/history",

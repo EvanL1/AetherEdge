@@ -7,12 +7,8 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
-#[cfg(feature = "schema")]
-use schemars::JsonSchema;
-
 /// Physical point plane encoded by existing configuration and protocol DTOs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[repr(u8)]
 pub enum PointType {
     #[serde(rename = "T", alias = "YC", alias = "yc", alias = "telemetry")]

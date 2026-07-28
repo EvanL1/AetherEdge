@@ -172,7 +172,6 @@ AetherEdge/
 ├── libs/                    # 共享 Rust 库
 │   ├── aether-routing/    # 数据流路由
 │   ├── aether-rules/      # 规则引擎与表达式求值
-│   ├── aether-schema-macro/ # SQL DDL 过程宏
 │   └── common/             # 服务引导、配置 DTO 与 HTTP envelope
 │
 ├── firmware/               # 独立 workspace；固件 codec 与 ABI 类型

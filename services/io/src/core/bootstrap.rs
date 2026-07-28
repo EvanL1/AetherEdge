@@ -7,7 +7,7 @@
 //! Uses common bootstrap utilities for shared functionality
 
 use clap::Parser;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 use crate::core::config::DEFAULT_PORT;
 use anyhow::Result;
@@ -15,9 +15,6 @@ use common::DEFAULT_API_HOST;
 use common::service_bootstrap::ServiceInfo;
 
 use crate::core::config::ConfigManager;
-
-// Re-export common bootstrap functionality
-pub use common::bootstrap_system::check_system_requirements;
 
 /// Command-line arguments for io
 #[derive(Parser)]
@@ -104,20 +101,24 @@ pub fn determine_bind_address(
         return config_addr;
     }
 
-    // Try environment variables
-    let port = common::config_loader::get_config_value(
-        Some(config_port),
-        is_config_default,
-        "SERVICE_PORT",
-        DEFAULT_PORT,
-    );
+    let port = std::env::var("SERVICE_PORT")
+        .ok()
+        .and_then(|value| match value.parse::<u16>() {
+            Ok(port) => Some(port),
+            Err(error) => {
+                warn!(%error, "ignoring invalid SERVICE_PORT");
+                None
+            },
+        })
+        .unwrap_or(DEFAULT_PORT);
+    let host = if config_host.is_empty() {
+        std::env::var("SERVICE_HOST")
+            .ok()
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| DEFAULT_API_HOST.to_string())
+    } else {
+        config_host.to_string()
+    };
 
-    let host = common::config_loader::get_string_config(
-        Some(config_host.to_string()),
-        config_host.is_empty(),
-        "SERVICE_HOST",
-        DEFAULT_API_HOST.to_string(),
-    );
-
-    format!("{}:{}", host, port)
+    format!("{host}:{port}")
 }

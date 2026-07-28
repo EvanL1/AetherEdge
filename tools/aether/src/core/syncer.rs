@@ -3,10 +3,10 @@
 //! This module is responsible for syncing configuration from YAML/CSV files
 //! to the SQLite database.
 
+use super::file_utils::CsvFields;
 use anyhow::{Context, Result};
 use common::automation_config::AutomationConfig;
 use common::io_config::IoConfig;
-use common::validation::CsvFields;
 use serde::de::DeserializeOwned;
 use serde_json::Value as JsonValue;
 use sqlx::{Sqlite, Transaction};
@@ -1964,14 +1964,6 @@ channels:
         let database_file = database_path.join("aether.db");
         let pool = connect_to_database(&database_file).await;
         sqlx::query(
-            "INSERT INTO channel_templates \
-             (name, protocol, points_snapshot, mappings_snapshot, source_channel_id) \
-             VALUES ('api-template', 'modbus_tcp', '[]', '[]', 1)",
-        )
-        .execute(&pool)
-        .await
-        .unwrap();
-        sqlx::query(
             "INSERT INTO measurement_routing \
              (instance_id, instance_name, channel_id, channel_type, channel_point_id, measurement_id) \
              VALUES (1, 'configured-device', 1, 'T', 77, 88)",
@@ -2041,12 +2033,6 @@ channels:
             .fetch_one(&pool)
             .await
             .unwrap();
-        let template_source: Option<i64> = sqlx::query_scalar(
-            "SELECT source_channel_id FROM channel_templates WHERE name = 'api-template'",
-        )
-        .fetch_one(&pool)
-        .await
-        .unwrap();
         let routing_target: Option<i64> = sqlx::query_scalar(
             "SELECT channel_id FROM measurement_routing \
              WHERE instance_id = 1 AND measurement_id = 88",
@@ -2086,7 +2072,6 @@ channels:
 
         assert_eq!(channel_count, 2, "API-created channel must be preserved");
         assert_eq!(instance_count, 2, "API-created instance must be preserved");
-        assert_eq!(template_source, Some(1));
         assert_eq!(routing_target, Some(1));
         assert_eq!(property_value, "\"api-owned\"");
         assert_eq!(api_config_value, "preserve");

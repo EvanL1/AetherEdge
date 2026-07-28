@@ -7,7 +7,7 @@
 //! 4. Handles invalid enum values during import
 
 use anyhow::Result;
-use common::{FourRemote, PointRole};
+use common::{PointRole, PointType};
 use std::fs;
 use std::path::PathBuf;
 use std::str::FromStr;
@@ -102,7 +102,7 @@ impl TestEnvironment {
 async fn test_io_four_remote_import_export() -> Result<()> {
     let env = TestEnvironment::new()?;
 
-    // Create a channels.yaml with FourRemote enums
+    // Create a channels.yaml with PointType enums
     let channels_yaml = r#"
 channels:
   - channel_id: 1001
@@ -246,17 +246,17 @@ instances:
 
     // Test enum parsing directly
     let test_four_remotes = vec![
-        ("T", FourRemote::Telemetry),
-        ("S", FourRemote::Signal),
-        ("C", FourRemote::Control),
-        ("A", FourRemote::Adjustment),
+        ("T", PointType::Telemetry),
+        ("S", PointType::Signal),
+        ("C", PointType::Control),
+        ("A", PointType::Adjustment),
     ];
 
     for (type_str, expected) in test_four_remotes {
         let parsed = type_str
-            .parse::<FourRemote>()
+            .parse::<PointType>()
             .map_err(|e| anyhow::anyhow!("Failed to parse four remote type {}: {}", type_str, e))?;
-        assert_eq!(parsed, expected, "FourRemote parsing works");
+        assert_eq!(parsed, expected, "PointType parsing works");
     }
 
     let test_point_roles = vec![("M", PointRole::Measurement), ("A", PointRole::Action)];

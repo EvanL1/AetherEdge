@@ -6,15 +6,12 @@ edition = "2024"
 license.workspace = true
 
 [features]
-default = ["sqlite", "axum", "openapi"]
+default = ["sqlite"]
 sqlite = ["dep:sqlx"]
-dependency = ["dep:reqwest"]
 axum = ["dep:axum"]
 openapi = ["dep:utoipa"]
-schema = ["dep:schemars"]
 
 [dependencies]
-aether-schema-macro = { path = "../aether-schema-macro" }
 tokio = { workspace = true, features = ["full"] }
 tokio-util = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
@@ -29,19 +26,12 @@ tracing-subscriber = { workspace = true, features = [
 chrono = { workspace = true, features = ["serde"] }
 anyhow = { workspace = true }
 thiserror = { workspace = true }
-csv = { workspace = true }
 axum = { workspace = true, optional = true }
 utoipa = { workspace = true, optional = true }
 sysinfo = "0.32"
 
-# Startup dependency health check
-reqwest = { workspace = true, features = ["json"], optional = true }
-
 # SQLite - kept for direct usage in test_utils and service_config
 sqlx = { workspace = true, optional = true }
-
-# Schema generation
-schemars = { version = "0.8", optional = true }
 
 [dev-dependencies]
 

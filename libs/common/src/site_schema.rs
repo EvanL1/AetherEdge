@@ -6,8 +6,27 @@
 use anyhow::Result;
 use sqlx::SqlitePool;
 
-// Re-export common table constants
-pub use crate::{SERVICE_CONFIG_TABLE, SYNC_METADATA_TABLE};
+/// Shared key/value service configuration table.
+pub const SERVICE_CONFIG_TABLE: &str = r#"
+    CREATE TABLE IF NOT EXISTS service_config (
+        service_name TEXT NOT NULL,
+        key TEXT NOT NULL,
+        value TEXT NOT NULL,
+        type TEXT DEFAULT 'string',
+        description TEXT,
+        updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (service_name, key)
+    )
+"#;
+
+/// Per-service offline commissioning revision metadata.
+pub const SYNC_METADATA_TABLE: &str = r#"
+    CREATE TABLE IF NOT EXISTS sync_metadata (
+        service TEXT PRIMARY KEY,
+        last_sync TEXT NOT NULL,
+        version TEXT
+    )
+"#;
 
 // ============================================================================
 // Io Table DDL
@@ -238,32 +257,6 @@ pub const ADJUSTMENT_POINTS_TABLE: &str = r#"
         PRIMARY KEY (channel_id, point_id)
     )
 "#;
-
-// ============================================================================
-// Channel Templates DDL
-// ============================================================================
-
-/// Channel templates table DDL — stores point configuration snapshots as JSON
-///
-/// Templates capture a channel's complete point definitions and protocol mappings,
-/// enabling "save once → apply many" workflows for devices with identical configurations.
-pub const CHANNEL_TEMPLATES_TABLE: &str = r#"
-    CREATE TABLE IF NOT EXISTS channel_templates (
-        template_id       INTEGER PRIMARY KEY AUTOINCREMENT,
-        name              TEXT NOT NULL UNIQUE,
-        description       TEXT,
-        protocol          TEXT NOT NULL,
-        points_snapshot   TEXT NOT NULL,
-        mappings_snapshot TEXT NOT NULL,
-        source_channel_id INTEGER REFERENCES channels(channel_id) ON DELETE SET NULL,
-        created_at        TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        updated_at        TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-    )
-"#;
-
-/// Index on channel_templates.source_channel_id — accelerates lookups by source
-/// channel and lets `ON DELETE SET NULL` cascade cheaply.
-pub const CHANNEL_TEMPLATES_SOURCE_INDEX: &str = "CREATE INDEX IF NOT EXISTS idx_channel_templates_source ON channel_templates(source_channel_id)";
 
 // ============================================================================
 // Automation Table DDL (matches automation::config schemas)
@@ -735,12 +728,6 @@ pub async fn init_io_schema(pool: &SqlitePool) -> Result<()> {
     sqlx::query(CONTROL_POINTS_TABLE).execute(pool).await?;
     sqlx::query(ADJUSTMENT_POINTS_TABLE).execute(pool).await?;
 
-    // Channel templates table
-    sqlx::query(CHANNEL_TEMPLATES_TABLE).execute(pool).await?;
-    sqlx::query(CHANNEL_TEMPLATES_SOURCE_INDEX)
-        .execute(pool)
-        .await?;
-
     Ok(())
 }
 
@@ -817,10 +804,10 @@ mod tests {
                 .await
                 .unwrap();
 
-        // Should have 8 tables: service_config, sync_metadata, channels, 4 point tables, channel_templates
+        // service_config, sync_metadata, channels, and four point tables.
         assert!(
-            result.0 >= 8,
-            "Expected at least 8 tables, found {}",
+            result.0 >= 7,
+            "Expected at least 7 tables, found {}",
             result.0
         );
 

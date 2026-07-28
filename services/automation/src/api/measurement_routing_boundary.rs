@@ -6,7 +6,7 @@ use aether_ports::{
     LogicalRoutingRevision, MeasurementRoute, MeasurementRouteKey, MeasurementRoutingMutation,
 };
 use axum::http::HeaderMap;
-use common::FourRemote;
+use common::PointType;
 use serde_json::{Value, json};
 
 use crate::app_state::AppState;
@@ -23,9 +23,9 @@ pub fn upsert_mutation(
         AutomationError::InvalidRouting("channel_id must be non-negative".to_string())
     })?;
     let kind = match request.four_remote {
-        FourRemote::Telemetry => PointKind::Telemetry,
-        FourRemote::Signal => PointKind::Status,
-        FourRemote::Control | FourRemote::Adjustment => {
+        PointType::Telemetry => PointKind::Telemetry,
+        PointType::Signal => PointKind::Status,
+        PointType::Control | PointType::Adjustment => {
             return Err(AutomationError::InvalidRouting(
                 "measurement routes may target only T or S channel points".to_string(),
             ));

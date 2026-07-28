@@ -3,21 +3,39 @@
 //! This module provides validation functionality for service configurations
 //! using the shared validation framework.
 
-use anyhow::Result;
+use anyhow::{Context, Result};
+use serde::de::DeserializeOwned;
 use std::path::{Path, PathBuf};
 use tracing::{debug, info, warn};
 
 // Import validation types from common
-use common::{ConfigValidator as _, GenericValidator, ValidationLevel, ValidationResult};
+use common::{ValidationLevel, ValidationResult};
 
 // Cross-platform config DTOs shared with the services through `common`.
-use common::automation_config::{AutomationConfig, RulesConfig};
+use common::automation_config::AutomationConfig;
 use common::io_config::IoConfig;
 
-// Type aliases for validators
-type IoValidator = GenericValidator<IoConfig>;
-type AutomationValidator = GenericValidator<AutomationConfig>;
-type RulesValidator = GenericValidator<RulesConfig>;
+fn validate_file<T>(path: &Path, level: ValidationLevel) -> Result<ValidationResult>
+where
+    T: DeserializeOwned + common::ConfigValidator,
+{
+    let content = std::fs::read_to_string(path)
+        .with_context(|| format!("Failed to read file: {}", path.display()))?;
+    let config = serde_yml::from_str::<T>(&content).map_err(|error| {
+        if let Some(location) = error.location() {
+            anyhow::anyhow!(
+                "Configuration error in {}:{}:{}\n  {}",
+                path.display(),
+                location.line(),
+                location.column(),
+                error
+            )
+        } else {
+            anyhow::anyhow!("Configuration error in {}\n  {}", path.display(), error)
+        }
+    })?;
+    config.validate(level)
+}
 
 /// Create a failed validation result with error message
 fn validation_error(error: impl Into<String>) -> ValidationResult {
@@ -75,7 +93,6 @@ impl ConfigValidator {
         let result = match service {
             "aether-io" => self.validate_io().await?,
             "aether-automation" => self.validate_automation().await?,
-            "rules" => self.validate_rules().await?,
             _ => return Ok(validation_error(format!("Unknown service: {}", service))),
         };
 
@@ -105,8 +122,7 @@ impl ConfigValidator {
 
         // Load and validate using shared framework
         // Note: Errors from from_file already include file path + line number + reason
-        let validator = IoValidator::from_file(&yaml_path)?;
-        validator.validate(self.validation_level)
+        validate_file::<IoConfig>(&yaml_path, self.validation_level)
     }
 
     /// Validate automation configuration
@@ -123,26 +139,7 @@ impl ConfigValidator {
 
         // Load and validate using shared framework
         // Note: Errors from from_file already include file path + line number + reason
-        let validator = AutomationValidator::from_file(&yaml_path)?;
-        validator.validate(self.validation_level)
-    }
-
-    /// Validate rules configuration
-    async fn validate_rules(&self) -> Result<ValidationResult> {
-        let yaml_path = self.config_path.join("rules").join("rules.yaml");
-
-        // Check if file exists
-        if !yaml_path.exists() {
-            return Ok(validation_error(format!(
-                "Missing required file: {:?}",
-                yaml_path
-            )));
-        }
-
-        // Load and validate using shared framework
-        // Note: Errors from from_file already include file path + line number + reason
-        let validator = RulesValidator::from_file(&yaml_path)?;
-        validator.validate(self.validation_level)
+        validate_file::<AutomationConfig>(&yaml_path, self.validation_level)
     }
 
     /// Validate global configuration

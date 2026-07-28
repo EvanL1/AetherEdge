@@ -13,11 +13,11 @@ use common::site_schema::{
     ACTION_ROUTING_TABLE, ADJUSTMENT_POINTS_TABLE, CHANNEL_REVISION_BUMP_TRIGGER,
     CHANNEL_REVISION_DELETE_EXHAUSTED_TRIGGER, CHANNEL_REVISION_DELETE_TOMBSTONE_TRIGGER,
     CHANNEL_REVISION_EXHAUSTED_TRIGGER, CHANNEL_REVISION_INSERT_ADVANCE_TRIGGER,
-    CHANNEL_REVISION_INSERT_GUARD_TRIGGER, CHANNEL_REVISION_TOMBSTONES_TABLE,
-    CHANNEL_TEMPLATES_TABLE, CHANNELS_TABLE, CONFIGURATION_REVISIONS_TABLE, CONTROL_POINTS_TABLE,
-    INSTANCE_PROPERTIES_TABLE, INSTANCES_TABLE, LOGICAL_ROUTING_INTEGRITY_TRIGGER_NAMES,
-    LOGICAL_ROUTING_INTEGRITY_TRIGGERS, MEASUREMENT_ROUTING_TABLE, SERVICE_CONFIG_TABLE,
-    SIGNAL_POINTS_TABLE, SYNC_METADATA_TABLE, TELEMETRY_POINTS_TABLE,
+    CHANNEL_REVISION_INSERT_GUARD_TRIGGER, CHANNEL_REVISION_TOMBSTONES_TABLE, CHANNELS_TABLE,
+    CONFIGURATION_REVISIONS_TABLE, CONTROL_POINTS_TABLE, INSTANCE_PROPERTIES_TABLE,
+    INSTANCES_TABLE, LOGICAL_ROUTING_INTEGRITY_TRIGGER_NAMES, LOGICAL_ROUTING_INTEGRITY_TRIGGERS,
+    MEASUREMENT_ROUTING_TABLE, SERVICE_CONFIG_TABLE, SIGNAL_POINTS_TABLE, SYNC_METADATA_TABLE,
+    TELEMETRY_POINTS_TABLE,
 };
 
 use super::file_utils;
@@ -104,10 +104,6 @@ async fn run_migrations(pool: &SqlitePool) -> Result<()> {
 
     if current < 2 {
         migrate_v2(&mut conn).await.context("Migration v2 failed")?;
-    }
-
-    if current < 3 {
-        migrate_v3(&mut conn).await.context("Migration v3 failed")?;
     }
 
     if current < 4 {
@@ -274,21 +270,6 @@ async fn migrate_v1(conn: &mut sqlx::pool::PoolConnection<Sqlite>) -> Result<()>
 /// mapping before running the kernel schema upgrade.
 async fn migrate_v2(_conn: &mut sqlx::pool::PoolConnection<Sqlite>) -> Result<()> {
     info!("Migration v2: domain product aliases are Pack-owned (kernel no-op)");
-    Ok(())
-}
-
-/// v3: Add `channel_templates` table for protocol point-table template management
-///
-/// Stores JSON snapshots of channel point definitions and protocol mappings,
-/// enabling "save once → apply many" workflows for identically-configured devices.
-async fn migrate_v3(conn: &mut sqlx::pool::PoolConnection<Sqlite>) -> Result<()> {
-    info!("Migration v3: creating channel_templates table");
-
-    sqlx::query(CHANNEL_TEMPLATES_TABLE)
-        .execute(&mut **conn)
-        .await?;
-
-    info!("Migration v3: complete");
     Ok(())
 }
 
@@ -480,7 +461,6 @@ async fn migrate_v5(conn: &mut sqlx::pool::PoolConnection<Sqlite>) -> Result<()>
 /// Rolls up several long-overdue fixes in one shot:
 /// - `rules.id` gains AUTOINCREMENT so deleted ids are never reused
 /// - `rule_history.rule_id` gains `ON DELETE CASCADE` (no more orphan history)
-/// - `channel_templates.source_channel_id` gains FK to channels + an index
 /// - Drops 2 unused indexes on `alert_rule` (description and created_at —
 ///   the former never matched equality, the latter rarely queried)
 ///
@@ -503,7 +483,7 @@ async fn migrate_v6(conn: &mut sqlx::pool::PoolConnection<Sqlite>) -> Result<()>
     // `INSERT INTO rules_new SELECT FROM rules`, which fails on a fresh
     // DB with `no such table: rules`. Add `rules_exists` so we only
     // touch an existing legacy table, matching the pattern used by
-    // sections 2 (rule_history) and 3 (channel_templates) below.
+    // section 2 (rule_history) below.
     let rules_exists: bool = sqlx::query_scalar(
         "SELECT COUNT(*) > 0 FROM sqlite_master WHERE type='table' AND name='rules'",
     )
@@ -623,84 +603,7 @@ async fn migrate_v6(conn: &mut sqlx::pool::PoolConnection<Sqlite>) -> Result<()>
         info!("Migration v6: rule_history rebuilt with ON DELETE CASCADE");
     }
 
-    // ── 3. Rebuild `channel_templates` with FK + index ───────────────────
-    let templates_has_fk: bool = sqlx::query_scalar(
-        "SELECT COUNT(*) > 0 FROM sqlite_master \
-         WHERE type='table' AND name='channel_templates' \
-           AND sql LIKE '%REFERENCES channels%'",
-    )
-    .fetch_one(&mut **conn)
-    .await?;
-
-    let templates_exists: bool = sqlx::query_scalar(
-        "SELECT COUNT(*) > 0 FROM sqlite_master \
-         WHERE type='table' AND name='channel_templates'",
-    )
-    .fetch_one(&mut **conn)
-    .await?;
-
-    if templates_exists && !templates_has_fk {
-        // Null out any source_channel_id that no longer points at a real
-        // channel — once FK is declared, those rows would fail constraint.
-        sqlx::query(
-            "UPDATE channel_templates SET source_channel_id = NULL \
-             WHERE source_channel_id IS NOT NULL \
-               AND source_channel_id NOT IN (SELECT channel_id FROM channels)",
-        )
-        .execute(&mut **conn)
-        .await?;
-
-        sqlx::query(
-            "CREATE TABLE channel_templates_new (
-                template_id       INTEGER PRIMARY KEY AUTOINCREMENT,
-                name              TEXT NOT NULL UNIQUE,
-                description       TEXT,
-                protocol          TEXT NOT NULL,
-                points_snapshot   TEXT NOT NULL,
-                mappings_snapshot TEXT NOT NULL,
-                source_channel_id INTEGER REFERENCES channels(channel_id) ON DELETE SET NULL,
-                created_at        TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                updated_at        TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-            )",
-        )
-        .execute(&mut **conn)
-        .await?;
-        sqlx::query(
-            "INSERT INTO channel_templates_new \
-                (template_id, name, description, protocol, points_snapshot, \
-                 mappings_snapshot, source_channel_id, created_at, updated_at) \
-             SELECT template_id, name, description, protocol, points_snapshot, \
-                    mappings_snapshot, source_channel_id, created_at, updated_at \
-             FROM channel_templates",
-        )
-        .execute(&mut **conn)
-        .await?;
-        sqlx::query("DROP TABLE channel_templates")
-            .execute(&mut **conn)
-            .await?;
-        sqlx::query("ALTER TABLE channel_templates_new RENAME TO channel_templates")
-            .execute(&mut **conn)
-            .await?;
-        info!("Migration v6: channel_templates rebuilt with source_channel_id FK");
-    }
-
-    // (Re)create the index — cheap if it already exists. Gated on
-    // `templates_exists` so a fresh DB (where `channel_templates`
-    // hasn't been created by init_database yet) does not error on
-    // CREATE INDEX against a missing table. The index is recreated
-    // after init_database's CHANNEL_TEMPLATES_TABLE bootstrap via the
-    // helper below; fresh DBs do not need this migration step to wire
-    // it up.
-    if templates_exists {
-        sqlx::query(
-            "CREATE INDEX IF NOT EXISTS idx_channel_templates_source \
-             ON channel_templates(source_channel_id)",
-        )
-        .execute(&mut **conn)
-        .await?;
-    }
-
-    // ── 4. Drop unused alert_rule indexes ────────────────────────────────
+    // ── 3. Drop unused alert_rule indexes ────────────────────────────────
     sqlx::query("DROP INDEX IF EXISTS idx_alert_rule_description")
         .execute(&mut **conn)
         .await?;
@@ -1599,9 +1502,6 @@ pub async fn init_database(db_path: impl AsRef<Path>) -> Result<()> {
     sqlx::query(CONTROL_POINTS_TABLE).execute(&pool).await?;
     sqlx::query(ADJUSTMENT_POINTS_TABLE).execute(&pool).await?;
 
-    // === Channel templates table ===
-    sqlx::query(CHANNEL_TEMPLATES_TABLE).execute(&pool).await?;
-
     // === Instance tables ===
     sqlx::query(INSTANCES_TABLE).execute(&pool).await?;
     sqlx::query(MEASUREMENT_ROUTING_TABLE)
@@ -1646,13 +1546,6 @@ async fn create_indexes(pool: &SqlitePool) -> Result<()> {
     .await?;
     sqlx::query(
         "CREATE INDEX IF NOT EXISTS idx_adjustment_points_channel ON adjustment_points(channel_id)",
-    )
-    .execute(pool)
-    .await?;
-
-    // Channel templates index for source_channel_id lookups (added in v6)
-    sqlx::query(
-        "CREATE INDEX IF NOT EXISTS idx_channel_templates_source ON channel_templates(source_channel_id)",
     )
     .execute(pool)
     .await?;

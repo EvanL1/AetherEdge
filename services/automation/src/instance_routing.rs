@@ -101,8 +101,8 @@ impl InstanceManager {
         instance_name: &str,
         point_id: u32,
         point_label: &str,
-        channel_type: &Option<common::FourRemote>,
-        is_valid_direction: impl Fn(&common::FourRemote) -> bool,
+        channel_type: &Option<common::PointType>,
+        is_valid_direction: impl Fn(&common::PointType) -> bool,
         direction_label: &str,
         check_point_in_product: impl FnOnce(&crate::config::Product) -> bool,
     ) -> Result<ValidationResult> {
@@ -163,7 +163,7 @@ impl InstanceManager {
 mod tests {
     use std::sync::Arc;
 
-    use common::FourRemote;
+    use common::PointType;
     use sqlx::SqlitePool;
 
     use super::*;
@@ -195,7 +195,7 @@ mod tests {
         let (_directory, manager) = fixture().await;
         let routing = MeasurementRoutingRow {
             channel_id: Some(3001),
-            channel_type: Some(FourRemote::Telemetry),
+            channel_type: Some(PointType::Telemetry),
             channel_point_id: Some(101),
             measurement_id: 1,
         };
@@ -214,7 +214,7 @@ mod tests {
         let (_directory, manager) = fixture().await;
         let routing = MeasurementRoutingRow {
             channel_id: Some(3001),
-            channel_type: Some(FourRemote::Control),
+            channel_type: Some(PointType::Control),
             channel_point_id: Some(101),
             measurement_id: 9999,
         };

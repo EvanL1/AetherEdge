@@ -1,7 +1,6 @@
 //! Io service configuration structures
 
 use crate::serde_helpers::deserialize_bool_flexible;
-use crate::validation::CsvFields;
 use crate::{ApiConfig, BaseServiceConfig, ConfigValidator, ValidationLevel, ValidationResult};
 
 use serde::{Deserialize, Serialize};
@@ -572,28 +571,6 @@ impl ChannelConfig {
         }
     }
 }
-
-/// Common CSV field names shared by all point types
-fn point_csv_fields() -> Vec<String> {
-    [
-        "point_id",
-        "signal_name",
-        "scale",
-        "offset",
-        "unit",
-        "reverse",
-        "data_type",
-    ]
-    .into_iter()
-    .map(String::from)
-    .collect()
-}
-
-/// All four point types share the same CSV column layout
-macro_rules! impl_csv_fields {
-    ($($t:ty),+) => { $(impl CsvFields for $t { fn field_names() -> Vec<String> { point_csv_fields() } })+ };
-}
-impl_csv_fields!(TelemetryPoint, SignalPoint, ControlPoint, AdjustmentPoint);
 
 #[cfg(test)]
 #[allow(clippy::disallowed_methods)] // Test code - unwrap is acceptable

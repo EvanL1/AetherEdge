@@ -76,36 +76,6 @@ pub fn load_development_env() {
     // No-op in release builds - production environments should set environment variables externally
 }
 
-/// Helper to get service port from configuration or environment
-pub fn get_service_port(config_port: u16, service: &ServiceInfo) -> u16 {
-    // Check if config port is default
-    let is_default = config_port == 0 || config_port == service.default_port;
-
-    if is_default {
-        // Try SERVICE_PORT first (unified across all services)
-        if let Ok(port) = std::env::var("SERVICE_PORT")
-            && let Ok(p) = port.parse::<u16>()
-        {
-            return p;
-        }
-
-        // Fallback to service-specific environment variable
-        let env_var = format!("{}_PORT", service.name.to_uppercase());
-        if let Ok(port) = std::env::var(&env_var)
-            && let Ok(p) = port.parse::<u16>()
-        {
-            return p;
-        }
-    }
-
-    // Return config port or default
-    if config_port > 0 {
-        config_port
-    } else {
-        service.default_port
-    }
-}
-
 #[cfg(test)]
 #[allow(clippy::disallowed_methods)] // Test code - unwrap is acceptable
 mod tests {

@@ -255,17 +255,6 @@ pub struct CreateInstanceRequest {
 /// Product hierarchy using tuples (following CLAUDE.md)
 pub type ProductHierarchy = Vec<(String, Option<String>)>;
 
-/// Topology tree node for hierarchical instance display
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "openapi", derive(ToSchema))]
-pub struct TopologyNode {
-    pub instance_id: u32,
-    pub instance_name: String,
-    pub product_name: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub parent_id: Option<u32>,
-}
-
 // ============================================================================
 // Validation implementations
 // ============================================================================
@@ -336,140 +325,6 @@ impl crate::ConfigValidator for AutomationConfig {
     }
 }
 
-// ============================================================================
-// Centralized SQL Queries for Automation
-// ============================================================================
-// ============================================================================
-// Rules Configuration Types (for YAML config export/import)
-// ============================================================================
-
-/// Default API configuration for rules (port 6002, merged into automation)
-fn default_rules_api() -> ApiConfig {
-    ApiConfig {
-        host: crate::DEFAULT_API_HOST.to_string(),
-        port: 6002,
-    }
-}
-
-/// Rules service configuration
-/// Used by aether for YAML config export/import
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RulesConfig {
-    /// Base service configuration
-    #[serde(flatten)]
-    pub service: BaseServiceConfig,
-
-    /// API configuration (has default value)
-    #[serde(default = "default_rules_api")]
-    pub api: ApiConfig,
-}
-
-impl Default for RulesConfig {
-    fn default() -> Self {
-        let service = BaseServiceConfig {
-            name: "rules".to_string(),
-            ..Default::default()
-        };
-
-        let api = ApiConfig {
-            host: crate::DEFAULT_API_HOST.to_string(),
-            port: 6002, // merged into automation
-        };
-
-        Self { service, api }
-    }
-}
-
-/// Rule core fields (shared between Config and API responses)
-/// These fields represent the essential rule identity and state
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RuleCore {
-    /// Rule ID
-    pub id: i64,
-
-    /// Rule name
-    pub name: String,
-
-    /// Rule description
-    pub description: Option<String>,
-
-    /// Whether the rule is enabled
-    #[serde(default = "bool_true")]
-    pub enabled: bool,
-
-    /// Priority (higher number = higher priority)
-    #[serde(default)]
-    pub priority: u32,
-}
-
-/// Individual rule configuration for vue-flow/node-red
-/// Used by aether for YAML config export/import
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RuleConfig {
-    /// Core rule fields
-    #[serde(flatten)]
-    pub core: RuleCore,
-
-    /// Complete flow graph JSON (nodes, edges, viewport, etc.)
-    pub flow_json: serde_json::Value,
-}
-
-impl RuleConfig {
-    /// Convenient accessor for rule ID
-    pub fn id(&self) -> i64 {
-        self.core.id
-    }
-
-    /// Convenient accessor for rule name
-    pub fn name(&self) -> &str {
-        &self.core.name
-    }
-
-    /// Convenient accessor for enabled status
-    pub fn is_enabled(&self) -> bool {
-        self.core.enabled
-    }
-
-    /// Convenient accessor for priority
-    pub fn priority(&self) -> u32 {
-        self.core.priority
-    }
-}
-
-// ============================================================================
-// RulesConfig Validation Implementation
-// ============================================================================
-
-impl crate::ConfigValidator for RulesConfig {
-    fn validate_syntax(&self) -> Result<ValidationResult> {
-        Ok(ValidationResult::new(ValidationLevel::Syntax))
-    }
-
-    fn validate_schema(&self) -> Result<ValidationResult> {
-        let mut result = ValidationResult::new(ValidationLevel::Schema);
-
-        // Validate common components
-        self.service.validate(&mut result);
-        self.api.validate(&mut result);
-
-        Ok(result)
-    }
-
-    fn validate_business(&self) -> Result<ValidationResult> {
-        let result = ValidationResult::new(ValidationLevel::Business);
-        Ok(result)
-    }
-
-    fn validate_runtime(&self) -> Result<ValidationResult> {
-        let mut result = ValidationResult::new(ValidationLevel::Runtime);
-
-        // Port availability check
-        self.api.validate_runtime(&mut result);
-
-        Ok(result)
-    }
-}
-
 #[cfg(test)]
 #[allow(clippy::disallowed_methods)]
 mod tests {
@@ -477,15 +332,11 @@ mod tests {
 
     #[test]
     fn default_automation_configs_do_not_serialize_redis() {
-        for serialized in [
-            serde_json::to_value(AutomationConfig::default()).unwrap(),
-            serde_json::to_value(RulesConfig::default()).unwrap(),
-        ] {
-            assert!(
-                serialized.get("redis").is_none(),
-                "SHM-only automation config must not expose Redis"
-            );
-        }
+        let serialized = serde_json::to_value(AutomationConfig::default()).unwrap();
+        assert!(
+            serialized.get("redis").is_none(),
+            "SHM-only automation config must not expose Redis"
+        );
     }
 
     #[test]

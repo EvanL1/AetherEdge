@@ -48,8 +48,6 @@ async fn main() -> anyhow::Result<()> {
     if !args.no_color {
         common::service_bootstrap::print_startup_banner(&service_info);
     }
-    let _system_info = bootstrap::check_system_requirements();
-
     // Validation mode: validate and exit
     if args.validate {
         bootstrap::validate_configuration().await?;

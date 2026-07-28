@@ -1,13 +1,91 @@
 //! Utility functions for configuration loading and processing
 
 use anyhow::{Context, Result};
-use common::validation::{CsvFields, CsvHeaderValidator};
+use common::io_config::{AdjustmentPoint, ControlPoint, SignalPoint, TelemetryPoint};
 use csv::Reader;
 use serde::de::DeserializeOwned;
 use serde_json::Value as JsonValue;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use tracing::{debug, warn};
+
+/// CSV records that declare their reviewed commissioning columns.
+pub trait CsvFields {
+    fn field_names() -> Vec<String>;
+}
+
+macro_rules! impl_point_csv_fields {
+    ($($point:ty),+ $(,)?) => {
+        $(
+            impl CsvFields for $point {
+                fn field_names() -> Vec<String> {
+                    [
+                        "point_id",
+                        "signal_name",
+                        "scale",
+                        "offset",
+                        "unit",
+                        "reverse",
+                        "data_type",
+                    ]
+                    .into_iter()
+                    .map(str::to_string)
+                    .collect()
+                }
+            }
+        )+
+    };
+}
+
+impl_point_csv_fields!(TelemetryPoint, SignalPoint, ControlPoint, AdjustmentPoint,);
+
+struct CsvHeaderValidator;
+
+impl CsvHeaderValidator {
+    fn validate_csv_header<T: CsvFields>(csv_path: &Path) -> Result<common::ValidationResult> {
+        let mut reader = csv::ReaderBuilder::new()
+            .has_headers(true)
+            .from_path(csv_path)?;
+        let actual: Vec<String> = reader.headers()?.iter().map(str::to_string).collect();
+        let expected = T::field_names();
+        let actual_set: HashSet<_> = actual.iter().collect();
+        let expected_set: HashSet<_> = expected.iter().collect();
+
+        let mut result = common::ValidationResult::new(common::ValidationLevel::Schema);
+        let mut missing: Vec<_> = expected_set
+            .difference(&actual_set)
+            .map(|field| (*field).clone())
+            .collect();
+        missing.sort();
+        if !missing.is_empty() {
+            result.add_error(format!(
+                "Missing required fields in {}: [{}]",
+                csv_path.display(),
+                missing.join(", ")
+            ));
+        }
+
+        let mut extra: Vec<_> = actual_set
+            .difference(&expected_set)
+            .map(|field| (*field).clone())
+            .collect();
+        extra.sort();
+        if !extra.is_empty() {
+            result.add_warning(format!(
+                "Extra fields found in {} (will be ignored): [{}]",
+                csv_path.display(),
+                extra.join(", ")
+            ));
+        }
+        if actual != expected && missing.is_empty() && extra.is_empty() {
+            result.add_warning(format!(
+                "Field order in {} differs from expected",
+                csv_path.display()
+            ));
+        }
+        Ok(result)
+    }
+}
 
 /// Error that occurred while parsing a specific CSV row
 #[derive(Debug, Clone)]

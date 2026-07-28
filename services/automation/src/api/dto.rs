@@ -4,12 +4,12 @@
 
 #![allow(clippy::disallowed_methods)] // json! macro used in multiple functions
 
-use common::FourRemote;
+use common::PointType;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use utoipa::ToSchema;
 
-// === Custom Deserializer for FourRemote ===
+// === Custom Deserializer for PointType ===
 
 // === Query Parameters ===
 
@@ -30,7 +30,7 @@ pub struct SinglePointRoutingRequest {
     #[schema(example = 1)]
     pub channel_id: Option<i32>,
     #[schema(value_type = Option<String>, example = "T")]
-    pub four_remote: Option<FourRemote>,
+    pub four_remote: Option<PointType>,
     #[schema(example = 101)]
     pub channel_point_id: Option<u32>,
     #[serde(default = "default_enabled")]
@@ -59,7 +59,7 @@ pub struct MeasurementRoutingUpsertRequest {
     #[schema(example = 1)]
     pub channel_id: i32,
     #[schema(value_type = String, example = "T")]
-    pub four_remote: FourRemote,
+    pub four_remote: PointType,
     #[schema(example = 101)]
     pub channel_point_id: u32,
     #[serde(default = "default_enabled")]

@@ -17,7 +17,7 @@ test = false
 
 [dependencies]
 # Local dependencies
-common = { path = "../../libs/common", default-features = false, features = ["sqlite", "axum", "dependency"] }
+common = { path = "../../libs/common", default-features = false, features = ["sqlite", "axum"] }
 aether-application = { path = "../../crates/aether-application" }
 aether-auth-jwt = { path = "../../libs/aether-auth-jwt" }
 aether-pack = { path = "../../crates/aether-pack" }
@@ -46,6 +46,7 @@ sqlx = { workspace = true }
 # cron removed - not currently used
 arc-swap = "1.7"  # ArcSwapOption for runtime-swappable SHM writer
 tower = { workspace = true }
+reqwest = { workspace = true }
 subtle = "2.6"
 
 [dev-dependencies]
