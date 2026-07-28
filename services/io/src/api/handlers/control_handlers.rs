@@ -20,7 +20,6 @@ use crate::dto::{
 use aether_application::{
     ChannelMutationAcceptance, ChannelReconciliationAcceptance, CompletionAuditStatus,
 };
-use aether_core::PointType;
 use aether_domain::ChannelId;
 use aether_ports::{ChannelMutation, ChannelReconciliationScope, ChannelRuntimeProjection};
 use axum::{
@@ -29,6 +28,7 @@ use axum::{
     http::HeaderMap,
     response::Json,
 };
+use common::PointType;
 
 /// Govern one channel's desired lifecycle or rebuildable runtime projection.
 ///

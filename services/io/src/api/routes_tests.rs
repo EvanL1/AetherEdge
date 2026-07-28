@@ -13,7 +13,6 @@ use sqlx::SqlitePool;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, Mutex};
 
-use aether_core::PointType;
 use aether_ports::{
     AuditOutcome, AuditRecord, AuditSink, ChannelDesiredStateObservation, ChannelMutation,
     ChannelMutationKind, ChannelMutationReceipt, ChannelMutator, ChannelReconciler,
@@ -21,6 +20,7 @@ use aether_ports::{
     ChannelRevision, ChannelRuntimeProjection, PortError, PortErrorKind, PortResult,
 };
 use aether_shm_bridge::ShmWriterHandle;
+use common::PointType;
 use tower::util::ServiceExt; // for `oneshot` and `ready`
 
 const TEST_JWT_SECRET: &str = "0123456789abcdef0123456789abcdef";

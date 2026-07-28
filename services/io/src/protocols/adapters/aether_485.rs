@@ -23,8 +23,8 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use aether_core::PointType;
 use async_trait::async_trait;
+use common::PointType;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};

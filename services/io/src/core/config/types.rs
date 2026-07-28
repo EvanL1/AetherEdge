@@ -1,7 +1,4 @@
-//! Io service configuration types (re-exported from aether-config).
-//!
-//! Config schema lives in the platform-agnostic `aether-config` crate so that
-//! `aether.exe` can be built on Windows without pulling in Linux-only
-//! service runtime code (SHM, UDS).
+//! IO configuration DTOs shared through `common` without depending on the
+//! Linux-only service runtime from cross-platform tooling.
 
-pub use aether_config::io::*;
+pub use common::io_config::*;

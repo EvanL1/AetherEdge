@@ -66,8 +66,9 @@ plane, and typed SHM port adapters. In particular:
   experimental and production credential and durable-store gates remain open.
 - `aether-domain` is the sole business-semantics owner. The former
   `aether-model` compatibility crate has been removed: Pack product contracts
-  live in `aether-pack`, SunSpec material is absent from the kernel, and
-  `aether-core` retains wire-codec and SHM ABI representations.
+  live in `aether-pack`, SunSpec material is absent from the kernel, T/S/C/A
+  configuration representation lives at the `common` adapter boundary, and
+  firmware-only codecs and ABI primitives stay in the nested firmware workspace.
 - Domain models and knowledge are absent by default. Automation and MCP load
   them only from manifest-validated Packs explicitly selected by
   `<AETHER_CONFIG_PATH>/global.yaml`; `packs: []` is the safe empty kernel.

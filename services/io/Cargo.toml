@@ -16,10 +16,7 @@ path = "src/main.rs"
 [dependencies]
 # Local dependencies
 common = { path = "../../libs/common", default-features = false, features = ["sqlite", "axum", "openapi"] }
-errors = { path = "../../libs/errors", default-features = false, features = ["axum-support"] }
-aether-config = { path = "../../libs/aether-config", features = ["openapi"] }
 aether-application = { path = "../../crates/aether-application" }
-aether-core = { path = "../../libs/aether-core", features = ["serde"] }
 aether-auth-jwt = { path = "../../libs/aether-auth-jwt" }
 aether-domain = { path = "../../crates/aether-domain" }
 aether-ports = { path = "../../crates/aether-ports" }

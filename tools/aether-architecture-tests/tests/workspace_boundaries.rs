@@ -7,6 +7,8 @@ use std::sync::OnceLock;
 use serde::Deserialize;
 
 const RETIRED_PACKAGES: &[&str] = &[
+    "aether-config",
+    "aether-core",
     "aether-home-assistant-bridge",
     "aether-http-history-query",
     "aether-infra",
@@ -17,13 +19,17 @@ const RETIRED_PACKAGES: &[&str] = &[
     "aether-rtdb",
     "aether-rtdb-shm",
     "aether-sunspec",
+    "errors",
 ];
 const RETIRED_ROOT_PATHS: &[&str] = &[
+    "libs/aether-config",
+    "libs/aether-core",
     "libs/aether-infra",
     "libs/aether-model",
     "libs/aether-rtdb",
     "libs/aether-rtdb-shm",
     "libs/aether-shm",
+    "libs/errors",
     "libs/aether-infra/src/redis.rs",
     "libs/common/src/warning_monitor.rs",
     "services/io/assets/script-host",

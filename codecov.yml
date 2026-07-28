@@ -49,11 +49,6 @@ flags:
       - services/automation/
     carryforward: true
 
-  aether-core:
-    paths:
-      - libs/aether-core/
-    carryforward: true
-
   aether-routing:
     paths:
       - libs/aether-routing/

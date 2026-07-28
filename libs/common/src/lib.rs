@@ -1,5 +1,6 @@
 //! Shared service bootstrap, configuration, logging, and API utilities.
 
+pub mod point_type;
 pub mod service_config;
 pub mod service_ports;
 #[cfg(feature = "sqlite")]
@@ -8,7 +9,9 @@ pub mod sqlite;
 // Common modules
 pub mod admin_api;
 pub mod api_types;
+pub mod automation_config;
 pub mod config_loader;
+pub mod io_config;
 pub mod log_rotation;
 pub mod logging;
 pub mod serde_helpers;

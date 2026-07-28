@@ -26,8 +26,10 @@ example, legacy `PointType` uses the storage/protocol codes T/S/C/A, while
 Legacy quality values and point identifiers likewise require an explicit,
 tested conversion at each compatibility boundary.
 
-`aether-core` remains a separate, valid owner for embedded wire codecs and SHM
-ABI primitives used by firmware. It is not a second business-model authority.
+The Linux workspace no longer contains `aether-core`. Embedded wire codecs and
+SHM ABI primitives are owned by the separately targeted `firmware/aether-core`
+crate. The stable T/S/C/A configuration DTO is owned by `common`; neither is a
+second business-model authority.
 
 ## Decision
 
@@ -35,8 +37,9 @@ ABI primitives used by firmware. It is not a second business-model authority.
    and invariants. Application and port contracts use domain types; wire,
    storage, protocol, and Pack representations remain explicit DTOs in their
    owning boundary rather than becoming a second semantic model.
-2. `aether-core` retains firmware-oriented codec, layout, and representation
-   concerns. It must not become a new home for service/business entities.
+2. `firmware/aether-core` retains firmware-oriented codec and layout concerns
+   inside the nested firmware workspace. Linux service configuration and wire
+   DTOs stay in their adapter owner and must not become business entities.
 3. `aether-model` is retired and removed. No production crate may restore a
    dependency or import. Cargo-metadata architecture tests enforce the absent
    package, path, and dependency; normal Rust compilation rejects stale imports.
@@ -66,8 +69,8 @@ The migration was not a global rename: database, protocol, and OpenAPI
 representations remain stable at explicit compatibility boundaries.
 
 Implementation removed every production dependency on `aether-model` and then
-removed the crate. T/S/C/A wire representation remains in `aether-core`; M/A
-CSV and HTTP representation lives in `common`; product-directory contracts
-live in `aether-pack`; SunSpec catalog and expansion live under the IO protocol
-adapter; command finiteness and instance-name invariants are enforced by
-`aether-domain`.
+removed the crate. T/S/C/A storage, CSV, HTTP, and protocol representation lives
+in `common`; firmware codecs and ABI layouts live only under `firmware/`;
+product-directory contracts live in `aether-pack`; protocol-specific catalogs
+stay downstream; command finiteness and instance-name invariants are enforced
+by `aether-domain`.

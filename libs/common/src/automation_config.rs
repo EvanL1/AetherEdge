@@ -2,11 +2,12 @@
 //!
 //! This module contains all automation-specific configuration types.
 
+use crate::{ApiConfig, BaseServiceConfig, ValidationLevel, ValidationResult};
 use anyhow::Result;
-use common::{ApiConfig, BaseServiceConfig, ValidationLevel, ValidationResult};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+#[cfg(feature = "openapi")]
 use utoipa::ToSchema;
 
 // ============================================================================
@@ -16,12 +17,12 @@ use utoipa::ToSchema;
 /// Default API configuration for automation (port 6002)
 fn default_automation_api() -> ApiConfig {
     ApiConfig {
-        host: common::DEFAULT_API_HOST.to_string(),
+        host: crate::DEFAULT_API_HOST.to_string(),
         port: 6002,
     }
 }
 
-use common::serde_helpers::bool_true;
+use crate::serde_helpers::bool_true;
 
 // ============================================================================
 // Core Configuration
@@ -62,7 +63,7 @@ impl Default for AutomationConfig {
         };
 
         let api = ApiConfig {
-            host: common::DEFAULT_API_HOST.to_string(),
+            host: crate::DEFAULT_API_HOST.to_string(),
             port: 6002, // automation default port
         };
 
@@ -81,15 +82,15 @@ impl Default for AutomationConfig {
 // ============================================================================
 
 /// Re-export service config table SQL from common
-pub use common::SERVICE_CONFIG_TABLE;
+pub use crate::SERVICE_CONFIG_TABLE;
 
 /// Re-export sync metadata table SQL from common
-pub use common::SYNC_METADATA_TABLE;
+pub use crate::SYNC_METADATA_TABLE;
 
 /// Re-export DDL from common (single source of truth — production code in
 /// aether and automation reads these constants; the Schema-macro variants that
 /// previously lived here drifted from the canonical SQL.)
-pub use common::test_utils::schema::{
+pub use crate::test_utils::schema::{
     ACTION_ROUTING_TABLE, CONFIGURATION_REVISIONS_TABLE, INSTANCE_PROPERTIES_TABLE,
     INSTANCES_TABLE, MEASUREMENT_ROUTING_TABLE,
 };
@@ -99,7 +100,8 @@ pub use common::test_utils::schema::{
 // ============================================================================
 
 /// Complete product definition with nested structure
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(ToSchema))]
 pub struct Product {
     /// Product name (unique identifier)
     pub product_name: String,
@@ -121,7 +123,8 @@ pub struct Product {
 }
 
 /// Measurement point definition (M type)
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(ToSchema))]
 pub struct MeasurementPoint {
     /// Measurement point ID (unique within product)
     #[serde(alias = "id", alias = "index")]
@@ -138,7 +141,8 @@ pub struct MeasurementPoint {
 }
 
 /// Action point definition (A type)
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(ToSchema))]
 pub struct ActionPoint {
     /// Action point ID (unique within product)
     #[serde(alias = "id", alias = "index")]
@@ -155,7 +159,8 @@ pub struct ActionPoint {
 }
 
 /// Property template for instance configuration
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(ToSchema))]
 pub struct PropertyTemplate {
     /// Property ID (unique within product)
     #[serde(alias = "id", alias = "index")]
@@ -251,7 +256,8 @@ pub struct CreateInstanceRequest {
 pub type ProductHierarchy = Vec<(String, Option<String>)>;
 
 /// Topology tree node for hierarchical instance display
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(ToSchema))]
 pub struct TopologyNode {
     pub instance_id: u32,
     pub instance_name: String,
@@ -264,7 +270,7 @@ pub struct TopologyNode {
 // Validation implementations
 // ============================================================================
 
-impl common::ConfigValidator for AutomationConfig {
+impl crate::ConfigValidator for AutomationConfig {
     fn validate_syntax(&self) -> Result<ValidationResult> {
         Ok(ValidationResult::new(ValidationLevel::Syntax))
     }
@@ -330,9 +336,6 @@ impl common::ConfigValidator for AutomationConfig {
     }
 }
 
-/// Type alias for backward compatibility - use GenericValidator directly for new code
-pub type AutomationValidator = common::GenericValidator<AutomationConfig>;
-
 // ============================================================================
 // Centralized SQL Queries for Automation
 // ============================================================================
@@ -343,7 +346,7 @@ pub type AutomationValidator = common::GenericValidator<AutomationConfig>;
 /// Default API configuration for rules (port 6002, merged into automation)
 fn default_rules_api() -> ApiConfig {
     ApiConfig {
-        host: common::DEFAULT_API_HOST.to_string(),
+        host: crate::DEFAULT_API_HOST.to_string(),
         port: 6002,
     }
 }
@@ -359,10 +362,6 @@ pub struct RulesConfig {
     /// API configuration (has default value)
     #[serde(default = "default_rules_api")]
     pub api: ApiConfig,
-
-    /// Execution configuration
-    #[serde(default)]
-    pub execution: ExecutionConfig,
 }
 
 impl Default for RulesConfig {
@@ -373,21 +372,13 @@ impl Default for RulesConfig {
         };
 
         let api = ApiConfig {
-            host: common::DEFAULT_API_HOST.to_string(),
+            host: crate::DEFAULT_API_HOST.to_string(),
             port: 6002, // merged into automation
         };
 
-        Self {
-            service,
-            api,
-            execution: ExecutionConfig::default(),
-        }
+        Self { service, api }
     }
 }
-
-/// Rule execution configuration (reserved for future use)
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct ExecutionConfig {}
 
 /// Rule core fields (shared between Config and API responses)
 /// These fields represent the essential rule identity and state
@@ -449,7 +440,7 @@ impl RuleConfig {
 // RulesConfig Validation Implementation
 // ============================================================================
 
-impl common::ConfigValidator for RulesConfig {
+impl crate::ConfigValidator for RulesConfig {
     fn validate_syntax(&self) -> Result<ValidationResult> {
         Ok(ValidationResult::new(ValidationLevel::Syntax))
     }

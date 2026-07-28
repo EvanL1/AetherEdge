@@ -8,10 +8,10 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
-use aether_core::PointType;
 use aether_io::core::channels::ShmCommandListener;
 use aether_io::core::channels::types::ChannelCommand;
 use aether_shm_bridge::DeviceCommandFrame;
+use common::PointType;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::mpsc;
 use tokio::time::timeout;

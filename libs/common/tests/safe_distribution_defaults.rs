@@ -1,6 +1,6 @@
-use aether_config::automation::AutomationConfig;
-use aether_config::io::IoConfig;
 use common::ConfigValidator as _;
+use common::automation_config::AutomationConfig;
+use common::io_config::IoConfig;
 use serde_json::Value;
 use std::fs;
 use std::path::{Path, PathBuf};

@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use tracing::warn;
 
-use aether_core::PointType;
+use common::PointType;
 
 use crate::protocols::core::data::DataBatch;
 use crate::protocols::core::error::{GatewayError, Result as ProtocolResult};

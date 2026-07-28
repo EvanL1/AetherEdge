@@ -5,8 +5,8 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
 
-use aether_core::PointType;
 use arc_swap::ArcSwapOption;
+use common::PointType;
 use socketcan::{CanSocket, EmbeddedFrame, Frame, Socket};
 use tokio::sync::RwLock;
 use tokio::sync::broadcast;

@@ -10,9 +10,9 @@ use tracing::{debug, info, warn};
 // Import validation types from common
 use common::{ConfigValidator as _, GenericValidator, ValidationLevel, ValidationResult};
 
-// Cross-platform config schema (shared with io/automation via aether-config).
-use aether_config::automation::{AutomationConfig, RulesConfig};
-use aether_config::io::IoConfig;
+// Cross-platform config DTOs shared with the services through `common`.
+use common::automation_config::{AutomationConfig, RulesConfig};
+use common::io_config::IoConfig;
 
 // Type aliases for validators
 type IoValidator = GenericValidator<IoConfig>;

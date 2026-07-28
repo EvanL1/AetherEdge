@@ -3,9 +3,9 @@
 //! This module is responsible for syncing configuration from YAML/CSV files
 //! to the SQLite database.
 
-use aether_config::automation::AutomationConfig;
-use aether_config::io::IoConfig;
 use anyhow::{Context, Result};
+use common::automation_config::AutomationConfig;
+use common::io_config::IoConfig;
 use common::validation::CsvFields;
 use serde::de::DeserializeOwned;
 use serde_json::Value as JsonValue;
@@ -808,7 +808,7 @@ impl ConfigSyncer {
         config_dir: &Path,
         errors: &mut Vec<SyncError>,
     ) -> Result<usize> {
-        use aether_config::io::{AdjustmentPoint, ControlPoint, SignalPoint, TelemetryPoint};
+        use common::io_config::{AdjustmentPoint, ControlPoint, SignalPoint, TelemetryPoint};
 
         let mut total_count = 0;
 

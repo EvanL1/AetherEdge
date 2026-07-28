@@ -449,7 +449,7 @@ impl ChannelFileLogHandler {
         &self,
         values: &[super::logging::PointValueSummary],
     ) -> Vec<String> {
-        use aether_core::PointType;
+        use common::PointType;
         use std::collections::HashMap;
         use std::fmt::Write;
 

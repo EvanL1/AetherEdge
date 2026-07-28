@@ -61,6 +61,9 @@ domain <- ports <- application <- services/interfaces
 - `aether-domain` owns all industry-neutral business semantics. The retired
   `aether-model` compatibility crate must not be restored; wire, storage,
   protocol, and Pack DTOs stay in their owning adapters or contract crates.
+  The Linux workspace must not restore `aether-core`, `aether-config`, or the
+  generic `errors` crate: firmware core types stay in the nested firmware
+  workspace, shared service DTOs stay in `common`, and services own typed errors.
 - Traits describe domain capabilities, never vendor command sets. Prefer
   `HistorySink` or `StateMirror` over a generic database/RTDB abstraction.
 - AetherEdge owns no in-tree `extensions/` layer. Optional third-party

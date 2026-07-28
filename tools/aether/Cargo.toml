@@ -16,11 +16,6 @@ aether-application = { path = "../../crates/aether-application" }
 aether-runtime-catalog = { path = "../../libs/aether-runtime-catalog" }
 common = { path = "../../libs/common" }
 
-# Cross-platform config schema. Replaces the previous io/automation service
-# crate dependencies so aether.exe builds on Windows (service crates are
-# Linux-only due to SHM/UDS deps).
-aether-config = { path = "../../libs/aether-config" }
-
 # CLI
 clap = { workspace = true }
 

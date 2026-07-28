@@ -1,10 +1,10 @@
 [package]
 name = "aether-core"
 publish = false
-version.workspace = true
+version = "0.3.0"
 edition = "2024"
 description = "Core types and codecs for AetherEdge - no_std compatible for embedded firmware"
-license.workspace = true
+license = "MIT OR Apache-2.0"
 
 [features]
 default = ["std"]

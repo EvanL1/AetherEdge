@@ -11,9 +11,9 @@ use std::path::Path;
 use std::sync::Arc;
 use tracing::{debug, info};
 
-// Cross-platform config schema (shared with io/automation via aether-config).
-use aether_config::automation::{AutomationConfig, RuleConfig, RuleCore, RulesConfig};
-use aether_config::io::{ChannelConfig, ChannelCore, IoConfig};
+// Cross-platform config DTOs shared with the services through `common`.
+use common::automation_config::{AutomationConfig, RuleConfig, RuleCore, RulesConfig};
+use common::io_config::{ChannelConfig, ChannelCore, IoConfig};
 
 /// CSV column headers for point exports
 const POINT_CSV_HEADERS: [&str; 8] = [

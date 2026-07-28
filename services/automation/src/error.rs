@@ -3,7 +3,7 @@
 //! Domain-specific error handling for Model Service.
 //!
 //! Simplified error types (15 variants) - reduced from 40+ to improve maintainability.
-//! All errors map to ErrorCategory for HTTP status codes.
+//! Errors map directly to service-local HTTP classifications.
 
 use thiserror::Error;
 
@@ -123,10 +123,23 @@ pub enum AutomationError {
 }
 
 // ============================================================================
-// AetherErrorTrait Implementation
+// Service-local error classification
 // ============================================================================
 
-impl errors::AetherErrorTrait for AutomationError {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ErrorCategory {
+    Configuration,
+    Database,
+    Network,
+    Validation,
+    NotFound,
+    Conflict,
+    Permission,
+    ResourceBusy,
+    Internal,
+}
+
+impl AutomationError {
     fn error_code(&self) -> &'static str {
         match self {
             // Configuration
@@ -169,9 +182,7 @@ impl errors::AetherErrorTrait for AutomationError {
         }
     }
 
-    fn category(&self) -> errors::ErrorCategory {
-        use errors::ErrorCategory;
-
+    fn category(&self) -> ErrorCategory {
         match self {
             // Configuration → Configuration
             Self::ConfigError(_) | Self::InvalidConfig(_) | Self::MissingConfig(_) => {
@@ -210,6 +221,26 @@ impl errors::AetherErrorTrait for AutomationError {
             | Self::SchedulerError(_)
             | Self::SerializationError(_)
             | Self::InternalError(_) => ErrorCategory::Internal,
+        }
+    }
+
+    fn is_retryable(&self) -> bool {
+        matches!(
+            self.category(),
+            ErrorCategory::Network | ErrorCategory::ResourceBusy
+        )
+    }
+
+    fn http_status(&self) -> axum::http::StatusCode {
+        use axum::http::StatusCode;
+        match self.category() {
+            ErrorCategory::Configuration => StatusCode::BAD_REQUEST,
+            ErrorCategory::Validation => StatusCode::UNPROCESSABLE_ENTITY,
+            ErrorCategory::NotFound => StatusCode::NOT_FOUND,
+            ErrorCategory::Permission => StatusCode::FORBIDDEN,
+            ErrorCategory::Conflict => StatusCode::CONFLICT,
+            ErrorCategory::Network | ErrorCategory::ResourceBusy => StatusCode::SERVICE_UNAVAILABLE,
+            _ => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
 
@@ -314,11 +345,10 @@ impl From<aether_application::ApplicationError> for AutomationError {
 // API Adaptation: AutomationError → AppError conversion
 // ============================================================================
 
-/// Automatically convert AutomationError to AppError using AetherErrorTrait for HTTP status mapping
+/// Convert the service error directly into the shared HTTP envelope.
 impl From<AutomationError> for common::AppError {
     fn from(err: AutomationError) -> Self {
         use common::{AppError, ErrorInfo};
-        use errors::AetherErrorTrait;
 
         let status = err.http_status();
         let mut error_info = ErrorInfo::new(err.to_string())
@@ -350,26 +380,6 @@ impl axum::response::IntoResponse for AutomationError {
 // ============================================================================
 // Interoperability conversions
 // ============================================================================
-
-/// Convert from AetherError
-impl From<errors::AetherError> for AutomationError {
-    fn from(err: errors::AetherError) -> Self {
-        use errors::AetherError as VE;
-        match err {
-            VE::Configuration(msg) => Self::ConfigError(msg),
-            VE::InvalidConfig { field, reason } => {
-                Self::InvalidConfig(format!("{}: {}", field, reason))
-            },
-            VE::MissingConfig(msg) => Self::MissingConfig(msg),
-            VE::Database(msg) => Self::DatabaseError(msg),
-            VE::Sqlite(e) => Self::DatabaseError(format!("SQLite: {}", e)),
-            VE::Io(e) => Self::InternalError(format!("IO: {}", e)),
-            VE::Timeout(d) => Self::InternalError(format!("Timeout: {:?}", d)),
-            VE::Serialization(e) => Self::SerializationError(e),
-            _ => Self::InternalError(err.to_string()),
-        }
-    }
-}
 
 /// Convert from SQLx Error
 impl From<sqlx::Error> for AutomationError {

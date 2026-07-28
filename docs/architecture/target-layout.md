@@ -20,7 +20,7 @@ libs/
   aether-auth-jwt        shared application-interface authentication
   aether-shm-bridge      native SHM runtime implementation
   aether-store-local     default zero-external-service storage
-  aether-config          shared configuration schema
+  common                 shared service bootstrap and configuration DTOs
   aether-routing         internal logical routing projection
   aether-runtime-catalog exact build/runtime capability manifest
   aether-rules           deterministic industry-neutral rule engine

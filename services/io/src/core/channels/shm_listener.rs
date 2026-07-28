@@ -14,9 +14,9 @@
 //! Replaced the former ShmCommandPoller (polling-based) with lower latency (~1-2ms vs 10-20ms avg)
 //! and event-triggered CPU usage instead of continuous polling.
 
-use aether_core::PointType;
 use aether_domain::CommandConstraints;
 use aether_shm_bridge::{DEFAULT_COMMAND_UDS_PATH, DeviceCommandFrame};
+use common::PointType;
 use dashmap::DashMap;
 use dashmap::mapref::entry::Entry;
 use std::sync::Arc;

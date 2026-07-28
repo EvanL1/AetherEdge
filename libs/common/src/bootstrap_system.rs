@@ -3,7 +3,6 @@
 //! Provides functions to check system resources and requirements
 //! before starting AetherEdge services
 
-use errors::AetherResult;
 use tracing::{debug, info, warn};
 
 /// System requirements for AetherEdge services
@@ -31,14 +30,12 @@ impl Default for SystemRequirements {
 }
 
 /// Check if system meets the requirements
-pub fn check_system_requirements() -> AetherResult<SystemInfo> {
+pub fn check_system_requirements() -> SystemInfo {
     check_system_requirements_with(SystemRequirements::default())
 }
 
-/// Check system requirements with custom thresholds
-pub fn check_system_requirements_with(
-    requirements: SystemRequirements,
-) -> AetherResult<SystemInfo> {
+/// Check system requirements with custom thresholds.
+pub fn check_system_requirements_with(requirements: SystemRequirements) -> SystemInfo {
     let mut info = SystemInfo::collect();
 
     // Check CPU cores
@@ -81,7 +78,7 @@ pub fn check_system_requirements_with(
         }
     }
 
-    Ok(info)
+    info
 }
 
 /// System information collected during checks
@@ -223,33 +220,6 @@ fn get_windows_memory_info() -> (Option<usize>, Option<usize>) {
     (None, None)
 }
 
-/// Check disk space availability for a given path
-pub fn check_disk_space(path: &str, _required_mb: usize) -> AetherResult<bool> {
-    use std::path::Path;
-
-    let path = Path::new(path);
-    let check_path = if path.exists() {
-        path
-    } else {
-        path.parent().unwrap_or(Path::new("/"))
-    };
-
-    // For now, we'll use a simplified check based on filesystem metadata
-    // Real disk space checking would require platform-specific system calls
-    if let Ok(metadata) = std::fs::metadata(check_path)
-        && (metadata.is_dir() || metadata.is_file())
-    {
-        debug!("Path {} exists and is accessible", check_path.display());
-        // Since we can't easily get disk space without external dependencies,
-        // we'll just check if the path is accessible
-        return Ok(true);
-    }
-
-    warn!("Cannot verify disk space at {}", path.display());
-    // Default to true if we can't check
-    Ok(true)
-}
-
 #[cfg(test)]
 #[allow(clippy::disallowed_methods)] // Test code - unwrap is acceptable
 mod tests {
@@ -273,7 +243,7 @@ mod tests {
     #[test]
     fn test_system_check() {
         // Should not panic
-        let result = check_system_requirements();
-        assert!(result.is_ok());
+        let info = check_system_requirements();
+        assert!(info.cpu_cores >= 1);
     }
 }

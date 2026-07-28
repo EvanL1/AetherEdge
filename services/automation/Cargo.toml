@@ -18,8 +18,6 @@ test = false
 [dependencies]
 # Local dependencies
 common = { path = "../../libs/common", default-features = false, features = ["sqlite", "axum", "dependency"] }
-errors = { path = "../../libs/errors", default-features = false, features = ["axum-support"] }
-aether-config = { path = "../../libs/aether-config" }
 aether-application = { path = "../../crates/aether-application" }
 aether-auth-jwt = { path = "../../libs/aether-auth-jwt" }
 aether-pack = { path = "../../crates/aether-pack" }

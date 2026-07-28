@@ -2,8 +2,8 @@
 //!
 //! Contains ChannelEntry, ChannelMetadata, ChannelStats, and related helpers.
 
-use aether_config::io::MAX_CHANNEL_TIMING_MS;
 use arc_swap::ArcSwapOption;
+use common::io_config::MAX_CHANNEL_TIMING_MS;
 use std::num::NonZeroU64;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU8, AtomicU64, Ordering};

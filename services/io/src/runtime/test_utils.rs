@@ -3,11 +3,11 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use aether_core::PointType;
 use aether_routing::RoutingCache;
 use aether_shm_bridge::{
     ChannelPointManifest, PhysicalPointAddress, ShmRuntimeConfig, ShmWriterHandle,
 };
+use common::PointType;
 
 /// Creates an empty but available SHM layout suitable for manager/API tests.
 pub fn create_test_shm_handle() -> Arc<ShmWriterHandle> {

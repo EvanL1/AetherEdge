@@ -14,8 +14,8 @@ use std::fmt;
 use std::path::Path;
 use std::str::FromStr;
 
-// Re-export the firmware/protocol representation type for wire compatibility.
-pub use aether_core::PointType;
+// Re-export the protocol/storage representation for configuration compatibility.
+pub use crate::point_type::PointType;
 
 #[cfg(feature = "schema")]
 use schemars::JsonSchema;

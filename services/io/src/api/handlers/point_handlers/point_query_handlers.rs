@@ -4,13 +4,13 @@
 
 use crate::api::routes::AppState;
 use crate::dto::{AppError, SuccessResponse};
-use aether_core::PointType;
 use aether_domain::PointKind;
 use aether_shm_bridge::PhysicalPointAddress;
 use axum::{
     extract::{Path, Query, State},
     response::Json,
 };
+use common::PointType;
 
 use super::point_helpers::{
     fetch_grouped_points, parse_protocol_mapping_json, point_type_to_table, validate_channel_exists,

@@ -14,7 +14,7 @@ resolver = "3"
 
 [dependencies]
 # Core libraries (no_std compatible)
-aether-core = { path = "../libs/aether-core", default-features = false }
+aether-core = { path = "aether-core", default-features = false }
 aether-shm = { path = "aether-shm", default-features = false }
 
 # Embedded runtime (STM32F4 as example target)

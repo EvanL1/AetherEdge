@@ -32,9 +32,9 @@ pub mod transport;
 use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
-use aether_core::PointType;
 use async_trait::async_trait;
 use chrono::{DateTime, TimeZone, Utc};
+use common::PointType;
 use serde::{Deserialize, Serialize};
 use tokio::net::TcpStream;
 use tokio::time::timeout;

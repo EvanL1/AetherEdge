@@ -13,7 +13,6 @@ use tracing::{debug, error, info, warn};
 
 use aether_io::core::config::DEFAULT_PORT;
 use common::service_bootstrap::ServiceInfo;
-use errors::AetherResult;
 
 // aether-io imports
 use aether_io::{
@@ -40,7 +39,7 @@ use aether_shm_bridge::{
 };
 
 #[tokio::main]
-async fn main() -> AetherResult<()> {
+async fn main() -> anyhow::Result<()> {
     // Parse arguments and initialize
     let args = Args::parse();
     let service_args = args.clone().into();
@@ -59,7 +58,7 @@ async fn main() -> AetherResult<()> {
     if !args.no_color {
         common::service_bootstrap::print_startup_banner(&service_info);
     }
-    bootstrap::check_system_requirements()?;
+    let _system_info = bootstrap::check_system_requirements();
 
     // Validation mode: validate and exit
     if args.validate {

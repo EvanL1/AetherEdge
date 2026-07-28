@@ -1,7 +1,7 @@
 ---
 title: Data Model
 description: Products, instances, and T/S/C/A points - and why an instance is a pure thing-model with no status field
-updated: 2026-07-10
+updated: 2026-07-27
 ---
 
 # Data Model
@@ -16,7 +16,7 @@ reference the instance without ever being copied onto it.
 ## Three layers
 
 **Product** — a template describing what points a device *type* has. Defined
-in `Product` (`libs/aether-config/src/automation.rs`): a unique `product_name`, an
+in `Product` (`libs/common/src/automation_config.rs`): a unique `product_name`, an
 optional `parent_name` for the type hierarchy (Station → ESS → Battery/PCS,
 and so on), plus three point lists:
 
@@ -32,7 +32,7 @@ directory. Product candidates pass the same confinement, regular-file, size,
 JSON, and duplicate-name checks in validation and at runtime.
 
 **Instance** — one physical device. Defined in `Instance` / `InstanceCore`
-(`libs/aether-config/src/automation.rs`):
+(`libs/common/src/automation_config.rs`):
 
 - `instance_id` (numeric, unique) and `instance_name`
 - `product_name` — which template this device instantiates
@@ -53,8 +53,8 @@ command, power setpoint).
 ## Point types
 
 Channel-side protocol and storage DTOs use the four-type classification defined
-by `PointType` in `libs/aether-core/src/types.rs`. The enum documentation calls
-this the standard IEC "Four Remote" classification;
+by `PointType` in `libs/common/src/point_type.rs`. It is an adapter representation
+of the established IEC "Four Remote" classification;
 each variant carries a serde alias for the Chinese-standard code (YC/YX/YK/YT).
 
 | Type | Name | Signal kind | Direction | Write owner |
@@ -64,9 +64,9 @@ each variant carries a serde alias for the Chinese-standard code (YC/YX/YK/YT).
 | `C` | Control | Digital command (YK) | system → device | automation |
 | `A` | Adjustment | Analog setpoint (YT) | system → device | automation |
 
-`PointType` provides the category predicates the codebase uses everywhere:
-`is_measurement()` is true for T and S, `is_action()` for C and A,
-`is_analog()` for T and A, `is_digital()` for S and C.
+`PointType` preserves storage codes, historical aliases, and the T/S versus C/A
+ownership predicates. Application contracts use the semantic
+`aether_domain::PointKind` instead.
 
 Write ownership is enforced by construction at the port and composition
 boundaries. IO alone receives `LiveStateWriter` and publishes T/S acquisition
@@ -175,9 +175,9 @@ time before dispatching.
 instance state.** When the target channel is offline, automation rejects the write
 with `AutomationError::ChannelUnreachable` (`services/automation/src/error.rs`); a
 degraded dispatch path (SHM written but the notification to io failed)
-fails with `AutomationError::DispatchDegraded`. Both reach HTTP through
-`AetherErrorTrait::http_status` (`libs/errors/src/lib.rs`), where their
-categories — `ResourceBusy` and `Network` respectively — both map to
+fails with `AutomationError::DispatchDegraded`. Both reach HTTP through the service-local mapping in
+`services/automation/src/error.rs`, where their categories — `ResourceBusy`
+and `Network` respectively — both map to
 **HTTP 503**; callers distinguish them by error code
 (`AUTOMATION_CHANNEL_UNREACHABLE` vs `AUTOMATION_DISPATCH_DEGRADED`), and both are
 retryable. In the rule engine, an action that cannot be resolved produces an

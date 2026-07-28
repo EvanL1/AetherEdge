@@ -10,7 +10,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::SystemTime;
 
-use aether_core::PointType;
+use common::PointType;
 
 use crate::protocols::core::data::Value;
 use crate::protocols::core::quality::Quality;

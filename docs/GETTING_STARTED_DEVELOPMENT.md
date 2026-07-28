@@ -152,7 +152,7 @@ AetherEdge/
 │   │   ├── src/
 │   │   │   ├── api/        # REST API 处理器
 │   │   │   ├── core/       # 核心逻辑
-│   │   │   └── protocols/  # 协议实现（10 种）
+│   │   │   └── protocols/  # 发行版维护的物理协议实现
 │   │   └── Cargo.toml
 │   │
 │   ├── automation/             # 模型服务 - 产品定义、设备实例、规则引擎 (Rust)
@@ -167,15 +167,14 @@ AetherEdge/
 │   └── alarm/       # 告警管理 (Rust)
 │
 ├── libs/                    # 共享 Rust 库
-│   ├── aether-core/       # 线协议类型与编解码器（no_std）
 │   ├── aether-routing/    # 数据流路由
 │   ├── aether-calc/       # 表达式求值引擎
 │   ├── aether-rules/      # 规则引擎
 │   ├── aether-sim/        # 波形生成器
 │   ├── aether-schema-macro/ # SQL DDL 过程宏
-│   ├── common/             # 服务引导与共享工具
-│   └── errors/             # 统一错误类型
+│   └── common/             # 服务引导、配置 DTO 与 HTTP envelope
 │
+├── firmware/               # 独立 workspace；固件 codec 与 ABI 类型
 ├── tools/
 │   ├── aether/            # CLI 配置与服务管理工具
 │   └── simulator/          # Modbus TCP/RTU 从站模拟器

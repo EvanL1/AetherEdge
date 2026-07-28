@@ -1,6 +1,6 @@
 //! Platform-independent CAN configuration, point, and frame-cache types.
 
-use aether_core::PointType;
+use common::PointType;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 

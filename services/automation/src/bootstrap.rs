@@ -155,7 +155,9 @@ fn validate_configuration(config: &AutomationConfig) -> Result<()> {
 async fn setup_sqlite() -> Result<SqlitePool> {
     let db_path = ServiceArgs::default().get_db_path("automation");
     info!("SQLite: {}", db_path);
-    setup_sqlite_pool(&db_path).await.map_err(Into::into)
+    setup_sqlite_pool(&db_path)
+        .await
+        .map_err(|error| AutomationError::DatabaseError(error.to_string()))
 }
 
 /// Assembles models from validated active Packs and an optional site directory.
@@ -514,7 +516,7 @@ pub async fn create_app_state(service_info: &ServiceInfo) -> Result<Arc<AppState
         recommended_cpu_cores: 4,
         recommended_memory_mb: 1024,
     };
-    check_system_requirements_with(requirements)?;
+    check_system_requirements_with(requirements).print_summary();
 
     // Load configuration
     let config = Arc::new(load_configuration(service_info).await?);

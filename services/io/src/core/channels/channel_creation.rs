@@ -5,7 +5,7 @@
 
 use std::sync::Arc;
 
-use aether_config::io::MAX_CHANNEL_TIMING_MS;
+use common::io_config::MAX_CHANNEL_TIMING_MS;
 use common::{ValidationLevel, ValidationResult};
 #[cfg(any(feature = "aether_485", all(feature = "can", target_os = "linux")))]
 use tracing::warn;
@@ -621,7 +621,7 @@ impl ChannelManager {
             if let Some(addr) = parse_iec61850_point(&tp.base.protocol_mappings) {
                 point_configs.push(PointConfig {
                     id: tp.base.point_id,
-                    point_type: aether_core::PointType::Telemetry,
+                    point_type: common::PointType::Telemetry,
                     name: Some(tp.base.signal_name.clone()),
                     address: ProtocolAddress::Iec61850(addr),
                     transform: TransformConfig {
@@ -645,7 +645,7 @@ impl ChannelManager {
             if let Some(addr) = parse_iec61850_point(&sp.base.protocol_mappings) {
                 point_configs.push(PointConfig {
                     id: sp.base.point_id,
-                    point_type: aether_core::PointType::Signal,
+                    point_type: common::PointType::Signal,
                     name: Some(sp.base.signal_name.clone()),
                     address: ProtocolAddress::Iec61850(addr),
                     transform: TransformConfig {
@@ -662,7 +662,7 @@ impl ChannelManager {
             if let Some(addr) = parse_iec61850_point(&cp.base.protocol_mappings) {
                 point_configs.push(PointConfig {
                     id: cp.base.point_id,
-                    point_type: aether_core::PointType::Control,
+                    point_type: common::PointType::Control,
                     name: Some(cp.base.signal_name.clone()),
                     address: ProtocolAddress::Iec61850(addr),
                     transform: TransformConfig {
@@ -684,7 +684,7 @@ impl ChannelManager {
             if let Some(addr) = parse_iec61850_point(&ap.base.protocol_mappings) {
                 point_configs.push(PointConfig {
                     id: ap.base.point_id,
-                    point_type: aether_core::PointType::Adjustment,
+                    point_type: common::PointType::Adjustment,
                     name: Some(ap.base.signal_name.clone()),
                     address: ProtocolAddress::Iec61850(addr),
                     transform: TransformConfig {

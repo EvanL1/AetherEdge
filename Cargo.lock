@@ -24,7 +24,6 @@ name = "aether"
 version = "0.0.1"
 dependencies = [
  "aether-application",
- "aether-config",
  "aether-dataplane",
  "aether-domain",
  "aether-pack",
@@ -188,7 +187,6 @@ dependencies = [
  "aether-application",
  "aether-auth-jwt",
  "aether-calc",
- "aether-config",
  "aether-domain",
  "aether-pack",
  "aether-ports",
@@ -203,7 +201,6 @@ dependencies = [
  "axum",
  "chrono",
  "common",
- "errors",
  "http-body-util",
  "jsonwebtoken",
  "serde",
@@ -274,29 +271,6 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
-]
-
-[[package]]
-name = "aether-config"
-version = "0.0.1"
-dependencies = [
- "aether-schema-macro",
- "anyhow",
- "chrono",
- "common",
- "serde",
- "serde_json",
- "serde_yaml_ng",
- "sqlx",
- "utoipa",
-]
-
-[[package]]
-name = "aether-core"
-version = "0.0.1"
-dependencies = [
- "schemars 0.8.22",
- "serde",
 ]
 
 [[package]]
@@ -430,8 +404,6 @@ version = "0.0.1"
 dependencies = [
  "aether-application",
  "aether-auth-jwt",
- "aether-config",
- "aether-core",
  "aether-dataplane",
  "aether-domain",
  "aether-ports",
@@ -449,7 +421,6 @@ dependencies = [
  "clap",
  "common",
  "dashmap",
- "errors",
  "futures",
  "hex",
  "http-body-util",
@@ -1152,14 +1123,12 @@ dependencies = [
 name = "common"
 version = "0.0.1"
 dependencies = [
- "aether-core",
  "aether-schema-macro",
  "anyhow",
  "axum",
  "chrono",
  "clap",
  "csv",
- "errors",
  "flate2",
  "futures",
  "reqwest",
@@ -1169,6 +1138,7 @@ dependencies = [
  "serde_yaml_ng",
  "sqlx",
  "sysinfo",
+ "thiserror 2.0.18",
  "tokio",
  "tokio-util",
  "tracing",
@@ -1684,22 +1654,6 @@ name = "error-code"
 version = "3.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dea2df4cf52843e0452895c455a1a2cfbb842a1e7329671acf418fdc53ed4c59"
-
-[[package]]
-name = "errors"
-version = "0.0.1"
-dependencies = [
- "anyhow",
- "axum",
- "reqwest",
- "schemars 0.8.22",
- "serde",
- "serde_json",
- "serde_yaml_ng",
- "sqlx",
- "thiserror 2.0.18",
- "tracing",
-]
 
 [[package]]
 name = "etcetera"

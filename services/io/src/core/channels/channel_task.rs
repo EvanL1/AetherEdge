@@ -12,7 +12,7 @@ use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU8, AtomicU64, Ordering};
 use std::time::Duration;
 use tracing::{debug, error, info, warn};
 
-use aether_core::PointType;
+use common::PointType;
 
 use crate::core::channels::traits::ChannelCommand;
 use crate::core::channels::types::ProtocolCommand;

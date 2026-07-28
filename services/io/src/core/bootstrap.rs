@@ -10,9 +10,9 @@ use clap::Parser;
 use tracing::{debug, info};
 
 use crate::core::config::DEFAULT_PORT;
+use anyhow::Result;
 use common::DEFAULT_API_HOST;
 use common::service_bootstrap::ServiceInfo;
-use errors::{AetherError, AetherResult};
 
 use crate::core::config::ConfigManager;
 
@@ -74,7 +74,7 @@ pub fn initialize_logging(
     args: &ServiceArgs,
     service_info: &ServiceInfo,
     logging_config: Option<&common::LoggingConfig>,
-) -> AetherResult<()> {
+) -> Result<()> {
     // Load environment variables from .env file in development mode
     common::service_bootstrap::load_development_env();
 
@@ -100,12 +100,12 @@ pub fn initialize_logging(
     };
 
     common::logging::init_with_config(log_config)
-        .map_err(|e| AetherError::Configuration(format!("Failed to init logging: {}", e)))?;
+        .map_err(|error| anyhow::anyhow!("failed to initialize logging: {error}"))?;
     Ok(())
 }
 
 /// Validate configuration from SQLite database
-pub async fn validate_configuration() -> AetherResult<()> {
+pub async fn validate_configuration() -> Result<()> {
     debug!("Validating configuration from SQLite database");
 
     // Load and validate configuration

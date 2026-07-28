@@ -3,11 +3,11 @@
 use std::collections::HashMap;
 use std::fmt;
 
-use aether_core::PointType;
 use aether_domain::{
     CommandConstraints, CommandId, ControlCommand, DomainError, InstanceId, PointAddress, PointId,
     PointKind, TimestampMs,
 };
+use common::PointType;
 
 use crate::core::config::RuntimeChannelConfig;
 

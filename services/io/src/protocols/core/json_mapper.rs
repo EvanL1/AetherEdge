@@ -10,8 +10,8 @@
 //! - Timestamp format conversion (Unix seconds/millis, ISO 8601)
 //! - Data type conversion and linear scaling (scale * value + offset)
 
-use aether_core::PointType;
 use chrono::{DateTime, TimeZone, Utc};
+use common::PointType;
 use serde::{Deserialize, Serialize};
 use serde_json_path::JsonPath;
 use sqlx::SqlitePool;

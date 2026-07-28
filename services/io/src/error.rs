@@ -3,7 +3,6 @@
 //! This module provides error type definitions and conversions for the Communication Service.
 //! Error types have been consolidated from 27 variants to 15 for maintainability.
 
-use errors::AetherError;
 use thiserror::Error;
 
 /// Communication Service Error Type (Simplified: 15 variants)
@@ -273,51 +272,25 @@ where
 }
 
 // ============================================================================
-// Conversion from IoError to AetherError for API boundaries
+// Service-local error classification used by the HTTP adapter.
 // ============================================================================
 
-impl From<IoError> for AetherError {
-    fn from(err: IoError) -> Self {
-        match err {
-            IoError::ConfigError(msg) => AetherError::Configuration(msg),
-            IoError::IoError(msg) => AetherError::Io(std::io::Error::other(msg)),
-            IoError::ProtocolError(msg) => AetherError::Protocol {
-                protocol: "io".to_string(),
-                message: msg,
-            },
-            IoError::ConnectionError(msg) => AetherError::Communication(msg),
-            IoError::DataError(msg) => AetherError::Validation(msg),
-            IoError::TimeoutError(msg) => AetherError::Timeout(msg),
-            IoError::StorageError(msg) => AetherError::Database(msg),
-            IoError::ResourceError(msg) => AetherError::ResourceBusy(msg),
-            IoError::ChannelError(msg) => {
-                if msg.contains("not found") {
-                    AetherError::ChannelNotFound(msg)
-                } else if msg.contains("exists") {
-                    AetherError::AlreadyExists(msg)
-                } else {
-                    AetherError::Processing(msg)
-                }
-            },
-            IoError::PointError(msg) => AetherError::NotFound {
-                resource: format!("Point: {}", msg),
-            },
-            IoError::ValidationError(msg) => AetherError::Validation(msg),
-            IoError::PermissionError(msg) => AetherError::Forbidden(msg),
-            IoError::StateError(msg) => AetherError::Internal(msg),
-            IoError::BatchError(msg) => AetherError::Internal(msg),
-            IoError::InternalError(msg) => AetherError::Internal(msg),
-        }
-    }
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ErrorCategory {
+    Configuration,
+    Database,
+    Validation,
+    NotFound,
+    Permission,
+    Protocol,
+    Connection,
+    Timeout,
+    ResourceBusy,
+    ResourceExhausted,
+    Internal,
 }
 
-// ============================================================================
-// IoError implements AetherErrorTrait
-// ============================================================================
-
-use errors::{AetherErrorTrait, ErrorCategory};
-
-impl AetherErrorTrait for IoError {
+impl IoError {
     fn error_code(&self) -> &'static str {
         match self {
             Self::ConfigError(_) => "IO_CONFIG_ERROR",
@@ -355,6 +328,27 @@ impl AetherErrorTrait for IoError {
             Self::StateError(_) => ErrorCategory::ResourceBusy,
             Self::BatchError(_) => ErrorCategory::Internal,
             Self::InternalError(_) => ErrorCategory::Internal,
+        }
+    }
+
+    fn is_retryable(&self) -> bool {
+        matches!(
+            self.category(),
+            ErrorCategory::Timeout | ErrorCategory::ResourceBusy
+        )
+    }
+
+    fn http_status(&self) -> axum::http::StatusCode {
+        use axum::http::StatusCode;
+        match self.category() {
+            ErrorCategory::Configuration => StatusCode::BAD_REQUEST,
+            ErrorCategory::Validation => StatusCode::UNPROCESSABLE_ENTITY,
+            ErrorCategory::NotFound => StatusCode::NOT_FOUND,
+            ErrorCategory::Permission => StatusCode::FORBIDDEN,
+            ErrorCategory::Timeout => StatusCode::REQUEST_TIMEOUT,
+            ErrorCategory::ResourceBusy => StatusCode::SERVICE_UNAVAILABLE,
+            ErrorCategory::ResourceExhausted => StatusCode::TOO_MANY_REQUESTS,
+            _ => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
 
@@ -407,7 +401,6 @@ impl AetherErrorTrait for IoError {
 impl From<IoError> for common::AppError {
     fn from(err: IoError) -> Self {
         use common::{AppError, ErrorInfo};
-        use errors::AetherErrorTrait;
 
         let status = err.http_status();
         let mut error_info = ErrorInfo::new(err.to_string())
@@ -436,7 +429,6 @@ impl From<IoError> for common::AppError {
 #[allow(clippy::disallowed_methods)] // Test code - unwrap is acceptable
 mod tests {
     use super::*;
-    use errors::{AetherErrorTrait, ErrorCategory};
 
     /// Helper macro to test constructor + display + error_code + category in one shot
     macro_rules! test_error_variant {
@@ -663,75 +655,36 @@ mod tests {
     }
 
     #[test]
-    fn test_to_voltage_error_conversions() {
-        assert!(matches!(
-            AetherError::from(IoError::ConfigError("t".into())),
-            AetherError::Configuration(_)
-        ));
-        assert!(matches!(
-            AetherError::from(IoError::IoError("t".into())),
-            AetherError::Io(_)
-        ));
-        assert!(matches!(
-            AetherError::from(IoError::ProtocolError("t".into())),
-            AetherError::Protocol { .. }
-        ));
-        assert!(matches!(
-            AetherError::from(IoError::ConnectionError("t".into())),
-            AetherError::Communication(_)
-        ));
-        assert!(matches!(
-            AetherError::from(IoError::DataError("t".into())),
-            AetherError::Validation(_)
-        ));
-        assert!(matches!(
-            AetherError::from(IoError::TimeoutError("t".into())),
-            AetherError::Timeout(_)
-        ));
-        assert!(matches!(
-            AetherError::from(IoError::StorageError("t".into())),
-            AetherError::Database(_)
-        ));
-        assert!(matches!(
-            AetherError::from(IoError::ResourceError("t".into())),
-            AetherError::ResourceBusy(_)
-        ));
-        assert!(matches!(
-            AetherError::from(IoError::channel_not_found(1)),
-            AetherError::ChannelNotFound(_)
-        ));
-        assert!(matches!(
-            AetherError::from(IoError::channel_exists(1)),
-            AetherError::AlreadyExists(_)
-        ));
-        assert!(matches!(
-            AetherError::from(IoError::ChannelError("other".into())),
-            AetherError::Processing(_)
-        ));
-        assert!(matches!(
-            AetherError::from(IoError::PointError("t".into())),
-            AetherError::NotFound { .. }
-        ));
-        assert!(matches!(
-            AetherError::from(IoError::ValidationError("t".into())),
-            AetherError::Validation(_)
-        ));
-        assert!(matches!(
-            AetherError::from(IoError::PermissionError("t".into())),
-            AetherError::Forbidden(_)
-        ));
-        assert!(matches!(
-            AetherError::from(IoError::StateError("t".into())),
-            AetherError::Internal(_)
-        ));
-        assert!(matches!(
-            AetherError::from(IoError::BatchError("t".into())),
-            AetherError::Internal(_)
-        ));
-        assert!(matches!(
-            AetherError::from(IoError::InternalError("t".into())),
-            AetherError::Internal(_)
-        ));
+    fn service_errors_map_directly_to_http_statuses() {
+        use axum::http::StatusCode;
+
+        for (error, expected) in [
+            (IoError::ConfigError("t".into()), StatusCode::BAD_REQUEST),
+            (
+                IoError::DataError("t".into()),
+                StatusCode::UNPROCESSABLE_ENTITY,
+            ),
+            (IoError::PointError("t".into()), StatusCode::NOT_FOUND),
+            (IoError::PermissionError("t".into()), StatusCode::FORBIDDEN),
+            (
+                IoError::TimeoutError("t".into()),
+                StatusCode::REQUEST_TIMEOUT,
+            ),
+            (
+                IoError::StateError("t".into()),
+                StatusCode::SERVICE_UNAVAILABLE,
+            ),
+            (
+                IoError::ResourceError("t".into()),
+                StatusCode::TOO_MANY_REQUESTS,
+            ),
+            (
+                IoError::InternalError("t".into()),
+                StatusCode::INTERNAL_SERVER_ERROR,
+            ),
+        ] {
+            assert_eq!(error.http_status(), expected);
+        }
     }
 
     #[test]

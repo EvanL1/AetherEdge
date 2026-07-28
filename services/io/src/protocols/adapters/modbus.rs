@@ -19,7 +19,7 @@ use voltage_modbus::{ModbusTcpClient, TcpTransport};
 #[cfg(feature = "modbus")]
 use voltage_modbus::{ModbusRtuClient, RtuTransport};
 
-use aether_core::PointType;
+use common::PointType;
 
 use crate::protocols::core::data::{DataBatch, Value};
 use crate::protocols::core::diagnostics::AtomicDiagnostics;
