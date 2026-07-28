@@ -38,14 +38,13 @@ pub struct ChannelManager {
     pub(super) active_channel_ids: DashSet<u32>,
     /// Shared authoritative SHM store used by all channels.
     pub(super) store: Arc<ShmDataStore>,
-    /// Routing cache for C2M/M2C routing (public for reload operations)
+    /// IO-owned C2C channel-routing projection, replaced during reconciliation.
     pub routing_cache: Arc<aether_routing::ChannelRoutingCache>,
     /// SQLite connection pool for configuration loading
     pub(super) sqlite_pool: Option<sqlx::SqlitePool>,
-    /// Runtime-swappable shared memory handle (writer + index, rebuilt on routing reload)
+    /// Runtime-swappable shared memory handle rebuilt with physical topology.
     pub(super) shm_handle: Arc<ShmWriterHandle>,
-    /// Command TX cache for O(1) hot path access
-    /// Shared with AppState for direct API access bypassing RwLock
+    /// Command TX cache shared by channel tasks and the M2C listener.
     pub(super) command_tx_cache: Option<Arc<crate::api::command_cache::CommandTxCache>>,
 
     // ========== SHM Command Listener (Event-driven M2C via UDS) ==========
@@ -132,13 +131,12 @@ impl ChannelManager {
         self.shm_listener.as_ref()
     }
 
-    /// Get the SHM writer handle for routing reload and SHM rebuild.
+    /// Get the SHM writer handle for topology reconciliation.
     pub fn shm_handle(&self) -> &Arc<ShmWriterHandle> {
         &self.shm_handle
     }
 
-    /// Shared SHM writer used by every acquisition channel and by explicit
-    /// telemetry/signal simulation writes.
+    /// Shared authoritative SHM writer used by acquisition channels.
     pub fn data_store(&self) -> &Arc<ShmDataStore> {
         &self.store
     }

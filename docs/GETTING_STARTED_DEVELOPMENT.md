@@ -120,7 +120,7 @@ docker compose --profile postgres-storage up -d
 # 验收 supervisor、网关与 SHM writer heartbeat
 docker compose ps
 curl --fail http://127.0.0.1:6005/health
-./target/release/aether shm info
+curl --fail http://127.0.0.1:6001/health
 ```
 
 ### 步骤 5：运行测试

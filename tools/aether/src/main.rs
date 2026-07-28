@@ -17,8 +17,6 @@ mod output;
 mod pack_artifact;
 mod routing;
 mod rules;
-mod shm;
-mod templates;
 mod transport_security;
 mod utils;
 
@@ -172,20 +170,6 @@ enum Commands {
     Routing {
         #[command(subcommand)]
         command: routing::RoutingCommands,
-    },
-
-    /// Shared memory operations (interactive REPL)
-    #[command(about = "Zero-latency shared memory CLI (like mysql-cli)")]
-    Shm {
-        #[command(subcommand)]
-        command: Option<shm::ShmCommands>,
-    },
-
-    /// Inspect channel templates
-    #[command(about = "Inspect channel configuration templates")]
-    Templates {
-        #[command(subcommand)]
-        command: templates::TemplateCommands,
     },
 
     /// Manage alarm rules and inspect active alerts
@@ -387,16 +371,6 @@ async fn run(cli: Cli) -> Result<()> {
         Commands::Routing { command } => {
             let urls = mcp::BaseUrls::from_api_base(&api_base_url(host));
             routing::handle_command(command, &urls.automation, json).await?;
-        },
-        Commands::Shm { command } => {
-            if json {
-                eprintln!("warning: --json is not supported for 'shm' command");
-            }
-            shm::handle_command(command, &db_path).await?;
-        },
-        Commands::Templates { command } => {
-            let urls = mcp::BaseUrls::from_api_base(&api_base_url(host));
-            templates::handle_command(command, &urls.io, json).await?;
         },
         Commands::Alarms { command } => {
             let urls = mcp::BaseUrls::from_api_base(&api_base_url(host));

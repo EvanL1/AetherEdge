@@ -7,7 +7,9 @@ nonexistent instance-measurement compatibility surface and the rule engine's
 direct action-dispatch path were removed on 2026-07-12. Physical action-route
 mutations joined the same application boundary on 2026-07-12.
 The fixed authenticated remote service namespaces were added on 2026-07-14 so
-downstream applications no longer connect to process ports directly.
+downstream applications no longer connect to process ports directly. The
+historical development-only direct T/S simulation route was retired by
+[ADR-0031](0031-offline-physical-point-topology.md).
 
 ## Context
 

@@ -14,15 +14,15 @@ the server at a remote installation, and the read-only/write access model.
 
 ## What you get
 
-The production MCP catalog has 45 tools in two tiers:
+The production MCP catalog has 44 tools in two tiers:
 
-- **23 read-only tools**, always registered — listing and inspecting channels
+- **22 read-only tools**, always registered — listing and inspecting channels
   and their point mappings (`channels_list`, `channels_status`,
   `channels_points`), alarms and alarm rules (`alarms_list`, `alarms_stats`),
   control rules (`rules_list`, `rules_get`),
   routing, historical data (`history_query`, `history_latest`), product models
-  and device instances (`models_products`, `models_instances`), channel
-  templates, and cloud-link status (`net_mqtt_status`, `net_cert_info`).
+  and device instances (`models_products`, `models_instances`), and cloud-link
+  status (`net_mqtt_status`, `net_cert_info`).
 - **22 governed write tools**, registered only when the server is started
   with `--allow-write`: `channels_create`, `channels_update`,
   `channels_delete`, `channels_enable`, `channels_disable`, and

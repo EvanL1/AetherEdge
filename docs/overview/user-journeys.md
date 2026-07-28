@@ -66,7 +66,7 @@ Run the first health gate:
 ```bash
 systemctl status aether.target
 curl --fail http://127.0.0.1:6005/health
-aether shm info
+curl --fail http://127.0.0.1:6001/health
 ```
 
 Success means the six services, remote gateway, and authoritative SHM plane are

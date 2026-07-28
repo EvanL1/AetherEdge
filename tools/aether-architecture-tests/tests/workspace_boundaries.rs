@@ -78,6 +78,12 @@ const RETIRED_ROOT_PATHS: &[&str] = &[
     "libs/common/src/warning_monitor.rs",
     "services/io/assets/script-host",
     "services/io/src/api/handlers/network_handlers.rs",
+    "services/io/src/api/handlers/template_handlers.rs",
+    "services/io/src/api/handlers/point_handlers/point_batch_handlers.rs",
+    "services/io/src/api/handlers/point_handlers/point_crud_handlers.rs",
+    "services/io/src/api/handlers/point_handlers/point_governance.rs",
+    "services/io/src/api/handlers/point_handlers/point_types.rs",
+    "services/io/src/point_topology.rs",
     "services/io/src/protocols/adapters/can/j1939.rs",
     "services/io/src/protocols/adapters/can/j1939",
     "services/io/src/protocols/adapters/can/config.rs",
@@ -101,6 +107,8 @@ const RETIRED_ROOT_PATHS: &[&str] = &[
     "tools/aether/src/top_draw.rs",
     "tools/aether/src/shm_dashboard.rs",
     "tools/aether/src/deploy_mode.rs",
+    "tools/aether/src/templates.rs",
+    "tools/aether/src/shm.rs",
 ];
 const RETIRED_EXTERNAL_RUST_DEPENDENCIES: &[&str] = &["bb8", "bb8-redis", "redis"];
 const RETIRED_IO_PROTOCOLS: &[&str] = &[
@@ -613,7 +621,15 @@ fn core_and_gateway_do_not_select_forbidden_sdk_or_adapter_edges() {
         violations.push("aether-routing depends on the concrete SQLite client".to_string());
     }
     let cli = workspace.package("aether");
-    for forbidden in ["crossterm", "ratatui"] {
+    for forbidden in [
+        "aether-dataplane",
+        "aether-routing",
+        "aether-shm-bridge",
+        "aether-store-local",
+        "crossterm",
+        "ratatui",
+        "rustyline",
+    ] {
         if production_dependencies(cli).any(|dependency| dependency.name == forbidden) {
             violations.push(format!(
                 "headless aether CLI restored retired TUI dependency {forbidden}"

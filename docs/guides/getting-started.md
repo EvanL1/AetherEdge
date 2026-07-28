@@ -138,15 +138,14 @@ because the example sets `AETHER_ALLOW_PUBLIC_REGISTRATION=false`.
 docker compose up -d
 docker compose ps
 curl --fail http://127.0.0.1:6005/health
-aether shm info
+curl --fail http://127.0.0.1:6001/health
 ```
 
 The compose file references pre-built images; on a machine without
 `aetherems:latest`, build the installer image or load a release archive as
 described in [Deployment](deployment.md). Docker Compose or systemd owns the
-six process states. The API health endpoint proves the remote boundary, and
-`aether shm info` verifies the local authoritative segment and writer
-heartbeat.
+six process states. The API health endpoint proves the remote boundary, while IO health verifies
+the acquisition owner and authoritative live-state plane.
 
 With everything healthy, these ports are listening (see
 [System Architecture](../concepts/architecture.md) for what each service

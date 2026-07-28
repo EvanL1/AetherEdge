@@ -22,7 +22,7 @@ HTTP share one application API rather than duplicate operational behavior.
 
 1. `aether` retains offline `init`, `sync`, `status`, and `export`; authenticated
    application queries and governed commands; runtime-manifest and Pack
-   operations; SHM one-shot reads; and MCP.
+   operations; and MCP.
 2. First installation and safe-empty configuration activation remain installer
    responsibilities. Offline commissioning uses `sync --dry-run` followed by
    `sync --confirmed` while runtime owners are stopped.
@@ -30,8 +30,8 @@ HTTP share one application API rather than duplicate operational behavior.
    container logs, and the operator's observability stack own logs.
 4. Service `/health`, authenticated query routes, and distribution checks own
    health evidence. The CLI does not aggregate another health model.
-5. Interactive top/log/SHM dashboards are downstream console concerns and are
-   removed with their terminal dependencies.
+5. Interactive dashboards and direct SHM attachment are not application-client
+   capabilities. Live reads use authenticated SHM-backed service APIs.
 6. Architecture and CLI tests reject restoration of the retired modules and
    commands.
 

@@ -1006,7 +1006,7 @@ echo "=== Install complete ==="
 systemctl --no-pager status aether.target || true
 echo ""
 echo "Next: prove the safe-empty runtime before commissioning hardware."
-echo "  1. Check runtime: systemctl status aether.target; curl --fail http://127.0.0.1:6005/health; aether shm info"
+echo "  1. Check runtime: systemctl status aether.target; curl --fail http://127.0.0.1:6005/health; curl --fail http://127.0.0.1:6001/health"
 echo "  2. Complete the bootstrap administrator action above."
 echo "  3. Confirm that channels, instances, and rules are empty."
 echo "  4. Create one disabled channel, map its points, and prove read-only data."

@@ -39,7 +39,6 @@ use crate::models::client::ModelClient;
 use crate::net::NetClient;
 use crate::routing::RoutingClient;
 use crate::rules::RuleClient;
-use crate::templates::TemplateClient;
 
 /// Every tool body ends with this: `Ok` becomes structured content, `Err`
 /// becomes visible error text -- never `Err(ErrorData)`, which MCP clients
@@ -87,7 +86,6 @@ pub(crate) struct AetherMcp {
     routing: RoutingClient,
     history: HistoryClient,
     models: ModelClient,
-    templates: TemplateClient,
     net: NetClient,
     doc_resources: Vec<crate::mcp_docs::DocResource>,
     tool_router: ToolRouter<AetherMcp>,
@@ -184,7 +182,6 @@ impl AetherMcp {
             routing: RoutingClient::new(&urls.automation)?,
             history: HistoryClient::new(&urls.history)?,
             models: ModelClient::new(&urls.automation)?,
-            templates: TemplateClient::new(&urls.io)?,
             net: NetClient::new(&urls.uplink)?,
             doc_resources: crate::mcp_docs::doc_resources(active_packs)?,
             tool_router,
@@ -347,12 +344,6 @@ struct HistoryLatestParams {
 struct ModelsInstancesParams {
     /// Filter by product type, e.g. "ESS", "Battery"
     product: Option<String>,
-}
-
-#[derive(Deserialize, schemars::JsonSchema)]
-struct TemplatesListParams {
-    /// Filter by protocol, e.g. "modbus"
-    protocol: Option<String>,
 }
 
 #[tool_router(router = read_only_router)]
@@ -540,14 +531,6 @@ impl AetherMcp {
         Parameters(p): Parameters<ModelsInstancesParams>,
     ) -> CallToolResult {
         to_call_result(self.models.list_instances(p.product.as_deref()).await)
-    }
-
-    #[tool(description = "List channel configuration templates, optionally filtered by protocol")]
-    async fn templates_list(
-        &self,
-        Parameters(p): Parameters<TemplatesListParams>,
-    ) -> CallToolResult {
-        to_call_result(self.templates.list_templates(p.protocol.as_deref()).await)
     }
 }
 
@@ -1968,29 +1951,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn templates_list_forwards_the_protocol_filter() {
-        let server = MockServer::start().await;
-        Mock::given(method("GET"))
-            .and(path("/api/templates"))
-            .and(query_param("protocol", "modbus"))
-            .respond_with(
-                ResponseTemplate::new(200).set_body_json(serde_json::json!({ "templates": [] })),
-            )
-            .expect(1)
-            .mount(&server)
-            .await;
-
-        let mcp = AetherMcp::new(&test_urls(&server.uri()), false).unwrap();
-        let result = mcp
-            .templates_list(Parameters(TemplatesListParams {
-                protocol: Some("modbus".to_string()),
-            }))
-            .await;
-
-        assert_ne!(result.is_error, Some(true), "{result:?}");
-    }
-
-    #[tokio::test]
     async fn write_router_is_empty_without_allow_write() {
         let server = MockServer::start().await;
         let mcp = AetherMcp::new(&test_urls(&server.uri()), false).unwrap();
@@ -2009,7 +1969,7 @@ mod tests {
         }
         // Route-count safety net catches a future write tool landing in the
         // wrong impl block or a name collision overwriting a read-only route.
-        assert_eq!(names.len(), 23, "{names:?}");
+        assert_eq!(names.len(), 22, "{names:?}");
     }
 
     #[tokio::test]
@@ -2031,8 +1991,8 @@ mod tests {
         }
         // Read-only tools are still present too -- --allow-write ADDS, doesn't replace.
         assert!(names.contains(&"channels_list".to_string()), "{names:?}");
-        // Route-count safety net: 23 read-only + 22 governed writes.
-        assert_eq!(names.len(), 45, "{names:?}");
+        // Route-count safety net: 22 read-only + 22 governed writes.
+        assert_eq!(names.len(), 44, "{names:?}");
     }
 
     #[tokio::test]

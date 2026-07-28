@@ -141,13 +141,10 @@ aether history metrics                 # storage backend statistics
 aether history health                  # history health check
 ```
 
-### Authoritative live data (local SHM)
+### Authoritative live data
 ```bash
-aether shm get ch:1001:T:101
-aether shm get inst:9:M:101
-aether shm watch ch:1001:T:101
-aether shm info
-aether models instances data 9         # remote-capable SHM-backed API
+aether channels points 1001 --type T --json
+aether models instances data 9 --json  # authenticated SHM-backed API
 ```
 
 ### Routing
@@ -215,7 +212,7 @@ aether alarms list --channel <id> --json
 
 - **Read-only**: Do not run commands that mutate state (`models instances action`, channel create/update/delete/enable/disable, `channels write`, action-routing create/delete, `rules create/update/enable/disable/delete`, `alarms resolve/rule-create/rule-update/rule-delete/rule-enable/rule-disable`) unless the user explicitly asks to make a change. `channels write` injects simulated telemetry; it never sends C/A device commands. Channel commissioning/lifecycle, device actions, physical action-routing changes, and every automation/alarm policy mutation require `AETHER_ACCESS_TOKEN` plus `--confirmed`; `--force` only skips an interactive prompt and is not safety confirmation. MCP's `--allow-write` only registers governed tools and is not confirmation.
 - **No source diving**: Never open `*.rs`, `*.yaml`, or `*.db` files to answer live data questions.
-- **No external store needed**: use `aether shm` or SHM-backed service APIs for live data and `aether history` for historical data.
+- **No external store needed**: use SHM-backed service APIs for live data and `aether history` for historical data.
 - If a service is not reachable, report the error message from `aether` directly; do not guess at data.
 
 ## Terminology

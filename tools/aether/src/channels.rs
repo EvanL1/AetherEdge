@@ -20,14 +20,6 @@ pub enum ChannelCommands {
         channel_id: u32,
     },
 
-    /// Reconcile all channel runtimes from authoritative desired state
-    #[command(about = "Reconcile all channel runtimes from authoritative desired state")]
-    Reload {
-        /// Explicitly confirm this high-risk runtime reconciliation
-        #[arg(long)]
-        confirmed: bool,
-    },
-
     /// Check service health
     #[command(about = "Check communication service health")]
     Health,
@@ -194,10 +186,6 @@ pub async fn handle_command(cmd: ChannelCommands, base_url: &str, json: bool) ->
                     serde_json::to_string_pretty(&status)?
                 );
             }
-        },
-        ChannelCommands::Reload { confirmed } => {
-            let result = client.reconcile_channels(confirmed).await?;
-            print_reconciliation_receipt(&result, json)?;
         },
         ChannelCommands::Health => {
             let health = client.check_health().await?;
@@ -526,39 +514,6 @@ fn parse_reconciliation_receipt(response: &Value) -> Result<ChannelReconciliatio
     Ok(receipt)
 }
 
-fn reconciliation_receipt_summary(response: &Value) -> Result<String> {
-    let receipt = parse_reconciliation_receipt(response)?;
-    let scope = match (receipt.scope, receipt.channel_id) {
-        (ChannelReconciliationScopeReceipt::All, None) => "all channels".to_string(),
-        (ChannelReconciliationScopeReceipt::One, Some(channel_id)) => {
-            format!("channel {channel_id}")
-        },
-        _ => anyhow::bail!("invalid channel reconciliation receipt: scope and channel_id disagree"),
-    };
-    let reconciliation = if receipt.reconciliation_required {
-        "reconciliation required"
-    } else {
-        "runtime projections reconciled"
-    };
-    Ok(format!(
-        "Runtime reconciliation for {scope} accepted: {} channel(s), {} degraded; {reconciliation}; completion audit {}; request {}; do not retry automatically",
-        receipt.items.len(),
-        receipt.degraded_count,
-        receipt.completion_audit.status,
-        receipt.request_id
-    ))
-}
-
-fn print_reconciliation_receipt(response: &Value, json: bool) -> Result<()> {
-    let summary = reconciliation_receipt_summary(response)?;
-    if json {
-        crate::output::print_success(response);
-    } else {
-        println!("{summary}");
-    }
-    Ok(())
-}
-
 // HTTP client for channel management
 crate::api_client::authenticated_api_client!(pub(crate) ChannelClient);
 
@@ -870,10 +825,7 @@ impl PointClient {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        ChannelClient, ChannelCommands, PointClient, mutation_receipt_summary,
-        reconciliation_receipt_summary,
-    };
+    use super::{ChannelClient, ChannelCommands, PointClient, mutation_receipt_summary};
     use clap::Parser;
     use wiremock::matchers::{body_json, header, header_exists, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -961,16 +913,6 @@ mod tests {
     }
 
     #[test]
-    fn reload_requires_explicit_confirmation_in_the_cli_schema() {
-        let cli = ChannelCli::try_parse_from(["channels", "reload", "--confirmed"]).unwrap();
-
-        match cli.command {
-            ChannelCommands::Reload { confirmed } => assert!(confirmed),
-            _ => panic!("expected reload command"),
-        }
-    }
-
-    #[test]
     fn update_enable_and_disable_parse_revision_guards_and_confirmation() {
         let cases = [
             vec![
@@ -1054,20 +996,6 @@ mod tests {
         assert!(summary.contains("completion audit incomplete"), "{summary}");
         assert!(summary.contains("do not retry automatically"), "{summary}");
         assert!(!summary.contains("connected"), "{summary}");
-    }
-
-    #[test]
-    fn typed_reconciliation_receipt_exposes_scope_degradation_and_audit_state() {
-        let response = reconciliation_response();
-
-        let summary = reconciliation_receipt_summary(&response).expect("typed receipt");
-        assert!(summary.contains("all channels"), "{summary}");
-        assert!(summary.contains("2 channel(s)"), "{summary}");
-        assert!(summary.contains("1 degraded"), "{summary}");
-        assert!(summary.contains("reconciliation required"), "{summary}");
-        assert!(summary.contains("completion audit incomplete"), "{summary}");
-        assert!(summary.contains("do not retry automatically"), "{summary}");
-        assert!(!summary.contains("parameters"), "{summary}");
     }
 
     fn reconciliation_response() -> serde_json::Value {

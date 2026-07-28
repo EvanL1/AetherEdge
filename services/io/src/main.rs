@@ -539,10 +539,6 @@ async fn main() -> anyhow::Result<()> {
             Arc::clone(&channel_audit),
             aether_application::SafetyPolicy,
         ));
-    let point_topology = Arc::new(aether_io::point_topology::PointTopologyApplication::new(
-        sqlite_pool.clone(),
-        channel_audit,
-    ));
     let access_authenticator = Arc::new(
         aether_auth_jwt::AccessTokenAuthenticator::from_env().map_err(|error| {
             IoError::ConfigError(format!("Channel-management authentication: {error}"))
@@ -554,7 +550,6 @@ async fn main() -> anyhow::Result<()> {
         Arc::clone(&command_tx_cache),
         channel_management,
         channel_reconciliation,
-        point_topology,
         access_authenticator,
     );
 

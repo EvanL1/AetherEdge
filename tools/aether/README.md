@@ -51,8 +51,6 @@ from a timeout alone.
 
 - `aether runtime-manifest` verifies the feature-exact composition artifact.
 - `aether packs build|install` handles data-only Pack artifacts.
-- `aether templates list|get` inspects channel templates.
-- `aether shm get|info|watch` provides one-shot local read diagnostics.
 - `aether mcp` starts the default read-only MCP server.
 - `aether mcp --allow-write` registers the bounded governed write set for one
   session; each invocation still confirms separately.

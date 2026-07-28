@@ -529,6 +529,48 @@ fn rule_calculation_has_one_concrete_owner() {
 }
 
 #[test]
+fn io_point_topology_is_offline_only() {
+    let root = workspace_metadata().workspace_root;
+    for (relative, forbidden) in [
+        (
+            "services/io/src/api/handlers/mapping_handlers.rs",
+            "update_channel_mappings_handler",
+        ),
+        (
+            "services/io/src/api/routes.rs",
+            "create_telemetry_point_handler",
+        ),
+        (
+            "services/io/src/api/routes.rs",
+            "batch_point_operations_handler",
+        ),
+        (
+            "services/io/src/api/routes.rs",
+            "update_channel_mappings_handler",
+        ),
+        ("services/io/src/api/routes.rs", "/api/templates"),
+        ("services/io/src/api/routes.rs", "/api/channels/reload"),
+        ("services/io/src/api/routes.rs", "/api/routing/reload"),
+        ("services/io/src/api/routes.rs", "/write"),
+        (
+            "services/io/src/api/handlers/channel_management_handlers/reload.rs",
+            "reload_configuration_handler",
+        ),
+        (
+            "services/io/src/api/handlers/channel_management_handlers/reload.rs",
+            "reload_routing_handler",
+        ),
+    ] {
+        let source = fs::read_to_string(root.join(relative))
+            .unwrap_or_else(|error| panic!("failed to read {relative}: {error}"));
+        assert!(
+            !source.contains(forbidden),
+            "{relative} restored online point-topology compatibility surface {forbidden}"
+        );
+    }
+}
+
+#[test]
 fn routing_library_is_storage_agnostic() {
     let root = workspace_metadata().workspace_root;
     for relative in [
@@ -565,7 +607,6 @@ fn cli_and_mcp_share_one_concrete_authenticated_http_client() {
         "tools/aether/src/net.rs",
         "tools/aether/src/routing.rs",
         "tools/aether/src/rules.rs",
-        "tools/aether/src/templates.rs",
     ] {
         let source = fs::read_to_string(root.join(relative))
             .unwrap_or_else(|error| panic!("failed to read {relative}: {error}"));

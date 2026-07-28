@@ -1,10 +1,4 @@
-//! Governed channel lifecycle and development-only point simulation handlers.
-//!
-//! This module contains handlers for:
-//! - Channel control operations (start, stop, restart)
-//! - Point-level control commands
-//! - Point-level adjustment commands
-//! - Batch control and adjustment operations
+//! Governed channel lifecycle and per-channel logging handlers.
 
 #![allow(clippy::disallowed_methods)] // json! macro used in multiple functions
 
@@ -15,7 +9,7 @@ use crate::api::routes::AppState;
 use crate::dto::{
     AppError, ChannelCompletionAudit, ChannelCompletionAuditState, ChannelControlOperationResult,
     ChannelControlResponse, ChannelControlResult, ChannelOperation, ChannelOperationKind,
-    ChannelRuntimeProjectionResult, SuccessResponse, WritePointRequest, WriteResponse,
+    ChannelRuntimeProjectionResult, SuccessResponse,
 };
 use aether_application::{
     ChannelMutationAcceptance, ChannelReconciliationAcceptance, CompletionAuditStatus,
@@ -28,7 +22,6 @@ use axum::{
     http::HeaderMap,
     response::Json,
 };
-use common::PointType;
 
 /// Govern one channel's desired lifecycle or rebuildable runtime projection.
 ///
@@ -235,155 +228,6 @@ const fn runtime_projection_result(
     }
 }
 
-/// Simulation write endpoint for acquisition-owned T/S points.
-///
-/// Real C/A device commands are deliberately rejected here. They must enter
-/// through automation's authenticated, confirmed, and audited application API,
-/// then reach io through the SHM/UDS command plane.
-///
-/// ## Supported Point Types
-/// - **T** / **Telemetry**: For testing/simulation (normally read-only)
-/// - **S** / **Signal**: For testing/simulation (normally read-only)
-#[utoipa::path(
-    post,
-    path = "/api/channels/{channel_id}/write",
-    description = "Development-only injection of acquisition-owned T/S samples. The route returns 403 unless AETHER_ALLOW_SIMULATION_WRITES=true; C/A device commands are always rejected and must use the audited automation application API.",
-    params(
-        ("channel_id" = u16, Path, description = "Channel identifier", example = 1001)
-    ),
-    request_body = WritePointRequest,
-    responses(
-        (status = 200, description = "Simulation sample committed (single or batch)",
-            body = WriteResponse),
-        (status = 400, description = "Invalid T/S point type, identifier, value, or batch", body = String),
-        (status = 403, description = "Simulation writes are disabled by default", body = String),
-        (status = 500, description = "Write operation failed", body = String)
-    ),
-    tag = "io"
-)]
-pub async fn write_channel_point(
-    State(state): State<AppState>,
-    Path(channel_id): Path<u32>,
-    Json(request): Json<WritePointRequest>,
-) -> Result<Json<SuccessResponse<crate::dto::WriteResponse>>, AppError> {
-    use crate::dto::{BatchCommandError, BatchCommandResult, WritePointData, WriteResponse};
-
-    let point_type = normalize_point_type(&request.r#type)?;
-    if !point_type.is_measurement() {
-        return Err(AppError::bad_request(
-            "Direct C/A writes are disabled; use an instance action through aether-automation",
-        ));
-    }
-    if !state.allow_simulation_writes {
-        return Err(AppError::new(
-            axum::http::StatusCode::FORBIDDEN,
-            common::ErrorInfo::new(
-                "Simulation writes are disabled; set AETHER_ALLOW_SIMULATION_WRITES=true only in an isolated development environment",
-            )
-            .with_code(403),
-        ));
-    }
-
-    match &request.data {
-        WritePointData::Single { id, value } => {
-            let point_id = id
-                .parse::<u32>()
-                .map_err(|_| AppError::bad_request(format!("Invalid point ID: {}", id)))?;
-
-            let timestamp_ms = crate::core::channels::channel_manager::unix_timestamp_ms();
-            use crate::protocols::core::data::{DataBatch, DataPoint};
-            let point = match point_type {
-                PointType::Telemetry => DataPoint::telemetry(point_id, *value),
-                PointType::Signal => DataPoint::signal(point_id, *value),
-                _ => unreachable!(),
-            };
-            state
-                .channel_manager
-                .data_store()
-                .write_batch(channel_id, DataBatch::from_points(vec![point]))
-                .await
-                .map_err(|error| {
-                    AppError::internal_error(format!("Failed to write SHM point: {error}"))
-                })?;
-
-            tracing::debug!(
-                "Write Ch{}:{:?}:{} = {} @{}",
-                channel_id,
-                point_type,
-                id,
-                value,
-                timestamp_ms
-            );
-
-            let response = crate::dto::WritePointResponse {
-                channel_id,
-                point_type: point_type.as_str().to_string(),
-                point_id,
-                value: *value,
-                timestamp_ms,
-            };
-
-            Ok(Json(SuccessResponse::new(WriteResponse::Single(response))))
-        },
-        WritePointData::Batch { points } => {
-            let mut errors = Vec::new();
-            let total = points.len();
-            // Parse all IDs up front; invalid IDs go to errors and skip.
-            let mut parsed: Vec<(u32, f64)> = Vec::with_capacity(total);
-            for point in points {
-                match point.id.parse::<u32>() {
-                    Ok(id) => parsed.push((id, point.value)),
-                    Err(_) => {
-                        tracing::warn!("Invalid ID: Ch{}:{}:{}", channel_id, point_type, point.id);
-                        errors.push(BatchCommandError {
-                            point_id: 0,
-                            error: format!("Invalid point ID: {}", point.id),
-                        });
-                    },
-                }
-            }
-
-            if !parsed.is_empty() {
-                use crate::protocols::core::data::{DataBatch, DataPoint};
-                let points = parsed
-                    .iter()
-                    .map(|(point_id, value)| match point_type {
-                        PointType::Telemetry => DataPoint::telemetry(*point_id, *value),
-                        PointType::Signal => DataPoint::signal(*point_id, *value),
-                        _ => unreachable!(),
-                    })
-                    .collect();
-                state
-                    .channel_manager
-                    .data_store()
-                    .write_batch(channel_id, DataBatch::from_points(points))
-                    .await
-                    .map_err(|error| {
-                        AppError::internal_error(format!("Failed to write SHM batch: {error}"))
-                    })?;
-            }
-            let succeeded = parsed.len();
-
-            tracing::debug!(
-                "Batch Ch{}:{:?}: {}/{} ok",
-                channel_id,
-                point_type,
-                succeeded,
-                total
-            );
-
-            let result = BatchCommandResult {
-                total,
-                succeeded,
-                failed: total - succeeded,
-                errors,
-            };
-
-            Ok(Json(SuccessResponse::new(WriteResponse::Batch(result))))
-        },
-    }
-}
-
 /// Change a channel's log verbosity at runtime, no restart needed.
 ///
 /// Per-channel knob (overrides global `RUST_LOG`) for trace-level
@@ -432,18 +276,4 @@ pub async fn set_channel_log_level(
         "Channel {} log level set to {}",
         id, req.level
     ))))
-}
-
-/// Normalize point type from full name or short name to single letter
-fn normalize_point_type(type_str: &str) -> Result<PointType, AppError> {
-    match type_str {
-        "T" | "t" | "Telemetry" | "telemetry" | "TELEMETRY" => Ok(PointType::Telemetry),
-        "S" | "s" | "Signal" | "signal" | "SIGNAL" => Ok(PointType::Signal),
-        "C" | "c" | "Control" | "control" | "CONTROL" => Ok(PointType::Control),
-        "A" | "a" | "Adjustment" | "adjustment" | "ADJUSTMENT" => Ok(PointType::Adjustment),
-        _ => Err(AppError::bad_request(format!(
-            "Invalid point type '{}'. Must be one of: T/Telemetry, S/Signal, C/Control, A/Adjustment",
-            type_str
-        ))),
-    }
 }

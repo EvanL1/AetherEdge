@@ -12,6 +12,7 @@ fn repository_root() -> PathBuf {
 fn cli_rejects_retired_ungoverned_mutation_subcommands() {
     let retired: &[&[&str]] = &[
         &["channels", "write"],
+        &["channels", "reload"],
         &["channels", "points", "add"],
         &["channels", "points", "update"],
         &["channels", "points", "remove"],
@@ -23,6 +24,8 @@ fn cli_rejects_retired_ungoverned_mutation_subcommands() {
         &["routing", "batch"],
         &["routing", "delete-instance"],
         &["routing", "delete-channel"],
+        &["templates", "list"],
+        &["templates", "get"],
         &["templates", "snapshot"],
         &["templates", "apply"],
         &["templates", "delete"],
@@ -36,6 +39,9 @@ fn cli_rejects_retired_ungoverned_mutation_subcommands() {
         &["logs", "list"],
         &["doctor"],
         &["top"],
+        &["shm", "get", "ch:1:T:1"],
+        &["shm", "info"],
+        &["shm", "watch", "ch:1:T:1"],
         &["shm", "top"],
     ];
 
@@ -67,8 +73,6 @@ fn source_and_reference_docs_keep_ungoverned_wrappers_retired() {
         ("tools/aether/src/models/client.rs", "fn delete_instance"),
         ("tools/aether/src/routing.rs", "fn create_routing"),
         ("tools/aether/src/routing.rs", "fn batch_routing"),
-        ("tools/aether/src/templates.rs", "fn snapshot_channel"),
-        ("tools/aether/src/templates.rs", "fn apply_template"),
         ("tools/aether/src/net.rs", "fn mqtt_config_set"),
         ("tools/aether/src/net.rs", "fn cert_upload"),
         ("tools/aether/src/mcp.rs", "fn channels_write"),

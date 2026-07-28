@@ -19,6 +19,7 @@ rules are defined in:
 - [ADR-0028: Move derived-data processing downstream](docs/adr/0028-move-derived-data-processing-downstream.md)
 - [ADR-0029: Headless remote application boundary](docs/adr/0029-headless-remote-application-boundary.md)
 - [ADR-0030: Separate CLI from host supervision](docs/adr/0030-separate-cli-from-host-supervision.md)
+- [ADR-0031: Offline physical point topology](docs/adr/0031-offline-physical-point-topology.md)
 - [Target repository layout](docs/architecture/target-layout.md)
 - [AI invariants](ai/invariants.md)
 - [Capability safety policy](ai/safety-policy.yaml)
@@ -83,11 +84,8 @@ plane, and typed SHM port adapters. In particular:
 
 The remaining kernel migration is narrower but still real:
 
-- many local management mutations have not yet moved behind transport-neutral
-  application commands with declared capability, authorization, and audit
-  contracts. This includes explicit channel/runtime reload and the sensitive
-  full-configuration query, which still depend on the loopback deployment
-  boundary;
+- new remote mutations require a declared transport-neutral capability,
+  authorization, revision, confirmation, and audit contract;
 - Energy mappings, rules, and evaluations remain isolated Pack assets with
   closed v1 indexes. Derived-data processing and forecasting have moved to the
   downstream AetherEMS repository.

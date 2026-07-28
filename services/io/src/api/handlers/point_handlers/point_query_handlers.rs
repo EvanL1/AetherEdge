@@ -459,14 +459,9 @@ mod cache_tests {
             ChannelManager::new(shm_handle, routing_cache)
                 .expect("create SHM-backed channel manager"),
         );
-        let command_tx_cache = Arc::new(crate::api::command_cache::CommandTxCache::new());
-
         AppState {
             channel_manager,
             sqlite_pool,
-            command_tx_cache,
-            allow_simulation_writes: false,
-            channel_reconciliation: None,
         }
     }
 

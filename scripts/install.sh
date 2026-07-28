@@ -272,7 +272,7 @@ print_operator_next_steps() {
     echo "  1. Check the supervisor, gateway health, and local SHM:"
     echo "       docker compose -f /opt/AetherEdge/docker-compose.yml ps"
     echo "       curl --fail http://127.0.0.1:6005/health"
-    echo "       aether shm info"
+    echo "       curl --fail http://127.0.0.1:6001/health"
     echo "  2. Complete the bootstrap administrator action above."
     echo "  3. Confirm that channels, instances, and rules are empty."
     echo "  4. Create one disabled channel, map its points, and prove read-only data."

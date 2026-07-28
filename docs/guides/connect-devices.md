@@ -160,16 +160,15 @@ average response time). Note that `connected` checks both the transport
 state and data freshness: a channel that holds its TCP connection but has
 received no data for 90 seconds reports `false`.
 
-Then watch a live value. On the channel side,
-`GET /api/channels/{channel_id}/{T|S|C|A}/{point_id}` returns the current
-value with its timestamp and raw protocol value. For direct inspection, open
-the shared-memory REPL:
+Then read a live value through the authenticated application client:
 
 ```bash
-aether shm
+aether channels points <channel_id> --type T --json
+aether models instances data <instance_id> --json
 ```
 
-If the channel point updates but the instance point does not, the routing
+The IO query reads authoritative SHM internally. If the channel point updates
+but the instance point does not, the routing
 entry is missing or wrong. SHM is the authoritative live view, so no external
 database needs to be running for this check.
 
@@ -178,8 +177,8 @@ What offline looks like: `aether channels status` reports
 values stop updating — their timestamps go stale. A point that has *never*
 been acquired is a NaN sentinel in shared memory, not a zero; see
 [Data Model](../concepts/data-model.md) for why unavailability is a
-first-class value. For a whole-system pass — services up, SQLite readable,
-shared memory attached — check the six service health endpoints and `aether shm info`.
+first-class value. For a whole-system pass, check the host supervisor and all
+six service health endpoints.
 
 ## Related pages
 

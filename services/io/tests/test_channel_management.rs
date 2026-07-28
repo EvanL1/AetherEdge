@@ -5,8 +5,8 @@
 //! - PUT /api/channels/{id} - Update channel configuration
 //! - PUT /api/channels/{id}/enabled - Enable/disable channel
 //! - DELETE /api/channels/{id} - Delete channel
-//! - POST /api/channels/reload - Reload all channels
-//! - POST /api/routing/reload - Reload routing cache
+//! - POST /api/channels/reconcile - Reconcile all channel runtimes
+//! - POST /api/channels/{id}/reconcile - Reconcile one channel runtime
 //!
 //! Test scenarios cover:
 //! - Happy path (success cases)
@@ -86,10 +86,6 @@ async fn create_test_app() -> Result<axum::Router> {
             Arc::clone(&audit),
             aether_application::SafetyPolicy,
         ));
-    let point_topology = Arc::new(aether_io::point_topology::PointTopologyApplication::new(
-        pool.clone(),
-        audit,
-    ));
     let access_authenticator = Arc::new(
         aether_auth_jwt::AccessTokenAuthenticator::new(TEST_JWT_SECRET)
             .expect("valid test access-token secret"),
@@ -100,7 +96,6 @@ async fn create_test_app() -> Result<axum::Router> {
         command_tx_cache,
         channel_management,
         channel_reconciliation,
-        point_topology,
         access_authenticator,
     );
     Ok(router)
@@ -607,55 +602,6 @@ async fn test_delete_nonexistent_channel() -> Result<()> {
 // ============================================================================
 // Reload Configuration Tests
 // ============================================================================
-
-#[tokio::test]
-async fn test_reload_configuration() -> Result<()> {
-    let mut app = create_test_app().await?;
-
-    // Create some channels first
-    for i in 1..=3 {
-        let create_payload = json!({
-            "channel_id": 6000 + i,
-            "name": format!("Reload Test Channel {}", i),
-            "protocol": "modbus_tcp",
-            "enabled": true,
-            "parameters": {"host": "127.0.0.1", "port": 502}
-        });
-
-        let (status, _) =
-            make_request(&mut app, "POST", "/api/channels", Some(create_payload)).await?;
-        assert_eq!(status, StatusCode::OK);
-    }
-
-    // Trigger reload
-    let (status, body) = make_request(&mut app, "POST", "/api/channels/reload", None).await?;
-
-    assert_eq!(status, StatusCode::OK, "Response: {:?}", body);
-    assert_eq!(body["success"], true);
-    assert_eq!(body["data"]["scope"], "all");
-    assert_eq!(body["data"]["items"].as_array().map(Vec::len), Some(3));
-    assert_eq!(body["data"]["retryable"], false);
-
-    Ok(())
-}
-
-#[tokio::test]
-async fn test_reload_routing() -> Result<()> {
-    let mut app = create_test_app().await?;
-
-    // Trigger routing reload (even with empty routing tables)
-    let (status, body) = make_request(&mut app, "POST", "/api/routing/reload", None).await?;
-
-    assert_eq!(status, StatusCode::OK, "Response: {:?}", body);
-    assert_eq!(body["success"], true);
-    assert!(body["data"]["c2m_count"].as_u64().is_some());
-    assert!(body["data"]["m2c_count"].as_u64().is_some());
-    assert!(body["data"]["c2c_count"].as_u64().is_some());
-    assert!(body["data"]["duration_ms"].as_u64().is_some());
-
-    Ok(())
-}
-
 // ============================================================================
 // Edge Cases and Validation Tests
 // ============================================================================

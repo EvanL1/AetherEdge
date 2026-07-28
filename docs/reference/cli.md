@@ -8,7 +8,7 @@ updated: 2026-07-28
 
 `aether` is the offline commissioning and authenticated application client. It
 covers configuration (`sync`, `status`, `init`, `export`), application groups,
-Pack/runtime artifacts, one-shot SHM reads, and MCP. Host setup, process
+Pack/runtime artifacts, and MCP. Host setup, process
 supervision, logs, aggregate diagnostics, and TUI dashboards use installer or
 standard operating-system tooling instead.
 
@@ -20,12 +20,13 @@ Use `aether <command> --help` for the same information at the terminal.
 
 Online mutation commands are exposed only when they map to a governed
 application capability with explicit authentication, confirmation, audit, and
-revision semantics. Point topology, instance configuration, measurement
-routing, templates, uplink configuration, certificates, and simulation input
-remain deployment concerns: use commissioned configuration and host-managed
-certificate files, validate configuration with `aether sync --dry-run`, stop
-the runtime owners, then apply with `aether sync --confirmed` where applicable.
-Their former direct HTTP compatibility subcommands are intentionally absent.
+revision semantics. Physical point topology, channel templates, uplink
+configuration, certificates, and simulation input remain deployment concerns:
+use commissioned configuration, host-managed certificate files, and the
+external protocol simulator. Validate configuration with `aether sync
+--dry-run`, stop the runtime owners, then apply with `aether sync --confirmed`
+where applicable. Their former direct HTTP compatibility subcommands are
+intentionally absent.
 
 ## Global flags
 
@@ -196,31 +197,6 @@ Usage: aether channels status [OPTIONS] <CHANNEL_ID>
 aether channels status 1001
 ```
 
-### channels reload
-
-Reconcile every channel runtime from authoritative desired state. The command
-name is retained for compatibility, but it calls the canonical governed
-`POST /api/channels/reconcile` endpoint rather than the legacy reload route.
-
-```
-Usage: aether channels reload [OPTIONS] --confirmed
-```
-
-| Flag | Description |
-|------|-------------|
-| `--confirmed` | Explicitly confirm this high-risk runtime reconciliation; requires `AETHER_ACCESS_TOKEN` |
-
-```bash
-AETHER_ACCESS_TOKEN='<signed access JWT>' aether channels reload --confirmed
-```
-
-The receipt reports the sanitized desired-state observation and runtime
-projection for each channel, plus `degraded_count`,
-`reconciliation_required`, and terminal `completion_audit`. Preserve its UUID
-`request_id`; this operation can reconnect protocol sessions and is
-non-idempotent, so never retry it automatically, including after an incomplete
-terminal audit.
-
 ### channels health
 
 Check communication service health.
@@ -341,10 +317,9 @@ runtime projection after desired state has committed. Preserve `request_id`,
 inspect `resulting_revision` and `reconciliation_required`, and do not
 automatically retry the non-idempotent command. Update, delete, enable, and
 disable require the revision returned by the latest channel read and fail
-before HTTP when it is absent. `channels reload` is the sixth
-governed channel command and maps separately to `io.channel.reconcile` while
-requiring the same `io.channel.manage` permission, explicit confirmation,
-Bearer token, UUID request ID, and audit policy.
+before HTTP when it is absent. Explicit runtime reconciliation remains the
+separate `io.channel.reconcile` application capability exposed through the
+HTTP/MCP boundary.
 
 ### channels mappings
 
@@ -709,92 +684,7 @@ AETHER_ACCESS_TOKEN='<signed access JWT>' \
 Measurement routing remains part of the explicitly confirmed offline
 configuration import until it has the same governed online revision contract.
 
-## aether shm
-
-Zero-latency shared memory CLI (like mysql-cli). The subcommand is optional;
-running bare `aether shm` opens the shared-memory file directly for an
-interactive session (it fails if the SHM file does not exist yet).
-
-```
-Usage: aether shm [OPTIONS] [COMMAND]
-```
-
-### shm get
-
-Get point value. Key format: `inst:<id>:M|A:<point_id>` or
-`ch:<id>:T|S|C|A:<point_id>`.
-
-```
-Usage: aether shm get [OPTIONS] <KEY>
-```
-
-```bash
-aether shm get inst:9:M:101
-```
-
-### shm info
-
-Show shared memory statistics.
-
-```
-Usage: aether shm info [OPTIONS]
-```
-
-```bash
-aether shm info --json
-```
-
-### shm watch
-
-Watch key for changes (real-time monitoring).
-
-```
-Usage: aether shm watch [OPTIONS] <KEY>
-```
-
-| Flag | Description |
-|------|-------------|
-| `-i, --interval-ms <INTERVAL_MS>` | Polling interval in milliseconds (default: 500) |
-
-```bash
-aether shm watch ch:1001:T:101 --interval-ms 200
-```
-
-## aether templates
-
-Manage channel configuration templates.
-
-```
-Usage: aether templates [OPTIONS] <COMMAND>
-```
-
-### templates list
-
-List all channel templates.
-
-```
-Usage: aether templates list [OPTIONS]
-```
-
-| Flag | Description |
-|------|-------------|
-| `-p, --protocol <PROTOCOL>` | Filter by protocol type |
-
-```bash
-aether templates list --protocol modbus_tcp
-```
-
-### templates get
-
-Show detailed information about a template.
-
-```
-Usage: aether templates get [OPTIONS] <ID>
-```
-
-```bash
-aether templates get 3
-```
+## aether alarms
 
 ### alarms list
 
@@ -1045,6 +935,8 @@ Usage: aether net cert info [OPTIONS]
 aether net cert info
 ```
 
+## aether history
+
 ### history latest
 
 Get the latest historical value for a point. Positional arguments:
@@ -1145,7 +1037,7 @@ Usage: aether mcp [OPTIONS]
 
 | Flag | Description |
 |------|-------------|
-| `--allow-write` | Add the 22 governed write tools to the 23 always-registered read-only tools. It is only a registration gate; each invocation still requires `confirmed: true` |
+| `--allow-write` | Add the 22 governed write tools to the 22 always-registered read-only tools. It is only a registration gate; each invocation still requires `confirmed: true` |
 
 ```bash
 aether mcp --allow-write

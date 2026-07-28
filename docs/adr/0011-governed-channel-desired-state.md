@@ -6,7 +6,8 @@ Accepted on 2026-07-12. The application, default SQLite/runtime adapter, and
 HTTP/CLI/MCP CRUD, lifecycle, and runtime-reconciliation migrations are
 implemented as one staged change. Offline bulk configuration import remains an
 explicitly tracked compatibility exception below; it is not an online command
-surface.
+surface. The historical reload alias and first-party CLI wrapper were retired
+by [ADR-0031](0031-offline-physical-point-topology.md).
 
 ## Context
 
@@ -84,9 +85,8 @@ it does not move live-state authority into SQLite.
    attach Bearer credentials only to loopback HTTP or certificate-validated
    HTTPS service URLs; remote plaintext HTTP fails before token selection.
    Runtime convergence is the separately discoverable `io.channel.reconcile`
-   command. `POST /api/channels/reconcile` is canonical; the historical
-   `POST /api/channels/reload` path is a deprecated alias over that same
-   authenticated, confirmed, audited application boundary.
+   command. `POST /api/channels/reconcile` is canonical, with
+   `POST /api/channels/{id}/reconcile` for one channel.
 9. The default distribution adds no external dependency. Command audit and
    desired configuration remain in the local SQLite database; Redis and
    PostgreSQL are not required.
@@ -112,15 +112,10 @@ it does not move live-state authority into SQLite.
   composition root injects the governed application explicitly.
 - Direct lifecycle and ID-migration handler modules have no accepted fallback
   role and are removed in this change.
-- `POST /api/channels/reload` remains only as a deprecated compatibility alias
-  over `io.channel.reconcile`; it uses the same lifecycle serialization,
-  authentication, confirmation, audit, and typed receipt as the canonical
-  `/api/channels/reconcile` route. Remove the alias after the browser client,
-  supported SDKs, deployment automation, and downstream integrations consume
-  the canonical route and the compatibility matrix rejects older clients. The
-  first-party CLI no longer exposes the unauthenticated generic
-  `aether services reload` fan-out; operators use the governed
-  `aether channels reload --confirmed` command or a supervised service restart.
+- The former `POST /api/channels/reload` compatibility alias and
+  `aether channels reload` wrapper met their removal criteria and were retired
+  by ADR-0031. Clients use the canonical reconciliation endpoints; host
+  supervision remains responsible for process restarts.
 - `aether sync` remains an offline desired-state import rather than an online
   runtime command. It requires explicit operator confirmation and refuses to
   apply while the configuration-owning services are running; imported state is
@@ -153,9 +148,6 @@ it does not move live-state authority into SQLite.
 - Offline sync remains a separate desired-state import and must not be
   advertised as an online application command or run beside configuration
   owners.
-- The deprecated `/api/channels/reload` alias temporarily enlarges the HTTP
-  compatibility surface even though it no longer creates a second runtime
-  owner.
 - Deleted numeric IDs are not returned to the automatic-allocation pool. Sites
   with unusually high commissioning churn must explicitly reuse an ID (and
   inherit its revision high-water mark) or migrate to a future wider identity

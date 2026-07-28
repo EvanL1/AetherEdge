@@ -1,8 +1,7 @@
 #![allow(clippy::disallowed_methods)]
 
-//! Validation, reload, and query utility functions for point handlers
+//! Validation and query utility functions for point handlers.
 
-use crate::api::routes::AppState;
 use crate::dto::AppError;
 
 // ----------------------------------------------------------------------------
@@ -204,74 +203,4 @@ pub(crate) async fn validate_channel_exists(
     }
 
     Ok(())
-}
-
-// ============================================================================
-// Auto-Reload Helper Functions
-// ============================================================================
-
-/// Reconcile the affected channel through the shared application boundary.
-///
-/// The operation is awaited so a detached stale snapshot can never reactivate
-/// a channel after a later disable or delete.
-pub async fn trigger_channel_reload_if_needed(
-    channel_id: u32,
-    state: &AppState,
-    auto_reload: bool,
-) -> bool {
-    if !auto_reload {
-        tracing::debug!(
-            "Auto-reload disabled for channel {}, skipping hot reload",
-            channel_id
-        );
-        return false;
-    }
-
-    let Some(application) = &state.channel_reconciliation else {
-        tracing::warn!(
-            "Ch{} reconciliation deferred: application boundary unavailable",
-            channel_id
-        );
-        return false;
-    };
-    let request_id = uuid::Uuid::new_v4().to_string();
-    let timestamp = chrono::Utc::now().timestamp_millis().max(0) as u64;
-    let context = aether_application::RequestContext::new(
-        &request_id,
-        aether_application::Actor::new("io.point-topology").with_permission("io.channel.manage"),
-        true,
-        aether_domain::TimestampMs::new(timestamp),
-    );
-    match application
-        .reconcile(
-            &context,
-            aether_ports::ChannelReconciliationScope::One(aether_domain::ChannelId::new(
-                channel_id,
-            )),
-        )
-        .await
-    {
-        Ok(acceptance) => {
-            let converged = !acceptance.reconciliation_required();
-            if converged {
-                tracing::debug!("Ch{} reconciled", channel_id);
-            } else {
-                tracing::warn!(
-                    request_id = acceptance.request_id(),
-                    "Ch{} reconciliation remains degraded",
-                    channel_id
-                );
-            }
-            converged
-        },
-        Err(error) => {
-            tracing::error!(
-                request_id,
-                "Ch{} reconciliation failed: {}",
-                channel_id,
-                error
-            );
-            false
-        },
-    }
 }

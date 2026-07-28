@@ -10,8 +10,8 @@ Aether controls real equipment: PCS inverters, battery stacks, diesel generators
 
 ## The write surface
 
-The production MCP catalog has 44 tools: 23 read-only tools that are always
-registered and 21 governed write tools that exist only when the server is
+The production MCP catalog has 44 tools: 22 read-only tools that are always
+registered and 22 governed write tools that exist only when the server is
 started with `--allow-write`. The static `MCP_WRITE_CAPABILITY_MAPPING` in
 `tools/aether/src/mcp.rs` maps those tools to the transport-neutral application
 capability catalog.
@@ -92,48 +92,30 @@ required; it is not a safe retry signal. Preserve `request_id`, inspect
 `resulting_revision` and `reconciliation_required`, then inspect current state
 and audit records before an operator authorizes any follow-up.
 
-### Data-integrity mutations are excluded from MCP
+### Data-integrity injection is not a runtime capability
 
-| Compatibility surface | Status |
-|------|----------------------------------|
-| io channel simulation write | Available only through explicit development CLI/HTTP paths; not an MCP tool |
+Direct instance-measurement and T/S simulation writes are not available through
+CLI, MCP, automation, or io HTTP. They would forge acquisition-owned live state
+and could trigger alarms or control rules from fabricated telemetry. Use the
+external protocol simulator against an isolated test deployment instead;
+automation must never receive a live-state writer to recreate this surface.
 
-This tool does not touch a device, which makes it look safe. It is not.
-It writes into acquisition live state, and downstream consumers treat the
-value as telemetry. Alarm rules can trigger (or fail to trigger), control rules
-can compute actions, and dashboards can display the injected value as truth.
-Never use it against a system connected to real equipment except in a
-deliberate, supervised test. Direct instance-measurement writes are not an
-available CLI, MCP, or automation HTTP capability; automation must not be given
-a live-state writer to recreate one. `channels_write` is disabled by default at
-the io service and
-returns 403 unless the operator explicitly starts io with
-`AETHER_ALLOW_SIMULATION_WRITES=true` in an isolated development environment.
+### Remaining cloud configuration mutations stay excluded from MCP
 
-### Remaining configuration mutations stay excluded from MCP
-
-These remaining compatibility operations change live-state inputs or
-persisted configuration. Channel point batches can reshape acquired data,
-while MQTT or certificate changes can disconnect or redirect cloud traffic.
-They are not made safe merely by being configuration rather than immediate
-device commands.
-
-| Area | Existing compatibility operations (not MCP tools) |
-|------|-------|
-| Channel point batch | `channels_points_batch` |
-| Cloud connectivity (MQTT, certificates) | `net_mqtt_config_set`, `net_mqtt_reconnect`, `net_mqtt_disconnect`, `net_cert_upload`, `net_cert_delete` |
-
-Channel point-batch and uplink operations remain outside MCP until both their
-application boundary and explicit capability mapping have been reviewed.
+MQTT and certificate operations can disconnect or redirect cloud traffic. They
+remain outside MCP until both their application boundary and explicit
+capability mapping have been reviewed. Channel lifecycle, rule and alarm-rule
+mutations, and alert resolution are exposed only through the exact governed
+mappings above. `--allow-write` never promotes a wrapper automatically.
 Channel lifecycle, rule and alarm-rule mutations, and alert resolution are
 exposed only through the exact governed mappings above. `--allow-write` never
 promotes a wrapper automatically.
 
 ## How write gating works
 
-`aether mcp` starts the server with only the 23 read-only tools registered.
+`aether mcp` starts the server with only the 22 read-only tools registered.
 `aether mcp --allow-write` additionally merges a `ToolRouter` containing only
-the 21 governed writes. This is registration-time gating, decided once at
+the 22 governed writes. This is registration-time gating, decided once at
 startup in `AetherMcp::new` (`tools/aether/src/mcp.rs`). It is not confirmation:
 each invocation must independently send `confirmed: true`.
 
@@ -145,7 +127,7 @@ read-only tools carry no annotation; the 21 write tools are marked
 replace signed authorization, per-call confirmation, or audit. The generated
 public surface is listed in [MCP Tools Reference](../../../docs/reference/mcp-tools.md).
 
-Tests in `tools/aether/src/mcp.rs` assert the exact 23+21 route counts, verify
+Tests in `tools/aether/src/mcp.rs` assert the exact 22+22 route counts, verify
 that excluded mutation names remain absent even with `--allow-write`, and
 require every exposed write to exist in `aether_application::capability_catalog()`
 as a command with `Always` confirmation and `Required` audit.

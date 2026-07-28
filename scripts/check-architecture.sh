@@ -24,8 +24,8 @@ cargo test -p aether-automation \
     --test test_rule_execution_boundary
 cargo test -p aether-io \
     --test automatic_reconciliation_contract \
-    --test channel_mutator_contract \
-    --test point_topology_governance_contract
+    --test channel_mutator_contract
+cargo test -p aether-store-local --all-features --test sqlite_physical_topology_contract
 cargo test -p aether-io --lib channel_management
 cargo test -p aether-io --lib channel_reconciliation
 cargo test -p aether-io --lib confirmed_channel_requests_forward_exact_typed_mutations

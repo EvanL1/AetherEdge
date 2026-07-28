@@ -1,23 +1,17 @@
-//! Governed channel runtime reconciliation and routing reload handlers.
+//! Governed channel runtime reconciliation handlers.
 
 use super::{ChannelManagementHttpBoundary, path_channel_id};
-use crate::api::routes::AppState;
 use crate::dto::{
     AppError, ChannelCompletionAudit, ChannelCompletionAuditState, ChannelDesiredStateResult,
     ChannelReconciliationItemResult, ChannelReconciliationResponse, ChannelReconciliationResult,
-    ChannelReconciliationScopeResult, ChannelRuntimeProjectionResult, SuccessResponse,
+    ChannelReconciliationScopeResult, ChannelRuntimeProjectionResult,
 };
 
 use aether_application::{ChannelReconciliationAcceptance, CompletionAuditStatus};
 use aether_ports::{
     ChannelDesiredStateObservation, ChannelReconciliationScope, ChannelRuntimeProjection,
 };
-use axum::{
-    Extension,
-    extract::{Path, State},
-    http::HeaderMap,
-    response::Json,
-};
+use axum::{Extension, extract::Path, http::HeaderMap, response::Json};
 
 /// Reconcile every commissioned channel runtime from authoritative desired
 /// state through the shared application command.
@@ -85,37 +79,8 @@ pub async fn reconcile_channel_handler(
     .await
 }
 
-/// Compatibility alias for full channel reconciliation.
-///
-/// New clients must use `POST /api/channels/reconcile`. This deprecated alias
-/// executes the same governed application command and has the same receipt.
-#[utoipa::path(
-    post,
-    path = "/api/channels/reload",
-    params(
-        ("x-request-id" = String, Header, format = "uuid", description = "Required UUID audit correlation ID; this is not an idempotency key"),
-        ("x-aether-confirmed" = bool, Header, description = "Required explicit confirmation; must be true")
-    ),
-    responses(
-        (status = 200, description = "Accepted non-idempotent full runtime reconciliation through the compatibility alias. Per-channel degradation and incomplete terminal audit remain accepted; do not retry automatically.", body = ChannelReconciliationResponse),
-        (status = 400, description = "Malformed request ID or invalid reconciliation scope", body = common::ErrorResponse),
-        (status = 403, description = "Missing/invalid Bearer token or io.channel.manage permission", body = common::ErrorResponse),
-        (status = 409, description = "Runtime reconciliation conflicts with current state", body = common::ErrorResponse),
-        (status = 422, description = "Explicit confirmation is missing or false", body = common::ErrorResponse),
-        (status = 503, description = "Mandatory pre-execution audit or reconciliation adapter is unavailable", body = common::ErrorResponse),
-        (status = 504, description = "Reconciliation adapter timed out", body = common::ErrorResponse),
-        (status = 500, description = "Permanent reconciliation adapter failure", body = common::ErrorResponse)
-    ),
-    security(("bearer_auth" = [])),
-    tag = "io"
-)]
-pub async fn reload_configuration_handler(
-    Extension(boundary): Extension<ChannelManagementHttpBoundary>,
-    headers: HeaderMap,
-) -> Result<Json<ChannelReconciliationResponse>, AppError> {
-    reconcile_scope(&boundary, &headers, ChannelReconciliationScope::All).await
-}
-
+/// Execute canonical all-channel or single-channel reconciliation through the
+/// same governed application boundary.
 async fn reconcile_scope(
     boundary: &ChannelManagementHttpBoundary,
     headers: &HeaderMap,
@@ -218,83 +183,4 @@ const fn runtime_projection(
         ChannelRuntimeProjection::Degraded => ChannelRuntimeProjectionResult::Degraded,
         ChannelRuntimeProjection::Removed => ChannelRuntimeProjectionResult::Removed,
     }
-}
-
-/// Reloads the IO-owned C2C routing cache without touching channels.
-///
-/// C2M and M2C remain part of the independently published logical routing
-/// generation consumed by automation and read-side services. Their counts are
-/// reported from the local configuration snapshot but IO does not cache or
-/// execute those logical routes.
-#[utoipa::path(
-    post,
-    path = "/api/routing/reload",
-    responses(
-        (status = 200, description = "Routing cache reloaded successfully", body = crate::dto::RoutingReloadResult),
-        (status = 500, description = "Internal server error")
-    ),
-    tag = "io"
-)]
-pub async fn reload_routing_handler(
-    State(state): State<AppState>,
-) -> Result<Json<SuccessResponse<crate::dto::RoutingReloadResult>>, AppError> {
-    tracing::debug!("Reloading routing");
-
-    let start_time = std::time::Instant::now();
-    let mut errors = Vec::new();
-
-    let logical = aether_store_local::load_routing_snapshot(&state.sqlite_pool).await;
-    let channel_routes = aether_store_local::load_channel_routes(&state.sqlite_pool).await;
-    let (c2m_count, m2c_count, c2c_count) = match (logical, channel_routes) {
-        (Ok(logical), Ok(channel_routes)) => {
-            let counts = (
-                logical.measurement_route_count(),
-                logical.action_route_count(),
-                channel_routes.len(),
-            );
-            if let Err(error) = state.channel_manager.routing_cache.replace(channel_routes) {
-                tracing::error!(%error, "failed to publish channel routing");
-                errors.push("Failed to publish channel routing".to_string());
-            }
-            counts
-        },
-        (logical, channel_routes) => {
-            if let Err(error) = logical {
-                tracing::error!(%error, "failed to observe logical routing");
-            }
-            if let Err(error) = channel_routes {
-                tracing::error!(%error, "failed to load channel routing");
-            }
-            errors.push("Failed to reload routing".to_string());
-            (0, 0, 0)
-        },
-    };
-
-    let duration_ms = start_time.elapsed().as_millis() as u64;
-
-    let result = crate::dto::RoutingReloadResult {
-        c2m_count,
-        m2c_count,
-        c2c_count,
-        errors,
-        duration_ms,
-    };
-
-    if result.errors.is_empty() {
-        tracing::info!(
-            "Routing: {} C2M, {} M2C, {} C2C ({}ms)",
-            c2m_count,
-            m2c_count,
-            c2c_count,
-            duration_ms
-        );
-    } else {
-        tracing::warn!(
-            "Routing: {} errors ({}ms)",
-            result.errors.len(),
-            duration_ms
-        );
-    }
-
-    Ok(Json(SuccessResponse::new(result)))
 }
