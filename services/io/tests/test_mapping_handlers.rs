@@ -194,11 +194,7 @@ async fn create_test_app_with_pool(pool: sqlx::SqlitePool) -> Result<axum::Route
         support::create_test_shm_handle(),
         Arc::new(aether_routing::ChannelRoutingCache::new()),
     )?);
-    Ok(aether_io::api::routes::create_api_routes(
-        manager,
-        pool,
-        Arc::new(aether_io::api::command_cache::CommandTxCache::new()),
-    ))
+    Ok(aether_io::api::routes::create_api_routes(manager, pool))
 }
 
 async fn make_request(

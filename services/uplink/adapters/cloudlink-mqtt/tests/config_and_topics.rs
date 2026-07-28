@@ -1,15 +1,9 @@
-use std::path::PathBuf;
-use std::str::FromStr;
-
 use aether_cloudlink_mqtt::{
-    CloudLinkMigrationMode, CloudLinkMqttConfig, CloudLinkTlsConfig, DeploymentSecurity,
-    MqttClientIdentity, SecretString, TopicNamespace,
+    CloudLinkMqttConfig, CloudLinkTlsConfig, DeploymentSecurity, MqttClientIdentity, SecretString,
+    TopicNamespace,
 };
-use aether_domain::TimestampMs;
-use aether_ports::{
-    CloudLinkEnqueue, CloudLinkMessageKind, CloudLinkSpool, CloudLinkTransportRoute,
-};
-use aether_store_local::MemoryCloudLinkSpool;
+use aether_ports::CloudLinkTransportRoute;
+use std::path::PathBuf;
 
 #[test]
 fn topic_namespace_is_versioned_exact_and_isolated_from_legacy_topics() {
@@ -82,56 +76,6 @@ fn inbound_topics_map_only_to_the_three_allowed_downlink_routes() {
         None
     );
 }
-
-#[test]
-fn migration_mode_is_explicit_and_legacy_remains_the_compatibility_default() {
-    assert_eq!(
-        CloudLinkMigrationMode::default(),
-        CloudLinkMigrationMode::Legacy
-    );
-    assert_eq!(
-        CloudLinkMigrationMode::from_str("cloudlink-v1").expect("mode"),
-        CloudLinkMigrationMode::CloudLinkV1
-    );
-    assert_eq!(
-        CloudLinkMigrationMode::from_str("dual").expect("mode"),
-        CloudLinkMigrationMode::Dual
-    );
-    assert!(CloudLinkMigrationMode::Dual.legacy_enabled());
-    assert!(CloudLinkMigrationMode::Dual.cloudlink_enabled());
-    assert!(!CloudLinkMigrationMode::Legacy.cloudlink_enabled());
-    assert!(CloudLinkMigrationMode::from_str("write-through").is_err());
-}
-
-#[tokio::test]
-async fn dual_mode_keeps_one_cloudlink_identity_for_the_same_business_fact() {
-    let spool = MemoryCloudLinkSpool::new("telemetry", 8).expect("spool");
-    let content = CloudLinkEnqueue::new(
-        CloudLinkMessageKind::TelemetryBatch,
-        "batch-1",
-        format!("sha256:{}", "a".repeat(64)),
-        br#"{"samples":[]}"#.to_vec(),
-        TimestampMs::new(1),
-        None,
-    );
-
-    assert!(CloudLinkMigrationMode::CloudLinkV1.cloudlink_enabled());
-    let cloudlink_only = spool
-        .enqueue(content.clone())
-        .await
-        .expect("CloudLink identity");
-    assert!(CloudLinkMigrationMode::Dual.legacy_enabled());
-    assert!(CloudLinkMigrationMode::Dual.cloudlink_enabled());
-    let dual = spool
-        .enqueue(content)
-        .await
-        .expect("same CloudLink fact in dual mode");
-
-    assert_eq!(dual.identity(), cloudlink_only.identity());
-    assert_eq!(dual.digest(), cloudlink_only.digest());
-    assert_eq!(spool.status().await.expect("status").pending_records(), 1);
-}
-
 #[test]
 fn production_requires_tls_and_custom_client_identity_is_all_or_nothing() {
     let plaintext = CloudLinkMqttConfig::development(

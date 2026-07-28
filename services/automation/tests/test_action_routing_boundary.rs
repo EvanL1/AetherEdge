@@ -262,7 +262,7 @@ fn route(instance_id: u32, action_id: u32, channel_id: u32, point_id: u32) -> Ac
 }
 
 #[tokio::test]
-async fn mixed_global_delete_is_rejected_before_either_plane_changes() {
+async fn retired_mixed_global_delete_is_absent_without_changing_either_plane() {
     let fixture = RoutingFixture::complete().await;
     for statement in [
         "INSERT INTO action_routing \
@@ -290,7 +290,7 @@ async fn mixed_global_delete_is_rejected_before_either_plane_changes() {
         .await
         .expect("mixed delete response");
 
-    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED);
     let (measurement_count, action_count, head): (i64, i64, i64) = (
         sqlx::query_scalar("SELECT COUNT(*) FROM measurement_routing")
             .fetch_one(&fixture.pool)

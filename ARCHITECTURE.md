@@ -20,6 +20,7 @@ rules are defined in:
 - [ADR-0029: Headless remote application boundary](docs/adr/0029-headless-remote-application-boundary.md)
 - [ADR-0030: Separate CLI from host supervision](docs/adr/0030-separate-cli-from-host-supervision.md)
 - [ADR-0031: Offline physical point topology](docs/adr/0031-offline-physical-point-topology.md)
+- [ADR-0032: Retire zero-consumer runtime compatibility planes](docs/adr/0032-retire-zero-consumer-runtime-compatibility.md)
 - [Target repository layout](docs/architecture/target-layout.md)
 - [AI invariants](ai/invariants.md)
 - [Capability safety policy](ai/safety-policy.yaml)

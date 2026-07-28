@@ -394,18 +394,6 @@ Usage: aether models products list [OPTIONS]
 aether models products list --json
 ```
 
-### models products available
-
-List product definitions in the `products/` directory.
-
-```
-Usage: aether models products available [OPTIONS]
-```
-
-```bash
-aether models products available
-```
-
 ### models products get
 
 Show detailed information about a selected product.

@@ -68,9 +68,10 @@ applicable.
 
 Each channel carries a point table split by the four point types —
 telemetry (T, analog measurement), signal (S, digital status), control
-(C, digital command), and adjustment (A, analog setpoint). Points are
-managed with `aether channels points list|add|update|delete` or authored as
-CSV tables next to the channel YAML and picked up by `aether sync`.
+(C, digital command), and adjustment (A, analog setpoint). Point definitions
+and protocol mappings are authored as reviewed configuration and applied
+atomically with `aether sync --confirmed` while runtime owners are stopped.
+Online channel point APIs are read-only.
 
 ## Protocol availability
 
@@ -84,7 +85,7 @@ MQTT and HTTP.
 | Modbus TCP/RTU (`modbus`) | yes | Golden simulator E2E protocol |
 | IEC 61850 MMS (`iec61850`) | yes | TCP/MMS implementation |
 | MQTT (`mqtt`) | no | Event-driven JSON payloads; implies `json-mapping` |
-| HTTP (`http`) | no | Polling and webhook modes; implies `json-mapping` |
+| HTTP (`http`) | no | Outbound polling only; implies `json-mapping` |
 | CAN (`can`) | yes | Linux only |
 | GPIO (`gpio`) | yes | Linux only |
 | Aether-485 (`aether_485`) | yes | Private RS-485 protocol |

@@ -44,9 +44,6 @@ pub struct ChannelManager {
     pub(super) sqlite_pool: Option<sqlx::SqlitePool>,
     /// Runtime-swappable shared memory handle rebuilt with physical topology.
     pub(super) shm_handle: Arc<ShmWriterHandle>,
-    /// Command TX cache shared by channel tasks and the M2C listener.
-    pub(super) command_tx_cache: Option<Arc<crate::api::command_cache::CommandTxCache>>,
-
     // ========== SHM Command Listener (Event-driven M2C via UDS) ==========
     /// SHM command listener for event-driven M2C command dispatch (UDS path, self-healing)
     pub(super) shm_listener: Option<Arc<ShmCommandListener>>,
@@ -83,7 +80,6 @@ impl ChannelManager {
             routing_cache,
             sqlite_pool: None,
             shm_handle,
-            command_tx_cache: None,
             shm_listener: None,
         })
     }
@@ -94,7 +90,6 @@ impl ChannelManager {
         sqlite_pool: sqlx::SqlitePool,
         shm_handle: Arc<ShmWriterHandle>,
         channel_health_writer: Option<Arc<ShmChannelHealthWriterHandle>>,
-        command_tx_cache: Option<Arc<crate::api::command_cache::CommandTxCache>>,
     ) -> Result<Self> {
         let mut store = ShmDataStore::new(Arc::clone(&shm_handle), Arc::clone(&routing_cache))?;
         if let Some(writer) = channel_health_writer.as_ref() {
@@ -107,7 +102,6 @@ impl ChannelManager {
             routing_cache,
             sqlite_pool: Some(sqlite_pool),
             shm_handle,
-            command_tx_cache,
             shm_listener: None,
         })
     }
@@ -147,11 +141,6 @@ impl ChannelManager {
 
     /// Remove channel with graceful shutdown.
     pub async fn remove_channel(&self, channel_id: u32) -> Result<()> {
-        // Unregister from cache before removing channel
-        if let Some(ref cache) = self.command_tx_cache {
-            cache.unregister(channel_id);
-        }
-
         // Unregister from SHM listener (event-driven M2C via UDS)
         if let Some(ref listener) = self.shm_listener {
             listener.unregister_channel(channel_id);

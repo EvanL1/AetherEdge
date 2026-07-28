@@ -578,11 +578,6 @@ async fn terminal_audit_failure_stays_accepted_and_is_never_retryable() {
     assert_eq!(mutator.mutation_count(), 1);
 }
 
-// The write-environment helper is inlined into
-// `setup_write_test_env` so the latter can register a stub command
-// sender on `command_tx_cache` before constructing the router. There
-// are no other callers, so the helper was removed.
-
 // ========================================================================
 // Closed-loop Testing Utilities
 // ========================================================================
@@ -1449,11 +1444,7 @@ async fn legacy_router_fails_closed_for_channel_control() {
         )
         .unwrap(),
     );
-    let app = create_api_routes(
-        channel_manager,
-        create_test_sqlite_pool().await,
-        Arc::new(crate::api::command_cache::CommandTxCache::new()),
-    );
+    let app = create_api_routes(channel_manager, create_test_sqlite_pool().await);
 
     for operation in ["start", "restart"] {
         let response = app
@@ -1498,11 +1489,9 @@ async fn test_api_routes_with_shm() {
 #[test]
 fn test_api_routes_compile() {
     // Verify the public route factory exposes only SHM-backed runtime state
-    // plus SQLite configuration and the command dispatch cache.
+    // plus SQLite configuration.
     use super::*;
-    use crate::api::command_cache::CommandTxCache;
-    let _ = create_api_routes
-        as fn(Arc<ChannelManager>, sqlx::SqlitePool, Arc<CommandTxCache>) -> Router;
+    let _ = create_api_routes as fn(Arc<ChannelManager>, sqlx::SqlitePool) -> Router;
 }
 
 // ========================================================================
@@ -1517,7 +1506,6 @@ async fn create_channel_without_enabled_stays_disabled_and_has_no_runtime() {
             crate::test_utils::create_test_routing_cache(),
             pool.clone(),
             crate::test_utils::create_test_shm_handle(),
-            None,
             None,
         )
         .unwrap(),
@@ -1559,7 +1547,6 @@ async fn create_enabled_physical_channel_reports_degraded_when_device_is_unavail
             crate::test_utils::create_test_routing_cache(),
             pool.clone(),
             crate::test_utils::create_test_shm_handle(),
-            None,
             None,
         )
         .unwrap(),
@@ -1870,11 +1857,7 @@ async fn legacy_router_fails_closed_for_channel_reconciliation() {
         )
         .unwrap(),
     );
-    let app = create_api_routes(
-        channel_manager,
-        create_test_sqlite_pool().await,
-        Arc::new(crate::api::command_cache::CommandTxCache::new()),
-    );
+    let app = create_api_routes(channel_manager, create_test_sqlite_pool().await);
 
     let response = app
         .oneshot(governed_reconciliation_request("/api/channels/reconcile"))
@@ -3275,11 +3258,7 @@ async fn legacy_route_constructor_fails_closed_for_channel_mutations() {
         )
         .unwrap(),
     );
-    let app = create_api_routes(
-        manager,
-        pool.clone(),
-        Arc::new(crate::api::command_cache::CommandTxCache::new()),
-    );
+    let app = create_api_routes(manager, pool.clone());
     let response = app
         .oneshot(governed_channel_request(
             "POST",

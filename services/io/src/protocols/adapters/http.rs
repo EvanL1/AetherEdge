@@ -4,12 +4,8 @@
 //!
 //! ## Design Overview
 //!
-//! Two operating modes:
-//! - **Polling**: io actively fetches data from device REST APIs
-//! - **Webhook**: Device pushes data to io (requires API route integration)
-//!
-//! This file implements Polling mode. Webhook mode requires integration
-//! with the io API server and is handled separately.
+//! The adapter polls device REST APIs and maps JSON responses into acquisition
+//! samples. Incoming webhook hosting is intentionally outside the IO runtime.
 //!
 //! ## Configuration Example
 //!
@@ -35,28 +31,14 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::time::Duration;
-use tokio::sync::broadcast;
-use tracing::{debug, error, info, trace};
+use tracing::{debug, info};
 
 use crate::protocols::ChannelRuntime;
 use crate::protocols::core::data::DataBatch;
 use crate::protocols::core::diagnostics::AtomicDiagnostics;
 use crate::protocols::core::error::{GatewayError, Result};
 use crate::protocols::core::json_mapper::{JsonMapper, JsonMappingConfig};
-use crate::protocols::core::traits::{
-    ConnectionState, DataEvent, DataEventReceiver, DataEventSender, Diagnostics, PollResult,
-};
-
-/// HTTP channel operating mode
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum HttpMode {
-    /// Polling mode: io fetches data at intervals
-    #[default]
-    Polling,
-    /// Webhook mode: device pushes data to io
-    Webhook,
-}
+use crate::protocols::core::traits::{ConnectionState, DataEventReceiver, Diagnostics, PollResult};
 
 /// HTTP method for requests
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -81,10 +63,6 @@ impl From<HttpMethod> for Method {
 /// HTTP channel parameters (from database config JSON)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HttpParamsConfig {
-    /// Operating mode
-    #[serde(default)]
-    pub mode: HttpMode,
-
     /// Target URL for polling mode
     #[serde(default)]
     pub url: Option<String>,
@@ -112,23 +90,6 @@ pub struct HttpParamsConfig {
     /// JSON mapping configuration
     #[serde(default)]
     pub json_mapping: JsonMappingConfig,
-
-    // === Webhook mode specific ===
-    /// Webhook listen path (for webhook mode)
-    #[serde(default)]
-    pub listen_path: Option<String>,
-
-    /// Authentication token for webhook validation
-    #[serde(default)]
-    pub auth_token: Option<String>,
-
-    /// Maximum retries on failure
-    #[serde(default = "default_max_retries")]
-    pub max_retries: u32,
-
-    /// Retry delay in milliseconds
-    #[serde(default = "default_retry_delay_ms")]
-    pub retry_delay_ms: u64,
 }
 
 fn default_interval_ms() -> u64 {
@@ -139,18 +100,9 @@ fn default_timeout_ms() -> u64 {
     3000
 }
 
-fn default_max_retries() -> u32 {
-    3
-}
-
-fn default_retry_delay_ms() -> u64 {
-    1000
-}
-
 impl Default for HttpParamsConfig {
     fn default() -> Self {
         Self {
-            mode: HttpMode::Polling,
             url: None,
             method: HttpMethod::GET,
             headers: HashMap::new(),
@@ -158,10 +110,6 @@ impl Default for HttpParamsConfig {
             interval_ms: default_interval_ms(),
             timeout_ms: default_timeout_ms(),
             json_mapping: JsonMappingConfig::default(),
-            listen_path: None,
-            auth_token: None,
-            max_retries: default_max_retries(),
-            retry_delay_ms: default_retry_delay_ms(),
         }
     }
 }
@@ -170,18 +118,12 @@ impl HttpParamsConfig {
     /// Convert to runtime configuration
     pub fn to_config(&self) -> HttpConfig {
         HttpConfig {
-            mode: self.mode,
             url: self.url.clone(),
             method: self.method,
             headers: self.headers.clone(),
             body: self.body.clone(),
-            interval: Duration::from_millis(self.interval_ms),
             timeout: Duration::from_millis(self.timeout_ms),
             json_mapping: self.json_mapping.clone(),
-            listen_path: self.listen_path.clone(),
-            auth_token: self.auth_token.clone(),
-            max_retries: self.max_retries,
-            retry_delay: Duration::from_millis(self.retry_delay_ms),
         }
     }
 }
@@ -189,18 +131,12 @@ impl HttpParamsConfig {
 /// HTTP runtime configuration
 #[derive(Debug, Clone)]
 pub struct HttpConfig {
-    pub mode: HttpMode,
     pub url: Option<String>,
     pub method: HttpMethod,
     pub headers: HashMap<String, String>,
     pub body: Option<String>,
-    pub interval: Duration,
     pub timeout: Duration,
     pub json_mapping: JsonMappingConfig,
-    pub listen_path: Option<String>,
-    pub auth_token: Option<String>,
-    pub max_retries: u32,
-    pub retry_delay: Duration,
 }
 
 /// Build an HTTP request with configured method, headers, and optional body.
@@ -244,12 +180,8 @@ pub struct HttpChannel {
     mapper: Option<Arc<JsonMapper>>,
     /// HTTP client
     client: Option<Client>,
-    /// Polling task handle
-    poll_task_handle: Option<tokio::task::JoinHandle<()>>,
     /// Connection state
     state: AtomicU8,
-    /// Event broadcast sender (for webhook mode or optional polling events)
-    event_tx: DataEventSender,
     /// Diagnostics
     diagnostics: Arc<AtomicDiagnostics>,
     /// Database pool for loading mappings
@@ -261,17 +193,13 @@ pub struct HttpChannel {
 impl HttpChannel {
     /// Create a new HTTP channel
     pub fn new(config: HttpConfig, channel_id: u32, name: String) -> Self {
-        let (event_tx, _) = broadcast::channel(256);
-
         Self {
             config,
             channel_id,
             name,
             mapper: None,
             client: None,
-            poll_task_handle: None,
             state: AtomicU8::new(ConnectionState::Disconnected as u8),
-            event_tx,
             diagnostics: Arc::new(AtomicDiagnostics::new()),
             db_pool: None,
             consecutive_failures: std::sync::atomic::AtomicU32::new(0),
@@ -305,9 +233,6 @@ impl HttpChannel {
     /// Set connection state
     fn set_state(&self, state: ConnectionState) {
         self.state.store(state as u8, Ordering::SeqCst);
-        if let Err(e) = self.event_tx.send(DataEvent::ConnectionChanged(state)) {
-            trace!("No subscribers for ConnectionChanged event: {e}");
-        }
     }
 
     /// Create HTTP client
@@ -405,95 +330,6 @@ impl HttpChannel {
         );
         Ok(batch)
     }
-
-    /// Run the polling loop (for background polling mode)
-    async fn run_poll_loop(
-        channel_id: u32,
-        client: Client,
-        config: HttpConfig,
-        mapper: Arc<JsonMapper>,
-        state: Arc<AtomicU8>,
-        event_tx: DataEventSender,
-        diagnostics: Arc<AtomicDiagnostics>,
-    ) {
-        let url = match &config.url {
-            Some(u) => u.clone(),
-            None => {
-                error!(channel_id, "No URL configured for HTTP polling");
-                return;
-            },
-        };
-
-        info!(
-            channel_id,
-            url = %url,
-            interval_ms = config.interval.as_millis(),
-            "HTTP polling loop started"
-        );
-
-        let mut interval = tokio::time::interval(config.interval);
-        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-        let mut consecutive_failures = 0u32;
-
-        loop {
-            interval.tick().await;
-
-            let response = match build_request(&client, &config, &url).send().await {
-                Ok(r) => r,
-                Err(e) => {
-                    consecutive_failures += 1;
-                    debug!(channel_id, error = %e, "HTTP request failed");
-                    diagnostics.record_error(e.to_string());
-                    if consecutive_failures >= config.max_retries && config.max_retries > 0 {
-                        state.store(ConnectionState::Error as u8, Ordering::SeqCst);
-                        let _ = event_tx.send(DataEvent::ConnectionChanged(ConnectionState::Error));
-                        let _ = event_tx.send(DataEvent::Error(e.to_string()));
-                    }
-                    continue;
-                },
-            };
-
-            if !response.status().is_success() {
-                consecutive_failures += 1;
-                let status = response.status().as_u16();
-                debug!(channel_id, status, "HTTP request returned error status");
-                diagnostics.record_error(format!("HTTP status {status}"));
-                continue;
-            }
-
-            if let Some(len) = response.content_length()
-                && len > 10 * 1024 * 1024
-            {
-                diagnostics.record_error(format!("Response too large: {len} bytes (max 10MB)"));
-                consecutive_failures += 1;
-                continue;
-            }
-
-            let body = match response.bytes().await {
-                Ok(b) => b,
-                Err(e) => {
-                    debug!(channel_id, error = %e, "Failed to read response body");
-                    diagnostics.record_error(e.to_string());
-                    continue;
-                },
-            };
-
-            match mapper.parse(&body) {
-                Ok(batch) => {
-                    if !batch.is_empty() {
-                        diagnostics.add_read(batch.len() as u64);
-                        let _ = event_tx.send(DataEvent::DataUpdate(Arc::new(batch)));
-                    }
-                    consecutive_failures = 0;
-                    state.store(ConnectionState::Connected as u8, Ordering::SeqCst);
-                },
-                Err(e) => {
-                    debug!(channel_id, error = %e, "Failed to parse HTTP response");
-                    diagnostics.record_error(e.to_string());
-                },
-            }
-        }
-    }
 }
 
 #[async_trait]
@@ -511,8 +347,7 @@ impl ChannelRuntime for HttpChannel {
     }
 
     fn is_event_driven(&self) -> bool {
-        // Webhook mode is event-driven, polling mode is not
-        self.config.mode == HttpMode::Webhook
+        false
     }
 
     async fn connect(&mut self) -> Result<()> {
@@ -538,7 +373,6 @@ impl ChannelRuntime for HttpChannel {
 
         info!(
             channel_id = self.channel_id,
-            mode = ?self.config.mode,
             url = ?self.config.url,
             "HTTP channel connected"
         );
@@ -547,11 +381,6 @@ impl ChannelRuntime for HttpChannel {
     }
 
     async fn disconnect(&mut self) -> Result<()> {
-        // Stop polling task if running
-        if let Some(handle) = self.poll_task_handle.take() {
-            handle.abort();
-        }
-
         self.client = None;
         self.set_state(ConnectionState::Disconnected);
 
@@ -560,11 +389,6 @@ impl ChannelRuntime for HttpChannel {
     }
 
     async fn poll_once(&mut self) -> PollResult {
-        // Only polling mode supports poll_once
-        if self.config.mode != HttpMode::Polling {
-            return PollResult::success(DataBatch::new());
-        }
-
         match self.poll_once_internal().await {
             Ok(batch) => {
                 self.consecutive_failures.store(0, Ordering::SeqCst);
@@ -596,57 +420,14 @@ impl ChannelRuntime for HttpChannel {
     }
 
     fn subscribe(&self) -> Option<DataEventReceiver> {
-        // Both modes support subscribe for monitoring
-        Some(self.event_tx.subscribe())
+        None
     }
 
     async fn start_events(&mut self) -> Result<()> {
-        // Connect if not already connected
-        if self.client.is_none() {
-            self.connect().await?;
-        }
-
-        // For polling mode, start background polling task
-        if self.config.mode == HttpMode::Polling && self.poll_task_handle.is_none() {
-            let mapper = self.mapper.clone().ok_or_else(|| {
-                GatewayError::Config("Mapper not loaded for HTTP polling".to_string())
-            })?;
-            let client = self
-                .client
-                .clone()
-                .ok_or_else(|| GatewayError::Config("HTTP client not initialized".to_string()))?;
-            let config = self.config.clone();
-            let channel_id = self.channel_id;
-            let state = Arc::new(AtomicU8::new(ConnectionState::Connected as u8));
-            let event_tx = self.event_tx.clone();
-            let diagnostics = self.diagnostics.clone();
-
-            let handle = tokio::spawn(async move {
-                Self::run_poll_loop(
-                    channel_id,
-                    client,
-                    config,
-                    mapper,
-                    state,
-                    event_tx,
-                    diagnostics,
-                )
-                .await;
-            });
-
-            self.poll_task_handle = Some(handle);
-            info!(channel_id = self.channel_id, "HTTP polling task started");
-        }
-
         Ok(())
     }
 
     async fn stop_events(&mut self) -> Result<()> {
-        // Stop polling task
-        if let Some(handle) = self.poll_task_handle.take() {
-            handle.abort();
-            info!(channel_id = self.channel_id, "HTTP polling task stopped");
-        }
         Ok(())
     }
 
@@ -673,87 +454,9 @@ impl std::fmt::Debug for HttpChannel {
         f.debug_struct("HttpChannel")
             .field("channel_id", &self.channel_id)
             .field("name", &self.name)
-            .field("mode", &self.config.mode)
             .field("url", &self.config.url)
             .field("state", &self.connection_state())
             .finish()
-    }
-}
-
-// ============================================================================
-// Webhook Handler (for API integration)
-// ============================================================================
-
-/// Webhook data handler for processing incoming HTTP POST requests
-///
-/// This struct is designed to be integrated with the io API router.
-/// It validates incoming requests and processes JSON payloads.
-#[derive(Clone)]
-pub struct WebhookHandler {
-    /// Channel ID
-    pub channel_id: u32,
-    /// JSON mapper
-    pub mapper: Arc<JsonMapper>,
-    /// Event sender
-    pub event_tx: DataEventSender,
-    /// Authentication token (optional)
-    pub auth_token: Option<String>,
-    /// Diagnostics
-    pub diagnostics: Arc<AtomicDiagnostics>,
-}
-
-impl WebhookHandler {
-    /// Create a new webhook handler
-    pub fn new(
-        channel_id: u32,
-        mapper: Arc<JsonMapper>,
-        event_tx: DataEventSender,
-        auth_token: Option<String>,
-    ) -> Self {
-        Self {
-            channel_id,
-            mapper,
-            event_tx,
-            auth_token,
-            diagnostics: Arc::new(AtomicDiagnostics::new()),
-        }
-    }
-
-    /// Process incoming webhook payload
-    ///
-    /// Returns the number of extracted data points, or an error.
-    pub fn process(&self, payload: &[u8], auth_header: Option<&str>) -> Result<usize> {
-        // Validate auth token if configured
-        if let Some(expected) = &self.auth_token {
-            let provided = auth_header.ok_or_else(|| {
-                GatewayError::Protocol("Missing authorization header".to_string())
-            })?;
-
-            // Support "Bearer <token>" format
-            let token = provided.strip_prefix("Bearer ").unwrap_or(provided);
-            if token != expected {
-                return Err(GatewayError::Protocol(
-                    "Invalid authorization token".to_string(),
-                ));
-            }
-        }
-
-        // Parse payload
-        let batch = self.mapper.parse(payload)?;
-        let count = batch.len();
-
-        if !batch.is_empty() {
-            self.diagnostics.add_read(count as u64);
-            let _ = self.event_tx.send(DataEvent::DataUpdate(Arc::new(batch)));
-        }
-
-        debug!(
-            channel_id = self.channel_id,
-            points = count,
-            "Processed webhook payload"
-        );
-
-        Ok(count)
     }
 }
 
@@ -765,7 +468,6 @@ mod tests {
     #[test]
     fn test_http_params_default() {
         let params = HttpParamsConfig::default();
-        assert_eq!(params.mode, HttpMode::Polling);
         assert!(params.url.is_none());
         assert_eq!(params.method, HttpMethod::GET);
         assert!(params.headers.is_empty());
@@ -783,7 +485,6 @@ mod tests {
         }"#;
 
         let params: HttpParamsConfig = serde_json::from_str(json).unwrap();
-        assert_eq!(params.mode, HttpMode::Polling);
         assert_eq!(
             params.url,
             Some("http://192.168.1.100/api/data".to_string())
@@ -791,19 +492,6 @@ mod tests {
         assert_eq!(params.interval_ms, 5000);
         assert!(params.headers.contains_key("Authorization"));
     }
-
-    #[test]
-    fn test_http_mode_deserialize() {
-        assert_eq!(
-            serde_json::from_str::<HttpMode>(r#""polling""#).unwrap(),
-            HttpMode::Polling
-        );
-        assert_eq!(
-            serde_json::from_str::<HttpMode>(r#""webhook""#).unwrap(),
-            HttpMode::Webhook
-        );
-    }
-
     #[test]
     fn test_http_method_deserialize() {
         assert_eq!(

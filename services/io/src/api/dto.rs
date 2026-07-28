@@ -418,26 +418,6 @@ pub struct ChannelControlResponse {
     pub metadata: HashMap<String, serde_json::Value>,
 }
 
-/// Routing cache reload result
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct RoutingReloadResult {
-    /// Number of C2M routing mappings loaded
-    #[schema(example = 150)]
-    pub c2m_count: usize,
-    /// Number of M2C routing mappings loaded
-    #[schema(example = 80)]
-    pub m2c_count: usize,
-    /// Number of C2C routing mappings loaded
-    #[schema(example = 20)]
-    pub c2c_count: usize,
-    /// Error messages (if any)
-    #[schema(example = json!([]))]
-    pub errors: Vec<String>,
-    /// Reload duration in milliseconds
-    #[schema(example = 25)]
-    pub duration_ms: u64,
-}
-
 /// Complete channel details (configuration + runtime status + statistics)
 /// Uses ChannelConfig to eliminate field duplication
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -530,19 +510,6 @@ pub struct GroupedPoints {
     pub signal: Vec<PointDefinition>,
     pub control: Vec<PointDefinition>,
     pub adjustment: Vec<PointDefinition>,
-}
-
-/// Point list response
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct PointListResponse {
-    #[schema(example = 1)]
-    pub channel_id: u32,
-    #[schema(example = "T")]
-    pub point_type: String, // "T", "S", "C", "A"
-    pub total_points: usize,
-    pub mapped_points: usize,   // Points with mapping
-    pub unmapped_points: usize, // Reserve points without mapping
-    pub points: Vec<PointDefinition>,
 }
 
 /// Single point mapping detail (for GET response)

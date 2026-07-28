@@ -19,7 +19,7 @@ pub mod converters; // Config converters: io config → PointConfig
 pub mod factory; // Protocol client factory: create_*_channel() functions
 
 // Re-export data types from local types module
-pub use types::{ChannelCommand, ChannelStatus, ConnectionState, ProtocolValue};
+pub use types::{ChannelCommand, ChannelStatus, ConnectionState};
 
 // Re-export other types from local modules
 pub use crate::core::config::FourRemote;

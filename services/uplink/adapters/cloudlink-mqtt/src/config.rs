@@ -2,7 +2,6 @@
 
 use std::fmt;
 use std::path::{Path, PathBuf};
-use std::str::FromStr;
 
 use thiserror::Error;
 
@@ -10,47 +9,6 @@ use crate::TopicNamespace;
 
 const MAX_CREDENTIAL_BYTES: usize = 1_024;
 const MAX_CERTIFICATE_BYTES: u64 = 1024 * 1024;
-
-/// Explicit legacy/CloudLink migration mode.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-pub enum CloudLinkMigrationMode {
-    /// Existing unversioned adapter only. Deprecated but compatibility-safe.
-    #[default]
-    Legacy,
-    /// Experimental CloudLink v1 namespace only.
-    CloudLinkV1,
-    /// Strictly isolated legacy and CloudLink namespaces during migration.
-    Dual,
-}
-
-impl CloudLinkMigrationMode {
-    /// Returns whether the deprecated compatibility adapter is selected.
-    #[must_use]
-    pub const fn legacy_enabled(self) -> bool {
-        matches!(self, Self::Legacy | Self::Dual)
-    }
-
-    /// Returns whether exactly one CloudLink v1 stream owner is selected.
-    #[must_use]
-    pub const fn cloudlink_enabled(self) -> bool {
-        matches!(self, Self::CloudLinkV1 | Self::Dual)
-    }
-}
-
-impl FromStr for CloudLinkMigrationMode {
-    type Err = CloudLinkMqttError;
-
-    fn from_str(value: &str) -> Result<Self, Self::Err> {
-        match value {
-            "legacy" => Ok(Self::Legacy),
-            "cloudlink-v1" => Ok(Self::CloudLinkV1),
-            "dual" => Ok(Self::Dual),
-            _ => Err(CloudLinkMqttError::InvalidConfiguration(
-                "CloudLink migration mode must be legacy, cloudlink-v1, or dual",
-            )),
-        }
-    }
-}
 
 /// Whether deployment policy permits plaintext development transport.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

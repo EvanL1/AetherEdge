@@ -6,23 +6,16 @@
 #![allow(clippy::disallowed_methods)]
 
 use axum::{
-    extract::{Path, Query, State},
-    http::HeaderMap,
+    extract::{Path, State},
     response::Json,
 };
 use common::SuccessResponse;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use serde_json::{Value, json};
 use std::sync::Arc;
 
 use crate::app_state::AppState;
 use crate::error::AutomationError;
-
-#[derive(Debug, Deserialize)]
-pub struct ConfirmQuery {
-    pub confirm: Option<bool>,
-    pub expected_revision: Option<u64>,
-}
 
 #[derive(Debug, Serialize)]
 struct RoutingEntry {
@@ -165,35 +158,6 @@ pub async fn get_all_routing_handler(
     Ok(Json(SuccessResponse::new(result)))
 }
 
-/// Delete all routing configurations (DANGEROUS)
-///
-/// Removes all routing entries from the system. Requires confirmation parameter.
-#[utoipa::path(
-    delete,
-    path = "/api/routing",
-    params(
-        ("confirm" = Option<bool>, Query, description = "Confirmation flag (must be true)"),
-        ("expected_revision" = u64, Query, description = "Current shared logical-routing revision"),
-        ("x-request-id" = Option<String>, Header, description = "Optional UUID audit correlation ID")
-    ),
-    responses(
-        (status = 422, description = "Mixed measurement+action deletion is disabled until one transaction can own both planes"),
-        (status = 403, description = "Missing/invalid Bearer credentials or actor lacks automation.routing.manage"),
-        (status = 422, description = "Explicit confirmation is required"),
-        (status = 503, description = "Mandatory audit, routing storage, or cache publication is unavailable")
-    ),
-    security(("bearer_auth" = [])),
-    tag = "automation"
-)]
-pub async fn delete_all_routing_handler(
-    State(_state): State<Arc<AppState>>,
-    Query(params): Query<ConfirmQuery>,
-    _headers: HeaderMap,
-) -> Result<Json<SuccessResponse<Value>>, AutomationError> {
-    let _expected = required_revision(params.expected_revision)?;
-    Err(mixed_delete_disabled("all routing"))
-}
-
 /// Get routing by channel ID
 ///
 /// Returns all routing entries (uplink and downlink) for a specific channel.
@@ -280,87 +244,4 @@ pub async fn get_routing_by_channel_handler(
     });
 
     Ok(Json(SuccessResponse::new(result)))
-}
-
-/// Delete all routing for an instance
-///
-/// Removes all routing entries (measurement and action) for a specific instance.
-#[utoipa::path(
-    delete,
-    path = "/api/routing/instances/{instance_name}",
-    params(
-        ("instance_name" = String, Path, description = "Instance name"),
-        ("confirm" = Option<bool>, Query, description = "Confirmation flag (must be true)"),
-        ("expected_revision" = u64, Query, description = "Current shared logical-routing revision"),
-        ("x-request-id" = Option<String>, Header, description = "Optional UUID audit correlation ID")
-    ),
-    responses(
-        (status = 422, description = "Mixed measurement+action deletion is disabled until one transaction can own both planes"),
-        (status = 403, description = "Missing/invalid Bearer credentials or actor lacks automation.routing.manage"),
-        (status = 404, description = "Instance not found"),
-        (status = 422, description = "Explicit confirmation is required"),
-        (status = 503, description = "Mandatory audit, routing storage, or cache publication is unavailable")
-    ),
-    security(("bearer_auth" = [])),
-    tag = "automation"
-)]
-pub async fn delete_instance_routing_handler(
-    State(_state): State<Arc<AppState>>,
-    Path(instance_name): Path<String>,
-    Query(params): Query<ConfirmQuery>,
-    _headers: HeaderMap,
-) -> Result<Json<SuccessResponse<Value>>, AutomationError> {
-    let _expected = required_revision(params.expected_revision)?;
-    Err(mixed_delete_disabled(&format!(
-        "routing for instance {instance_name}"
-    )))
-}
-
-/// Delete all routing for a channel
-///
-/// Removes all routing entries (uplink and downlink) for a specific channel.
-#[utoipa::path(
-    delete,
-    path = "/api/routing/channels/{channel_id}",
-    params(
-        ("channel_id" = u32, Path, description = "Channel ID"),
-        ("confirm" = Option<bool>, Query, description = "Confirmation flag (must be true)"),
-        ("expected_revision" = u64, Query, description = "Current shared logical-routing revision"),
-        ("x-request-id" = Option<String>, Header, description = "Optional UUID audit correlation ID")
-    ),
-    responses(
-        (status = 422, description = "Mixed measurement+action deletion is disabled until one transaction can own both planes"),
-        (status = 403, description = "Missing/invalid Bearer credentials or actor lacks automation.routing.manage"),
-        (status = 422, description = "Explicit confirmation is required"),
-        (status = 503, description = "Mandatory audit, routing storage, or cache publication is unavailable")
-    ),
-    security(("bearer_auth" = [])),
-    tag = "automation"
-)]
-pub async fn delete_channel_routing_handler(
-    State(_state): State<Arc<AppState>>,
-    Path(channel_id): Path<u32>,
-    Query(params): Query<ConfirmQuery>,
-    _headers: HeaderMap,
-) -> Result<Json<SuccessResponse<Value>>, AutomationError> {
-    let _expected = required_revision(params.expected_revision)?;
-    Err(mixed_delete_disabled(&format!(
-        "routing for channel {channel_id}"
-    )))
-}
-
-fn mixed_delete_disabled(scope: &str) -> AutomationError {
-    AutomationError::InvalidRouting(format!(
-        "mixed measurement+action deletion for {scope} is disabled until both planes can commit in one SQLite transaction; use plane-specific governed endpoints"
-    ))
-}
-
-fn required_revision(
-    revision: Option<u64>,
-) -> Result<aether_ports::LogicalRoutingRevision, AutomationError> {
-    crate::api::measurement_routing_boundary::revision(revision.ok_or_else(|| {
-        AutomationError::InvalidRouting(
-            "expected_revision is required for logical-routing CAS".to_string(),
-        )
-    })?)
 }

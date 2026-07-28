@@ -16,10 +16,7 @@ use common::service_bootstrap::ServiceInfo;
 
 // aether-io imports
 use aether_io::{
-    api::{
-        command_cache::CommandTxCache,
-        routes::{create_api_routes_with_channel_applications, set_service_start_time},
-    },
+    api::routes::{create_api_routes_with_channel_applications, set_service_start_time},
     core::{
         bootstrap::{self, Args},
         channels::ChannelManager,
@@ -324,11 +321,6 @@ async fn main() -> anyhow::Result<()> {
         })
     };
 
-    // CommandTxCache for O(1) hot path access
-    // Bypasses ChannelManager RwLock for Control/Adjustment writes
-    let command_tx_cache = Arc::new(CommandTxCache::new());
-    info!("CommandTxCache initialized (O(1) hot path for Control/Adjustment)");
-
     let (shm_listener_shutdown_tx, shm_listener_shutdown_rx) = tokio::sync::watch::channel(false);
 
     let channel_health_writer = {
@@ -386,7 +378,6 @@ async fn main() -> anyhow::Result<()> {
         sqlite_pool.clone(),
         Arc::clone(&shm_handle),
         Some(Arc::clone(&channel_health_writer)),
-        Some(Arc::clone(&command_tx_cache)),
     )?;
 
     // Configure SHM listener for event-driven M2C dispatch.
@@ -547,7 +538,6 @@ async fn main() -> anyhow::Result<()> {
     let app = create_api_routes_with_channel_applications(
         Arc::clone(&channel_manager),
         sqlite_pool,
-        Arc::clone(&command_tx_cache),
         channel_management,
         channel_reconciliation,
         access_authenticator,

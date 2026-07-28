@@ -8,8 +8,8 @@ mod topics;
 mod transport;
 
 pub use config::{
-    CloudLinkMigrationMode, CloudLinkMqttConfig, CloudLinkMqttError, CloudLinkTlsConfig,
-    DeploymentSecurity, MqttClientIdentity, SecretString,
+    CloudLinkMqttConfig, CloudLinkMqttError, CloudLinkTlsConfig, DeploymentSecurity,
+    MqttClientIdentity, SecretString,
 };
 pub use topics::TopicNamespace;
 pub use transport::MqttCloudLinkTransport;

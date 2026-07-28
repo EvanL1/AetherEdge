@@ -322,12 +322,7 @@ impl ChannelManager {
         // 1. Atomic store (publish channel to be visible)
         slot.store(Some(Arc::clone(entry)));
 
-        // 2. Register command_tx with cache
-        if let (Some(cache), Some(tx)) = (&self.command_tx_cache, &entry.command_tx) {
-            cache.register(channel_id, tx.clone());
-        }
-
-        // 3. Register with SHM listener for event-driven M2C dispatch
+        // 2. Register with SHM listener for event-driven M2C dispatch
         if let (Some(listener), Some(tx)) = (&self.shm_listener, &entry.command_tx) {
             listener.register_channel(channel_id, tx.clone());
             debug!(
@@ -336,7 +331,7 @@ impl ChannelManager {
             );
         }
 
-        // 4. Register in active channel index for O(1) iteration
+        // 3. Register in active channel index for O(1) iteration
         self.active_channel_ids.insert(channel_id);
     }
 

@@ -5,35 +5,11 @@
 #![allow(clippy::disallowed_methods)] // json! macro used in multiple functions
 
 use common::FourRemote;
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use utoipa::ToSchema;
 
-// Import Core types for zero-duplication architecture
-use crate::config::{Instance, InstanceCore};
-
-// Import shared serde helpers
-use common::serde_helpers::{deserialize_optional_i32, deserialize_optional_u32};
-
 // === Custom Deserializer for FourRemote ===
-
-/// Deserialize `Option<FourRemote>` from null, empty string, or valid enum value
-fn deserialize_optional_four_remote<'de, D>(deserializer: D) -> Result<Option<FourRemote>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let opt: Option<String> = Option::deserialize(deserializer)?;
-    match opt {
-        None => Ok(None),
-        Some(s) if s.is_empty() => Ok(None),
-        Some(s) => {
-            // Parse directly using FromStr - avoids clone and intermediate Value
-            s.parse::<FourRemote>()
-                .map(Some)
-                .map_err(serde::de::Error::custom)
-        },
-    }
-}
 
 // === Query Parameters ===
 
@@ -45,74 +21,6 @@ pub struct DataTypeQuery {
 }
 
 // === Parameter Management ===
-
-/// Request to update instance parameter routing
-#[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
-pub struct RoutingUpdate {
-    pub routings: HashMap<String, String>,
-    #[serde(default)]
-    pub routing_type: RoutingType,
-}
-
-/// Type of routing being updated
-#[derive(Debug, Clone, Deserialize, Serialize, Default, ToSchema)]
-#[serde(rename_all = "lowercase")]
-pub enum RoutingType {
-    #[default]
-    Measurement,
-    Action,
-}
-
-/// API-layer model-point direction (M/A only).
-///
-/// Used in RoutingRequest to explicitly specify whether the point_id
-/// refers to a measurement point or an action point.
-/// Unlike the device/protocol `common::PointType` representation (T/S/C/A),
-/// automation only routes Measurement and Action points.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-pub enum PointType {
-    /// Measurement point routing
-    #[serde(rename = "M")]
-    Measurement,
-    /// Action point routing
-    #[serde(rename = "A")]
-    Action,
-}
-
-// === Routing Management ===
-
-/// Request to create or update a channel-to-instance point routing
-///
-/// `channel_id`, `four_remote`, and `channel_point_id` form a unit to identify a channel point.
-/// All three must be present for a valid routing, or all null/empty to unbind the routing.
-///
-/// Supports null, empty string "", or omitted fields to indicate "unbind routing".
-#[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
-pub struct RoutingRequest {
-    /// Point type: "M" for measurement, "A" for action
-    #[schema(example = "M")]
-    pub point_type: PointType,
-    /// Point ID (measurement_id or action_id based on point_type)
-    #[schema(example = 101)]
-    pub point_id: u32,
-    #[schema(example = 1)]
-    #[serde(default, deserialize_with = "deserialize_optional_i32")]
-    pub channel_id: Option<i32>,
-    #[schema(value_type = Option<String>, example = "T")]
-    #[serde(default, deserialize_with = "deserialize_optional_four_remote")]
-    pub four_remote: Option<FourRemote>,
-    #[schema(example = 101)]
-    #[serde(default, deserialize_with = "deserialize_optional_u32")]
-    pub channel_point_id: Option<u32>,
-    /// Current shared logical-routing revision required for compare-and-set.
-    #[schema(example = 7)]
-    #[serde(default)]
-    pub expected_revision: u64,
-    /// Explicit confirmation required when this request changes an action route.
-    #[serde(default)]
-    #[schema(default = false, example = true)]
-    pub confirmed: bool,
-}
 
 /// Request to create or update routing for a single point
 ///
@@ -139,15 +47,6 @@ pub struct SinglePointRoutingRequest {
 pub struct ToggleRoutingRequest {
     #[schema(example = true)]
     pub enabled: bool,
-    /// Explicitly confirms a high-risk physical command-topology change.
-    #[serde(default)]
-    #[schema(default = false, example = true)]
-    pub confirmed: bool,
-}
-
-/// Confirmation body for destructive action-routing commands.
-#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, ToSchema)]
-pub struct RoutingMutationConfirmation {
     /// Explicitly confirms a high-risk physical command-topology change.
     #[serde(default)]
     #[schema(default = false, example = true)]
@@ -405,53 +304,6 @@ pub struct ActionRequest {
     pub confirmed: bool,
 }
 
-// === Instance Result Responses ===
-
-/// Instance operation result (create/update/delete)
-/// Uses InstanceCore to eliminate field duplication
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct InstanceResult {
-    /// Core instance fields (instance_id, instance_name, product_name, properties)
-    #[serde(flatten)]
-    #[schema(value_type = Object)]
-    pub core: InstanceCore,
-
-    /// Runtime status
-    #[schema(example = "active")]
-    pub runtime_status: String,
-
-    /// Operation message
-    #[schema(example = "Instance created successfully")]
-    pub message: Option<String>,
-}
-
-impl From<(Instance, String, Option<String>)> for InstanceResult {
-    fn from((instance, runtime_status, message): (Instance, String, Option<String>)) -> Self {
-        Self {
-            core: instance.core, // Move instead of clone
-            runtime_status,
-            message,
-        }
-    }
-}
-
-/// Instance detail response (complete information)
-/// Uses Instance to eliminate field duplication
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct InstanceDetail {
-    /// Complete instance configuration
-    #[serde(flatten)]
-    #[schema(value_type = Object)]
-    pub instance: Instance,
-
-    /// Runtime status
-    #[schema(example = "active")]
-    pub runtime_status: String,
-
-    /// Point statistics (measurement_count, action_count, etc.)
-    pub point_statistics: HashMap<String, usize>,
-}
-
 // === Runtime Point Structures (Product Point + Instance Routing) ===
 
 /// Point routing configuration (instance-specific attribute)
@@ -591,127 +443,4 @@ pub struct InstancePointsResponse {
 
     /// Property points with current values (no routing)
     pub properties: Vec<InstancePropertyPoint>,
-}
-
-// === Unit Tests ===
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// Test null values are deserialized as None
-    #[test]
-    fn test_routing_request_with_null_values() {
-        let json = r#"{"point_type": "M", "point_id": 3, "channel_id": null, "channel_point_id": null, "four_remote": null}"#;
-        let req: RoutingRequest = serde_json::from_str(json).unwrap();
-        assert_eq!(req.point_type, PointType::Measurement);
-        assert!(req.channel_id.is_none());
-        assert!(req.four_remote.is_none());
-        assert!(req.channel_point_id.is_none());
-        assert_eq!(req.point_id, 3);
-    }
-
-    /// Test empty strings are deserialized as None
-    #[test]
-    fn test_routing_request_with_empty_strings() {
-        let json = r#"{"point_type": "A", "point_id": 3, "channel_id": "", "channel_point_id": "", "four_remote": ""}"#;
-        let req: RoutingRequest = serde_json::from_str(json).unwrap();
-        assert_eq!(req.point_type, PointType::Action);
-        assert!(req.channel_id.is_none());
-        assert!(req.four_remote.is_none());
-        assert!(req.channel_point_id.is_none());
-        assert_eq!(req.point_id, 3);
-    }
-
-    /// Test omitted optional fields default to None (requires #[serde(default)])
-    #[test]
-    fn test_routing_request_with_omitted_fields() {
-        let json = r#"{"point_type": "M", "point_id": 3}"#;
-        let req: RoutingRequest = serde_json::from_str(json).unwrap();
-        assert_eq!(req.point_type, PointType::Measurement);
-        assert!(req.channel_id.is_none());
-        assert!(req.four_remote.is_none());
-        assert!(req.channel_point_id.is_none());
-        assert_eq!(req.point_id, 3);
-    }
-
-    /// Test valid values are deserialized correctly
-    #[test]
-    fn test_routing_request_with_valid_values() {
-        let json = r#"{"point_type": "M", "point_id": 3, "channel_id": 1, "channel_point_id": 101, "four_remote": "T"}"#;
-        let req: RoutingRequest = serde_json::from_str(json).unwrap();
-        assert_eq!(req.point_type, PointType::Measurement);
-        assert_eq!(req.channel_id, Some(1));
-        assert_eq!(req.four_remote, Some(FourRemote::Telemetry));
-        assert_eq!(req.channel_point_id, Some(101));
-        assert_eq!(req.point_id, 3);
-    }
-
-    /// Test mixed null and empty string (original failing scenario)
-    #[test]
-    fn test_routing_request_mixed_null_and_empty() {
-        let json = r#"{"point_type": "A", "point_id": 3, "channel_id": null, "channel_point_id": null, "four_remote": ""}"#;
-        let req: RoutingRequest = serde_json::from_str(json).unwrap();
-        assert_eq!(req.point_type, PointType::Action);
-        assert!(req.channel_id.is_none());
-        assert!(req.four_remote.is_none());
-        assert!(req.channel_point_id.is_none());
-        assert_eq!(req.point_id, 3);
-    }
-
-    /// Test string numbers are parsed correctly ("123" → 123)
-    #[test]
-    fn test_routing_request_string_numbers() {
-        let json = r#"{"point_type": "M", "point_id": 3, "channel_id": "1", "channel_point_id": "101", "four_remote": "T"}"#;
-        let req: RoutingRequest = serde_json::from_str(json).unwrap();
-        assert_eq!(req.point_type, PointType::Measurement);
-        assert_eq!(req.channel_id, Some(1));
-        assert_eq!(req.channel_point_id, Some(101));
-        assert_eq!(req.four_remote, Some(FourRemote::Telemetry));
-    }
-
-    /// Test all FourRemote variants with standard aliases
-    #[test]
-    fn test_routing_request_four_remote_variants() {
-        // Telemetry (T, YC, telemetry, yc)
-        let json = r#"{"point_type": "M", "point_id": 1, "four_remote": "T"}"#;
-        let req: RoutingRequest = serde_json::from_str(json).unwrap();
-        assert_eq!(req.four_remote, Some(FourRemote::Telemetry));
-
-        // Signal (S, YX, signal, yx)
-        let json = r#"{"point_type": "M", "point_id": 1, "four_remote": "S"}"#;
-        let req: RoutingRequest = serde_json::from_str(json).unwrap();
-        assert_eq!(req.four_remote, Some(FourRemote::Signal));
-
-        // Control (C, YK, control, yk)
-        let json = r#"{"point_type": "A", "point_id": 1, "four_remote": "C"}"#;
-        let req: RoutingRequest = serde_json::from_str(json).unwrap();
-        assert_eq!(req.four_remote, Some(FourRemote::Control));
-
-        // Adjustment (A, YT, adjustment, setpoint, yt)
-        let json = r#"{"point_type": "A", "point_id": 1, "four_remote": "A"}"#;
-        let req: RoutingRequest = serde_json::from_str(json).unwrap();
-        assert_eq!(req.four_remote, Some(FourRemote::Adjustment));
-    }
-
-    /// Test point_type serialization and deserialization
-    #[test]
-    fn test_point_type_serde() {
-        // Test Measurement
-        assert_eq!(
-            serde_json::to_string(&PointType::Measurement).unwrap(),
-            "\"M\""
-        );
-        assert_eq!(
-            serde_json::from_str::<PointType>("\"M\"").unwrap(),
-            PointType::Measurement
-        );
-
-        // Test Action
-        assert_eq!(serde_json::to_string(&PointType::Action).unwrap(), "\"A\"");
-        assert_eq!(
-            serde_json::from_str::<PointType>("\"A\"").unwrap(),
-            PointType::Action
-        );
-    }
 }

@@ -17,7 +17,6 @@ pub mod api {
     //!
     //! Provides HTTP API endpoints for the communication service.
 
-    pub mod command_cache;
     pub mod dto;
     pub mod routes;
 

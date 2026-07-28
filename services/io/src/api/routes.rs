@@ -15,7 +15,6 @@ use utoipa::OpenApi;
 use aether_application::{ChannelManagementApplication, ChannelReconciliationApplication};
 use aether_auth_jwt::AccessTokenAuthenticator;
 
-use crate::api::command_cache::CommandTxCache;
 use crate::core::channels::ChannelManager;
 
 // Import handler modules
@@ -156,7 +155,6 @@ impl AppState {
             crate::dto::ChannelReconciliationResponse,
             common::ErrorInfo,
             common::ErrorResponse,
-            crate::dto::RoutingReloadResult,
             crate::dto::PointDefinition,
             crate::dto::GroupedPoints,
             crate::dto::GroupedMappings,
@@ -207,7 +205,6 @@ async fn openapi_document() -> axum::Json<utoipa::openapi::OpenApi> {
 pub fn create_api_routes(
     channel_manager: Arc<ChannelManager>,
     sqlite_pool: sqlx::SqlitePool,
-    _command_tx_cache: Arc<CommandTxCache>,
 ) -> Router {
     create_api_routes_with_boundary(
         channel_manager,
@@ -222,7 +219,6 @@ pub fn create_api_routes(
 pub fn create_api_routes_with_channel_applications(
     channel_manager: Arc<ChannelManager>,
     sqlite_pool: sqlx::SqlitePool,
-    _command_tx_cache: Arc<CommandTxCache>,
     channel_management: Arc<ChannelManagementApplication>,
     channel_reconciliation: Arc<ChannelReconciliationApplication>,
     access_authenticator: Arc<AccessTokenAuthenticator>,

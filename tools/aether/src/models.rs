@@ -6,7 +6,6 @@ use anyhow::Result;
 use clap::Subcommand;
 
 pub mod client;
-pub mod csv_loader;
 
 #[derive(Subcommand)]
 pub enum ModelCommands {
@@ -30,10 +29,6 @@ pub enum ProductCommands {
     /// List products selected by active Packs and site configuration
     #[command(about = "Show products selected by aether-automation")]
     List,
-
-    /// Show available products in products/ directory (for development)
-    #[command(about = "List product definitions in the products/ directory")]
-    Available,
 
     /// Get product details
     #[command(about = "Show detailed information about a selected product")]
@@ -100,12 +95,6 @@ pub async fn handle_command(cmd: ModelCommands, base_url: &str, json: bool) -> R
 
 async fn handle_product_command(cmd: ProductCommands, base_url: &str, json: bool) -> Result<()> {
     match cmd {
-        ProductCommands::Available => {
-            if json {
-                eprintln!("warning: --json is not fully supported for 'products available'");
-            }
-            csv_loader::list_available_products()?;
-        },
         ProductCommands::List => {
             let client = client::ModelClient::new(base_url)?;
             let products = client.list_products().await?;

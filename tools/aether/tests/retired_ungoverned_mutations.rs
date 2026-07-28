@@ -25,6 +25,7 @@ fn cli_rejects_retired_ungoverned_mutation_subcommands() {
         &["routing", "delete-instance"],
         &["routing", "delete-channel"],
         &["templates", "list"],
+        &["models", "products", "available"],
         &["templates", "get"],
         &["templates", "snapshot"],
         &["templates", "apply"],

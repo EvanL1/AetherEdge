@@ -571,6 +571,43 @@ fn io_point_topology_is_offline_only() {
 }
 
 #[test]
+fn zero_consumer_runtime_compatibility_planes_stay_retired() {
+    let root = workspace_metadata().workspace_root;
+    for (relative, forbidden) in [
+        (
+            "services/io/src/protocols/adapters/http.rs",
+            "WebhookHandler",
+        ),
+        ("services/io/src/protocols/adapters/http.rs", "HttpMode"),
+        ("services/automation/src/routes.rs", "/api/instances/reload"),
+        (
+            "services/automation/src/routes.rs",
+            "/api/instances/{id}/routing/validate",
+        ),
+        (
+            "services/automation/src/routes.rs",
+            "/api/routing/instances/{instance_name}",
+        ),
+        (
+            "services/automation/src/routes.rs",
+            "/api/routing/channels/{channel_id}",
+        ),
+        (
+            "services/uplink/adapters/cloudlink-mqtt/src/config.rs",
+            "CloudLinkMigrationMode",
+        ),
+        ("tools/aether/src/models.rs", "ProductCommands::Available"),
+    ] {
+        let source = fs::read_to_string(root.join(relative))
+            .unwrap_or_else(|error| panic!("failed to read {relative}: {error}"));
+        assert!(
+            !source.contains(forbidden),
+            "{relative} restored zero-consumer compatibility surface {forbidden}"
+        );
+    }
+}
+
+#[test]
 fn routing_library_is_storage_agnostic() {
     let root = workspace_metadata().workspace_root;
     for relative in [

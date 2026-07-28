@@ -308,53 +308,6 @@ pub(crate) fn governance_response(
     })
 }
 
-/// Reload instances from database
-///
-/// Rebuilds process-local caches from authoritative SQLite configuration.
-///
-#[cfg_attr(feature = "openapi", utoipa::path(
-    post,
-    path = "/api/instances/reload",
-    responses(
-        (status = 200, description = "Instances reloaded from SQLite", body = serde_json::Value),
-        (status = 500, description = "Reload failed", body = serde_json::Value)
-    ),
-    tag = "automation"
-))]
-pub async fn reload_instances_from_db(
-    State(state): State<Arc<AppState>>,
-) -> Result<Json<SuccessResponse<serde_json::Value>>, AutomationError> {
-    // Use unified ReloadableService interface for incremental sync
-    use common::ReloadableService;
-    match ReloadableService::reload_from_database(
-        &*state.instance_manager,
-        &state.instance_manager.pool,
-    )
-    .await
-    {
-        Ok(result) => {
-            info!(
-                "Instances reloaded: {} added, {} updated, {} removed, {} errors",
-                result.added.len(),
-                result.updated.len(),
-                result.removed.len(),
-                result.errors.len()
-            );
-            Ok(Json(SuccessResponse::new(json!({
-                "message": "Instances reloaded successfully",
-                "result": result
-            }))))
-        },
-        Err(e) => {
-            error!("Failed to reload instances: {}", e);
-            Err(AutomationError::InternalError(format!(
-                "Failed to reload instances: {}",
-                e
-            )))
-        },
-    }
-}
-
 // ============================================================================
 // Action Execution
 // ============================================================================

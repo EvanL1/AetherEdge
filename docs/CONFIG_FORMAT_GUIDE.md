@@ -123,20 +123,14 @@ channels:
 
 | 参数 | 类型 | 必需 | 默认值 | 说明 |
 |------|------|------|--------|------|
-| `mode` | enum | ✗ | `polling` | 模式：`polling`（轮询）/ `webhook`（被动接收） |
-| `url` | string | ✓* | - | 目标 URL（轮询模式必需） |
+| `url` | string | ✓ | - | 轮询目标 URL |
 | `method` | enum | ✗ | `GET` | HTTP 方法：`GET`/`POST`/`PUT` |
 | `headers` | object | ✗ | {} | 请求头，如 `Authorization` |
 | `body` | string | ✗ | - | 请求体（POST/PUT） |
 | `interval_ms` | u64 | ✗ | 5000 | 轮询间隔（毫秒） |
 | `timeout_ms` | u64 | ✗ | 3000 | 请求超时（毫秒） |
-| `listen_path` | string | ✓* | - | 监听路径（Webhook 模式必需） |
-| `auth_token` | string | ✗ | - | Webhook 认证 token |
-| `max_retries` | u32 | ✗ | 3 | 失败重试次数 |
 
-**HTTP 模式选择指南：**
-- **polling**：主动从外部 API 拉取数据，适用于传统 HTTP API
-- **webhook**：被动接收外部推送，适用于支持事件通知的系统
+HTTP 适配器只主动轮询设备 API。入站 Webhook 托管不属于 IO runtime。
 
 ### instances.yaml - 设备实例
 

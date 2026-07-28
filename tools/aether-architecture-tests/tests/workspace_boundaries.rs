@@ -77,6 +77,7 @@ const RETIRED_ROOT_PATHS: &[&str] = &[
     "libs/aether-infra/src/redis.rs",
     "libs/common/src/warning_monitor.rs",
     "services/io/assets/script-host",
+    "services/io/src/api/command_cache.rs",
     "services/io/src/api/handlers/network_handlers.rs",
     "services/io/src/api/handlers/template_handlers.rs",
     "services/io/src/api/handlers/point_handlers/point_batch_handlers.rs",
@@ -84,6 +85,7 @@ const RETIRED_ROOT_PATHS: &[&str] = &[
     "services/io/src/api/handlers/point_handlers/point_governance.rs",
     "services/io/src/api/handlers/point_handlers/point_types.rs",
     "services/io/src/point_topology.rs",
+    "services/automation/src/api/routing_management_handlers.rs",
     "services/io/src/protocols/adapters/can/j1939.rs",
     "services/io/src/protocols/adapters/can/j1939",
     "services/io/src/protocols/adapters/can/config.rs",
@@ -109,6 +111,7 @@ const RETIRED_ROOT_PATHS: &[&str] = &[
     "tools/aether/src/deploy_mode.rs",
     "tools/aether/src/templates.rs",
     "tools/aether/src/shm.rs",
+    "tools/aether/src/models/csv_loader.rs",
 ];
 const RETIRED_EXTERNAL_RUST_DEPENDENCIES: &[&str] = &["bb8", "bb8-redis", "redis"];
 const RETIRED_IO_PROTOCOLS: &[&str] = &[

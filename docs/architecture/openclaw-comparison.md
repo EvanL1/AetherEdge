@@ -96,33 +96,30 @@ class ChannelAdapter:
 
 ### 2.2 控制平面：中央连接管理
 
-| 维度 | OpenClaw | AetherEMS |
+| 维度 | OpenClaw | AetherEdge |
 |------|----------|------------|
 | **核心组件** | Gateway（单进程） | ChannelManager |
 | **连接管理** | 管理所有 IM channel 连接 | 管理所有设备通道连接 |
 | **控制接口** | WebSocket (18789) | HTTP API（应用经 6005 网关；io 内部端口 6001） |
 | **会话路由** | 私聊/群聊/工作号隔离 | C2M/M2C/C2C 路由 |
-| **状态缓存** | 连接状态 + 会话上下文 | `ArcSwap<ConnectionState>` + immutable `RoutingSnapshot` |
+| **状态缓存** | 连接状态 + 会话上下文 | ArcSwap channel slots + generation-pinned SHM/routing |
 
 **代码对比**：
 
 ```rust
-// AetherEMS: ChannelManager
-pub struct ChannelManager<R: Rtdb> {
-    rtdb: Arc<R>,
-    routing: Arc<RoutingSnapshot>,
-    channels: RwLock<HashMap<u32, Arc<ChannelEntry<R>>>>,
-    shared_writer: Option<Arc<UnifiedWriter>>,  // SHM
-    command_tx_cache: Option<Arc<CommandTxCache>>,
-}
-
-// 连接管理
-impl ChannelManager {
-    pub async fn connect_all_channels(&self) -> Result<ConnectResult>
-    pub async fn start_channel(&self, id: u32) -> Result<()>
-    pub async fn stop_channel(&self, id: u32) -> Result<()>
+// AetherEdge: ChannelManager（概念结构）
+pub struct ChannelManager {
+    channels: Vec<ArcSwapOption<ChannelEntry>>,
+    active_channel_ids: DashSet<u32>,
+    store: Arc<ShmDataStore>,
+    routing_cache: Arc<ChannelRoutingCache>,
+    shm_handle: Arc<ShmWriterHandle>,
+    shm_listener: Option<Arc<ShmCommandListener>>,
 }
 ```
+
+设备命令只有一个 sender registry，由 `ShmCommandListener` 服务 M2C UDS
+命令平面；HTTP 边界不保留第二份 command cache。
 
 **相似度**: ⭐⭐⭐⭐ (85%)
 
