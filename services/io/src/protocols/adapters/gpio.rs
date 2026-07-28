@@ -60,7 +60,6 @@ use crate::protocols::core::error::{GatewayError, Result};
 use crate::protocols::core::logging::{
     ChannelLogConfig, ChannelLogHandler, ErrorContext, LogContext,
 };
-use crate::protocols::core::metadata::{DriverMetadata, ParameterMetadata, ParameterType};
 use crate::protocols::core::slot::AtomicBoolStore;
 use crate::protocols::core::traits::{
     AdjustmentCommand, ConnectionState, ControlCommand, DataEventReceiver, Diagnostics,
@@ -126,7 +125,9 @@ pub struct GpioChannelParamsConfig {
 }
 
 fn default_driver() -> String {
-    "gpiod".to_string()
+    // Preserve the historical effective runtime until a site explicitly
+    // commissions the modern character-device backend.
+    "sysfs".to_string()
 }
 
 fn default_sysfs_path() -> String {
@@ -138,23 +139,31 @@ fn default_poll_interval() -> u64 {
 }
 
 impl GpioChannelParamsConfig {
-    /// Get the GPIO driver type from configuration.
-    pub fn driver_type(&self) -> GpioDriverType {
+    /// Validate and resolve the explicitly selected GPIO backend.
+    pub fn driver_type(&self) -> Result<GpioDriverType> {
         match self.driver.to_lowercase().as_str() {
-            "sysfs" => GpioDriverType::Sysfs {
+            "gpiod" => Ok(GpioDriverType::Gpiod),
+            "sysfs" => Ok(GpioDriverType::Sysfs {
                 base_path: self.sysfs_base_path.clone(),
-            },
-            _ => GpioDriverType::Gpiod,
+            }),
+            _ => Err(GatewayError::Config(
+                "GPIO driver must be 'gpiod' or 'sysfs'".into(),
+            )),
         }
     }
 
-    /// Convert to GpioChannelConfig.
-    pub fn to_config(&self) -> GpioChannelConfig {
-        GpioChannelConfig {
-            driver: self.driver_type(),
-            pins: Vec::new(), // Pins are added via point configs
-            poll_interval: std::time::Duration::from_millis(self.poll_interval_ms),
+    /// Convert to a validated runtime configuration.
+    pub fn to_config(&self) -> Result<GpioChannelConfig> {
+        if !(1..=86_400_000).contains(&self.poll_interval_ms) {
+            return Err(GatewayError::Config(
+                "GPIO poll_interval_ms must be between 1 and 86400000".into(),
+            ));
         }
+        Ok(GpioChannelConfig {
+            driver: self.driver_type()?,
+            pins: Vec::new(),
+            poll_interval: std::time::Duration::from_millis(self.poll_interval_ms),
+        })
     }
 }
 
@@ -336,8 +345,7 @@ impl GpiodDriver {
         {
             // Check if it's actually on gpiochip0
             if gpio_num < 32 {
-                // Likely actually on gpiochip0 - borrow from config
-                return Ok((Cow::Borrowed(&pin.chip), pin.pin));
+                return Ok((Cow::Borrowed("gpiochip0"), gpio_num));
             }
             // Auto-resolve global GPIO number to chip + line (requires allocation)
             let (chip, line) = resolve_gpio_to_chip_line(gpio_num)?;
@@ -346,56 +354,6 @@ impl GpiodDriver {
 
         // Use the configured chip directly - no allocation!
         Ok((Cow::Borrowed(&pin.chip), pin.pin))
-    }
-}
-
-impl GpiodDriver {
-    #[allow(clippy::disallowed_methods)] // json! macro
-    pub(crate) fn metadata() -> DriverMetadata {
-        DriverMetadata {
-            name: "gpiod",
-            display_name: "Gpiod (Recommended)",
-            description: "Modern character device interface using /dev/gpiochipN. Recommended for new projects.",
-            is_recommended: true,
-            example_config: serde_json::json!({
-                "driver": "gpiod",
-                "gpio_chip": "gpiochip6",
-                "poll_interval_ms": 200,
-                "pins": [
-                    { "chip": "gpiochip6", "pin": 0, "direction": "input", "point_id": 1 },
-                    { "chip": "gpiochip6", "pin": 1, "direction": "output", "point_id": 101 }
-                ]
-            }),
-            parameters: vec![
-                ParameterMetadata::optional(
-                    "driver",
-                    "Driver",
-                    "GPIO driver type: 'gpiod' or 'sysfs'",
-                    ParameterType::String,
-                    serde_json::json!("gpiod"),
-                ),
-                ParameterMetadata::optional(
-                    "gpio_chip",
-                    "GPIO Chip",
-                    "Default GPIO chip device name (e.g., gpiochip0, gpiochip6)",
-                    ParameterType::String,
-                    serde_json::json!("gpiochip0"),
-                ),
-                ParameterMetadata::optional(
-                    "poll_interval_ms",
-                    "Poll Interval (ms)",
-                    "Polling interval for input pins in milliseconds",
-                    ParameterType::Integer,
-                    serde_json::json!(200),
-                ),
-                ParameterMetadata::required(
-                    "pins",
-                    "Pin Configuration",
-                    "Array of GPIO pin configurations with chip, pin, direction, and point_id",
-                    ParameterType::Array,
-                ),
-            ],
-        }
     }
 }
 
@@ -544,56 +502,6 @@ impl SysfsDriver {
         }
 
         Ok(())
-    }
-}
-
-impl SysfsDriver {
-    #[allow(clippy::disallowed_methods)] // json! macro
-    pub(crate) fn metadata() -> DriverMetadata {
-        DriverMetadata {
-            name: "sysfs",
-            display_name: "Sysfs (Legacy)",
-            description: "Legacy sysfs interface using /sys/class/gpio/. For compatibility with older systems.",
-            is_recommended: false,
-            example_config: serde_json::json!({
-                "driver": "sysfs",
-                "gpio_base_path": "/sys/class/gpio",
-                "poll_interval_ms": 200,
-                "pins": [
-                    { "gpio_number": 490, "direction": "input", "point_id": 1 },
-                    { "gpio_number": 491, "direction": "output", "point_id": 101 }
-                ]
-            }),
-            parameters: vec![
-                ParameterMetadata::optional(
-                    "driver",
-                    "Driver",
-                    "GPIO driver type: 'gpiod' or 'sysfs'",
-                    ParameterType::String,
-                    serde_json::json!("sysfs"),
-                ),
-                ParameterMetadata::optional(
-                    "gpio_base_path",
-                    "GPIO Base Path",
-                    "Base path for sysfs GPIO interface",
-                    ParameterType::String,
-                    serde_json::json!("/sys/class/gpio"),
-                ),
-                ParameterMetadata::optional(
-                    "poll_interval_ms",
-                    "Poll Interval (ms)",
-                    "Polling interval for input pins in milliseconds",
-                    ParameterType::Integer,
-                    serde_json::json!(200),
-                ),
-                ParameterMetadata::required(
-                    "pins",
-                    "Pin Configuration",
-                    "Array of GPIO pin configurations with gpio_number, direction, and point_id",
-                    ParameterType::Array,
-                ),
-            ],
-        }
     }
 }
 
@@ -1243,6 +1151,35 @@ mod tests {
     use super::*;
     use std::collections::HashMap;
     use std::sync::{Arc, Mutex};
+
+    #[test]
+    fn global_gpio_numbers_on_chip_zero_keep_their_line_identity() {
+        let pin = GpioPinConfig::digital_input_sysfs(17, 1);
+        let (chip, line) = GpiodDriver::resolve_chip_line(&pin).unwrap();
+        assert_eq!(chip, "gpiochip0");
+        assert_eq!(line, 17);
+    }
+
+    #[test]
+    fn reviewed_gpio_parameters_select_both_physical_backends() {
+        let sysfs: GpioChannelParamsConfig =
+            serde_json::from_value(serde_json::json!({"driver": "sysfs"})).unwrap();
+        assert!(matches!(
+            sysfs.driver_type().unwrap(),
+            GpioDriverType::Sysfs { .. }
+        ));
+
+        let gpiod: GpioChannelParamsConfig =
+            serde_json::from_value(serde_json::json!({"driver": "gpiod"})).unwrap();
+        assert!(matches!(
+            gpiod.driver_type().unwrap(),
+            GpioDriverType::Gpiod
+        ));
+
+        let invalid: GpioChannelParamsConfig =
+            serde_json::from_value(serde_json::json!({"driver": "invented"})).unwrap();
+        assert!(invalid.driver_type().is_err());
+    }
 
     /// Mock driver for testing (allows pre-setting values and verifying writes).
     struct SharedMockDriver {

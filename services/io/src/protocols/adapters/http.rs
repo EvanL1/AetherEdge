@@ -15,7 +15,7 @@
 //!   "url": "http://192.168.1.100/api/data",
 //!   "method": "GET",
 //!   "headers": {"Authorization": "Bearer xxx"},
-//!   "interval_ms": 5000,
+//!   "poll_interval_ms": 5000,
 //!   "timeout_ms": 3000,
 //!   "json_mapping": {
 //!     "timestamp_path": "$.timestamp"
@@ -26,7 +26,6 @@
 use async_trait::async_trait;
 use reqwest::{Client, Method};
 use serde::{Deserialize, Serialize};
-use sqlx::SqlitePool;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU8, Ordering};
@@ -79,9 +78,9 @@ pub struct HttpParamsConfig {
     #[serde(default)]
     pub body: Option<String>,
 
-    /// Polling interval in milliseconds
-    #[serde(default = "default_interval_ms")]
-    pub interval_ms: u64,
+    /// Polling interval in milliseconds.
+    #[serde(default = "default_interval_ms", alias = "interval_ms")]
+    pub poll_interval_ms: u64,
 
     /// Request timeout in milliseconds
     #[serde(default = "default_timeout_ms")]
@@ -107,7 +106,7 @@ impl Default for HttpParamsConfig {
             method: HttpMethod::GET,
             headers: HashMap::new(),
             body: None,
-            interval_ms: default_interval_ms(),
+            poll_interval_ms: default_interval_ms(),
             timeout_ms: default_timeout_ms(),
             json_mapping: JsonMappingConfig::default(),
         }
@@ -115,6 +114,27 @@ impl Default for HttpParamsConfig {
 }
 
 impl HttpParamsConfig {
+    /// Validate the complete polling contract before desired state commits.
+    pub fn validate(&self) -> Result<()> {
+        let url = self
+            .url
+            .as_deref()
+            .filter(|url| !url.trim().is_empty())
+            .ok_or_else(|| GatewayError::Config("HTTP polling URL must be nonblank".into()))?;
+        HttpChannel::validate_url(url)?;
+        for (name, value) in [
+            ("poll_interval_ms", self.poll_interval_ms),
+            ("timeout_ms", self.timeout_ms),
+        ] {
+            if !(1..=86_400_000).contains(&value) {
+                return Err(GatewayError::Config(format!(
+                    "HTTP {name} must be between 1 and 86400000"
+                )));
+            }
+        }
+        Ok(())
+    }
+
     /// Convert to runtime configuration
     pub fn to_config(&self) -> HttpConfig {
         HttpConfig {
@@ -123,7 +143,6 @@ impl HttpParamsConfig {
             headers: self.headers.clone(),
             body: self.body.clone(),
             timeout: Duration::from_millis(self.timeout_ms),
-            json_mapping: self.json_mapping.clone(),
         }
     }
 }
@@ -136,7 +155,6 @@ pub struct HttpConfig {
     pub headers: HashMap<String, String>,
     pub body: Option<String>,
     pub timeout: Duration,
-    pub json_mapping: JsonMappingConfig,
 }
 
 /// Build an HTTP request with configured method, headers, and optional body.
@@ -176,58 +194,31 @@ pub struct HttpChannel {
     channel_id: u32,
     /// Channel name
     name: String,
-    /// JSON mapper (loaded from database)
-    mapper: Option<Arc<JsonMapper>>,
+    /// JSON mapper compiled from the channel's physical topology generation.
+    mapper: Arc<JsonMapper>,
     /// HTTP client
     client: Option<Client>,
     /// Connection state
     state: AtomicU8,
     /// Diagnostics
     diagnostics: Arc<AtomicDiagnostics>,
-    /// Database pool for loading mappings
-    db_pool: Option<SqlitePool>,
     /// Consecutive failure count
     consecutive_failures: std::sync::atomic::AtomicU32,
 }
 
 impl HttpChannel {
     /// Create a new HTTP channel
-    pub fn new(config: HttpConfig, channel_id: u32, name: String) -> Self {
+    pub fn new(config: HttpConfig, channel_id: u32, name: String, mapper: Arc<JsonMapper>) -> Self {
         Self {
             config,
             channel_id,
             name,
-            mapper: None,
+            mapper,
             client: None,
             state: AtomicU8::new(ConnectionState::Disconnected as u8),
             diagnostics: Arc::new(AtomicDiagnostics::new()),
-            db_pool: None,
             consecutive_failures: std::sync::atomic::AtomicU32::new(0),
         }
-    }
-
-    /// Load JSON mappings from database
-    async fn load_mapper(&mut self) -> Result<()> {
-        if self.mapper.is_some() {
-            return Ok(());
-        }
-
-        let pool = self.db_pool.as_ref().ok_or_else(|| {
-            GatewayError::Config("Database pool not set for HTTP channel".to_string())
-        })?;
-
-        let mapper = JsonMapper::from_database(pool, self.channel_id)
-            .await?
-            .with_config(&self.config.json_mapping)?;
-
-        info!(
-            channel_id = self.channel_id,
-            mapping_count = mapper.len(),
-            "Loaded HTTP JSON mappings"
-        );
-
-        self.mapper = Some(Arc::new(mapper));
-        Ok(())
     }
 
     /// Set connection state
@@ -296,10 +287,7 @@ impl HttpChannel {
             .client
             .as_ref()
             .ok_or_else(|| GatewayError::Protocol("HTTP client not initialized".to_string()))?;
-        let mapper = self
-            .mapper
-            .as_ref()
-            .ok_or_else(|| GatewayError::Config("JSON mapper not configured".to_string()))?;
+        let mapper = &self.mapper;
 
         let response = build_request(client, &self.config, url)
             .send()
@@ -361,9 +349,6 @@ impl ChannelRuntime for HttpChannel {
         if let Some(url) = &self.config.url {
             Self::validate_url(url)?;
         }
-
-        // Load JSON mappings if not already loaded
-        self.load_mapper().await?;
 
         // Create HTTP client
         let client = self.create_client()?;
@@ -489,7 +474,7 @@ mod tests {
             params.url,
             Some("http://192.168.1.100/api/data".to_string())
         );
-        assert_eq!(params.interval_ms, 5000);
+        assert_eq!(params.poll_interval_ms, 5000);
         assert!(params.headers.contains_key("Authorization"));
     }
     #[test]

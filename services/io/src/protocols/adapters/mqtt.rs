@@ -31,7 +31,6 @@
 use async_trait::async_trait;
 use rumqttc::{AsyncClient, Event, EventLoop, MqttOptions, Packet, QoS};
 use serde::{Deserialize, Serialize};
-use sqlx::SqlitePool;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::time::Duration;
@@ -40,6 +39,45 @@ use tracing::{debug, error, info};
 
 /// Delay between reconnection attempts in the MQTT event loop
 const RECONNECT_BACKOFF_DELAY: Duration = Duration::from_secs(1);
+
+fn parse_broker_url(broker: &str) -> Result<(&str, u16)> {
+    let address = broker
+        .strip_prefix("tcp://")
+        .or_else(|| broker.strip_prefix("mqtt://"))
+        .or_else(|| broker.strip_prefix("ssl://"))
+        .or_else(|| broker.strip_prefix("mqtts://"))
+        .unwrap_or(broker);
+    if address.trim().is_empty() || address.contains('/') {
+        return Err(GatewayError::Config(format!(
+            "Invalid MQTT broker URL: {broker}"
+        )));
+    }
+    let (host, port) = match address.rsplit_once(':') {
+        Some((host, port)) => {
+            if host.contains(':') {
+                return Err(GatewayError::Config(
+                    "Bracketless IPv6 MQTT broker addresses are unsupported".into(),
+                ));
+            }
+            let port = port.parse::<u16>().map_err(|_| {
+                GatewayError::Config(format!("Invalid port in MQTT broker URL: {broker}"))
+            })?;
+            if port == 0 {
+                return Err(GatewayError::Config(
+                    "MQTT broker port must be greater than zero".into(),
+                ));
+            }
+            (host, port)
+        },
+        None => (address, 1883),
+    };
+    if host.trim().is_empty() {
+        return Err(GatewayError::Config(format!(
+            "Invalid MQTT broker URL: {broker}"
+        )));
+    }
+    Ok((host, port))
+}
 
 use crate::protocols::ChannelRuntime;
 use crate::protocols::core::data::DataBatch;
@@ -70,8 +108,8 @@ pub struct MqttParamsConfig {
     /// Broker URL (e.g., "tcp://localhost:1883" or "ssl://broker.example.com:8883")
     pub broker: String,
 
-    /// Client ID (should be unique per channel)
-    #[serde(default = "default_client_id")]
+    /// Client ID. When omitted, composition derives a stable ID from the channel.
+    #[serde(default)]
     pub client_id: String,
 
     /// Username for authentication (optional)
@@ -93,67 +131,71 @@ pub struct MqttParamsConfig {
     /// Keep-alive interval in seconds
     #[serde(default = "default_keep_alive")]
     pub keep_alive_secs: u64,
-
-    /// Connection timeout in milliseconds
-    #[serde(default = "default_connect_timeout_ms")]
-    pub connect_timeout_ms: u64,
-
-    /// Maximum reconnect attempts (0 = infinite)
-    #[serde(default)]
-    pub max_reconnect_attempts: u32,
-
-    /// Reconnect delay in milliseconds
-    #[serde(default = "default_reconnect_delay_ms")]
-    pub reconnect_delay_ms: u64,
-}
-
-fn default_client_id() -> String {
-    format!("io_{}", uuid::Uuid::new_v4().as_simple())
 }
 
 fn default_keep_alive() -> u64 {
     30
 }
 
-fn default_connect_timeout_ms() -> u64 {
-    5000
-}
-
-fn default_reconnect_delay_ms() -> u64 {
-    5000
-}
-
 impl Default for MqttParamsConfig {
     fn default() -> Self {
         Self {
             broker: "tcp://localhost:1883".to_string(),
-            client_id: default_client_id(),
+            client_id: String::new(),
             username: None,
             password: None,
             subscriptions: Vec::new(),
             json_mapping: JsonMappingConfig::default(),
             keep_alive_secs: default_keep_alive(),
-            connect_timeout_ms: default_connect_timeout_ms(),
-            max_reconnect_attempts: 0,
-            reconnect_delay_ms: default_reconnect_delay_ms(),
         }
     }
 }
 
 impl MqttParamsConfig {
+    /// Validate the complete acquisition contract before desired state commits.
+    pub fn validate(&self) -> Result<()> {
+        parse_broker_url(&self.broker)?;
+        if self.broker.starts_with("ssl://") || self.broker.starts_with("mqtts://") {
+            return Err(GatewayError::Unsupported(
+                "MQTT TLS is not configured for I/O channels".into(),
+            ));
+        }
+        if self.subscriptions.is_empty() {
+            return Err(GatewayError::Config(
+                "MQTT channel requires at least one subscription".into(),
+            ));
+        }
+        if self
+            .subscriptions
+            .iter()
+            .any(|subscription| subscription.topic.trim().is_empty() || subscription.qos > 2)
+        {
+            return Err(GatewayError::Config(
+                "MQTT subscriptions require a nonblank topic and QoS 0, 1, or 2".into(),
+            ));
+        }
+        if self.username.is_some() != self.password.is_some() {
+            return Err(GatewayError::Config(
+                "MQTT username and password must be configured together".into(),
+            ));
+        }
+        Ok(())
+    }
+
     /// Convert to runtime configuration
-    pub fn to_config(&self) -> MqttConfig {
+    pub fn to_config(&self, channel_id: u32) -> MqttConfig {
+        let client_id = if self.client_id.trim().is_empty() {
+            format!("aether-io-{channel_id}")
+        } else {
+            self.client_id.clone()
+        };
         MqttConfig {
             broker: self.broker.clone(),
-            client_id: self.client_id.clone(),
+            client_id,
             username: self.username.clone(),
             password: self.password.clone(),
             subscriptions: self.subscriptions.clone(),
-            json_mapping: self.json_mapping.clone(),
             keep_alive: Duration::from_secs(self.keep_alive_secs),
-            connect_timeout: Duration::from_millis(self.connect_timeout_ms),
-            max_reconnect_attempts: self.max_reconnect_attempts,
-            reconnect_delay: Duration::from_millis(self.reconnect_delay_ms),
         }
     }
 }
@@ -166,11 +208,7 @@ pub struct MqttConfig {
     pub username: Option<String>,
     pub password: Option<String>,
     pub subscriptions: Vec<MqttSubscription>,
-    pub json_mapping: JsonMappingConfig,
     pub keep_alive: Duration,
-    pub connect_timeout: Duration,
-    pub max_reconnect_attempts: u32,
-    pub reconnect_delay: Duration,
 }
 
 /// MQTT Channel implementation
@@ -184,63 +222,36 @@ pub struct MqttChannel {
     channel_id: u32,
     /// Channel name
     name: String,
-    /// JSON mapper (loaded from database)
-    mapper: Option<Arc<JsonMapper>>,
+    /// JSON mapper compiled from the channel's physical topology generation.
+    mapper: Arc<JsonMapper>,
     /// MQTT client handle
     client: Option<AsyncClient>,
     /// Event loop task handle
     event_loop_handle: Option<tokio::task::JoinHandle<()>>,
     /// Connection state
-    state: AtomicU8,
+    state: Arc<AtomicU8>,
     /// Event broadcast sender
     event_tx: DataEventSender,
     /// Diagnostics
     diagnostics: Arc<AtomicDiagnostics>,
-    /// Database pool for loading mappings
-    db_pool: Option<SqlitePool>,
 }
 
 impl MqttChannel {
     /// Create a new MQTT channel
-    pub fn new(config: MqttConfig, channel_id: u32, name: String) -> Self {
+    pub fn new(config: MqttConfig, channel_id: u32, name: String, mapper: Arc<JsonMapper>) -> Self {
         let (event_tx, _) = broadcast::channel(1024);
 
         Self {
             config,
             channel_id,
             name,
-            mapper: None,
+            mapper,
             client: None,
             event_loop_handle: None,
-            state: AtomicU8::new(ConnectionState::Disconnected as u8),
+            state: Arc::new(AtomicU8::new(ConnectionState::Disconnected as u8)),
             event_tx,
             diagnostics: Arc::new(AtomicDiagnostics::new()),
-            db_pool: None,
         }
-    }
-
-    /// Load JSON mappings from database
-    async fn load_mapper(&mut self) -> Result<()> {
-        if self.mapper.is_some() {
-            return Ok(());
-        }
-
-        let pool = self.db_pool.as_ref().ok_or_else(|| {
-            GatewayError::Config("Database pool not set for MQTT channel".to_string())
-        })?;
-
-        let mapper = JsonMapper::from_database(pool, self.channel_id)
-            .await?
-            .with_config(&self.config.json_mapping)?;
-
-        info!(
-            channel_id = self.channel_id,
-            mapping_count = mapper.len(),
-            "Loaded MQTT JSON mappings"
-        );
-
-        self.mapper = Some(Arc::new(mapper));
-        Ok(())
     }
 
     /// Set connection state and broadcast event
@@ -251,29 +262,7 @@ impl MqttChannel {
 
     /// Parse broker URL into host and port
     fn parse_broker(&self) -> Result<(&str, u16)> {
-        let broker = &self.config.broker;
-
-        // Remove scheme prefix
-        let without_scheme = broker
-            .strip_prefix("tcp://")
-            .or_else(|| broker.strip_prefix("mqtt://"))
-            .or_else(|| broker.strip_prefix("ssl://"))
-            .or_else(|| broker.strip_prefix("mqtts://"))
-            .unwrap_or(broker);
-
-        // Split host:port
-        let parts: Vec<&str> = without_scheme.split(':').collect();
-        let host = parts
-            .first()
-            .ok_or_else(|| GatewayError::Config(format!("Invalid broker URL: {}", broker)))?;
-        let port = parts
-            .get(1)
-            .map(|p| p.parse::<u16>())
-            .transpose()
-            .map_err(|_| GatewayError::Config(format!("Invalid port in broker URL: {}", broker)))?
-            .unwrap_or(1883);
-
-        Ok((host, port))
+        parse_broker_url(&self.config.broker)
     }
 
     /// Create MQTT options
@@ -429,9 +418,6 @@ impl ChannelRuntime for MqttChannel {
 
         self.set_state(ConnectionState::Connecting);
 
-        // Load JSON mappings if not already loaded
-        self.load_mapper().await?;
-
         // Create MQTT client
         let opts = self.create_options()?;
         let (client, event_loop) = AsyncClient::new(opts, 100);
@@ -443,13 +429,9 @@ impl ChannelRuntime for MqttChannel {
         self.client = Some(client);
 
         // Spawn event loop task
-        let mapper = self
-            .mapper
-            .clone()
-            .ok_or_else(|| GatewayError::Config("MQTT mapper not loaded".into()))?;
+        let mapper = Arc::clone(&self.mapper);
         let channel_id = self.channel_id;
-        let state = Arc::new(AtomicU8::new(ConnectionState::Connecting as u8));
-        let state_clone = state.clone();
+        let state_clone = Arc::clone(&self.state);
         let event_tx = self.event_tx.clone();
         let diagnostics = self.diagnostics.clone();
 
@@ -572,6 +554,12 @@ mod tests {
     }
 
     #[test]
+    fn omitted_client_id_is_stable_for_the_channel() {
+        let params = MqttParamsConfig::default();
+        assert_eq!(params.to_config(7).client_id, "aether-io-7");
+    }
+
+    #[test]
     fn test_mqtt_params_deserialize() {
         let json = r#"{
             "broker": "tcp://192.168.1.50:1883",
@@ -591,43 +579,42 @@ mod tests {
         assert_eq!(params.subscriptions[0].topic, "device/+/telemetry");
     }
 
-    #[test]
-    fn test_parse_broker_url() {
+    fn test_channel(broker: &str) -> MqttChannel {
         let config = MqttConfig {
-            broker: "tcp://192.168.1.50:1883".to_string(),
+            broker: broker.to_string(),
             client_id: "test".to_string(),
             username: None,
             password: None,
             subscriptions: Vec::new(),
-            json_mapping: JsonMappingConfig::default(),
             keep_alive: Duration::from_secs(30),
-            connect_timeout: Duration::from_secs(5),
-            max_reconnect_attempts: 0,
-            reconnect_delay: Duration::from_secs(5),
         };
+        MqttChannel::new(config, 1, "test".to_string(), Arc::new(JsonMapper::new(1)))
+    }
 
-        let channel = MqttChannel::new(config, 1, "test".to_string());
+    #[test]
+    fn test_parse_broker_url() {
+        let channel = test_channel("tcp://192.168.1.50:1883");
         let (host, port) = channel.parse_broker().unwrap();
         assert_eq!(host, "192.168.1.50");
         assert_eq!(port, 1883);
     }
 
     #[test]
-    fn tls_scheme_never_silently_downgrades_to_plaintext() {
-        let config = MqttConfig {
-            broker: "mqtts://broker.example.com:8883".to_string(),
-            client_id: "test".to_string(),
-            username: None,
-            password: None,
-            subscriptions: Vec::new(),
-            json_mapping: JsonMappingConfig::default(),
-            keep_alive: Duration::from_secs(30),
-            connect_timeout: Duration::from_secs(5),
-            max_reconnect_attempts: 0,
-            reconnect_delay: Duration::from_secs(5),
+    fn invalid_broker_port_is_rejected_during_configuration_validation() {
+        let params = MqttParamsConfig {
+            broker: "tcp://192.168.1.50:not-a-port".into(),
+            subscriptions: vec![MqttSubscription {
+                topic: "device/telemetry".into(),
+                qos: 1,
+            }],
+            ..Default::default()
         };
+        assert!(params.validate().is_err());
+    }
 
-        let channel = MqttChannel::new(config, 1, "test".to_string());
+    #[test]
+    fn tls_scheme_never_silently_downgrades_to_plaintext() {
+        let channel = test_channel("mqtts://broker.example.com:8883");
         assert!(channel.create_options().is_err());
     }
 }

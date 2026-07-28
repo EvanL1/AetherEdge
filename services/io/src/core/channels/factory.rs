@@ -5,6 +5,38 @@
 //! This module provides factory functions that create physical protocol client
 //! instances from IO configuration.
 
+#[cfg(any(
+    feature = "mqtt",
+    feature = "http",
+    all(target_os = "linux", feature = "gpio")
+))]
+use std::collections::HashMap;
+#[cfg(any(feature = "mqtt", feature = "http"))]
+use std::sync::Arc;
+
+#[cfg(any(
+    feature = "mqtt",
+    feature = "http",
+    all(target_os = "linux", feature = "gpio")
+))]
+use serde::de::DeserializeOwned;
+
+use crate::core::config::ChannelConfig;
+#[cfg(any(
+    feature = "mqtt",
+    feature = "http",
+    all(target_os = "linux", feature = "gpio")
+))]
+use crate::protocols::core::error::GatewayError;
+use crate::protocols::core::error::Result;
+#[cfg(any(
+    feature = "modbus",
+    feature = "mqtt",
+    feature = "http",
+    feature = "aether_485",
+    all(target_os = "linux", feature = "can"),
+    all(target_os = "linux", feature = "gpio")
+))]
 use crate::protocols::gateway::ChannelRuntime;
 
 #[cfg(feature = "modbus")]
@@ -13,18 +45,122 @@ use crate::protocols::adapters::modbus::{ModbusChannel, ModbusChannelConfig, Rec
 use crate::protocols::core::point::PointConfig;
 
 #[cfg(all(target_os = "linux", feature = "gpio"))]
-use crate::protocols::adapters::gpio::{GpioChannel, GpioChannelConfig, GpioPinConfig};
+use crate::protocols::adapters::gpio::{GpioChannel, GpioChannelParamsConfig, GpioPinConfig};
 
 #[cfg(all(feature = "can", target_os = "linux"))]
 use crate::protocols::adapters::can::{CanClient, CanConfig, CanPoint};
 
-#[cfg(all(target_os = "linux", feature = "gpio"))]
+#[cfg(any(
+    feature = "aether_485",
+    feature = "mqtt",
+    feature = "http",
+    all(target_os = "linux", feature = "gpio")
+))]
 use crate::core::config::RuntimeChannelConfig;
 
 #[cfg(feature = "aether_485")]
 use crate::protocols::adapters::aether_485::{
     Aether485Channel, Aether485ChannelConfig, Aether485PointMapping, PollTarget,
 };
+
+#[cfg(feature = "http")]
+use crate::protocols::adapters::http::{HttpChannel, HttpParamsConfig};
+#[cfg(feature = "mqtt")]
+use crate::protocols::adapters::mqtt::{MqttChannel, MqttParamsConfig};
+#[cfg(any(feature = "mqtt", feature = "http"))]
+use crate::protocols::core::json_mapper::{JsonMapper, JsonMappingConfig};
+
+#[cfg(any(
+    feature = "mqtt",
+    feature = "http",
+    all(target_os = "linux", feature = "gpio")
+))]
+fn parse_parameters<T: DeserializeOwned>(
+    parameters: &HashMap<String, serde_json::Value>,
+) -> Result<T> {
+    serde_json::from_value(serde_json::to_value(parameters).map_err(|error| {
+        GatewayError::Config(format!("Failed to encode channel parameters: {error}"))
+    })?)
+    .map_err(|error| GatewayError::Config(format!("Invalid channel parameters: {error}")))
+}
+
+#[cfg(feature = "mqtt")]
+fn mqtt_parameters(parameters: &HashMap<String, serde_json::Value>) -> Result<MqttParamsConfig> {
+    for retired in [
+        "connect_timeout_ms",
+        "max_reconnect_attempts",
+        "reconnect_delay_ms",
+    ] {
+        if parameters.contains_key(retired) {
+            return Err(GatewayError::Config(format!(
+                "MQTT parameter '{retired}' was never enforced and has been retired"
+            )));
+        }
+    }
+    let config = parse_parameters::<MqttParamsConfig>(parameters)?;
+    config.validate()?;
+    Ok(config)
+}
+
+/// Validate feature-selected protocol parameters before desired state commits.
+pub(crate) fn validate_protocol_parameters(config: &ChannelConfig) -> Result<()> {
+    match crate::utils::normalize_protocol_name(config.protocol()).as_ref() {
+        #[cfg(feature = "mqtt")]
+        "mqtt" => mqtt_parameters(&config.parameters).map(|_| ()),
+        #[cfg(feature = "http")]
+        "http" => parse_parameters::<HttpParamsConfig>(&config.parameters)?.validate(),
+        #[cfg(all(target_os = "linux", feature = "gpio"))]
+        "gpio" | "di_do" | "dido" => {
+            parse_parameters::<GpioChannelParamsConfig>(&config.parameters)?
+                .to_config()
+                .map(|_| ())
+        },
+        _ => Ok(()),
+    }
+}
+
+#[cfg(any(feature = "mqtt", feature = "http"))]
+fn compile_json_mapper(
+    runtime_config: &RuntimeChannelConfig,
+    mapping_config: &JsonMappingConfig,
+) -> Result<Arc<JsonMapper>> {
+    use common::PointType;
+
+    let rows = runtime_config
+        .telemetry_points
+        .iter()
+        .map(|point| {
+            (
+                point.base.point_id,
+                PointType::Telemetry,
+                point.base.protocol_mappings.as_deref(),
+            )
+        })
+        .chain(runtime_config.signal_points.iter().map(|point| {
+            (
+                point.base.point_id,
+                PointType::Signal,
+                point.base.protocol_mappings.as_deref(),
+            )
+        }))
+        .chain(runtime_config.control_points.iter().map(|point| {
+            (
+                point.base.point_id,
+                PointType::Control,
+                point.base.protocol_mappings.as_deref(),
+            )
+        }))
+        .chain(runtime_config.adjustment_points.iter().map(|point| {
+            (
+                point.base.point_id,
+                PointType::Adjustment,
+                point.base.protocol_mappings.as_deref(),
+            )
+        }));
+    Ok(Arc::new(
+        JsonMapper::from_inline_mappings(runtime_config.id(), rows)?.with_config(mapping_config)?,
+    ))
+}
 
 // ============================================================================
 // Modbus Channel Factory
@@ -131,21 +267,9 @@ pub fn create_modbus_rtu_channel(
 pub fn create_gpio_channel(
     channel_id: u32,
     runtime_config: &RuntimeChannelConfig,
-) -> Box<dyn ChannelRuntime> {
-    use std::time::Duration;
-
-    // Use sysfs driver - simpler and works directly with global GPIO numbers
-    let mut gpio_config = GpioChannelConfig::new_sysfs("/sys/class/gpio");
-
-    // Get poll interval from parameters
-    if let Some(interval_ms) = runtime_config
-        .base
-        .parameters
-        .get("poll_interval_ms")
-        .and_then(|v| v.as_u64())
-    {
-        gpio_config = gpio_config.with_poll_interval(Duration::from_millis(interval_ms));
-    }
+) -> Result<Box<dyn ChannelRuntime>> {
+    let params = parse_parameters::<GpioChannelParamsConfig>(&runtime_config.base.parameters)?;
+    let mut gpio_config = params.to_config()?;
 
     // Helper to parse gpio_number from protocol_mappings JSON
     // Expected format: {"gpio_number": 496, ...}
@@ -180,7 +304,7 @@ pub fn create_gpio_channel(
     let channel_name = format!("gpio_{}", channel_id);
     // GpioChannel directly implements ChannelRuntime - no wrapper needed
     let channel = GpioChannel::new(gpio_config, channel_id, channel_name);
-    Box::new(channel)
+    Ok(Box::new(channel))
 }
 
 // ============================================================================
@@ -216,6 +340,50 @@ pub fn create_can_channel(
 }
 
 // ============================================================================
+// JSON payload channel factories
+// ============================================================================
+
+/// Create an event-driven MQTT acquisition channel from reviewed parameters
+/// and the same physical topology generation used by the channel runtime.
+#[cfg(feature = "mqtt")]
+pub fn create_mqtt_channel(
+    channel_id: u32,
+    channel_name: &str,
+    runtime_config: &RuntimeChannelConfig,
+) -> Result<Box<dyn ChannelRuntime>> {
+    let params = mqtt_parameters(&runtime_config.base.parameters)?;
+    let mapper = compile_json_mapper(runtime_config, &params.json_mapping)?;
+    Ok(Box::new(MqttChannel::new(
+        params.to_config(channel_id),
+        channel_id,
+        channel_name.to_owned(),
+        mapper,
+    )))
+}
+
+/// Create an outbound HTTP polling channel and return its polling interval.
+#[cfg(feature = "http")]
+pub fn create_http_channel(
+    channel_id: u32,
+    channel_name: &str,
+    runtime_config: &RuntimeChannelConfig,
+) -> Result<(Box<dyn ChannelRuntime>, u64)> {
+    let params = parse_parameters::<HttpParamsConfig>(&runtime_config.base.parameters)?;
+    params.validate()?;
+    let mapper = compile_json_mapper(runtime_config, &params.json_mapping)?;
+    let interval_ms = params.poll_interval_ms;
+    Ok((
+        Box::new(HttpChannel::new(
+            params.to_config(),
+            channel_id,
+            channel_name.to_owned(),
+            mapper,
+        )),
+        interval_ms,
+    ))
+}
+
+// ============================================================================
 // Aether-485 Channel Factory
 // ============================================================================
 
@@ -228,7 +396,7 @@ pub fn create_aether_485_channel(
     channel_id: u32,
     channel_name: &str,
     params: &std::collections::HashMap<String, serde_json::Value>,
-    runtime_config: &crate::core::config::RuntimeChannelConfig,
+    runtime_config: &RuntimeChannelConfig,
 ) -> Box<dyn ChannelRuntime> {
     use common::PointType;
     use std::time::Duration;
@@ -311,4 +479,64 @@ pub fn create_aether_485_channel(
     };
 
     Box::new(Aether485Channel::new(config, channel_id, name, targets))
+}
+
+#[cfg(all(test, feature = "mqtt", feature = "http"))]
+mod tests {
+    use std::collections::HashMap;
+
+    use super::*;
+    use crate::core::config::{
+        ChannelConfig, ChannelCore, ChannelLoggingConfig, RuntimeChannelConfig,
+    };
+
+    fn runtime(
+        protocol: &str,
+        parameters: HashMap<String, serde_json::Value>,
+    ) -> RuntimeChannelConfig {
+        RuntimeChannelConfig::from_base(ChannelConfig {
+            core: ChannelCore {
+                id: 7,
+                name: format!("{protocol}-channel"),
+                description: None,
+                protocol: protocol.to_owned(),
+                enabled: true,
+            },
+            parameters,
+            logging: ChannelLoggingConfig::default(),
+        })
+    }
+
+    #[test]
+    fn distribution_json_protocols_have_concrete_channel_runtimes() {
+        let mqtt = runtime(
+            "mqtt",
+            HashMap::from([
+                (
+                    "broker".into(),
+                    serde_json::json!("tcp://192.168.1.20:1883"),
+                ),
+                (
+                    "subscriptions".into(),
+                    serde_json::json!([{"topic": "device/telemetry", "qos": 1}]),
+                ),
+            ]),
+        );
+        let mqtt = create_mqtt_channel(7, "mqtt-channel", &mqtt).expect("MQTT runtime");
+        assert_eq!(mqtt.protocol(), "mqtt");
+        assert!(mqtt.is_event_driven());
+
+        let http = runtime(
+            "http",
+            HashMap::from([
+                ("url".into(), serde_json::json!("http://192.168.1.21/data")),
+                ("poll_interval_ms".into(), serde_json::json!(2500)),
+            ]),
+        );
+        let (http, interval_ms) =
+            create_http_channel(7, "http-channel", &http).expect("HTTP runtime");
+        assert_eq!(http.protocol(), "http");
+        assert!(!http.is_event_driven());
+        assert_eq!(interval_ms, 2500);
+    }
 }

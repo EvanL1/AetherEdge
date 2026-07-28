@@ -651,6 +651,63 @@ fn zero_consumer_runtime_compatibility_planes_stay_retired() {
 }
 
 #[test]
+fn io_composition_matches_the_runtime_manifest_authority() {
+    let root = workspace_metadata().workspace_root;
+    for retired in [
+        "services/io/src/api/handlers/protocol_handlers.rs",
+        "services/io/src/protocols/core/metadata.rs",
+    ] {
+        assert!(
+            !root.join(retired).exists(),
+            "retired duplicate IO discovery authority was restored at {retired}"
+        );
+    }
+
+    let routes =
+        fs::read_to_string(root.join("services/io/src/api/routes.rs")).expect("read IO routes");
+    for retired in [
+        "/api/protocols",
+        "/api/channels/list",
+        "/api/channels/search",
+        "/api/points",
+        "/T/points/{point_id}",
+        "/S/points/{point_id}",
+        "/C/points/{point_id}",
+        "/A/points/{point_id}",
+    ] {
+        assert!(
+            !routes.contains(retired),
+            "IO restored duplicate browser/discovery route {retired}"
+        );
+    }
+
+    let creation =
+        fs::read_to_string(root.join("services/io/src/core/channels/channel_creation.rs"))
+            .expect("read IO channel composition");
+    for required in [
+        "\"mqtt\" =>",
+        "create_mqtt_channel_impl",
+        "\"http\" =>",
+        "create_http_channel_impl",
+    ] {
+        assert!(
+            creation.contains(required),
+            "distribution IO feature has no concrete composition branch {required}"
+        );
+    }
+
+    let mapper = fs::read_to_string(root.join("services/io/src/protocols/core/json_mapper.rs"))
+        .expect("read JSON mapper");
+    assert!(mapper.contains("from_inline_mappings"));
+    assert!(!mapper.contains("from_database"));
+
+    let loader = fs::read_to_string(root.join("services/io/src/core/config/sqlite_loader.rs"))
+        .expect("read IO topology loader");
+    assert!(loader.contains("physical topology snapshot"));
+    assert!(loader.matches("fetch_all(&mut *transaction)").count() >= 4);
+}
+
+#[test]
 fn routing_library_is_storage_agnostic() {
     let root = workspace_metadata().workspace_root;
     for relative in [

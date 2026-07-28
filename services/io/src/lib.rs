@@ -28,7 +28,6 @@ pub mod api {
         pub mod health;
         pub mod mapping_handlers;
         pub mod point_handlers;
-        pub mod protocol_handlers;
     }
 }
 
@@ -64,7 +63,6 @@ pub mod runtime {
         shutdown_handler, shutdown_services, start_cleanup_task, start_communication_service,
         wait_for_shutdown,
     };
-    pub use reconnect::{ReconnectContext, ReconnectError, ReconnectHelper, ReconnectPolicy};
 }
 
 // Re-export dto at crate root for compatibility

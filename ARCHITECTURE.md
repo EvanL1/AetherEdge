@@ -23,6 +23,7 @@ rules are defined in:
 - [ADR-0032: Retire zero-consumer runtime compatibility planes](docs/adr/0032-retire-zero-consumer-runtime-compatibility.md)
 - [ADR-0033: Keep the shared service kernel console-first](docs/adr/0033-console-first-shared-service-kernel.md)
 - [ADR-0034: Retire common single-consumer compatibility](docs/adr/0034-retire-common-single-consumer-compatibility.md)
+- [ADR-0035: Align IO composition with the runtime manifest](docs/adr/0035-align-io-composition-with-runtime-manifest.md)
 - [Target repository layout](docs/architecture/target-layout.md)
 - [AI invariants](ai/invariants.md)
 - [Capability safety policy](ai/safety-policy.yaml)

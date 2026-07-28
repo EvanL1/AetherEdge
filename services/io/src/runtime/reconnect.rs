@@ -4,7 +4,6 @@
 
 use rand::Rng;
 use std::time::{Duration, Instant};
-use thiserror::Error;
 use tracing::{debug, info, warn};
 
 /// Default cooldown before auto-recovery attempt (seconds)
@@ -18,22 +17,6 @@ const DEFAULT_INITIAL_DELAY_SECS: u64 = 1;
 
 /// Default maximum delay between reconnection attempts (seconds)
 const DEFAULT_MAX_DELAY_SECS: u64 = 60;
-
-/// Reconnection error types
-#[derive(Error, Debug)]
-pub enum ReconnectError {
-    /// Maximum retry attempts exceeded
-    #[error("Maximum reconnection attempts exceeded")]
-    MaxAttemptsExceeded,
-
-    /// Connection failed
-    #[error("Connection failed: {0}")]
-    ConnectionFailed(String),
-
-    /// Reconnection was cancelled
-    #[error("Reconnection cancelled")]
-    Cancelled,
-}
 
 /// Reconnection state enumeration
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -117,7 +100,7 @@ impl ReconnectPolicy {
 
 /// Reconnection context tracking current state and attempts
 #[derive(Debug, Clone)]
-pub struct ReconnectContext {
+struct ReconnectContext {
     /// Current retry attempt count
     pub current_attempt: u32,
     /// Last retry attempt time
@@ -141,11 +124,9 @@ impl Default for ReconnectContext {
 
 /// Reconnection statistics tracking
 #[derive(Debug, Default, Clone)]
-pub struct ReconnectStats {
+pub(crate) struct ReconnectStats {
     /// Total reconnection attempts
     pub total_attempts: u64,
-    /// Successful reconnection count
-    pub successful_reconnects: u64,
     /// Failed reconnection count
     pub failed_reconnects: u64,
     /// Last successful connection time
@@ -198,7 +179,7 @@ impl ReconnectHelper {
     }
 
     /// Get connection statistics
-    pub fn stats(&self) -> &ReconnectStats {
+    pub(crate) fn stats(&self) -> &ReconnectStats {
         &self.stats
     }
 

@@ -1820,6 +1820,34 @@
       "implementation_status": "partial",
       "production_readiness": "not-applicable",
       "context_sensitivity": "internal",
+      "updated": "2026-07-28",
+      "priority": "optional",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-docs-adr-0035-align-io-composition-with-runtime-manifest",
+      "path": "docs/adr/0035-align-io-composition-with-runtime-manifest.md",
+      "canonical_url": "https://github.com/EvanL1/AetherEdge/blob/main/docs/adr/0035-align-io-composition-with-runtime-manifest.md",
+      "title": "ADR-0035: Align IO composition with the runtime manifest",
+      "description": "Accepted and implemented on 2026-08-05.",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "decision",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "inspect-edge-implementation"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "not-applicable",
+      "context_sensitivity": "internal",
       "updated": "2026-07-18",
       "priority": "optional",
       "media_type": "text/markdown",

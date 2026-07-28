@@ -1648,10 +1648,7 @@ mod tests {
         assert_eq!(structured["total"], 3);
     }
 
-    // NOTE: `ChannelClient::list_channels` requests bare `/api/channels` (no
-    // `/list` suffix). io separately registers `/api/channels/list` for a
-    // handler literally named `list_channels` -- a name collision with this
-    // client method, but not the same route: the CLI client never calls it.
+    // `ChannelClient::list_channels` uses the canonical paginated channel query.
     #[tokio::test]
     async fn channels_list_calls_the_bare_channels_endpoint() {
         let server = MockServer::start().await;

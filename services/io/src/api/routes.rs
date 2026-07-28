@@ -24,7 +24,7 @@ use crate::api::{
     handlers::health::*,
     handlers::{
         channel_handlers::*, channel_management_handlers::*, control_handlers::*,
-        mapping_handlers::*, point_handlers::*, protocol_handlers::*,
+        mapping_handlers::*, point_handlers::*,
     },
 };
 
@@ -81,16 +81,10 @@ impl AppState {
         crate::api::handlers::health::get_service_status,
         crate::api::handlers::health::health_check,
 
-        // Protocol discovery
-        crate::api::handlers::protocol_handlers::list_protocols,
-
         // Channel queries and status
         crate::api::handlers::channel_handlers::get_all_channels,
-        crate::api::handlers::channel_handlers::list_channels,
-        crate::api::handlers::channel_handlers::search_channels,
         crate::api::handlers::channel_handlers::get_channel_detail_handler,
         crate::api::handlers::channel_handlers::get_channel_status,
-        crate::api::handlers::channel_handlers::list_all_points,
 
         // Control operations
         crate::api::handlers::control_handlers::control_channel,
@@ -101,12 +95,6 @@ impl AppState {
         crate::api::handlers::point_handlers::get_channel_points_handler,
         crate::api::handlers::point_handlers::get_unmapped_points_handler,
         crate::api::handlers::point_handlers::get_point_mapping_with_type_handler,
-
-        // Point configuration queries
-        crate::api::handlers::point_handlers::get_telemetry_point_config_handler,
-        crate::api::handlers::point_handlers::get_signal_point_config_handler,
-        crate::api::handlers::point_handlers::get_control_point_config_handler,
-        crate::api::handlers::point_handlers::get_adjustment_point_config_handler,
 
         // Channel management (CRUD)
         crate::api::handlers::channel_management_handlers::create_channel_handler,
@@ -245,13 +233,8 @@ fn create_api_routes_with_boundary(
         .route("/health", get(health_check))
         // Service management
         .route("/api/status", get(get_service_status))
-        // Protocol discovery
-        .route("/api/protocols", get(list_protocols))
         // Channel management (CRUD)
         .route("/api/channels", get(get_all_channels).post(create_channel_handler))
-        .route("/api/channels/list", get(list_channels))
-        .route("/api/channels/search", get(search_channels))
-        .route("/api/points", get(list_all_points))
         .route("/api/channels/reconcile", post(reconcile_channels_handler))
         .route("/api/channels/{id}/reconcile", post(reconcile_channel_handler))
         .route("/api/channels/{id}", get(get_channel_detail_handler).put(update_channel_handler).delete(delete_channel_handler))
@@ -263,11 +246,6 @@ fn create_api_routes_with_boundary(
         .route("/api/channels/{id}/unmapped-points", get(get_unmapped_points_handler))
         .route("/api/channels/{id}/mappings", get(get_channel_mappings_handler))
         .route("/api/channels/{channel_id}/{type}/points/{point_id}/mapping", get(get_point_mapping_with_type_handler))
-        // Point configuration queries are read-only; topology is commissioned offline.
-        .route("/api/channels/{channel_id}/T/points/{point_id}", get(get_telemetry_point_config_handler))
-        .route("/api/channels/{channel_id}/S/points/{point_id}", get(get_signal_point_config_handler))
-        .route("/api/channels/{channel_id}/C/points/{point_id}", get(get_control_point_config_handler))
-        .route("/api/channels/{channel_id}/A/points/{point_id}", get(get_adjustment_point_config_handler))
         .route(
             "/api/channels/{channel_id}/{telemetry_type}/{point_id}",
             get(get_point_info_handler),

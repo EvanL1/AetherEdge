@@ -5,6 +5,14 @@
 
 use std::sync::Arc;
 
+#[cfg(any(
+    feature = "modbus",
+    feature = "mqtt",
+    feature = "aether_485",
+    feature = "iec61850",
+    all(target_os = "linux", feature = "can"),
+    all(target_os = "linux", feature = "gpio")
+))]
 use common::io_config::MAX_CHANNEL_TIMING_MS;
 use common::{ValidationLevel, ValidationResult};
 #[cfg(any(feature = "aether_485", all(feature = "can", target_os = "linux")))]
@@ -84,6 +92,14 @@ fn required_u32_parameter(
     Ok(value)
 }
 
+#[cfg(any(
+    feature = "modbus",
+    feature = "mqtt",
+    feature = "aether_485",
+    feature = "iec61850",
+    all(target_os = "linux", feature = "can"),
+    all(target_os = "linux", feature = "gpio")
+))]
 fn timing_parameter(
     parameters: &std::collections::HashMap<String, serde_json::Value>,
     parameter: &str,
@@ -104,6 +120,14 @@ fn timing_parameter(
     Ok(Some(value))
 }
 
+#[cfg(any(
+    feature = "modbus",
+    feature = "mqtt",
+    feature = "aether_485",
+    feature = "iec61850",
+    all(target_os = "linux", feature = "can"),
+    all(target_os = "linux", feature = "gpio")
+))]
 fn poll_interval_ms(
     parameters: &std::collections::HashMap<String, serde_json::Value>,
     default: u64,
@@ -130,6 +154,10 @@ use crate::core::channels::factory::create_can_channel;
 
 #[cfg(feature = "aether_485")]
 use crate::core::channels::factory::create_aether_485_channel;
+#[cfg(feature = "http")]
+use crate::core::channels::factory::create_http_channel;
+#[cfg(feature = "mqtt")]
+use crate::core::channels::factory::create_mqtt_channel;
 
 /// Get the base directory for channel log files.
 /// Uses AETHER_LOG_DIR environment variable if set, otherwise falls back to "/app/logs".
@@ -286,9 +314,19 @@ impl ChannelManager {
                 self.create_iec61850_channel_impl(channel_id, runtime_config, base_config)
                     .await
             },
+            #[cfg(feature = "mqtt")]
+            "mqtt" => {
+                self.create_mqtt_channel_impl(channel_id, runtime_config, base_config)
+                    .await
+            },
+            #[cfg(feature = "http")]
+            "http" => {
+                self.create_http_channel_impl(channel_id, runtime_config, base_config)
+                    .await
+            },
             _ => {
                 #[allow(unused_mut)]
-                let mut supported = Vec::new();
+                let mut supported: Vec<&'static str> = Vec::new();
                 #[cfg(feature = "modbus")]
                 supported.extend(["modbus_tcp", "modbus_rtu"]);
                 #[cfg(all(target_os = "linux", feature = "gpio"))]
@@ -299,6 +337,10 @@ impl ChannelManager {
                 supported.push("aether_485");
                 #[cfg(feature = "iec61850")]
                 supported.push("iec61850");
+                #[cfg(feature = "mqtt")]
+                supported.push("mqtt");
+                #[cfg(feature = "http")]
+                supported.push("http");
 
                 Err(anyhow::anyhow!(
                     "Unsupported protocol '{}' for channel {}. Supported: {}",
@@ -441,7 +483,7 @@ impl ChannelManager {
 
         let store = self.create_data_store();
 
-        let mut protocol = create_gpio_channel(channel_id, runtime_config);
+        let mut protocol = create_gpio_channel(channel_id, runtime_config)?;
 
         let log_handler = Self::configure_channel_logging(
             &mut protocol,
@@ -546,6 +588,62 @@ impl ChannelManager {
             store,
             base_config,
             "aether_485".to_string(),
+            poll_interval_ms,
+            log_handler,
+            command_guard(runtime_config)?,
+        )
+    }
+
+    /// Create an MQTT event-driven acquisition channel entry.
+    #[cfg(feature = "mqtt")]
+    async fn create_mqtt_channel_impl(
+        &self,
+        channel_id: u32,
+        runtime_config: &Arc<RuntimeChannelConfig>,
+        base_config: Arc<ChannelConfig>,
+    ) -> Result<ChannelEntry> {
+        let store = self.create_data_store();
+        let mut protocol = create_mqtt_channel(channel_id, runtime_config.name(), runtime_config)?;
+        let log_handler = Self::configure_channel_logging(
+            &mut protocol,
+            channel_id,
+            runtime_config.name(),
+            &base_config.logging,
+        );
+        let poll_interval_ms = poll_interval_ms(&base_config.parameters, 1_000)?;
+        ChannelEntry::new(
+            protocol,
+            store,
+            base_config,
+            "mqtt".to_string(),
+            poll_interval_ms,
+            log_handler,
+            command_guard(runtime_config)?,
+        )
+    }
+
+    /// Create an outbound HTTP polling channel entry.
+    #[cfg(feature = "http")]
+    async fn create_http_channel_impl(
+        &self,
+        channel_id: u32,
+        runtime_config: &Arc<RuntimeChannelConfig>,
+        base_config: Arc<ChannelConfig>,
+    ) -> Result<ChannelEntry> {
+        let store = self.create_data_store();
+        let (mut protocol, poll_interval_ms) =
+            create_http_channel(channel_id, runtime_config.name(), runtime_config)?;
+        let log_handler = Self::configure_channel_logging(
+            &mut protocol,
+            channel_id,
+            runtime_config.name(),
+            &base_config.logging,
+        );
+        ChannelEntry::new(
+            protocol,
+            store,
+            base_config,
+            "http".to_string(),
             poll_interval_ms,
             log_handler,
             command_guard(runtime_config)?,
@@ -755,7 +853,16 @@ mod tests {
     use std::collections::HashMap;
     use std::sync::Arc;
 
-    use super::{poll_interval_ms, timing_parameter, validate_channel_config_for_runtime};
+    use super::validate_channel_config_for_runtime;
+    #[cfg(any(
+        feature = "modbus",
+        feature = "mqtt",
+        feature = "aether_485",
+        feature = "iec61850",
+        all(target_os = "linux", feature = "can"),
+        all(target_os = "linux", feature = "gpio")
+    ))]
+    use super::{poll_interval_ms, timing_parameter};
     #[cfg(feature = "modbus")]
     use super::{required_string_parameter, required_u16_parameter, required_u32_parameter};
     use crate::core::config::{ChannelConfig, ChannelCore, ChannelLoggingConfig};
@@ -830,6 +937,14 @@ mod tests {
         }
     }
 
+    #[cfg(any(
+        feature = "modbus",
+        feature = "mqtt",
+        feature = "aether_485",
+        feature = "iec61850",
+        all(target_os = "linux", feature = "can"),
+        all(target_os = "linux", feature = "gpio")
+    ))]
     #[test]
     fn runtime_timing_parser_never_falls_back_for_present_invalid_values() {
         for value in [

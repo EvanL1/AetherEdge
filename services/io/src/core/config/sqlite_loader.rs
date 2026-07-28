@@ -271,6 +271,11 @@ impl IoSqliteLoader {
         runtime_config.adjustment_points.clear();
 
         let channel_id = runtime_config.id();
+        let mut transaction = self.pool().begin().await.map_err(|error| {
+            IoError::ConfigError(format!(
+                "Failed to begin physical topology snapshot for channel {channel_id}: {error}"
+            ))
+        })?;
 
         // Load telemetry points from telemetry_points table (with embedded protocol mappings)
         let telem_rows = sqlx::query(
@@ -280,7 +285,7 @@ impl IoSqliteLoader {
              ORDER BY point_id",
         )
         .bind(channel_id as i64)
-        .fetch_all(self.pool())
+        .fetch_all(&mut *transaction)
         .await
         .map_err(|e| IoError::ConfigError(format!("Failed to load telemetry points: {}", e)))?;
 
@@ -292,7 +297,7 @@ impl IoSqliteLoader {
              ORDER BY point_id",
         )
         .bind(channel_id as i64)
-        .fetch_all(self.pool())
+        .fetch_all(&mut *transaction)
         .await
         .map_err(|e| IoError::ConfigError(format!("Failed to load signal points: {}", e)))?;
 
@@ -304,7 +309,7 @@ impl IoSqliteLoader {
              ORDER BY point_id",
         )
         .bind(channel_id as i64)
-        .fetch_all(self.pool())
+        .fetch_all(&mut *transaction)
         .await
         .map_err(|e| IoError::ConfigError(format!("Failed to load control points: {}", e)))?;
 
@@ -317,10 +322,15 @@ impl IoSqliteLoader {
              ORDER BY point_id",
         )
         .bind(channel_id as i64)
-        .fetch_all(self.pool())
+        .fetch_all(&mut *transaction)
         .await
         .map_err(|e| {
             IoError::ConfigError(format!("Failed to load adjustment points: {}", e))
+        })?;
+        transaction.commit().await.map_err(|error| {
+            IoError::ConfigError(format!(
+                "Failed to complete physical topology snapshot for channel {channel_id}: {error}"
+            ))
         })?;
 
         // Process telemetry points

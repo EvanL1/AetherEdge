@@ -27,7 +27,6 @@ use crate::protocols::core::error::{GatewayError, Result};
 use crate::protocols::core::logging::{
     ChannelLogConfig, ChannelLogHandler, ErrorContext, LogContext, ModbusTransportType,
 };
-use crate::protocols::core::metadata::{DriverMetadata, ParameterMetadata, ParameterType};
 
 use crate::protocols::adapters::command_batcher::{BatchCommand, CommandBatcher};
 use crate::protocols::core::point::{PointConfig, ProtocolAddress};
@@ -230,106 +229,6 @@ impl ModbusChannel {
 // ============================================================================
 // Trait Implementations
 // ============================================================================
-
-impl ModbusChannel {
-    /// Exact commissioning metadata for the TCP transport.
-    #[allow(clippy::disallowed_methods)]
-    pub(crate) fn tcp_metadata() -> DriverMetadata {
-        DriverMetadata {
-            name: "modbus_tcp",
-            display_name: "Modbus TCP",
-            description: "Industrial Modbus TCP protocol for reading/writing registers and coils.",
-            is_recommended: true,
-            example_config: serde_json::json!({
-                "host": "192.168.1.100",
-                "port": 502,
-                "read_timeout_ms": 3000,
-                "poll_interval_ms": 1000
-            }),
-            parameters: vec![
-                ParameterMetadata::required(
-                    "host",
-                    "Host",
-                    "Modbus device IP address or hostname",
-                    ParameterType::String,
-                )
-                .with_min_length(1),
-                ParameterMetadata::required(
-                    "port",
-                    "Port",
-                    "Modbus TCP port (1-65535)",
-                    ParameterType::Integer,
-                )
-                .with_integer_range(1, u64::from(u16::MAX)),
-                ParameterMetadata::optional(
-                    "read_timeout_ms",
-                    "Read Timeout (ms)",
-                    "Read operation timeout in milliseconds (1-86400000)",
-                    ParameterType::Integer,
-                    serde_json::json!(3000),
-                )
-                .with_integer_range(1, 86_400_000),
-                ParameterMetadata::optional(
-                    "poll_interval_ms",
-                    "Polling Interval (ms)",
-                    "Polling interval in milliseconds (1-86400000)",
-                    ParameterType::Integer,
-                    serde_json::json!(1000),
-                )
-                .with_integer_range(1, 86_400_000),
-            ],
-        }
-    }
-
-    /// Exact commissioning metadata for the serial RTU transport.
-    #[allow(clippy::disallowed_methods)]
-    pub(crate) fn rtu_metadata() -> DriverMetadata {
-        DriverMetadata {
-            name: "modbus_rtu",
-            display_name: "Modbus RTU",
-            description: "Industrial Modbus RTU protocol over a serial device.",
-            is_recommended: true,
-            example_config: serde_json::json!({
-                "device": "/dev/ttyUSB0",
-                "baud_rate": 9600,
-                "read_timeout_ms": 3000,
-                "poll_interval_ms": 1000
-            }),
-            parameters: vec![
-                ParameterMetadata::required(
-                    "device",
-                    "Serial Device",
-                    "Non-empty serial device path",
-                    ParameterType::String,
-                )
-                .with_min_length(1),
-                ParameterMetadata::required(
-                    "baud_rate",
-                    "Baud Rate",
-                    "Serial baud rate (1-4294967295)",
-                    ParameterType::Integer,
-                )
-                .with_integer_range(1, u64::from(u32::MAX)),
-                ParameterMetadata::optional(
-                    "read_timeout_ms",
-                    "Read Timeout (ms)",
-                    "Read operation timeout in milliseconds (1-86400000)",
-                    ParameterType::Integer,
-                    serde_json::json!(3000),
-                )
-                .with_integer_range(1, 86_400_000),
-                ParameterMetadata::optional(
-                    "poll_interval_ms",
-                    "Polling Interval (ms)",
-                    "Polling interval in milliseconds (1-86400000)",
-                    ParameterType::Integer,
-                    serde_json::json!(1000),
-                )
-                .with_integer_range(1, 86_400_000),
-            ],
-        }
-    }
-}
 
 impl ModbusChannel {
     fn protocol_display_name(&self) -> &'static str {

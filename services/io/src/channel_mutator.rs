@@ -1114,6 +1114,10 @@ fn validate_runtime_config(config: &ChannelConfig) -> PortResult<()> {
         "aether_485" => true,
         #[cfg(feature = "iec61850")]
         "iec61850" => true,
+        #[cfg(feature = "mqtt")]
+        "mqtt" => true,
+        #[cfg(feature = "http")]
+        "http" => true,
         _ => false,
     };
     if !supported {
@@ -1129,7 +1133,8 @@ fn validate_runtime_config(config: &ChannelConfig) -> PortResult<()> {
             "channel parameters do not satisfy the protocol schema",
         ));
     }
-    Ok(())
+    crate::core::channels::factory::validate_protocol_parameters(config)
+        .map_err(|_| invalid("channel parameters do not satisfy the protocol schema"))
 }
 
 async fn logical_route_count(pool: &SqlitePool, channel_id: ChannelId) -> PortResult<i64> {
@@ -1464,6 +1469,69 @@ mod tests {
         let error = validate_runtime_config(&runtime_config(1, "modbus_tcp", parameters))
             .expect_err("zero poll interval must be rejected");
         assert_eq!(error.kind(), PortErrorKind::InvalidData);
+    }
+
+    #[cfg(all(feature = "mqtt", feature = "http"))]
+    #[test]
+    fn production_validator_accepts_composed_json_acquisition_protocols() {
+        assert!(
+            validate_runtime_config(&runtime_config(
+                1,
+                "mqtt",
+                HashMap::from([
+                    (
+                        "broker".into(),
+                        serde_json::json!("tcp://192.168.1.20:1883")
+                    ),
+                    (
+                        "subscriptions".into(),
+                        serde_json::json!([{"topic": "device/telemetry", "qos": 1}]),
+                    ),
+                ]),
+            ))
+            .is_ok()
+        );
+        assert!(
+            validate_runtime_config(&runtime_config(
+                2,
+                "http",
+                HashMap::from([("url".into(), serde_json::json!("http://192.168.1.21/data"),)]),
+            ))
+            .is_ok()
+        );
+    }
+
+    #[cfg(all(feature = "mqtt", feature = "http"))]
+    #[test]
+    fn production_validator_rejects_inert_json_acquisition_configuration() {
+        for config in [
+            runtime_config(
+                1,
+                "mqtt",
+                HashMap::from([(
+                    "broker".into(),
+                    serde_json::json!("tcp://192.168.1.20:1883"),
+                )]),
+            ),
+            runtime_config(2, "http", HashMap::new()),
+            runtime_config(
+                3,
+                "mqtt",
+                HashMap::from([
+                    (
+                        "broker".into(),
+                        serde_json::json!("tcp://192.168.1.20:1883"),
+                    ),
+                    (
+                        "subscriptions".into(),
+                        serde_json::json!([{"topic": "device/telemetry", "qos": 1}]),
+                    ),
+                    ("max_reconnect_attempts".into(), serde_json::json!(3)),
+                ]),
+            ),
+        ] {
+            assert!(validate_runtime_config(&config).is_err());
+        }
     }
 
     #[cfg(feature = "modbus")]

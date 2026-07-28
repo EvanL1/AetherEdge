@@ -30,7 +30,6 @@ channels:
     parameters:
       host: "192.168.1.10"
       port: 502
-      connect_timeout_ms: 3000
       read_timeout_ms: 3000
 
   - id: 3
@@ -40,14 +39,14 @@ channels:
     parameters:
       device: "/dev/ttyS4"
       baud_rate: 9600
-      data_bits: 8
-      stop_bits: 1
-      parity: "N"
+      read_timeout_ms: 3000
 ```
 
-The `parameters` block is protocol-specific: Modbus TCP wants a host and
-port, Modbus RTU wants a serial device and line settings, MQTT wants a broker
-URL and subscription topics, and so on. Protocol names are normalized before
+The `parameters` block is protocol-specific: Modbus TCP requires `host` and
+`port`; Modbus RTU requires `device` and `baud_rate`; MQTT requires a plaintext
+field-network `broker` URL plus at least one subscription; HTTP requires an
+outbound polling `url` and optionally `poll_interval_ms` (the historical
+`interval_ms` spelling remains accepted). Protocol names are normalized before
 matching (`normalize_protocol_name` in `services/io/src/utils.rs`), so
 `modbus-tcp`, `ModbusTCP`, and `modbus_tcp` all resolve to the same protocol.
 
@@ -94,16 +93,19 @@ BLE, DL/T 645, IEC 60870-5-104, J1939, Matter, OPC UA, and Zigbee are not
 kernel capabilities. A configuration naming one of them fails as unavailable;
 it is never silently translated to another adapter.
 
-Two protocols are additionally OS-gated in the channel factory
-(`services/io/src/protocols/gateway/factory.rs`): CAN and GPIO are
-compiled only on Linux, so they never exist in a macOS build regardless of
-features. Hardware-independent protocol tests run against `tools/simulator`;
-the production IO binary contains no in-memory simulation protocol.
+CAN and GPIO are OS-gated in
+`services/io/src/core/channels/channel_creation.rs` and exist only on Linux.
+GPIO accepts an explicit channel parameter `driver: gpiod` or
+`driver: sysfs`; omission preserves the historical sysfs selection. MQTT and
+HTTP are concrete `ChannelRuntime` compositions, not build-only declarations.
+Their JSON mappings are compiled from the same transactional point-topology
+snapshot as the channel runtime.
 
-The rule of thumb: **if a channel fails to create, check the feature gate
-first.** The factory's error is literal about it — `Unsupported protocol:
-{name}. Check if the required feature is enabled.` — and the cause is almost
-always a protocol that was not compiled in, not a configuration typo.
+Protocol availability is read from the signed runtime manifest rather than a
+second service-local discovery endpoint. A channel fails before persistence
+when its protocol is absent from that build or its required parameters are
+invalid. Hardware-independent protocol tests run against `tools/simulator`;
+the production IO binary contains no in-memory simulation protocol.
 
 ## Mapping points to instances
 

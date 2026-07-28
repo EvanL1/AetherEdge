@@ -10,7 +10,6 @@ pub mod file_logging;
 pub mod json_mapper;
 pub mod log_handlers;
 pub mod logging;
-pub mod metadata;
 pub mod point;
 pub mod quality;
 pub mod slot;
@@ -21,11 +20,7 @@ pub use diagnostics::{AtomicDiagnostics, DiagnosticsSnapshot};
 pub use error::{GatewayError, Result};
 pub use file_logging::{ChannelFileLogHandler, FileLogLevel};
 #[cfg(feature = "json-mapping")]
-pub use json_mapper::{JsonMapper, JsonMappingConfig, SharedJsonMapper};
-pub use metadata::{
-    DriverMetadata, ParameterMetadata, ParameterType, ProtocolMetadata, ProtocolRegistry,
-    get_protocol_registry,
-};
+pub use json_mapper::{JsonMapper, JsonMappingConfig};
 pub use point::*;
 pub use quality::*;
 pub use slot::{AtomicBoolStore, DataSlot, ShardedSlotStore, SlotStore};

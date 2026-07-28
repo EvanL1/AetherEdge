@@ -3374,92 +3374,28 @@ mod openapi_tests {
     }
 
     #[test]
-    fn test_openapi_contains_protocol_and_admin_routes() {
+    fn retired_browser_discovery_aliases_stay_out_of_the_io_contract() {
         let spec = spec();
         let paths = spec["paths"].as_object().expect("OpenAPI paths object");
-
-        assert_path_methods(paths, "/api/protocols", &["get"]);
-    }
-
-    #[test]
-    fn protocol_discovery_openapi_matches_strict_modbus_configuration() {
-        let spec = spec();
-        let operation = spec
-            .pointer("/paths/~1api~1protocols/get")
-            .expect("protocol discovery operation");
-        let description = operation["description"]
-            .as_str()
-            .expect("protocol discovery description")
-            .split_whitespace()
-            .collect::<Vec<_>>()
-            .join(" ")
-            .to_ascii_lowercase();
-
-        for contract in [
-            "host: non-empty string",
-            "port: integer 1..65535",
-            "device: non-empty string",
-            "baud_rate: integer 1..4294967295",
-            "poll_interval_ms: integer 1..86400000",
-            "read_timeout_ms: integer 1..86400000",
-            "no type coercion or fallback",
+        for retired in [
+            "/api/protocols",
+            "/api/channels/list",
+            "/api/channels/search",
+            "/api/points",
+            "/api/channels/{channel_id}/T/points/{point_id}",
+            "/api/channels/{channel_id}/S/points/{point_id}",
+            "/api/channels/{channel_id}/C/points/{point_id}",
+            "/api/channels/{channel_id}/A/points/{point_id}",
         ] {
             assert!(
-                description.contains(contract),
-                "protocol discovery must state the exact Modbus contract: {contract}"
+                !paths.contains_key(retired),
+                "retired IO query alias {retired}"
             );
         }
-
-        let response_ref = operation
-            .pointer("/responses/200/content/application~1json/schema/$ref")
-            .and_then(serde_json::Value::as_str)
-            .expect("typed protocol discovery success envelope");
-        assert!(
-            response_ref.contains("SuccessResponse"),
-            "protocol discovery must document its actual SuccessResponse envelope"
-        );
-
-        let parameter_schema = spec
-            .pointer("/components/schemas/ParameterInfo/properties")
-            .expect("protocol parameter schema");
-        for constraint in ["minimum", "maximum", "min_length"] {
-            assert!(
-                parameter_schema.get(constraint).is_some(),
-                "ParameterInfo must expose {constraint} for dynamic forms"
-            );
-        }
-
-        let create_parameters = spec
-            .pointer("/components/schemas/ChannelCreateRequest/properties/parameters/description")
-            .and_then(serde_json::Value::as_str)
-            .expect("channel-create parameter description")
-            .split_whitespace()
-            .collect::<Vec<_>>()
-            .join(" ")
-            .to_ascii_lowercase();
-        assert!(create_parameters.contains("no type coercion or fallback"));
-        assert!(create_parameters.contains("port: integer 1..65535"));
-        assert!(create_parameters.contains("baud_rate: integer 1..4294967295"));
-
-        let create_examples = spec
-            .pointer("/paths/~1api~1channels/post/requestBody/content/application~1json/examples")
-            .and_then(serde_json::Value::as_object)
-            .expect("channel-create examples");
-        for (name, example) in create_examples {
-            let parameters = example["value"]["parameters"]
-                .as_object()
-                .unwrap_or_else(|| panic!("channel-create example {name} parameters"));
-            assert!(parameters["host"].is_string());
-            assert!(parameters["port"].is_u64());
-            for parameter in parameters.keys() {
-                assert!(
-                    ["host", "port", "read_timeout_ms", "poll_interval_ms"]
-                        .contains(&parameter.as_str()),
-                    "channel-create example {name} advertises ignored parameter {parameter}"
-                );
-            }
-        }
+        assert_path_methods(paths, "/api/channels", &["get", "post"]);
+        assert_path_methods(paths, "/api/channels/{id}/points", &["get"]);
     }
+
     #[test]
     fn channel_management_openapi_is_the_governed_application_contract() {
         let spec = spec();
@@ -3918,7 +3854,7 @@ mod openapi_tests {
             .sum::<usize>();
 
         assert_eq!(
-            operation_count, 28,
+            operation_count, 20,
             "HTTP operation count changed; re-audit Router/OpenAPI parity before updating this guard"
         );
     }

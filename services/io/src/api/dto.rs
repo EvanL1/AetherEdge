@@ -161,8 +161,7 @@ pub struct ChannelCreateRequest {
     #[schema(example = "Primary packaging-line controller channel")]
     pub description: Option<String>,
 
-    /// Protocol type identifier (for example `modbus_tcp` or `modbus_rtu`).
-    /// The active build's complete list is returned by `GET /api/protocols`.
+    /// Protocol type identifier selected by the active runtime manifest.
     #[schema(example = "modbus_tcp", value_type = String)]
     pub protocol: String,
 
@@ -176,7 +175,7 @@ pub struct ChannelCreateRequest {
     /// `port: integer 1..65535`; Modbus RTU requires
     /// `device: non-empty string` and `baud_rate: integer 1..4294967295`.
     /// Optional `poll_interval_ms` and `read_timeout_ms` are integers in
-    /// `1..86400000`. See `GET /api/protocols` for all supported parameters.
+    /// `1..86400000`. Protocol availability comes from the runtime manifest.
     #[schema(value_type = Object, example = json!({"host": "192.168.1.100", "port": 502, "read_timeout_ms": 3000, "poll_interval_ms": 1000}))]
     pub parameters: HashMap<String, serde_json::Value>,
 

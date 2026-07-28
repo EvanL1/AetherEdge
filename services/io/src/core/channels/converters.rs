@@ -8,10 +8,13 @@
 #[cfg(any(feature = "modbus", all(feature = "can", target_os = "linux")))]
 use tracing::warn;
 
+#[cfg(any(feature = "modbus", all(feature = "can", target_os = "linux")))]
 use crate::core::config::{
     AdjustmentPoint, ControlPoint, Point, RuntimeChannelConfig, SignalPoint, TelemetryPoint,
 };
+#[cfg(any(feature = "modbus", all(feature = "can", target_os = "linux")))]
 use crate::protocols::core::point::{PointConfig, ProtocolAddress, TransformConfig};
+#[cfg(any(feature = "modbus", all(feature = "can", target_os = "linux")))]
 use common::PointType;
 
 #[cfg(feature = "modbus")]
@@ -29,12 +32,14 @@ use crate::protocols::adapters::can::{CanDataType, CanPoint};
 /// Each concrete point type (Telemetry, Signal, Control, Adjustment) has different
 /// transform parameters (scale/offset/reverse), but they all share the same
 /// conversion pattern: base point + point type + transform -> PointConfig.
+#[cfg(any(feature = "modbus", all(feature = "can", target_os = "linux")))]
 trait PointConvertible {
     fn base(&self) -> &Point;
     fn point_type() -> PointType;
     fn transform(&self) -> TransformConfig;
 }
 
+#[cfg(any(feature = "modbus", all(feature = "can", target_os = "linux")))]
 impl PointConvertible for TelemetryPoint {
     fn base(&self) -> &Point {
         &self.base
@@ -52,6 +57,7 @@ impl PointConvertible for TelemetryPoint {
     }
 }
 
+#[cfg(any(feature = "modbus", all(feature = "can", target_os = "linux")))]
 impl PointConvertible for SignalPoint {
     fn base(&self) -> &Point {
         &self.base
@@ -67,6 +73,7 @@ impl PointConvertible for SignalPoint {
     }
 }
 
+#[cfg(any(feature = "modbus", all(feature = "can", target_os = "linux")))]
 impl PointConvertible for ControlPoint {
     fn base(&self) -> &Point {
         &self.base
@@ -82,6 +89,7 @@ impl PointConvertible for ControlPoint {
     }
 }
 
+#[cfg(any(feature = "modbus", all(feature = "can", target_os = "linux")))]
 impl PointConvertible for AdjustmentPoint {
     fn base(&self) -> &Point {
         &self.base
@@ -99,6 +107,7 @@ impl PointConvertible for AdjustmentPoint {
 }
 
 /// Convert a slice of typed points to PointConfig using the given address builder.
+#[cfg(any(feature = "modbus", all(feature = "can", target_os = "linux")))]
 fn convert_points<P: PointConvertible>(
     points: &[P],
     addr_fn: &impl Fn(&Point) -> Option<ProtocolAddress>,
@@ -117,6 +126,7 @@ fn convert_points<P: PointConvertible>(
 }
 
 /// Collect PointConfigs from all four point types on a RuntimeChannelConfig.
+#[cfg(any(feature = "modbus", all(feature = "can", target_os = "linux")))]
 fn convert_all_points(
     rc: &RuntimeChannelConfig,
     addr_fn: &impl Fn(&Point) -> Option<ProtocolAddress>,

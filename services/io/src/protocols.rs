@@ -33,10 +33,6 @@ pub use self::core::logging::{
     ChannelLogConfig, ChannelLogEvent, ChannelLogHandler, LogContext, LogEventType,
     PacketDirection, PacketMetadata,
 };
-pub use self::core::metadata::{
-    DriverMetadata, ParameterMetadata, ParameterType, ProtocolMetadata, ProtocolRegistry,
-    get_protocol_registry,
-};
 pub use self::core::quality::Quality;
 pub use self::core::traits::ConnectionState;
 

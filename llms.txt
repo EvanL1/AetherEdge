@@ -132,6 +132,7 @@ Use the narrowest document that answers the task. The catalog covers every agent
 - [ADR-0032: Retire zero-consumer runtime compatibility planes](https://github.com/EvanL1/AetherEdge/blob/main/docs/adr/0032-retire-zero-consumer-runtime-compatibility.md): Accepted and implemented on 2026-07-28.
 - [ADR-0033: Keep the shared service kernel console-first](https://github.com/EvanL1/AetherEdge/blob/main/docs/adr/0033-console-first-shared-service-kernel.md): Accepted and implemented on 2026-07-28.
 - [ADR-0034: Retire common single-consumer compatibility](https://github.com/EvanL1/AetherEdge/blob/main/docs/adr/0034-retire-common-single-consumer-compatibility.md): Accepted and implemented on 2026-07-28.
+- [ADR-0035: Align IO composition with the runtime manifest](https://github.com/EvanL1/AetherEdge/blob/main/docs/adr/0035-align-io-composition-with-runtime-manifest.md): Accepted and implemented on 2026-08-05.
 - [Control Strategies as Rules (Moved)](https://github.com/EvanL1/AetherEdge/blob/main/docs/domain/control-strategies.md): Compatibility pointer to the Energy Pack knowledge page
 - [Energy Storage Primer (Moved)](https://github.com/EvanL1/AetherEdge/blob/main/docs/domain/ess-primer.md): Compatibility pointer to the Energy Pack knowledge page
 - [Power Forecasting (Moved)](https://github.com/EvanL1/AetherEdge/blob/main/docs/domain/power-forecasting.md): Compatibility pointer to the downstream AetherEMS knowledge page
