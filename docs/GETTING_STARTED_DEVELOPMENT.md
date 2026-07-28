@@ -168,15 +168,14 @@ AetherEdge/
 │
 ├── libs/                    # 共享 Rust 库
 │   ├── aether-routing/    # 数据流路由
-│   ├── aether-calc/       # 表达式求值引擎
-│   ├── aether-rules/      # 规则引擎
-│   ├── aether-sim/        # 波形生成器
+│   ├── aether-rules/      # 规则引擎与表达式求值
 │   ├── aether-schema-macro/ # SQL DDL 过程宏
 │   └── common/             # 服务引导、配置 DTO 与 HTTP envelope
 │
 ├── firmware/               # 独立 workspace；固件 codec 与 ABI 类型
 ├── tools/
 │   ├── aether/            # CLI 配置与服务管理工具
+│   ├── simulator/         # 协议模拟与波形生成
 │   └── simulator/          # Modbus TCP/RTU 从站模拟器
 │
 ├── firmware/                # 独立嵌入式 workspace（含 aether-shm，ARM/STM32）

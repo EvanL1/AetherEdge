@@ -17,5 +17,4 @@ workspace-members = [
     "aether-automation",
     "aether-routing",
     "aether-rules",
-    "aether-calc",
 ]

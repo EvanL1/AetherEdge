@@ -187,7 +187,6 @@ version = "0.0.1"
 dependencies = [
  "aether-application",
  "aether-auth-jwt",
- "aether-calc",
  "aether-domain",
  "aether-pack",
  "aether-ports",
@@ -216,20 +215,6 @@ dependencies = [
  "tracing",
  "utoipa",
  "uuid",
-]
-
-[[package]]
-name = "aether-calc"
-version = "0.0.1"
-dependencies = [
- "chrono",
- "evalexpr",
- "regex",
- "serde",
- "serde_json",
- "thiserror 2.0.18",
- "tokio",
- "tracing",
 ]
 
 [[package]]
@@ -472,7 +457,6 @@ dependencies = [
 name = "aether-rules"
 version = "0.0.1"
 dependencies = [
- "aether-calc",
  "aether-dataplane",
  "aether-domain",
  "aether-ports",
@@ -482,6 +466,7 @@ dependencies = [
  "criterion",
  "evalexpr",
  "futures",
+ "regex",
  "serde",
  "serde_json",
  "sqlx",
@@ -532,16 +517,6 @@ dependencies = [
  "tempfile",
  "tokio",
  "tokio-util",
-]
-
-[[package]]
-name = "aether-sim"
-version = "0.0.1"
-dependencies = [
- "chrono",
- "rand 0.8.7",
- "serde",
- "workspace-hack",
 ]
 
 [[package]]
@@ -3983,7 +3958,6 @@ dependencies = [
 name = "simulator"
 version = "0.0.1"
 dependencies = [
- "aether-sim",
  "anyhow",
  "axum",
  "chrono",

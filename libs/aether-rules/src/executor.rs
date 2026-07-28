@@ -5,6 +5,7 @@
 //! 2. For each node: reading node-local variables, evaluating conditions
 //! 3. Executing actions and following wires
 
+use crate::calc::{CalcEngine, CalculationState};
 use crate::error::Result;
 use crate::live_state::{RuleExecutionContext, RuleLiveState};
 use crate::logger::format_conditions;
@@ -13,7 +14,6 @@ use crate::types::{
     RuleVariable, RuleWires,
 };
 use crate::{RuleActionCommand, RuleActionCommandFacade};
-use aether_calc::{CalcEngine, MemoryStateStore, StateStore};
 use aether_domain::{CommandConstraints, InstanceId, PointId};
 use serde::Serialize;
 use std::borrow::Cow;
@@ -125,7 +125,7 @@ fn snapshot_or_reuse(
 
 /// Evaluate a formula in Reverse Polish Notation (RPN)
 /// Convert a JSON token array `["X1", "+", "X2"]` to an expression string `"X1 + X2"`,
-/// then evaluate via the shared `formula::evaluate_formula` engine (evalexpr).
+/// then evaluate through the rule engine's shared stateless calculator.
 fn evaluate_token_formula(
     tokens: &[serde_json::Value],
     values: &HashMap<String, f64>,
@@ -141,7 +141,7 @@ fn evaluate_token_formula(
         .collect::<Vec<_>>()
         .join(" ");
 
-    match crate::formula::evaluate_formula(&expr, values) {
+    match CalcEngine::evaluate_stateless(&expr, values) {
         Ok(val) => Some(val),
         Err(e) => {
             tracing::warn!("Formula '{}' evaluation failed: {}", expr, e);
@@ -265,37 +265,22 @@ pub struct ConditionResult {
 ///
 /// Uses the authoritative SHM live-state view. Missing SHM data is missing;
 /// there is no network-store fallback.
-pub struct RuleExecutor<S: StateStore = MemoryStateStore> {
+pub struct RuleExecutor {
     live_state: Arc<dyn RuleLiveState>,
-    /// State store for stateful calculation functions (integrate, moving_avg, etc.)
-    state_store: Arc<S>,
+    state_store: Arc<CalculationState>,
     /// Governed logical-action facade installed by the composition root.
     action_commands: Option<Arc<dyn RuleActionCommandFacade>>,
 }
 
-impl RuleExecutor<MemoryStateStore> {
-    /// Create with default MemoryStateStore
+impl RuleExecutor {
+    /// Create with default CalculationState
     pub fn new<L>(live_state: Arc<L>) -> Self
     where
         L: RuleLiveState + 'static,
     {
         Self {
             live_state,
-            state_store: Arc::new(MemoryStateStore::new()),
-            action_commands: None,
-        }
-    }
-}
-
-impl<S: StateStore> RuleExecutor<S> {
-    /// Create with custom state store
-    pub fn with_state_store<L>(live_state: Arc<L>, state_store: Arc<S>) -> Self
-    where
-        L: RuleLiveState + 'static,
-    {
-        Self {
-            live_state,
-            state_store,
+            state_store: Arc::new(CalculationState::new()),
             action_commands: None,
         }
     }

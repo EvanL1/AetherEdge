@@ -22,7 +22,6 @@
 //! ```
 
 mod error;
-pub(crate) mod formula;
 #[cfg(unix)]
 mod live_state;
 pub mod parser;
@@ -34,6 +33,8 @@ pub mod types;
 // Windows builds only need the parser for `aether sync` (remote management CLI).
 #[cfg(unix)]
 mod action_command;
+#[cfg(unix)]
+mod calc;
 #[cfg(unix)]
 mod executor;
 #[cfg(unix)]

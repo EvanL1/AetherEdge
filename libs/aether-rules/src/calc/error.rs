@@ -1,4 +1,4 @@
-//! Error types for aether-calc
+//! Error types for deterministic rule calculations.
 
 use thiserror::Error;
 

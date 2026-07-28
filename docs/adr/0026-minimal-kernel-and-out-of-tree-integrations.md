@@ -74,6 +74,11 @@ and testkit contracts that downstream Rust compositions can consume.
    runtime implementations. Cross-adapter dependencies are removed. The SDK's
    explicitly documented `local-runtime` facade remains the compatibility
    exception accepted by ADR-0013 and ADR-0022.
+10. Rule calculation is part of the deterministic rule engine, not an
+    independently reusable platform. The single-implementation `StateStore`
+    abstraction and standalone `aether-calc` package are removed. Waveform
+    generation likewise belongs to the only real consumer, the standalone
+    simulator, so `aether-sim` is not a kernel library.
 
 ## Migration
 

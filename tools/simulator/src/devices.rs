@@ -1,7 +1,7 @@
 //! Device register map management.
 
 use crate::scenarios::{DeviceConfig, GeneratorConfig};
-use aether_sim::{
+use crate::waveforms::{
     BoxedGenerator, ConstantValue, DailyPattern, LinearRamp, NoiseGenerator, RandomDrift, SineWave,
     SquareWave, TriangleWave, WaveformGenerator,
 };

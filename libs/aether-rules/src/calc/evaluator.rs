@@ -6,9 +6,9 @@
 //! - Logic: &&, ||, !
 //! - Built-in functions: integrate, moving_avg, rate_of_change, scale, clamp, etc.
 
-use crate::builtin_functions::{self, BuiltinFunctions};
-use crate::error::{CalcError, Result};
-use crate::state::StateStore;
+use super::builtin_functions::{self, BuiltinFunctions};
+use super::error::{CalcError, Result};
+use super::state::CalculationState;
 use evalexpr::{ContextWithMutableFunctions, ContextWithMutableVariables, Value};
 use regex::Regex;
 use std::borrow::Cow;
@@ -40,10 +40,10 @@ fn stateful_regex(
 ///
 /// # Example
 /// ```ignore
-/// use aether_calc::{CalcEngine, MemoryStateStore};
+/// use super::{CalcEngine, CalculationState};
 /// use std::sync::Arc;
 ///
-/// let store = Arc::new(MemoryStateStore::new());
+/// let store = Arc::new(CalculationState::new());
 /// let engine = CalcEngine::new(store, "rule_1");
 ///
 /// let mut vars = HashMap::new();
@@ -55,18 +55,17 @@ fn stateful_regex(
 /// // With stateful functions (async)
 /// let energy = engine.evaluate("integrate(P)", &vars).await?;
 /// ```
-pub struct CalcEngine<S: StateStore> {
-    /// Built-in function executor
-    builtin: BuiltinFunctions<S>,
+pub struct CalcEngine {
+    builtin: BuiltinFunctions,
 }
 
-impl<S: StateStore> CalcEngine<S> {
+impl CalcEngine {
     /// Create new CalcEngine
     ///
     /// # Arguments
     /// * `state_store` - State storage for stateful functions
     /// * `context` - Context identifier (e.g., rule_id, instance_id)
-    pub fn new(state_store: Arc<S>, context: impl Into<String>) -> Self {
+    pub fn new(state_store: Arc<CalculationState>, context: impl Into<String>) -> Self {
         Self {
             builtin: BuiltinFunctions::new(state_store, context),
         }
@@ -76,7 +75,7 @@ impl<S: StateStore> CalcEngine<S> {
     ///
     /// Useful for direct access to stateful functions like period_delta
     /// when not using the formula string API.
-    pub fn builtin(&self) -> &BuiltinFunctions<S> {
+    pub fn builtin(&self) -> &BuiltinFunctions {
         &self.builtin
     }
 
@@ -87,6 +86,13 @@ impl<S: StateStore> CalcEngine<S> {
     ///
     /// Supported stateless functions: scale, clamp, abs, min, max, round, sign
     pub fn evaluate_simple(&self, formula: &str, variables: &HashMap<String, f64>) -> Result<f64> {
+        Self::evaluate_stateless(formula, variables)
+    }
+
+    pub(crate) fn evaluate_stateless(
+        formula: &str,
+        variables: &HashMap<String, f64>,
+    ) -> Result<f64> {
         let mut context = evalexpr::HashMapContext::new();
 
         // Add variables
@@ -454,12 +460,12 @@ impl<S: StateStore> CalcEngine<S> {
 #[allow(clippy::disallowed_methods)]
 #[allow(clippy::approx_constant)]
 mod tests {
+    use super::super::state::CalculationState;
     use super::*;
-    use crate::state::MemoryStateStore;
     use std::sync::Arc;
 
-    fn create_engine() -> CalcEngine<MemoryStateStore> {
-        let store = Arc::new(MemoryStateStore::new());
+    fn create_engine() -> CalcEngine {
+        let store = Arc::new(CalculationState::new());
         CalcEngine::new(store, "test")
     }
 
@@ -602,7 +608,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_integrate_in_formula() {
-        let store = Arc::new(MemoryStateStore::new());
+        let store = Arc::new(CalculationState::new());
         let engine = CalcEngine::new(store, "test");
 
         let mut vars = HashMap::new();
@@ -615,7 +621,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_moving_avg_in_formula() {
-        let store = Arc::new(MemoryStateStore::new());
+        let store = Arc::new(CalculationState::new());
         let engine = CalcEngine::new(store, "test");
 
         let mut vars = HashMap::new();
@@ -628,7 +634,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_rate_of_change_in_formula() {
-        let store = Arc::new(MemoryStateStore::new());
+        let store = Arc::new(CalculationState::new());
         let engine = CalcEngine::new(store, "test");
 
         let mut vars = HashMap::new();
@@ -648,7 +654,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_mixed_formula() {
-        let store = Arc::new(MemoryStateStore::new());
+        let store = Arc::new(CalculationState::new());
         let engine = CalcEngine::new(store, "test");
 
         let mut vars = HashMap::new();

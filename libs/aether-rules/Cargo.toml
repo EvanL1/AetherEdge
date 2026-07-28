@@ -9,7 +9,6 @@ description = "Rule engine library for AetherEdge - Vue Flow based rule parsing,
 [dependencies]
 aether-domain = { path = "../../crates/aether-domain" }
 aether-ports = { path = "../../crates/aether-ports" }
-aether-calc = { path = "../aether-calc" }
 
 # Async runtime
 tokio = { workspace = true }
@@ -25,6 +24,7 @@ serde_json = { workspace = true }
 
 # Expression evaluation
 evalexpr = { workspace = true }
+regex = { workspace = true }
 
 # Error handling
 thiserror = { workspace = true }

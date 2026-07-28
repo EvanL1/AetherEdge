@@ -39,14 +39,12 @@ members = [
     "examples/minimal-gateway",
     "examples/energy-gateway",
     "libs/common",
-    "libs/aether-calc",
     # libs/aether-comlink removed - types moved to io
     # libs/aether-protocols removed - protocols are now in io
     "libs/aether-routing",
     "libs/aether-runtime-catalog",
     "libs/aether-rules",
     "libs/aether-schema-macro",
-    "libs/aether-sim",
     "services/alarm",
     "services/api",
     "services/history",

@@ -10,9 +10,6 @@ name = "simulator"
 path = "src/main.rs"
 
 [dependencies]
-# Core library
-aether-sim = { path = "../../libs/aether-sim" }
-
 # Async runtime
 tokio = { version = "1.35", features = ["full"] }
 

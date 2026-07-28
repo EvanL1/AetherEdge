@@ -6,7 +6,6 @@
 #![allow(clippy::disallowed_methods)] // json! macro used in multiple functions
 
 use crate::error::AutomationError;
-use aether_calc::StateStore;
 use aether_domain::RuleId;
 use aether_ports::{RevisionedRuleMutation, RuleMutation};
 use aether_rules::{self as rule_repository, RuleNode, RuleScheduler, RuleVariable};
@@ -25,15 +24,12 @@ use tracing::{debug, error, info};
 #[cfg(feature = "openapi")]
 use utoipa::OpenApi;
 
-/// Rule Engine state shared across handlers
-///
-/// Generic over `S: StateStore` to support different state backends:
-/// - `MemoryStateStore`: In-memory (default, lost on restart)
-pub struct RuleEngineState<S: StateStore = aether_calc::MemoryStateStore> {
+/// Rule Engine state shared across handlers.
+pub struct RuleEngineState {
     /// SQLite pool for rule persistence
     pub pool: SqlitePool,
     /// Rule scheduler (owns the executor)
-    pub scheduler: Arc<RuleScheduler<S>>,
+    pub scheduler: Arc<RuleScheduler>,
     /// Governed manual rule-execution use case. `None` is allowed only in
     /// tests that never mount a usable execution boundary.
     execution_application: Option<Arc<aether_application::RuleExecutionApplication>>,
@@ -44,8 +40,8 @@ pub struct RuleEngineState<S: StateStore = aether_calc::MemoryStateStore> {
     execution_authenticator: Option<Arc<crate::infra::application_control::ControlAuthenticator>>,
 }
 
-impl<S: StateStore + 'static> RuleEngineState<S> {
-    pub fn new(pool: SqlitePool, scheduler: Arc<RuleScheduler<S>>) -> Self {
+impl RuleEngineState {
+    pub fn new(pool: SqlitePool, scheduler: Arc<RuleScheduler>) -> Self {
         Self {
             pool,
             scheduler,
@@ -81,23 +77,23 @@ impl<S: StateStore + 'static> RuleEngineState<S> {
 }
 
 /// Create rule engine API routes
-pub fn create_rule_routes<S: StateStore + 'static>(state: Arc<RuleEngineState<S>>) -> Router {
+pub fn create_rule_routes(state: Arc<RuleEngineState>) -> Router {
     Router::new()
         // Rule management (Vue Flow-based)
-        .route("/api/rules", get(list_rules::<S>).post(create_rule::<S>))
+        .route("/api/rules", get(list_rules).post(create_rule))
         .route(
             "/api/rules/{id}",
-            get(get_rule::<S>)
-                .put(update_rule::<S>)
-                .delete(delete_rule::<S>),
+            get(get_rule)
+                .put(update_rule)
+                .delete(delete_rule),
         )
-        .route("/api/rules/{id}/enable", post(enable_rule::<S>))
-        .route("/api/rules/{id}/disable", post(disable_rule::<S>))
-        .route("/api/rules/{id}/execute", post(execute_rule_now::<S>))
-        .route("/api/rules/{id}/variables", get(get_rule_variables::<S>))
+        .route("/api/rules/{id}/enable", post(enable_rule))
+        .route("/api/rules/{id}/disable", post(disable_rule))
+        .route("/api/rules/{id}/execute", post(execute_rule_now))
+        .route("/api/rules/{id}/variables", get(get_rule_variables))
         // Scheduler control
-        .route("/api/scheduler/status", get(scheduler_status::<S>))
-        .route("/api/scheduler/reload", post(scheduler_reload::<S>))
+        .route("/api/scheduler/status", get(scheduler_status))
+        .route("/api/scheduler/reload", post(scheduler_reload))
         // Apply HTTP request logging middleware
         .layer(axum::middleware::from_fn(common::logging::http_request_logger))
         .with_state(state)
@@ -436,8 +432,8 @@ pub struct ExecuteRuleRequest {
     ),
     tag = "rules"
 ))]
-pub async fn list_rules<S: StateStore + 'static>(
-    State(state): State<Arc<RuleEngineState<S>>>,
+pub async fn list_rules(
+    State(state): State<Arc<RuleEngineState>>,
     Query(query): Query<RuleListQuery>,
 ) -> Result<Response, AutomationError> {
     let page = query.page.max(1);
@@ -493,8 +489,8 @@ pub async fn list_rules<S: StateStore + 'static>(
     security(("bearer_auth" = [])),
     tag = "rules"
 ))]
-pub async fn create_rule<S: StateStore + 'static>(
-    State(state): State<Arc<RuleEngineState<S>>>,
+pub async fn create_rule(
+    State(state): State<Arc<RuleEngineState>>,
     headers: HeaderMap,
     Json(req): Json<CreateRuleRequest>,
 ) -> Result<Json<SuccessResponse<serde_json::Value>>, AutomationError> {
@@ -541,8 +537,8 @@ pub async fn create_rule<S: StateStore + 'static>(
     ),
     tag = "rules"
 ))]
-pub async fn get_rule<S: StateStore + 'static>(
-    State(state): State<Arc<RuleEngineState<S>>>,
+pub async fn get_rule(
+    State(state): State<Arc<RuleEngineState>>,
     Path(id): Path<i64>,
 ) -> Result<Response, AutomationError> {
     match rule_repository::get_rule(&state.pool, id).await {
@@ -580,8 +576,8 @@ pub async fn get_rule<S: StateStore + 'static>(
     security(("bearer_auth" = [])),
     tag = "rules"
 ))]
-pub async fn update_rule<S: StateStore + 'static>(
-    State(state): State<Arc<RuleEngineState<S>>>,
+pub async fn update_rule(
+    State(state): State<Arc<RuleEngineState>>,
     Path(id): Path<i64>,
     headers: HeaderMap,
     Json(req): Json<UpdateRuleRequest>,
@@ -657,8 +653,8 @@ pub async fn update_rule<S: StateStore + 'static>(
     security(("bearer_auth" = [])),
     tag = "rules"
 ))]
-pub async fn delete_rule<S: StateStore + 'static>(
-    State(state): State<Arc<RuleEngineState<S>>>,
+pub async fn delete_rule(
+    State(state): State<Arc<RuleEngineState>>,
     Path(id): Path<i64>,
     headers: HeaderMap,
     Json(request): Json<RuleMutationRequest>,
@@ -719,8 +715,8 @@ pub async fn delete_rule<S: StateStore + 'static>(
     security(("bearer_auth" = [])),
     tag = "rules"
 ))]
-pub async fn enable_rule<S: StateStore + 'static>(
-    State(state): State<Arc<RuleEngineState<S>>>,
+pub async fn enable_rule(
+    State(state): State<Arc<RuleEngineState>>,
     Path(id): Path<i64>,
     headers: HeaderMap,
     Json(request): Json<RuleMutationRequest>,
@@ -781,8 +777,8 @@ pub async fn enable_rule<S: StateStore + 'static>(
     security(("bearer_auth" = [])),
     tag = "rules"
 ))]
-pub async fn disable_rule<S: StateStore + 'static>(
-    State(state): State<Arc<RuleEngineState<S>>>,
+pub async fn disable_rule(
+    State(state): State<Arc<RuleEngineState>>,
     Path(id): Path<i64>,
     headers: HeaderMap,
     Json(request): Json<RuleMutationRequest>,
@@ -878,8 +874,8 @@ async fn rules_query_response<T: serde::Serialize>(
     Ok(response)
 }
 
-async fn apply_rule_mutation<S: StateStore + 'static>(
-    state: &RuleEngineState<S>,
+async fn apply_rule_mutation(
+    state: &RuleEngineState,
     headers: &HeaderMap,
     confirmed: bool,
     mutation: RevisionedRuleMutation,
@@ -1004,9 +1000,9 @@ fn rule_mutation_error(error: aether_application::ApplicationError) -> Automatio
     security(("bearer_auth" = [])),
     tag = "rules"
 ))]
-pub async fn execute_rule_now<S: StateStore + 'static>(
+pub async fn execute_rule_now(
     Path(id): Path<i64>,
-    State(state): State<Arc<RuleEngineState<S>>>,
+    State(state): State<Arc<RuleEngineState>>,
     headers: HeaderMap,
     Json(request): Json<ExecuteRuleRequest>,
 ) -> Result<Json<SuccessResponse<serde_json::Value>>, AutomationError> {
@@ -1070,8 +1066,8 @@ pub async fn execute_rule_now<S: StateStore + 'static>(
     ),
     tag = "rules"
 ))]
-pub async fn scheduler_status<S: StateStore + 'static>(
-    State(state): State<Arc<RuleEngineState<S>>>,
+pub async fn scheduler_status(
+    State(state): State<Arc<RuleEngineState>>,
 ) -> Result<Json<SuccessResponse<serde_json::Value>>, AutomationError> {
     let status = state.scheduler.status().await;
 
@@ -1107,8 +1103,8 @@ pub async fn scheduler_status<S: StateStore + 'static>(
     security(("bearer_auth" = [])),
     tag = "rules"
 ))]
-pub async fn scheduler_reload<S: StateStore + 'static>(
-    State(state): State<Arc<RuleEngineState<S>>>,
+pub async fn scheduler_reload(
+    State(state): State<Arc<RuleEngineState>>,
     headers: HeaderMap,
     Json(request): Json<RuleMutationRequest>,
 ) -> Result<Json<SuccessResponse<serde_json::Value>>, AutomationError> {
@@ -1152,8 +1148,8 @@ pub async fn scheduler_reload<S: StateStore + 'static>(
     ),
     tag = "rules"
 ))]
-pub async fn get_rule_variables<S: StateStore + 'static>(
-    State(state): State<Arc<RuleEngineState<S>>>,
+pub async fn get_rule_variables(
+    State(state): State<Arc<RuleEngineState>>,
     Path(id): Path<i64>,
 ) -> Result<Json<SuccessResponse<serde_json::Value>>, AutomationError> {
     // Get the rule from database

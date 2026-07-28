@@ -17,7 +17,6 @@ use crate::logger::RuleLoggerManager;
 use crate::point_watch_dispatcher::MeasurementRouteBinding;
 use crate::repository;
 use crate::types::Rule;
-use aether_calc::StateStore;
 use sqlx::SqlitePool;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -221,14 +220,10 @@ impl crate::point_watch_dispatcher::RuleSubscriptionInfo for ScheduledRule {
     }
 }
 
-/// Rule Scheduler - manages periodic rule execution
-///
-/// Generic over `S: StateStore` for stateful calculation memory. Live point
-/// values always come from the injected SHM-backed [`RuleLiveState`].
-pub struct RuleScheduler<S: StateStore = aether_calc::MemoryStateStore> {
+/// Rule Scheduler - manages periodic rule execution.
+pub struct RuleScheduler {
     live_state: Arc<dyn RuleLiveState>,
-    /// Rule executor instance with configurable state store
-    executor: Arc<RuleExecutor<S>>,
+    executor: Arc<RuleExecutor>,
     /// SQLite pool for rule persistence
     pool: SqlitePool,
     /// Cached rules with their trigger configs
@@ -254,8 +249,8 @@ pub struct RuleScheduler<S: StateStore = aether_calc::MemoryStateStore> {
         Option<Arc<std::sync::Mutex<crate::point_watch_dispatcher::PointWatchDispatcher>>>,
 }
 
-impl RuleScheduler<aether_calc::MemoryStateStore> {
-    /// Create a new rule scheduler with configurable tick interval (uses MemoryStateStore)
+impl RuleScheduler {
+    /// Create a new rule scheduler with configurable tick interval (uses CalculationState)
     ///
     /// # Arguments
     /// * `live_state` - authoritative live-state reader
@@ -279,25 +274,19 @@ impl RuleScheduler<aether_calc::MemoryStateStore> {
             pw_dispatcher: None,
         }
     }
-}
 
-impl<S: StateStore + 'static> RuleScheduler<S> {
-    /// Create with custom StateStore and full SHM support
-    ///
-    /// Use this constructor with a custom local state store.
-    #[allow(clippy::too_many_arguments)]
-    pub fn with_state_store<L>(
+    /// Creates a scheduler with the host-owned action command facade.
+    pub fn with_action_commands<L>(
         live_state: Arc<L>,
         pool: SqlitePool,
         tick_ms: u64,
         log_root: PathBuf,
-        state_store: Arc<S>,
         action_commands: Option<Arc<dyn RuleActionCommandFacade>>,
     ) -> Self
     where
         L: RuleLiveState + 'static,
     {
-        let mut executor = RuleExecutor::with_state_store(Arc::clone(&live_state), state_store);
+        let mut executor = RuleExecutor::new(Arc::clone(&live_state));
         if let Some(commands) = action_commands {
             executor = executor.with_action_command_facade(commands);
         }
@@ -943,7 +932,7 @@ impl<S: StateStore + 'static> RuleScheduler<S> {
 }
 
 #[async_trait::async_trait]
-impl<S: StateStore + 'static> aether_ports::AutomationRuleExecutor for RuleScheduler<S> {
+impl aether_ports::AutomationRuleExecutor for RuleScheduler {
     async fn execute(
         &self,
         rule_id: aether_domain::RuleId,
@@ -1183,16 +1172,12 @@ mod tests {
         pool
     }
 
-    fn failing_action_scheduler(
-        pool: SqlitePool,
-        log_root: PathBuf,
-    ) -> RuleScheduler<aether_calc::MemoryStateStore> {
-        RuleScheduler::with_state_store(
+    fn failing_action_scheduler(pool: SqlitePool, log_root: PathBuf) -> RuleScheduler {
+        RuleScheduler::with_action_commands(
             Arc::new(crate::MemoryRuleLiveState::new()),
             pool,
             1,
             log_root,
-            Arc::new(aether_calc::MemoryStateStore::new()),
             Some(Arc::new(FailingActionCommands)),
         )
     }

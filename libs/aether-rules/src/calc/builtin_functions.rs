@@ -3,29 +3,23 @@
 //! Provides stateful functions: integrate, moving_avg, rate_of_change
 //! And stateless functions: scale, clamp, abs, min, max
 
-use crate::error::{CalcError, Result};
-use crate::state::{
-    IntegrateState, MovingAvgState, PeriodDeltaState, RateOfChangeState, StateStore, state_key,
+use super::error::{CalcError, Result};
+use super::state::{
+    CalculationState, IntegrateState, MovingAvgState, PeriodDeltaState, RateOfChangeState,
+    state_key,
 };
 use chrono::{Datelike, Local, TimeZone, Utc};
 use std::sync::Arc;
 use tracing::debug;
 
-/// Built-in function executor
-///
-/// Handles execution of stateful and stateless built-in functions.
-///
-/// # Type Parameters
-/// * `S` - State store implementation (defaults to MemoryStateStore)
-pub struct BuiltinFunctions<S: StateStore> {
-    /// State store for stateful functions
-    state_store: Arc<S>,
-    /// Context identifier (e.g., rule_id, instance_id)
+/// Built-in stateful and stateless rule functions.
+pub struct BuiltinFunctions {
+    state_store: Arc<CalculationState>,
     context: String,
 }
 
-impl<S: StateStore> BuiltinFunctions<S> {
-    pub fn new(state_store: Arc<S>, context: impl Into<String>) -> Self {
+impl BuiltinFunctions {
+    pub fn new(state_store: Arc<CalculationState>, context: impl Into<String>) -> Self {
         Self {
             state_store,
             context: context.into(),
@@ -202,13 +196,6 @@ impl<S: StateStore> BuiltinFunctions<S> {
         self.state_store.set(&key, &data).await?;
 
         Ok(rate)
-    }
-
-    /// Reset all states for this context
-    pub async fn reset_states(&self) -> Result<()> {
-        // This is a simplified implementation
-        // In production, you'd want to iterate and delete all keys with the context prefix
-        Ok(())
     }
 
     /// Execute period delta function
@@ -427,8 +414,8 @@ pub fn sign(value: f64) -> f64 {
 #[allow(clippy::disallowed_methods)]
 #[allow(clippy::approx_constant)]
 mod tests {
+    use super::super::state::CalculationState;
     use super::*;
-    use crate::state::MemoryStateStore;
     use std::sync::Arc;
 
     #[test]
@@ -463,7 +450,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_integrate_basic() {
-        let store = Arc::new(MemoryStateStore::new());
+        let store = Arc::new(CalculationState::new());
         let funcs = BuiltinFunctions::new(store, "test");
 
         // First call initializes, returns 0
@@ -473,7 +460,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_moving_avg_async() {
-        let store = Arc::new(MemoryStateStore::new());
+        let store = Arc::new(CalculationState::new());
         let funcs = BuiltinFunctions::new(store, "test");
 
         let _ = funcs.moving_avg("temp", 10.0, 3).await.unwrap();
@@ -484,7 +471,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_moving_avg_window_zero_returns_err() {
-        let store = Arc::new(MemoryStateStore::new());
+        let store = Arc::new(CalculationState::new());
         let funcs = BuiltinFunctions::new(store, "test");
 
         // window=0 must surface as a CalcError, not silently succeed and not panic.
@@ -494,7 +481,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_rate_of_change_first_call_returns_nan() {
-        let store = Arc::new(MemoryStateStore::new());
+        let store = Arc::new(CalculationState::new());
         let funcs = BuiltinFunctions::new(store, "test");
 
         // First call has no baseline → NaN, not 0.0. Locks the contract:
@@ -511,7 +498,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_period_delta_first_call_returns_nan() {
-        let store = Arc::new(MemoryStateStore::new());
+        let store = Arc::new(CalculationState::new());
         let funcs = BuiltinFunctions::new(store, "test");
 
         // First call captures the snapshot but cannot compute a meaningful

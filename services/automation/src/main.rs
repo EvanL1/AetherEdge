@@ -18,7 +18,6 @@ use aether_automation::{
     AutomationError, DEFAULT_TICK_MS, Result, RuleScheduler, bootstrap, routes,
     rule_routes::{RuleEngineState, create_rule_routes},
 };
-use aether_calc::MemoryStateStore;
 use aether_rules::{PointWatchDispatcher, PointWatchHint, WatchEvent};
 use aether_shm_bridge::{
     PointWatchEvent, PointWatchEventListener, SubscriptionBitmap, automation_bitmap_path_from_shm,
@@ -371,19 +370,17 @@ async fn main() -> Result<()> {
     // SHM + UDS command sink configured above.
     // Stateful calculation memory is intentionally process-local for now.
     let rule_log_root = PathBuf::from("logs/automation");
-    let state_store = Arc::new(MemoryStateStore::new());
     let rule_live_state = Arc::new(ShmRuleLiveState::from_topology(Arc::clone(
         &runtime_topology,
     )));
     let rule_action_application = Arc::new(RuleActionApplication::new(Arc::clone(
         &state.control_application,
     )));
-    let mut scheduler = RuleScheduler::with_state_store(
+    let mut scheduler = RuleScheduler::with_action_commands(
         rule_live_state,
         sqlite_pool.clone(),
         tick_ms,
         rule_log_root,
-        state_store,
         // Both scheduled and manually-triggered rule actions enter the same
         // mandatory audit + CommandDispatcher path as external control.
         Some(rule_action_application),

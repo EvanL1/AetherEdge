@@ -136,7 +136,7 @@ impl ChannelManager {
 |------|----------------------|--------------------------|
 | **执行模式** | LLM 调用 → 判断 → 工具执行 → 反馈 | 读数据 → 规则计算 → 输出 → 下发 |
 | **决策核心** | LLM（大语言模型） | 规则引擎（表达式计算） |
-| **有状态计算** | 对话上下文、记忆 | `period_delta`, `integrate`, `RtdbStateStore` |
+| **有状态计算** | 对话上下文、记忆 | `period_delta`, `integrate`, process-local calculation state |
 | **循环触发** | 消息驱动 | tick 周期驱动 |
 
 **执行循环对比**：

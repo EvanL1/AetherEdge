@@ -507,6 +507,28 @@ fn production_sources_preserve_irreducible_boundaries() {
 }
 
 #[test]
+fn rule_calculation_has_one_concrete_owner() {
+    let root = workspace_metadata().workspace_root;
+    for relative in [
+        "libs/aether-rules/src/calc.rs",
+        "libs/aether-rules/src/calc/state.rs",
+        "libs/aether-rules/src/executor.rs",
+        "libs/aether-rules/src/scheduler.rs",
+        "services/automation/src/rule_routes.rs",
+        "services/automation/src/infra/rule_mutation.rs",
+    ] {
+        let source = fs::read_to_string(root.join(relative))
+            .unwrap_or_else(|error| panic!("failed to read {relative}: {error}"));
+        for retired in ["StateStore", "aether_calc", "MemoryStateStore"] {
+            assert!(
+                !source.contains(retired),
+                "{relative} restored speculative calculation abstraction {retired}"
+            );
+        }
+    }
+}
+
+#[test]
 fn routing_library_is_storage_agnostic() {
     let root = workspace_metadata().workspace_root;
     for relative in [
