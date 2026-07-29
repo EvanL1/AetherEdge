@@ -352,7 +352,7 @@ pub fn convert_to_can_point_configs(runtime_config: &RuntimeChannelConfig) -> Ve
 // Unit Tests
 // ============================================================================
 
-#[cfg(test)]
+#[cfg(all(test, feature = "modbus"))]
 #[allow(clippy::disallowed_methods)] // Test code - unwrap is acceptable
 mod tests {
     use super::*;

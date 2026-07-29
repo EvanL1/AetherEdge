@@ -502,7 +502,7 @@ mod tests {
 
         let channels = load_test_channels(&db_path).await;
         let channel_manager = Arc::new(
-            ChannelManager::new(
+            ChannelManager::new_for_test(
                 crate::test_utils::create_test_shm_handle(),
                 crate::test_utils::create_test_routing_cache(),
             )
@@ -526,7 +526,7 @@ mod tests {
 
         let channels = load_test_channels(&db_path).await;
         let channel_manager = Arc::new(
-            ChannelManager::new(
+            ChannelManager::new_for_test(
                 crate::test_utils::create_test_shm_handle(),
                 crate::test_utils::create_test_routing_cache(),
             )
@@ -550,7 +550,7 @@ mod tests {
 
         let channels = load_test_channels(&db_path).await;
         let channel_manager = Arc::new(
-            ChannelManager::new(
+            ChannelManager::new_for_test(
                 crate::test_utils::create_test_shm_handle(),
                 crate::test_utils::create_test_routing_cache(),
             )
@@ -581,7 +581,7 @@ mod tests {
 
         let channels = load_test_channels(&db_path).await;
         let channel_manager = Arc::new(
-            ChannelManager::new(
+            ChannelManager::new_for_test(
                 crate::test_utils::create_test_shm_handle(),
                 crate::test_utils::create_test_routing_cache(),
             )
@@ -605,7 +605,7 @@ mod tests {
     #[tokio::test]
     async fn test_shutdown_with_no_channels() {
         let channel_manager = Arc::new(
-            ChannelManager::new(
+            ChannelManager::new_for_test(
                 crate::test_utils::create_test_shm_handle(),
                 crate::test_utils::create_test_routing_cache(),
             )
@@ -625,7 +625,7 @@ mod tests {
 
         let channels = load_test_channels(&db_path).await;
         let channel_manager = Arc::new(
-            ChannelManager::new(
+            ChannelManager::new_for_test(
                 crate::test_utils::create_test_shm_handle(),
                 crate::test_utils::create_test_routing_cache(),
             )
@@ -649,7 +649,7 @@ mod tests {
     #[tokio::test]
     async fn test_cleanup_task_starts() {
         let channel_manager = Arc::new(
-            ChannelManager::new(
+            ChannelManager::new_for_test(
                 crate::test_utils::create_test_shm_handle(),
                 crate::test_utils::create_test_routing_cache(),
             )
@@ -669,7 +669,7 @@ mod tests {
     #[tokio::test]
     async fn test_cleanup_task_cancellation() {
         let channel_manager = Arc::new(
-            ChannelManager::new(
+            ChannelManager::new_for_test(
                 crate::test_utils::create_test_shm_handle(),
                 crate::test_utils::create_test_routing_cache(),
             )
@@ -693,7 +693,7 @@ mod tests {
 
         let channels = load_test_channels(&db_path).await;
         let channel_manager = Arc::new(
-            ChannelManager::new(
+            ChannelManager::new_for_test(
                 crate::test_utils::create_test_shm_handle(),
                 crate::test_utils::create_test_routing_cache(),
             )
@@ -728,7 +728,7 @@ mod tests {
 
         let channels = load_test_channels(&db_path).await;
         let channel_manager = Arc::new(
-            ChannelManager::new(
+            ChannelManager::new_for_test(
                 crate::test_utils::create_test_shm_handle(),
                 crate::test_utils::create_test_routing_cache(),
             )
@@ -751,7 +751,7 @@ mod tests {
 
         let channels = load_test_channels(&db_path).await;
         let channel_manager = Arc::new(
-            ChannelManager::new(
+            ChannelManager::new_for_test(
                 crate::test_utils::create_test_shm_handle(),
                 crate::test_utils::create_test_routing_cache(),
             )
@@ -787,7 +787,7 @@ mod tests {
 
         let channels = load_test_channels(&db_path).await;
         let channel_manager = Arc::new(
-            ChannelManager::new(
+            ChannelManager::new_for_test(
                 crate::test_utils::create_test_shm_handle(),
                 crate::test_utils::create_test_routing_cache(),
             )

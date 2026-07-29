@@ -359,12 +359,18 @@ async fn main() -> anyhow::Result<()> {
         })
     };
 
+    // Statically compose the exact protocol factories linked by this build.
+    // Adding a protocol requires registration plus a new binary build; no
+    // runtime plugin discovery or dynamic loading is permitted.
+    let protocol_registry = aether_io::core::channels::compiled_protocol_registry()?;
+
     // Create channel manager over the mandatory SHM writer.
     // Lock-free architecture - no RwLock wrapper needed
     let channel_manager = ChannelManager::with_shared_memory(
         routing_cache,
         sqlite_pool.clone(),
         Arc::clone(&shm_handle),
+        protocol_registry,
         Some(Arc::clone(&channel_health_writer)),
     )?;
 

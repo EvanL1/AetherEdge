@@ -195,6 +195,7 @@ async fn create_test_app_with_pool(pool: sqlx::SqlitePool) -> Result<axum::Route
     let manager = Arc::new(aether_io::core::channels::ChannelManager::new(
         support::create_test_shm_handle(),
         Arc::new(aether_routing::ChannelRoutingCache::new()),
+        aether_io::core::channels::compiled_protocol_registry()?,
     )?);
     let adapter = Arc::new(aether_io::SqliteChannelMutator::new(
         pool.clone(),

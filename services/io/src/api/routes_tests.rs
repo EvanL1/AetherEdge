@@ -317,7 +317,7 @@ async fn recording_channel_applications_router(
 ) -> Router {
     let pool = create_test_sqlite_pool().await;
     let channel_manager = Arc::new(
-        ChannelManager::new(
+        ChannelManager::new_for_test(
             crate::test_utils::create_test_shm_handle(),
             crate::test_utils::create_test_routing_cache(),
         )
@@ -658,7 +658,7 @@ fn assert_json_field(json: &serde_json::Value, path: &str, expected: serde_json:
 #[tokio::test]
 async fn test_health_check_returns_200_with_initialized_shm() {
     let channel_manager = Arc::new(
-        ChannelManager::new(
+        ChannelManager::new_for_test(
             crate::test_utils::create_test_shm_handle(),
             crate::test_utils::create_test_routing_cache(),
         )
@@ -683,7 +683,7 @@ async fn test_health_check_returns_200_with_initialized_shm() {
 #[tokio::test]
 async fn test_get_all_channels_returns_200() {
     let channel_manager = Arc::new(
-        ChannelManager::new(
+        ChannelManager::new_for_test(
             crate::test_utils::create_test_shm_handle(),
             crate::test_utils::create_test_routing_cache(),
         )
@@ -723,7 +723,7 @@ async fn test_get_all_channels_with_filters() {
 
     // Build the protocol factory without external infrastructure.
     let channel_manager = Arc::new(
-        ChannelManager::new(
+        ChannelManager::new_for_test(
             crate::test_utils::create_test_shm_handle(),
             crate::test_utils::create_test_routing_cache(),
         )
@@ -761,7 +761,7 @@ async fn test_get_all_channels_with_filters() {
 #[tokio::test]
 async fn test_get_channel_status_invalid_id_returns_400() {
     let channel_manager = Arc::new(
-        ChannelManager::new(
+        ChannelManager::new_for_test(
             crate::test_utils::create_test_shm_handle(),
             crate::test_utils::create_test_routing_cache(),
         )
@@ -782,7 +782,7 @@ async fn test_get_channel_status_invalid_id_returns_400() {
 #[tokio::test]
 async fn test_get_channel_status_not_found_returns_404() {
     let channel_manager = Arc::new(
-        ChannelManager::new(
+        ChannelManager::new_for_test(
             crate::test_utils::create_test_shm_handle(),
             crate::test_utils::create_test_routing_cache(),
         )
@@ -803,7 +803,7 @@ async fn test_get_channel_status_not_found_returns_404() {
 #[tokio::test]
 async fn test_get_point_info_handler_returns_200() {
     let channel_manager = Arc::new(
-        ChannelManager::new(
+        ChannelManager::new_for_test(
             crate::test_utils::create_test_shm_handle(),
             crate::test_utils::create_test_routing_cache(),
         )
@@ -828,7 +828,7 @@ async fn test_get_point_info_handler_returns_200() {
 #[tokio::test]
 async fn test_create_channel_returns_description() {
     let channel_manager = Arc::new(
-        ChannelManager::new(
+        ChannelManager::new_for_test(
             crate::test_utils::create_test_shm_handle(),
             crate::test_utils::create_test_routing_cache(),
         )
@@ -864,7 +864,7 @@ async fn test_create_channel_returns_description() {
 #[tokio::test]
 async fn test_update_channel_returns_description() {
     let channel_manager = Arc::new(
-        ChannelManager::new(
+        ChannelManager::new_for_test(
             crate::test_utils::create_test_shm_handle(),
             crate::test_utils::create_test_routing_cache(),
         )
@@ -924,7 +924,7 @@ async fn test_update_channel_returns_description() {
 #[tokio::test]
 async fn test_enable_disable_preserves_description() {
     let channel_manager = Arc::new(
-        ChannelManager::new(
+        ChannelManager::new_for_test(
             crate::test_utils::create_test_shm_handle(),
             crate::test_utils::create_test_routing_cache(),
         )
@@ -978,7 +978,7 @@ async fn test_enable_disable_preserves_description() {
 #[tokio::test]
 async fn test_grouped_points_unfiltered_and_filtered() {
     let channel_manager = Arc::new(
-        ChannelManager::new(
+        ChannelManager::new_for_test(
             crate::test_utils::create_test_shm_handle(),
             crate::test_utils::create_test_routing_cache(),
         )
@@ -1059,7 +1059,7 @@ async fn test_grouped_points_unfiltered_and_filtered() {
 #[tokio::test]
 async fn test_grouped_mappings_unfiltered() {
     let channel_manager = Arc::new(
-        ChannelManager::new(
+        ChannelManager::new_for_test(
             crate::test_utils::create_test_shm_handle(),
             crate::test_utils::create_test_routing_cache(),
         )
@@ -1113,7 +1113,7 @@ async fn test_grouped_mappings_unfiltered() {
 #[tokio::test]
 async fn test_channel_detail_returns_description() {
     let channel_manager = Arc::new(
-        ChannelManager::new(
+        ChannelManager::new_for_test(
             crate::test_utils::create_test_shm_handle(),
             crate::test_utils::create_test_routing_cache(),
         )
@@ -1152,7 +1152,7 @@ async fn test_channel_detail_returns_description() {
 #[tokio::test]
 async fn test_delete_channel_ok() {
     let channel_manager = Arc::new(
-        ChannelManager::new(
+        ChannelManager::new_for_test(
             crate::test_utils::create_test_shm_handle(),
             crate::test_utils::create_test_routing_cache(),
         )
@@ -1186,7 +1186,7 @@ async fn test_delete_channel_ok() {
 #[tokio::test]
 async fn test_get_point_info_invalid_type_400() {
     let channel_manager = Arc::new(
-        ChannelManager::new(
+        ChannelManager::new_for_test(
             crate::test_utils::create_test_shm_handle(),
             crate::test_utils::create_test_routing_cache(),
         )
@@ -1204,7 +1204,7 @@ async fn test_get_point_info_invalid_type_400() {
 #[tokio::test]
 async fn test_grouped_points_filter_c_and_a() {
     let channel_manager = Arc::new(
-        ChannelManager::new(
+        ChannelManager::new_for_test(
             crate::test_utils::create_test_shm_handle(),
             crate::test_utils::create_test_routing_cache(),
         )
@@ -1255,7 +1255,7 @@ async fn test_grouped_points_filter_c_and_a() {
 #[tokio::test]
 async fn test_get_channel_status_valid_id() {
     let channel_manager = Arc::new(
-        ChannelManager::new(
+        ChannelManager::new_for_test(
             crate::test_utils::create_test_shm_handle(),
             crate::test_utils::create_test_routing_cache(),
         )
@@ -1284,7 +1284,7 @@ async fn test_get_channel_status_valid_id() {
 #[tokio::test]
 async fn test_api_routes_with_shm() {
     let channel_manager = Arc::new(
-        ChannelManager::new(
+        ChannelManager::new_for_test(
             crate::test_utils::create_test_shm_handle(),
             crate::test_utils::create_test_routing_cache(),
         )
@@ -1307,6 +1307,7 @@ async fn create_channel_without_enabled_stays_disabled_and_has_no_runtime() {
             crate::test_utils::create_test_routing_cache(),
             pool.clone(),
             crate::test_utils::create_test_shm_handle(),
+            crate::core::channels::compiled_protocol_registry().unwrap(),
             None,
         )
         .unwrap(),
@@ -1348,6 +1349,7 @@ async fn create_enabled_physical_channel_reports_degraded_when_device_is_unavail
             crate::test_utils::create_test_routing_cache(),
             pool.clone(),
             crate::test_utils::create_test_shm_handle(),
+            crate::core::channels::compiled_protocol_registry().unwrap(),
             None,
         )
         .unwrap(),
@@ -1386,7 +1388,7 @@ async fn create_enabled_physical_channel_reports_degraded_when_device_is_unavail
 #[tokio::test]
 async fn test_create_channel_handler_returns_response() {
     let channel_manager = Arc::new(
-        ChannelManager::new(
+        ChannelManager::new_for_test(
             crate::test_utils::create_test_shm_handle(),
             crate::test_utils::create_test_routing_cache(),
         )
@@ -1427,7 +1429,7 @@ async fn test_create_channel_handler_returns_response() {
 #[tokio::test]
 async fn test_get_channel_detail_handler() {
     let channel_manager = Arc::new(
-        ChannelManager::new(
+        ChannelManager::new_for_test(
             crate::test_utils::create_test_shm_handle(),
             crate::test_utils::create_test_routing_cache(),
         )
@@ -1449,7 +1451,7 @@ async fn test_get_channel_detail_handler() {
 #[tokio::test]
 async fn test_update_channel_handler() {
     let channel_manager = Arc::new(
-        ChannelManager::new(
+        ChannelManager::new_for_test(
             crate::test_utils::create_test_shm_handle(),
             crate::test_utils::create_test_routing_cache(),
         )
@@ -1488,7 +1490,7 @@ async fn test_update_channel_handler() {
 #[tokio::test]
 async fn test_delete_channel_handler() {
     let channel_manager = Arc::new(
-        ChannelManager::new(
+        ChannelManager::new_for_test(
             crate::test_utils::create_test_shm_handle(),
             crate::test_utils::create_test_routing_cache(),
         )
@@ -1516,7 +1518,7 @@ async fn test_delete_channel_handler() {
 #[tokio::test]
 async fn test_get_channel_points_handler() {
     let channel_manager = Arc::new(
-        ChannelManager::new(
+        ChannelManager::new_for_test(
             crate::test_utils::create_test_shm_handle(),
             crate::test_utils::create_test_routing_cache(),
         )
@@ -1538,7 +1540,7 @@ async fn test_get_channel_points_handler() {
 #[tokio::test]
 async fn test_get_channel_points_with_type_filter() {
     let channel_manager = Arc::new(
-        ChannelManager::new(
+        ChannelManager::new_for_test(
             crate::test_utils::create_test_shm_handle(),
             crate::test_utils::create_test_routing_cache(),
         )
@@ -1560,7 +1562,7 @@ async fn test_get_channel_points_with_type_filter() {
 #[tokio::test]
 async fn test_get_channel_mappings_handler() {
     let channel_manager = Arc::new(
-        ChannelManager::new(
+        ChannelManager::new_for_test(
             crate::test_utils::create_test_shm_handle(),
             crate::test_utils::create_test_routing_cache(),
         )
@@ -1594,7 +1596,7 @@ async fn test_get_channel_mappings_handler() {
 #[tokio::test]
 async fn test_set_channel_enabled_handler() {
     let channel_manager = Arc::new(
-        ChannelManager::new(
+        ChannelManager::new_for_test(
             crate::test_utils::create_test_shm_handle(),
             crate::test_utils::create_test_routing_cache(),
         )
@@ -1623,7 +1625,7 @@ async fn test_set_channel_enabled_handler() {
 #[tokio::test]
 async fn test_set_channel_disabled() {
     let channel_manager = Arc::new(
-        ChannelManager::new(
+        ChannelManager::new_for_test(
             crate::test_utils::create_test_shm_handle(),
             crate::test_utils::create_test_routing_cache(),
         )
@@ -1656,7 +1658,7 @@ async fn test_set_channel_disabled() {
 #[tokio::test]
 async fn test_get_all_channels_with_pagination() {
     let channel_manager = Arc::new(
-        ChannelManager::new(
+        ChannelManager::new_for_test(
             crate::test_utils::create_test_shm_handle(),
             crate::test_utils::create_test_routing_cache(),
         )
@@ -1677,7 +1679,7 @@ async fn test_get_all_channels_with_pagination() {
 #[tokio::test]
 async fn test_get_all_channels_with_filter() {
     let channel_manager = Arc::new(
-        ChannelManager::new(
+        ChannelManager::new_for_test(
             crate::test_utils::create_test_shm_handle(),
             crate::test_utils::create_test_routing_cache(),
         )
@@ -1698,7 +1700,7 @@ async fn test_get_all_channels_with_filter() {
 #[tokio::test]
 async fn test_get_all_channels_large_page_size() {
     let channel_manager = Arc::new(
-        ChannelManager::new(
+        ChannelManager::new_for_test(
             crate::test_utils::create_test_shm_handle(),
             crate::test_utils::create_test_routing_cache(),
         )
@@ -1727,7 +1729,7 @@ async fn test_get_all_channels_large_page_size() {
 #[tokio::test]
 async fn test_create_channel_full_closed_loop() {
     let channel_manager = Arc::new(
-        ChannelManager::new(
+        ChannelManager::new_for_test(
             crate::test_utils::create_test_shm_handle(),
             crate::test_utils::create_test_routing_cache(),
         )
@@ -1797,7 +1799,7 @@ async fn test_create_channel_full_closed_loop() {
 #[tokio::test]
 async fn test_update_channel_full_closed_loop() {
     let channel_manager = Arc::new(
-        ChannelManager::new(
+        ChannelManager::new_for_test(
             crate::test_utils::create_test_shm_handle(),
             crate::test_utils::create_test_routing_cache(),
         )
@@ -1872,7 +1874,7 @@ async fn test_update_channel_full_closed_loop() {
 #[tokio::test]
 async fn test_delete_channel_closed_loop() {
     let channel_manager = Arc::new(
-        ChannelManager::new(
+        ChannelManager::new_for_test(
             crate::test_utils::create_test_shm_handle(),
             crate::test_utils::create_test_routing_cache(),
         )
@@ -1947,7 +1949,7 @@ async fn test_delete_channel_closed_loop() {
 #[tokio::test]
 async fn test_get_point_mapping_with_type_telemetry_success() {
     let channel_manager = Arc::new(
-        ChannelManager::new(
+        ChannelManager::new_for_test(
             crate::test_utils::create_test_shm_handle(),
             crate::test_utils::create_test_routing_cache(),
         )
@@ -1997,7 +1999,7 @@ async fn test_get_point_mapping_with_type_telemetry_success() {
 #[tokio::test]
 async fn test_get_point_mapping_with_type_signal_success() {
     let channel_manager = Arc::new(
-        ChannelManager::new(
+        ChannelManager::new_for_test(
             crate::test_utils::create_test_shm_handle(),
             crate::test_utils::create_test_routing_cache(),
         )
@@ -2042,7 +2044,7 @@ async fn test_get_point_mapping_with_type_signal_success() {
 #[tokio::test]
 async fn test_get_point_mapping_with_type_control_success() {
     let channel_manager = Arc::new(
-        ChannelManager::new(
+        ChannelManager::new_for_test(
             crate::test_utils::create_test_shm_handle(),
             crate::test_utils::create_test_routing_cache(),
         )
@@ -2087,7 +2089,7 @@ async fn test_get_point_mapping_with_type_control_success() {
 #[tokio::test]
 async fn test_get_point_mapping_with_type_adjustment_success() {
     let channel_manager = Arc::new(
-        ChannelManager::new(
+        ChannelManager::new_for_test(
             crate::test_utils::create_test_shm_handle(),
             crate::test_utils::create_test_routing_cache(),
         )
@@ -2132,7 +2134,7 @@ async fn test_get_point_mapping_with_type_adjustment_success() {
 #[tokio::test]
 async fn test_get_point_mapping_with_invalid_type_returns_400() {
     let channel_manager = Arc::new(
-        ChannelManager::new(
+        ChannelManager::new_for_test(
             crate::test_utils::create_test_shm_handle(),
             crate::test_utils::create_test_routing_cache(),
         )
@@ -2173,7 +2175,7 @@ async fn test_get_point_mapping_with_invalid_type_returns_400() {
 #[tokio::test]
 async fn test_get_point_mapping_channel_not_found_returns_404() {
     let channel_manager = Arc::new(
-        ChannelManager::new(
+        ChannelManager::new_for_test(
             crate::test_utils::create_test_shm_handle(),
             crate::test_utils::create_test_routing_cache(),
         )
@@ -2209,7 +2211,7 @@ async fn test_get_point_mapping_channel_not_found_returns_404() {
 #[tokio::test]
 async fn test_get_point_mapping_point_not_found_returns_404() {
     let channel_manager = Arc::new(
-        ChannelManager::new(
+        ChannelManager::new_for_test(
             crate::test_utils::create_test_shm_handle(),
             crate::test_utils::create_test_routing_cache(),
         )
@@ -2252,7 +2254,7 @@ async fn test_get_point_mapping_point_not_found_returns_404() {
 #[tokio::test]
 async fn test_get_point_mapping_reflects_database_changes() {
     let channel_manager = Arc::new(
-        ChannelManager::new(
+        ChannelManager::new_for_test(
             crate::test_utils::create_test_shm_handle(),
             crate::test_utils::create_test_routing_cache(),
         )
@@ -2350,7 +2352,7 @@ async fn test_get_point_mapping_reflects_database_changes() {
 #[tokio::test]
 async fn test_get_point_mapping_null_mappings_returns_empty_object() {
     let channel_manager = Arc::new(
-        ChannelManager::new(
+        ChannelManager::new_for_test(
             crate::test_utils::create_test_shm_handle(),
             crate::test_utils::create_test_routing_cache(),
         )
@@ -2395,7 +2397,7 @@ async fn test_get_point_mapping_null_mappings_returns_empty_object() {
 #[tokio::test]
 async fn test_get_point_mapping_type_case_insensitive() {
     let channel_manager = Arc::new(
-        ChannelManager::new(
+        ChannelManager::new_for_test(
             crate::test_utils::create_test_shm_handle(),
             crate::test_utils::create_test_routing_cache(),
         )

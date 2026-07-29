@@ -22,8 +22,10 @@ duplicated the canonical channel and point queries.
 ## Decision
 
 1. Every MQTT or HTTP feature selected by a distribution has a concrete
-   `ChannelRuntime` construction branch. Invalid broker, subscription, URL, or
-   timing parameters fail before desired state commits.
+   `ChannelRuntime` factory. Invalid broker, subscription, URL, or timing
+   parameters fail before desired state commits. ADR-0042 later replaced
+   per-protocol `ChannelManager` branches with one statically composed factory
+   registry.
 2. MQTT is event-driven and HTTP is outbound polling only. Both receive a JSON
    mapper compiled from the same `RuntimeChannelConfig` generation as the rest
    of the channel; adapters do not query SQLite.
@@ -50,7 +52,8 @@ duplicated the canonical channel and point queries.
 
 ## Verification
 
-- All-feature IO tests construct concrete MQTT and HTTP runtimes.
+- All-feature IO tests construct concrete MQTT and HTTP runtimes through the
+  static protocol registry.
 - Validation tests reject inert MQTT and HTTP configurations before persistence.
 - GPIO tests cover both reviewed backend selections.
 - OpenAPI tests reject retired aliases and preserve canonical queries.

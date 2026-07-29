@@ -1,5 +1,6 @@
 use std::collections::BTreeSet;
 
+use aether_io::core::channels::compiled_protocol_registry;
 use aether_runtime_catalog::KernelRuntimeManifest;
 
 fn compiled_io_protocol_features() -> Vec<&'static str> {
@@ -44,6 +45,14 @@ fn manifest_protocols_match_the_io_binary_feature_set() {
         .protocols()
         .map(String::as_str)
         .collect::<BTreeSet<_>>();
+    let registered = compiled_protocol_registry()
+        .expect("compiled protocol registry")
+        .protocol_ids()
+        .into_iter()
+        // The v1 manifest retains the deployment capability spelling for GPIO.
+        .map(|protocol| if protocol == "gpio" { "di_do" } else { protocol })
+        .collect::<BTreeSet<_>>();
+    assert_eq!(protocols, registered);
 
     assert_eq!(protocols.contains("mqtt"), cfg!(feature = "mqtt"));
     assert_eq!(protocols.contains("http"), cfg!(feature = "http"));

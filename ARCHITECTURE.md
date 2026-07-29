@@ -55,6 +55,11 @@ plane, and typed SHM port adapters. In particular:
   create/update/delete/enable/disable cross the same confirmed, audited
   `io.channel.manage` application boundary from HTTP, CLI, and MCP. SHM remains
   authoritative for live point values.
+- IO resolves every physical protocol through one statically composed
+  `ProtocolAdapterFactory` registry and one object-safe `ChannelRuntime`
+  lifecycle. Adding a protocol requires explicit Rust registration, manifest
+  alignment, and a rebuilt binary; the running service loads no dynamic
+  protocol plugins. Factories receive no SQLite or SHM authority.
 - Redis is absent from the kernel composition and the workspace ships no Redis
   client or mirror implementation. PostgreSQL is not a default dependency; the
   History service retains an explicitly selected migration backend while its

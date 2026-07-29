@@ -8,32 +8,76 @@
 #[cfg(any(
     feature = "mqtt",
     feature = "http",
+    feature = "aether_485",
     all(target_os = "linux", feature = "gpio")
 ))]
 use std::collections::HashMap;
-#[cfg(any(feature = "mqtt", feature = "http"))]
 use std::sync::Arc;
 
 #[cfg(any(
     feature = "mqtt",
     feature = "http",
+    feature = "aether_485",
     all(target_os = "linux", feature = "gpio")
 ))]
 use serde::de::DeserializeOwned;
 
-use crate::core::config::ChannelConfig;
-#[cfg(any(
-    feature = "mqtt",
-    feature = "http",
-    all(target_os = "linux", feature = "gpio")
-))]
-use crate::protocols::core::error::GatewayError;
-use crate::protocols::core::error::Result;
 #[cfg(any(
     feature = "modbus",
     feature = "mqtt",
     feature = "http",
     feature = "aether_485",
+    feature = "iec61850",
+    all(target_os = "linux", feature = "can"),
+    all(target_os = "linux", feature = "gpio")
+))]
+use common::io_config::MAX_CHANNEL_TIMING_MS;
+
+#[cfg(any(
+    feature = "modbus",
+    feature = "mqtt",
+    feature = "http",
+    feature = "aether_485",
+    feature = "iec61850",
+    all(target_os = "linux", feature = "can"),
+    all(target_os = "linux", feature = "gpio")
+))]
+use crate::core::channels::protocol_registry::BuiltProtocolRuntime;
+use crate::core::channels::protocol_registry::{ProtocolAdapterFactory, ProtocolRegistry};
+#[cfg(any(
+    feature = "modbus",
+    feature = "mqtt",
+    feature = "http",
+    feature = "aether_485",
+    feature = "iec61850",
+    all(target_os = "linux", feature = "can"),
+    all(target_os = "linux", feature = "gpio")
+))]
+use crate::core::config::{ChannelConfig, RuntimeChannelConfig};
+#[cfg(any(
+    feature = "modbus",
+    feature = "mqtt",
+    feature = "http",
+    feature = "aether_485",
+    feature = "iec61850",
+    all(target_os = "linux", feature = "can"),
+    all(target_os = "linux", feature = "gpio")
+))]
+use crate::error::IoError;
+use crate::error::Result;
+#[cfg(any(
+    feature = "mqtt",
+    feature = "http",
+    feature = "aether_485",
+    all(target_os = "linux", feature = "gpio")
+))]
+use crate::protocols::core::error::GatewayError;
+#[cfg(any(
+    feature = "modbus",
+    feature = "mqtt",
+    feature = "http",
+    feature = "aether_485",
+    feature = "iec61850",
     all(target_os = "linux", feature = "can"),
     all(target_os = "linux", feature = "gpio")
 ))]
@@ -52,17 +96,9 @@ use crate::protocols::adapters::gpio::{GpioChannel, GpioChannelParamsConfig, Gpi
 #[cfg(all(feature = "can", target_os = "linux"))]
 use crate::protocols::adapters::can::{CanClient, CanConfig, CanPoint};
 
-#[cfg(any(
-    feature = "aether_485",
-    feature = "mqtt",
-    feature = "http",
-    all(target_os = "linux", feature = "gpio")
-))]
-use crate::core::config::RuntimeChannelConfig;
-
 #[cfg(feature = "aether_485")]
 use crate::protocols::adapters::aether_485::{
-    Aether485Channel, Aether485ChannelConfig, Aether485PointMapping, PollTarget,
+    Aether485Channel, Aether485ParamsConfig, Aether485PointMapping, PollTarget,
 };
 
 #[cfg(feature = "http")]
@@ -75,11 +111,12 @@ use crate::protocols::core::json_mapper::{JsonMapper, JsonMappingConfig};
 #[cfg(any(
     feature = "mqtt",
     feature = "http",
+    feature = "aether_485",
     all(target_os = "linux", feature = "gpio")
 ))]
 fn parse_parameters<T: DeserializeOwned>(
     parameters: &HashMap<String, serde_json::Value>,
-) -> Result<T> {
+) -> crate::protocols::core::error::Result<T> {
     serde_json::from_value(serde_json::to_value(parameters).map_err(|error| {
         GatewayError::Config(format!("Failed to encode channel parameters: {error}"))
     })?)
@@ -87,7 +124,9 @@ fn parse_parameters<T: DeserializeOwned>(
 }
 
 #[cfg(feature = "mqtt")]
-fn mqtt_parameters(parameters: &HashMap<String, serde_json::Value>) -> Result<MqttParamsConfig> {
+fn mqtt_parameters(
+    parameters: &HashMap<String, serde_json::Value>,
+) -> crate::protocols::core::error::Result<MqttParamsConfig> {
     for retired in [
         "connect_timeout_ms",
         "max_reconnect_attempts",
@@ -104,28 +143,104 @@ fn mqtt_parameters(parameters: &HashMap<String, serde_json::Value>) -> Result<Mq
     Ok(config)
 }
 
-/// Validate feature-selected protocol parameters before desired state commits.
-pub(crate) fn validate_protocol_parameters(config: &ChannelConfig) -> Result<()> {
-    match crate::utils::normalize_protocol_name(config.protocol()).as_ref() {
-        #[cfg(feature = "mqtt")]
-        "mqtt" => mqtt_parameters(&config.parameters).map(|_| ()),
-        #[cfg(feature = "http")]
-        "http" => parse_parameters::<HttpParamsConfig>(&config.parameters)?.validate(),
-        #[cfg(all(target_os = "linux", feature = "gpio"))]
-        "gpio" | "di_do" | "dido" => {
-            parse_parameters::<GpioChannelParamsConfig>(&config.parameters)?
-                .to_config()
-                .map(|_| ())
-        },
-        _ => Ok(()),
+#[cfg(feature = "modbus")]
+fn required_string_parameter<'a>(
+    parameters: &'a std::collections::HashMap<String, serde_json::Value>,
+    parameter: &str,
+) -> Result<&'a str> {
+    parameters
+        .get(parameter)
+        .and_then(serde_json::Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| IoError::config(format!("'{parameter}' must be a non-empty string")))
+}
+
+#[cfg(feature = "modbus")]
+fn required_u16_parameter(
+    parameters: &std::collections::HashMap<String, serde_json::Value>,
+    parameter: &str,
+) -> Result<u16> {
+    let value = parameters
+        .get(parameter)
+        .and_then(serde_json::Value::as_u64)
+        .ok_or_else(|| IoError::config(format!("'{parameter}' must be a positive integer")))?;
+    let value = u16::try_from(value)
+        .map_err(|_| IoError::config(format!("'{parameter}' exceeds the u16 range")))?;
+    if value == 0 {
+        return Err(IoError::config(format!(
+            "'{parameter}' must be greater than zero"
+        )));
     }
+    Ok(value)
+}
+
+#[cfg(feature = "modbus")]
+fn required_u32_parameter(
+    parameters: &std::collections::HashMap<String, serde_json::Value>,
+    parameter: &str,
+) -> Result<u32> {
+    let value = parameters
+        .get(parameter)
+        .and_then(serde_json::Value::as_u64)
+        .ok_or_else(|| IoError::config(format!("'{parameter}' must be a positive integer")))?;
+    let value = u32::try_from(value)
+        .map_err(|_| IoError::config(format!("'{parameter}' exceeds the u32 range")))?;
+    if value == 0 {
+        return Err(IoError::config(format!(
+            "'{parameter}' must be greater than zero"
+        )));
+    }
+    Ok(value)
+}
+
+#[cfg(any(
+    feature = "modbus",
+    feature = "mqtt",
+    feature = "aether_485",
+    feature = "iec61850",
+    all(target_os = "linux", feature = "can"),
+    all(target_os = "linux", feature = "gpio")
+))]
+fn timing_parameter(
+    parameters: &std::collections::HashMap<String, serde_json::Value>,
+    parameter: &str,
+) -> Result<Option<u64>> {
+    let Some(value) = parameters.get(parameter) else {
+        return Ok(None);
+    };
+    let value = value.as_u64().ok_or_else(|| {
+        IoError::config(format!(
+            "'{parameter}' must be a positive integer number of milliseconds"
+        ))
+    })?;
+    if !(1..=MAX_CHANNEL_TIMING_MS).contains(&value) {
+        return Err(IoError::config(format!(
+            "'{parameter}' must be between 1 and {MAX_CHANNEL_TIMING_MS} milliseconds"
+        )));
+    }
+    Ok(Some(value))
+}
+
+#[cfg(any(
+    feature = "modbus",
+    feature = "mqtt",
+    feature = "aether_485",
+    feature = "iec61850",
+    all(target_os = "linux", feature = "can"),
+    all(target_os = "linux", feature = "gpio")
+))]
+fn poll_interval_ms(
+    parameters: &std::collections::HashMap<String, serde_json::Value>,
+    default: u64,
+) -> Result<u64> {
+    Ok(timing_parameter(parameters, "poll_interval_ms")?.unwrap_or(default))
 }
 
 #[cfg(any(feature = "mqtt", feature = "http"))]
 fn compile_json_mapper(
     runtime_config: &RuntimeChannelConfig,
     mapping_config: &JsonMappingConfig,
-) -> Result<Arc<JsonMapper>> {
+) -> crate::protocols::core::error::Result<Arc<JsonMapper>> {
     use common::PointType;
 
     let rows = runtime_config
@@ -181,7 +296,7 @@ fn compile_json_mapper(
 /// * `point_configs` - Point configurations with Modbus addresses
 /// * `io_timeout_ms` - Optional I/O timeout in milliseconds (default: 3000ms)
 #[cfg(feature = "modbus")]
-pub fn create_modbus_channel(
+fn create_modbus_channel(
     channel_id: u32,
     host: &str,
     port: u16,
@@ -220,7 +335,7 @@ pub fn create_modbus_channel(
 /// * `point_configs` - Point configurations with Modbus addresses
 /// * `io_timeout_ms` - Optional I/O timeout in milliseconds (default: 3000ms)
 #[cfg(feature = "modbus")]
-pub fn create_modbus_rtu_channel(
+fn create_modbus_rtu_channel(
     channel_id: u32,
     device: &str,
     baud_rate: u32,
@@ -262,7 +377,7 @@ pub fn create_modbus_rtu_channel(
 /// * `channel_id` - Unique channel identifier
 /// * `runtime_config` - Channel configuration containing GPIO pin mappings
 #[cfg(all(target_os = "linux", feature = "gpio"))]
-pub fn create_gpio_channel(
+fn create_gpio_channel(
     channel_id: u32,
     runtime_config: &RuntimeChannelConfig,
 ) -> Result<Box<dyn ChannelRuntime>> {
@@ -314,7 +429,7 @@ pub fn create_gpio_channel(
 /// This function creates a CanClient with the specified
 /// CAN interface and point configurations.
 #[cfg(all(feature = "can", target_os = "linux"))]
-pub fn create_can_channel(
+fn create_can_channel(
     channel_id: u32,
     can_interface: &str,
     points: Vec<CanPoint>,
@@ -344,7 +459,7 @@ pub fn create_can_channel(
 /// Create an event-driven MQTT acquisition channel from reviewed parameters
 /// and the same physical topology generation used by the channel runtime.
 #[cfg(feature = "mqtt")]
-pub fn create_mqtt_channel(
+fn create_mqtt_channel(
     channel_id: u32,
     channel_name: &str,
     runtime_config: &RuntimeChannelConfig,
@@ -361,7 +476,7 @@ pub fn create_mqtt_channel(
 
 /// Create an outbound HTTP polling channel and return its polling interval.
 #[cfg(feature = "http")]
-pub fn create_http_channel(
+fn create_http_channel(
     channel_id: u32,
     channel_name: &str,
     runtime_config: &RuntimeChannelConfig,
@@ -390,45 +505,15 @@ pub fn create_http_channel(
 /// Parses per-point `protocol_mappings` JSON (`{"device_id": N}`) to build
 /// the list of poll targets, then assembles the serial channel.
 #[cfg(feature = "aether_485")]
-pub fn create_aether_485_channel(
+fn create_aether_485_channel(
     channel_id: u32,
     channel_name: &str,
-    params: &std::collections::HashMap<String, serde_json::Value>,
     runtime_config: &RuntimeChannelConfig,
-) -> Box<dyn ChannelRuntime> {
+) -> Result<Box<dyn ChannelRuntime>> {
     use common::PointType;
-    use std::time::Duration;
 
-    let device = params
-        .get("device")
-        .and_then(|v| v.as_str())
-        .unwrap_or("/dev/ttyAP0");
-    let baud_rate = params
-        .get("baud_rate")
-        .and_then(|v| v.as_u64())
-        .map(|n| n as u32)
-        .unwrap_or(115_200);
-    let timeout_ms = params
-        .get("timeout_ms")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(1000);
-    let retry_count = params
-        .get("retry_count")
-        .and_then(|v| v.as_u64())
-        .map(|n| n as u32)
-        .unwrap_or(2);
-    let frame_delay_ms = params
-        .get("frame_delay_ms")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(50);
-
-    let config = Aether485ChannelConfig {
-        device: device.to_string(),
-        baud_rate,
-        io_timeout: Duration::from_millis(timeout_ms),
-        retry_count,
-        frame_delay: Duration::from_millis(frame_delay_ms),
-    };
+    let params = parse_parameters::<Aether485ParamsConfig>(&runtime_config.base.parameters)?;
+    let config = params.to_channel_config();
 
     let mut targets = Vec::new();
 
@@ -476,7 +561,361 @@ pub fn create_aether_485_channel(
         channel_name.to_string()
     };
 
-    Box::new(Aether485Channel::new(config, channel_id, name, targets))
+    Ok(Box::new(Aether485Channel::new(
+        config, channel_id, name, targets,
+    )))
+}
+
+// ============================================================================
+// Statically linked protocol factory composition
+// ============================================================================
+
+#[cfg(feature = "modbus")]
+struct ModbusTcpFactory;
+
+#[cfg(feature = "modbus")]
+impl ProtocolAdapterFactory for ModbusTcpFactory {
+    fn protocol_id(&self) -> &'static str {
+        "modbus_tcp"
+    }
+
+    fn validate(&self, config: &ChannelConfig) -> Result<()> {
+        required_string_parameter(&config.parameters, "host")?;
+        required_u16_parameter(&config.parameters, "port")?;
+        timing_parameter(&config.parameters, "read_timeout_ms")?;
+        poll_interval_ms(&config.parameters, 1_000)?;
+        Ok(())
+    }
+
+    fn build(&self, config: &RuntimeChannelConfig) -> Result<BuiltProtocolRuntime> {
+        let points = crate::core::channels::converters::convert_to_modbus_point_configs(config);
+        let host = required_string_parameter(&config.base.parameters, "host")?;
+        let port = required_u16_parameter(&config.base.parameters, "port")?;
+        let timeout = timing_parameter(&config.base.parameters, "read_timeout_ms")?;
+        Ok(BuiltProtocolRuntime::new(
+            create_modbus_channel(config.id(), host, port, points, timeout),
+            poll_interval_ms(&config.base.parameters, 1_000)?,
+        ))
+    }
+}
+
+#[cfg(feature = "modbus")]
+struct ModbusRtuFactory;
+
+#[cfg(feature = "modbus")]
+impl ProtocolAdapterFactory for ModbusRtuFactory {
+    fn protocol_id(&self) -> &'static str {
+        "modbus_rtu"
+    }
+
+    fn validate(&self, config: &ChannelConfig) -> Result<()> {
+        required_string_parameter(&config.parameters, "device")?;
+        required_u32_parameter(&config.parameters, "baud_rate")?;
+        timing_parameter(&config.parameters, "read_timeout_ms")?;
+        poll_interval_ms(&config.parameters, 1_000)?;
+        Ok(())
+    }
+
+    fn build(&self, config: &RuntimeChannelConfig) -> Result<BuiltProtocolRuntime> {
+        let points = crate::core::channels::converters::convert_to_modbus_point_configs(config);
+        let device = required_string_parameter(&config.base.parameters, "device")?;
+        let baud_rate = required_u32_parameter(&config.base.parameters, "baud_rate")?;
+        let timeout = timing_parameter(&config.base.parameters, "read_timeout_ms")?;
+        Ok(BuiltProtocolRuntime::new(
+            create_modbus_rtu_channel(config.id(), device, baud_rate, points, timeout),
+            poll_interval_ms(&config.base.parameters, 1_000)?,
+        ))
+    }
+}
+
+#[cfg(all(target_os = "linux", feature = "gpio"))]
+struct GpioFactory;
+
+#[cfg(all(target_os = "linux", feature = "gpio"))]
+impl ProtocolAdapterFactory for GpioFactory {
+    fn protocol_id(&self) -> &'static str {
+        "gpio"
+    }
+
+    fn validate(&self, config: &ChannelConfig) -> Result<()> {
+        parse_parameters::<GpioChannelParamsConfig>(&config.parameters)?
+            .to_config()
+            .map(|_| ())?;
+        poll_interval_ms(&config.parameters, 200)?;
+        Ok(())
+    }
+
+    fn build(&self, config: &RuntimeChannelConfig) -> Result<BuiltProtocolRuntime> {
+        Ok(BuiltProtocolRuntime::new(
+            create_gpio_channel(config.id(), config)?,
+            poll_interval_ms(&config.base.parameters, 200)?,
+        ))
+    }
+}
+
+#[cfg(all(feature = "can", target_os = "linux"))]
+struct CanFactory;
+
+#[cfg(all(feature = "can", target_os = "linux"))]
+impl ProtocolAdapterFactory for CanFactory {
+    fn protocol_id(&self) -> &'static str {
+        "can"
+    }
+
+    fn validate(&self, config: &ChannelConfig) -> Result<()> {
+        poll_interval_ms(&config.parameters, 200).map(|_| ())
+    }
+
+    fn build(&self, config: &RuntimeChannelConfig) -> Result<BuiltProtocolRuntime> {
+        let points = crate::core::channels::converters::convert_to_can_point_configs(config);
+        let interface = config
+            .base
+            .parameters
+            .get("device")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("can0");
+        Ok(BuiltProtocolRuntime::new(
+            create_can_channel(config.id(), interface, points)?,
+            poll_interval_ms(&config.base.parameters, 200)?,
+        ))
+    }
+}
+
+#[cfg(feature = "aether_485")]
+struct Aether485Factory;
+
+#[cfg(feature = "aether_485")]
+impl ProtocolAdapterFactory for Aether485Factory {
+    fn protocol_id(&self) -> &'static str {
+        "aether_485"
+    }
+
+    fn validate(&self, config: &ChannelConfig) -> Result<()> {
+        parse_parameters::<Aether485ParamsConfig>(&config.parameters)?;
+        poll_interval_ms(&config.parameters, 1_000).map(|_| ())
+    }
+
+    fn build(&self, config: &RuntimeChannelConfig) -> Result<BuiltProtocolRuntime> {
+        Ok(BuiltProtocolRuntime::new(
+            create_aether_485_channel(config.id(), config.name(), config)?,
+            poll_interval_ms(&config.base.parameters, 1_000)?,
+        ))
+    }
+}
+
+#[cfg(feature = "mqtt")]
+struct MqttFactory;
+
+#[cfg(feature = "mqtt")]
+impl ProtocolAdapterFactory for MqttFactory {
+    fn protocol_id(&self) -> &'static str {
+        "mqtt"
+    }
+
+    fn validate(&self, config: &ChannelConfig) -> Result<()> {
+        mqtt_parameters(&config.parameters)?;
+        poll_interval_ms(&config.parameters, 1_000).map(|_| ())
+    }
+
+    fn build(&self, config: &RuntimeChannelConfig) -> Result<BuiltProtocolRuntime> {
+        Ok(BuiltProtocolRuntime::new(
+            create_mqtt_channel(config.id(), config.name(), config)?,
+            poll_interval_ms(&config.base.parameters, 1_000)?,
+        ))
+    }
+}
+
+#[cfg(feature = "http")]
+struct HttpFactory;
+
+#[cfg(feature = "http")]
+impl ProtocolAdapterFactory for HttpFactory {
+    fn protocol_id(&self) -> &'static str {
+        "http"
+    }
+
+    fn validate(&self, config: &ChannelConfig) -> Result<()> {
+        parse_parameters::<HttpParamsConfig>(&config.parameters)?.validate()?;
+        Ok(())
+    }
+
+    fn build(&self, config: &RuntimeChannelConfig) -> Result<BuiltProtocolRuntime> {
+        let (runtime, interval) = create_http_channel(config.id(), config.name(), config)?;
+        Ok(BuiltProtocolRuntime::new(runtime, interval))
+    }
+}
+
+#[cfg(feature = "iec61850")]
+struct Iec61850Factory;
+
+#[cfg(feature = "iec61850")]
+impl ProtocolAdapterFactory for Iec61850Factory {
+    fn protocol_id(&self) -> &'static str {
+        "iec61850"
+    }
+
+    fn validate(&self, config: &ChannelConfig) -> Result<()> {
+        timing_parameter(&config.parameters, "connect_timeout_ms")?;
+        timing_parameter(&config.parameters, "request_timeout_ms")?;
+        poll_interval_ms(&config.parameters, 1_000).map(|_| ())
+    }
+
+    fn build(&self, config: &RuntimeChannelConfig) -> Result<BuiltProtocolRuntime> {
+        use crate::protocols::adapters::iec61850::{Iec61850Channel, Iec61850ParamsConfig};
+        use crate::protocols::core::point::{
+            Iec61850Address, PointConfig, ProtocolAddress, TransformConfig,
+        };
+
+        let params = &config.base.parameters;
+        let iec61850_params = Iec61850ParamsConfig {
+            address: params
+                .get("address")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("127.0.0.1:102")
+                .to_owned(),
+            connect_timeout_ms: timing_parameter(params, "connect_timeout_ms")?.unwrap_or(10_000),
+            request_timeout_ms: timing_parameter(params, "request_timeout_ms")?.unwrap_or(5_000),
+            reports: params
+                .get("reports")
+                .map(|value| serde_json::from_value(value.clone()))
+                .transpose()
+                .map_err(|error| IoError::config(format!("invalid IEC 61850 reports: {error}")))?
+                .unwrap_or_default(),
+        };
+
+        let parse_address = |mapping: &Option<String>| -> Option<Iec61850Address> {
+            let object: serde_json::Value = serde_json::from_str(mapping.as_deref()?).ok()?;
+            let mut address = Iec61850Address::parse(object.get("address")?.as_str()?).ok()?;
+            address.ctrl_model = object
+                .get("ctrl_model")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(1) as u8;
+            Some(address)
+        };
+        let mut points = Vec::<PointConfig>::new();
+
+        for point in &config.telemetry_points {
+            if let Some(address) = parse_address(&point.base.protocol_mappings) {
+                points.push(PointConfig {
+                    id: point.base.point_id,
+                    point_type: common::PointType::Telemetry,
+                    name: Some(point.base.signal_name.clone()),
+                    address: ProtocolAddress::Iec61850(address),
+                    transform: TransformConfig {
+                        scale: point.scale,
+                        offset: point.offset,
+                        reverse: point.reverse,
+                        ..Default::default()
+                    },
+                    poll_group: None,
+                    enabled: true,
+                });
+            } else {
+                tracing::warn!(
+                    "Ch{} telemetry point {} has no valid IEC 61850 address in protocol_mappings",
+                    config.id(),
+                    point.base.point_id
+                );
+            }
+        }
+        for point in &config.signal_points {
+            if let Some(address) = parse_address(&point.base.protocol_mappings) {
+                points.push(PointConfig {
+                    id: point.base.point_id,
+                    point_type: common::PointType::Signal,
+                    name: Some(point.base.signal_name.clone()),
+                    address: ProtocolAddress::Iec61850(address),
+                    transform: TransformConfig {
+                        reverse: point.reverse,
+                        ..Default::default()
+                    },
+                    poll_group: None,
+                    enabled: true,
+                });
+            }
+        }
+        for point in &config.control_points {
+            if let Some(address) = parse_address(&point.base.protocol_mappings) {
+                points.push(PointConfig {
+                    id: point.base.point_id,
+                    point_type: common::PointType::Control,
+                    name: Some(point.base.signal_name.clone()),
+                    address: ProtocolAddress::Iec61850(address),
+                    transform: TransformConfig {
+                        reverse: point.reverse,
+                        ..Default::default()
+                    },
+                    poll_group: None,
+                    enabled: true,
+                });
+            } else {
+                tracing::warn!(
+                    "Ch{} control point {} has no valid IEC 61850 address in protocol_mappings",
+                    config.id(),
+                    point.base.point_id
+                );
+            }
+        }
+        for point in &config.adjustment_points {
+            if let Some(address) = parse_address(&point.base.protocol_mappings) {
+                points.push(PointConfig {
+                    id: point.base.point_id,
+                    point_type: common::PointType::Adjustment,
+                    name: Some(point.base.signal_name.clone()),
+                    address: ProtocolAddress::Iec61850(address),
+                    transform: TransformConfig {
+                        scale: point.scale,
+                        offset: point.offset,
+                        ..Default::default()
+                    },
+                    poll_group: None,
+                    enabled: true,
+                });
+            } else {
+                tracing::warn!(
+                    "Ch{} adjustment point {} has no valid IEC 61850 address in protocol_mappings",
+                    config.id(),
+                    point.base.point_id
+                );
+            }
+        }
+
+        Ok(BuiltProtocolRuntime::new(
+            Box::new(Iec61850Channel::new(
+                config.id(),
+                config.name(),
+                &iec61850_params,
+                points,
+            )),
+            poll_interval_ms(params, 1_000)?,
+        ))
+    }
+}
+
+/// Compose the exact protocol set linked into this binary.
+///
+/// Adding a protocol requires adding its Rust factory here and rebuilding the
+/// IO binary. No runtime plugin discovery or dynamic loading is performed.
+pub fn compiled_protocol_registry() -> Result<Arc<ProtocolRegistry>> {
+    let factories: Vec<Arc<dyn ProtocolAdapterFactory>> = vec![
+        #[cfg(feature = "modbus")]
+        Arc::new(ModbusTcpFactory),
+        #[cfg(feature = "modbus")]
+        Arc::new(ModbusRtuFactory),
+        #[cfg(all(target_os = "linux", feature = "gpio"))]
+        Arc::new(GpioFactory),
+        #[cfg(all(feature = "can", target_os = "linux"))]
+        Arc::new(CanFactory),
+        #[cfg(feature = "aether_485")]
+        Arc::new(Aether485Factory),
+        #[cfg(feature = "mqtt")]
+        Arc::new(MqttFactory),
+        #[cfg(feature = "http")]
+        Arc::new(HttpFactory),
+        #[cfg(feature = "iec61850")]
+        Arc::new(Iec61850Factory),
+    ];
+    ProtocolRegistry::try_new(factories).map(Arc::new)
 }
 
 #[cfg(all(test, feature = "mqtt", feature = "http"))]
@@ -507,6 +946,7 @@ mod tests {
 
     #[test]
     fn distribution_json_protocols_have_concrete_channel_runtimes() {
+        let registry = compiled_protocol_registry().expect("compiled protocol registry");
         let mqtt = runtime(
             "mqtt",
             HashMap::from([
@@ -520,9 +960,9 @@ mod tests {
                 ),
             ]),
         );
-        let mqtt = create_mqtt_channel(7, "mqtt-channel", &mqtt).expect("MQTT runtime");
-        assert_eq!(mqtt.protocol(), "mqtt");
-        assert!(mqtt.is_event_driven());
+        let mqtt = registry.build(&mqtt).expect("MQTT runtime");
+        assert_eq!(mqtt.runtime.protocol(), "mqtt");
+        assert!(mqtt.runtime.is_event_driven());
 
         let http = runtime(
             "http",
@@ -531,10 +971,9 @@ mod tests {
                 ("poll_interval_ms".into(), serde_json::json!(2500)),
             ]),
         );
-        let (http, interval_ms) =
-            create_http_channel(7, "http-channel", &http).expect("HTTP runtime");
-        assert_eq!(http.protocol(), "http");
-        assert!(!http.is_event_driven());
-        assert_eq!(interval_ms, 2500);
+        let http = registry.build(&http).expect("HTTP runtime");
+        assert_eq!(http.runtime.protocol(), "http");
+        assert!(!http.runtime.is_event_driven());
+        assert_eq!(http.poll_interval_ms, 2500);
     }
 }

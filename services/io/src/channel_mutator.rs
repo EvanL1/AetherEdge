@@ -53,7 +53,7 @@ pub trait ChannelRuntimeLifecycle: Send + Sync + 'static {
 #[async_trait]
 impl ChannelRuntimeLifecycle for ChannelManager {
     fn validate(&self, config: &ChannelConfig) -> PortResult<()> {
-        validate_runtime_config(config)
+        validate_runtime_config(config, self.protocol_registry())
     }
 
     fn is_present(&self, channel_id: ChannelId) -> bool {
@@ -1097,34 +1097,13 @@ fn decode_config(
     Ok((description, parameters, logging))
 }
 
-fn validate_runtime_config(config: &ChannelConfig) -> PortResult<()> {
+fn validate_runtime_config(
+    config: &ChannelConfig,
+    protocols: &crate::core::channels::ProtocolRegistry,
+) -> PortResult<()> {
     if config.id() >= MAX_CHANNEL_ID {
         return Err(invalid("channel identity must be between 0 and 9999"));
     }
-    let protocol = crate::utils::normalize_protocol_name(config.protocol());
-    let supported = match protocol.as_ref() {
-        #[cfg(feature = "modbus")]
-        "modbus_tcp" | "modbus_rtu" => true,
-        #[cfg(all(target_os = "linux", feature = "gpio"))]
-        "gpio" | "di_do" | "dido" => true,
-        #[cfg(all(target_os = "linux", feature = "can"))]
-        "can" => true,
-        #[cfg(feature = "aether_485")]
-        "aether_485" => true,
-        #[cfg(feature = "iec61850")]
-        "iec61850" => true,
-        #[cfg(feature = "mqtt")]
-        "mqtt" => true,
-        #[cfg(feature = "http")]
-        "http" => true,
-        _ => false,
-    };
-    if !supported {
-        return Err(invalid(
-            "channel protocol is unavailable in this IO runtime build",
-        ));
-    }
-
     let mut validation = common::ValidationResult::new(common::ValidationLevel::Schema);
     config.validate(&mut validation, 0);
     if !validation.is_valid {
@@ -1132,8 +1111,9 @@ fn validate_runtime_config(config: &ChannelConfig) -> PortResult<()> {
             "channel parameters do not satisfy the protocol schema",
         ));
     }
-    crate::core::channels::factory::validate_protocol_parameters(config)
-        .map_err(|_| invalid("channel parameters do not satisfy the protocol schema"))
+    protocols
+        .validate(config)
+        .map_err(|_| invalid("channel parameters do not satisfy the statically linked protocol"))
 }
 
 async fn logical_route_count(pool: &SqlitePool, channel_id: ChannelId) -> PortResult<i64> {
@@ -1416,10 +1396,18 @@ fn unavailable(message: impl Into<String>) -> PortError {
     PortError::new(PortErrorKind::Unavailable, message)
 }
 
-#[cfg(test)]
+#[cfg(all(test, any(feature = "modbus", all(feature = "mqtt", feature = "http"))))]
 mod tests {
     use super::*;
 
+    #[cfg(any(feature = "modbus", all(feature = "mqtt", feature = "http")))]
+    fn validate_compiled_runtime_config(config: &ChannelConfig) -> PortResult<()> {
+        let protocols = crate::core::channels::compiled_protocol_registry()
+            .expect("compiled protocol registry");
+        super::validate_runtime_config(config, &protocols)
+    }
+
+    #[cfg(any(feature = "modbus", all(feature = "mqtt", feature = "http")))]
     fn runtime_config(
         id: u32,
         protocol: &str,
@@ -1450,8 +1438,12 @@ mod tests {
     #[test]
     fn production_validator_keeps_explicit_zero_channel_identity_compatible() {
         assert!(
-            validate_runtime_config(&runtime_config(0, "modbus_tcp", modbus_tcp_parameters()))
-                .is_ok()
+            validate_compiled_runtime_config(&runtime_config(
+                0,
+                "modbus_tcp",
+                modbus_tcp_parameters()
+            ))
+            .is_ok()
         );
     }
 
@@ -1460,7 +1452,7 @@ mod tests {
     fn production_validator_rejects_zero_poll_before_runtime_creation() {
         let mut parameters = modbus_tcp_parameters();
         parameters.insert("poll_interval_ms".to_owned(), serde_json::json!(0));
-        let error = validate_runtime_config(&runtime_config(1, "modbus_tcp", parameters))
+        let error = validate_compiled_runtime_config(&runtime_config(1, "modbus_tcp", parameters))
             .expect_err("zero poll interval must be rejected");
         assert_eq!(error.kind(), PortErrorKind::InvalidData);
     }
@@ -1469,7 +1461,7 @@ mod tests {
     #[test]
     fn production_validator_accepts_composed_json_acquisition_protocols() {
         assert!(
-            validate_runtime_config(&runtime_config(
+            validate_compiled_runtime_config(&runtime_config(
                 1,
                 "mqtt",
                 HashMap::from([
@@ -1486,7 +1478,7 @@ mod tests {
             .is_ok()
         );
         assert!(
-            validate_runtime_config(&runtime_config(
+            validate_compiled_runtime_config(&runtime_config(
                 2,
                 "http",
                 HashMap::from([("url".into(), serde_json::json!("http://192.168.1.21/data"),)]),
@@ -1524,7 +1516,7 @@ mod tests {
                 ]),
             ),
         ] {
-            assert!(validate_runtime_config(&config).is_err());
+            assert!(validate_compiled_runtime_config(&config).is_err());
         }
     }
 
@@ -1557,7 +1549,7 @@ mod tests {
                 ]),
             ),
         ] {
-            assert!(validate_runtime_config(&config).is_err());
+            assert!(validate_compiled_runtime_config(&config).is_err());
         }
     }
 }

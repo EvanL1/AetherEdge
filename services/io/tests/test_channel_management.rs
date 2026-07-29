@@ -63,6 +63,7 @@ async fn create_test_app() -> Result<axum::Router> {
     let channel_manager = Arc::new(aether_io::core::channels::ChannelManager::new(
         support::create_test_shm_handle(),
         routing_cache,
+        aether_io::core::channels::compiled_protocol_registry()?,
     )?);
 
     let adapter = Arc::new(aether_io::SqliteChannelMutator::new(

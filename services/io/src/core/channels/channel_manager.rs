@@ -10,6 +10,7 @@ use std::sync::Arc;
 use tracing::{error, info, warn};
 
 use crate::core::channels::channel_entry::{ChannelEntry, ChannelStats, MAX_CHANNELS};
+use crate::core::channels::protocol_registry::ProtocolRegistry;
 use crate::core::channels::shm_listener::ShmCommandListener;
 use crate::error::{IoError, Result};
 use crate::store::ShmDataStore;
@@ -39,6 +40,8 @@ pub struct ChannelManager {
     pub routing_cache: Arc<aether_routing::ChannelRoutingCache>,
     /// SQLite connection pool for configuration loading
     pub(super) sqlite_pool: Option<sqlx::SqlitePool>,
+    /// Statically linked protocol factories selected by the composition root.
+    pub(super) protocol_registry: Arc<ProtocolRegistry>,
     /// Runtime-swappable shared memory handle rebuilt with physical topology.
     pub(super) shm_handle: Arc<ShmWriterHandle>,
     // ========== SHM Command Listener (Event-driven M2C via UDS) ==========
@@ -65,6 +68,7 @@ impl ChannelManager {
     pub fn new(
         shm_handle: Arc<ShmWriterHandle>,
         routing_cache: Arc<aether_routing::ChannelRoutingCache>,
+        protocol_registry: Arc<ProtocolRegistry>,
     ) -> Result<Self> {
         let store = Arc::new(ShmDataStore::new(
             Arc::clone(&shm_handle),
@@ -76,9 +80,22 @@ impl ChannelManager {
             store,
             routing_cache,
             sqlite_pool: None,
+            protocol_registry,
             shm_handle,
             shm_listener: None,
         })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn new_for_test(
+        shm_handle: Arc<ShmWriterHandle>,
+        routing_cache: Arc<aether_routing::ChannelRoutingCache>,
+    ) -> Result<Self> {
+        Self::new(
+            shm_handle,
+            routing_cache,
+            crate::core::channels::compiled_protocol_registry()?,
+        )
     }
 
     /// Create channel manager with shared memory support
@@ -86,6 +103,7 @@ impl ChannelManager {
         routing_cache: Arc<aether_routing::ChannelRoutingCache>,
         sqlite_pool: sqlx::SqlitePool,
         shm_handle: Arc<ShmWriterHandle>,
+        protocol_registry: Arc<ProtocolRegistry>,
         channel_health_writer: Option<Arc<ShmChannelHealthWriterHandle>>,
     ) -> Result<Self> {
         let mut store = ShmDataStore::new(Arc::clone(&shm_handle), Arc::clone(&routing_cache))?;
@@ -98,9 +116,14 @@ impl ChannelManager {
             store: Arc::new(store),
             routing_cache,
             sqlite_pool: Some(sqlite_pool),
+            protocol_registry,
             shm_handle,
             shm_listener: None,
         })
+    }
+
+    pub(crate) fn protocol_registry(&self) -> &ProtocolRegistry {
+        &self.protocol_registry
     }
 
     /// Configure SHM command listener for event-driven M2C dispatch
@@ -324,7 +347,7 @@ mod tests {
     async fn test_channel_manager_creation() {
         let shm_handle = crate::test_utils::create_test_shm_handle();
         let routing_cache = create_test_routing_cache();
-        let manager = ChannelManager::new(shm_handle, routing_cache).unwrap();
+        let manager = ChannelManager::new_for_test(shm_handle, routing_cache).unwrap();
 
         assert_eq!(manager.channel_count(), 0);
         assert_eq!(manager.get_channel_ids().len(), 0);
@@ -334,7 +357,7 @@ mod tests {
     async fn test_channel_manager_running_count() {
         let shm_handle = crate::test_utils::create_test_shm_handle();
         let routing_cache = create_test_routing_cache();
-        let manager = ChannelManager::new(shm_handle, routing_cache).unwrap();
+        let manager = ChannelManager::new_for_test(shm_handle, routing_cache).unwrap();
 
         let count = manager.running_channel_count().await;
         assert_eq!(count, 0);

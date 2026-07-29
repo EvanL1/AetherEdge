@@ -296,7 +296,7 @@ mod cache_tests {
             [103, 0, 0, 0],
         )]));
         let channel_manager = Arc::new(
-            ChannelManager::new(shm_handle, routing_cache)
+            ChannelManager::new_for_test(shm_handle, routing_cache)
                 .expect("create SHM-backed channel manager"),
         );
         AppState {

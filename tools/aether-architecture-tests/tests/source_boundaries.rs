@@ -885,18 +885,61 @@ fn io_composition_matches_the_runtime_manifest_authority() {
 
     let creation =
         fs::read_to_string(root.join("services/io/src/core/channels/channel_creation.rs"))
-            .expect("read IO channel composition");
-    for required in [
-        "\"mqtt\" =>",
+            .expect("read generic IO channel composition");
+    assert!(creation.contains("self.protocol_registry.validate(&channel_config)?"));
+    assert!(creation.contains("self.protocol_registry.build(&runtime_config)?"));
+    for concrete in [
+        "create_modbus_channel_impl",
+        "create_gpio_channel_impl",
+        "create_can_channel_impl",
+        "create_aether_485_channel_impl",
+        "create_iec61850_channel_impl",
         "create_mqtt_channel_impl",
-        "\"http\" =>",
         "create_http_channel_impl",
     ] {
         assert!(
-            creation.contains(required),
-            "distribution IO feature has no concrete composition branch {required}"
+            !creation.contains(concrete),
+            "generic ChannelManager restored concrete protocol branch {concrete}"
         );
     }
+
+    let registry =
+        fs::read_to_string(root.join("services/io/src/core/channels/protocol_registry.rs"))
+            .expect("read static protocol registry");
+    assert!(registry.contains("trait ProtocolAdapterFactory"));
+    assert!(registry.contains("BTreeMap<&'static str, Arc<dyn ProtocolAdapterFactory>>"));
+    assert!(!registry.contains("libloading"));
+    assert!(!registry.contains("inventory::"));
+
+    let composition = fs::read_to_string(root.join("services/io/src/core/channels/factory.rs"))
+        .expect("read compiled protocol composition");
+    assert!(composition.contains("pub fn compiled_protocol_registry()"));
+    for registration in [
+        "Arc::new(ModbusTcpFactory)",
+        "Arc::new(ModbusRtuFactory)",
+        "Arc::new(GpioFactory)",
+        "Arc::new(CanFactory)",
+        "Arc::new(Aether485Factory)",
+        "Arc::new(Iec61850Factory)",
+        "Arc::new(MqttFactory)",
+        "Arc::new(HttpFactory)",
+    ] {
+        assert!(
+            composition.contains(registration),
+            "maintained protocol is not statically registered: {registration}"
+        );
+    }
+
+    let manager = fs::read_to_string(root.join("services/io/src/core/channels/channel_manager.rs"))
+        .expect("read generic channel manager");
+    assert!(manager.contains("protocol_registry: Arc<ProtocolRegistry>"));
+    let manager_production = manager.split("#[cfg(test)]").next().unwrap_or(&manager);
+    assert!(!manager_production.contains("compiled_protocol_registry"));
+
+    let main =
+        fs::read_to_string(root.join("services/io/src/main.rs")).expect("read IO composition root");
+    assert!(main.contains("compiled_protocol_registry()?"));
+    assert!(main.contains("protocol_registry,"));
 
     let mapper = fs::read_to_string(root.join("services/io/src/protocols/core/json_mapper.rs"))
         .expect("read JSON mapper");

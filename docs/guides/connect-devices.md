@@ -93,19 +93,27 @@ BLE, DL/T 645, IEC 60870-5-104, J1939, Matter, OPC UA, and Zigbee are not
 kernel capabilities. A configuration naming one of them fails as unavailable;
 it is never silently translated to another adapter.
 
-CAN and GPIO are OS-gated in
-`services/io/src/core/channels/channel_creation.rs` and exist only on Linux.
-GPIO accepts an explicit channel parameter `driver: gpiod` or
-`driver: sysfs`; omission preserves the historical sysfs selection. MQTT and
-HTTP are concrete `ChannelRuntime` compositions, not build-only declarations.
-Their JSON mappings are compiled from the same transactional point-topology
-snapshot as the channel runtime.
+CAN and GPIO are OS-gated static registrations and exist only on Linux. GPIO
+accepts an explicit channel parameter `driver: gpiod` or `driver: sysfs`;
+omission preserves the historical sysfs selection. MQTT and HTTP are concrete
+`ChannelRuntime` factories, not build-only declarations. Their JSON mappings
+are compiled from the same transactional point-topology snapshot as the
+channel runtime.
 
-Protocol availability is read from the signed runtime manifest rather than a
-second service-local discovery endpoint. A channel fails before persistence
-when its protocol is absent from that build or its required parameters are
-invalid. Hardware-independent protocol tests run against `tools/simulator`;
-the production IO binary contains no in-memory simulation protocol.
+All protocol adapters enter through the same `ProtocolAdapterFactory` and
+`ChannelRuntime` boundaries. Adding another protocol means implementing its
+Rust factory and runtime, registering it in the build composition, regenerating
+the matching runtime manifest, and rebuilding `aether-io`. A running process
+cannot discover or load a new adapter; production IO loads no scripts, shared
+libraries, or subprocess plugins.
+
+Protocol availability is read externally from the signed runtime manifest
+rather than a second service-local discovery endpoint. Internally, the static
+registry is the executable composition used for validation and construction. A
+channel fails before persistence when its protocol is absent from that build or
+its required parameters are invalid. Hardware-independent protocol tests run
+against `tools/simulator`; the production IO binary contains no in-memory
+simulation protocol.
 
 ## Mapping points to instances
 
