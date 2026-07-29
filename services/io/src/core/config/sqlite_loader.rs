@@ -198,14 +198,12 @@ impl IoSqliteLoader {
             // Parse logging config from JSON
             let logging = match extra_config_obj.remove("logging") {
                 None => crate::core::config::ChannelLoggingConfig::default(),
-                Some(logging_value) => serde_json::from_value(logging_value).unwrap_or_else(|e| {
-                    tracing::warn!(
-                        "Ch{} invalid logging config, using default: {}",
-                        channel_id,
-                        e
-                    );
-                    crate::core::config::ChannelLoggingConfig::default()
-                }),
+                Some(logging_value) => serde_json::from_value(logging_value).map_err(|e| {
+                    IoError::ConfigError(format!(
+                        "Invalid channel logging config for channel {}: {}",
+                        channel_id, e
+                    ))
+                })?,
             };
 
             info!(
@@ -592,6 +590,29 @@ mod tests {
         assert_eq!(config.service.name, "aether-io");
         assert_eq!(config.api.port, 6001); // Default port (test uses wrong key 'port' instead of 'service.port')
         assert_eq!(config.channels.len(), 3, "Should load all 3 channels");
+    }
+
+    #[tokio::test]
+    async fn retired_logging_path_fails_runtime_snapshot_loading() {
+        let (_temp_dir, db_path) = create_test_database().await;
+        let db_url = format!("sqlite://{}", db_path);
+        let pool = SqlitePool::connect(&db_url).await.unwrap();
+        sqlx::query(
+            r#"UPDATE channels
+               SET config = '{"parameters":{"host":"192.168.1.100","port":502},"logging":{"enabled":true,"level":"debug","file":"/tmp/retired.log"}}'
+               WHERE channel_id = 1001"#,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        pool.close().await;
+
+        let loader = IoSqliteLoader::new(&db_path).await.unwrap();
+        let error = loader
+            .load_config()
+            .await
+            .expect_err("retired logging paths must fail configuration loading");
+        assert!(error.to_string().contains("unknown field `file`"));
     }
 
     #[tokio::test]
