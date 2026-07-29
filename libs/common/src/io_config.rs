@@ -183,9 +183,6 @@ pub struct ChannelLoggingConfig {
 
     /// Log level for this channel
     pub level: Option<String>,
-
-    /// Log file for this channel
-    pub file: Option<String>,
 }
 
 /// Base point configuration
@@ -632,6 +629,21 @@ channels:
         .expect("channel config without enabled");
 
         assert!(!config.channels[0].core.enabled);
+    }
+
+    #[test]
+    fn retired_logging_file_is_ignored_and_not_reserialized() {
+        let logging: ChannelLoggingConfig = serde_json::from_value(serde_json::json!({
+            "enabled": true,
+            "level": "debug",
+            "file": "/tmp/retired.log"
+        }))
+        .expect("legacy logging object remains readable");
+
+        assert!(logging.enabled);
+        assert_eq!(logging.level.as_deref(), Some("debug"));
+        let canonical = serde_json::to_value(logging).expect("canonical logging object");
+        assert!(canonical.get("file").is_none());
     }
 
     #[test]

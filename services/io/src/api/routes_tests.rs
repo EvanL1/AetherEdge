@@ -2875,7 +2875,7 @@ async fn confirmed_channel_requests_forward_exact_typed_mutations() {
                 "description": "Line one",
                 "protocol": "modbus_tcp",
                 "parameters": {"port": 502},
-                "logging": {"enabled": true, "level": "debug", "file": "channel.log"}
+                "logging": {"enabled": true, "level": "debug"}
             })),
             true,
             true,
@@ -2887,7 +2887,7 @@ async fn confirmed_channel_requests_forward_exact_typed_mutations() {
             Some(json!({
                 "name": "Packaging PLC 2",
                 "parameters": {"timeout_ms": 1000},
-                "logging": {"enabled": false, "level": null, "file": null}
+                "logging": {"enabled": false, "level": null}
             })),
             true,
             true,
@@ -2924,8 +2924,7 @@ async fn confirmed_channel_requests_forward_exact_typed_mutations() {
     .with_logging(
         ChannelLoggingPolicy::default()
             .with_enabled(true)
-            .with_level("debug")
-            .with_file("channel.log"),
+            .with_level("debug"),
     );
     let expected_update = ChannelPatch::new()
         .with_name("Packaging PLC 2")
@@ -3085,6 +3084,12 @@ mod openapi_tests {
 
         assert_eq!(enabled["default"], false);
         assert_eq!(enabled["example"], false);
+        assert!(
+            specification["components"]["schemas"]["ChannelLoggingConfig"]["properties"]
+                .get("file")
+                .is_none(),
+            "caller-selected diagnostic paths must stay out of the channel contract"
+        );
         let examples = &specification["paths"]["/api/channels"]["post"]["requestBody"]["content"]["application/json"]
             ["examples"];
         for (name, example) in examples.as_object().expect("channel creation examples") {

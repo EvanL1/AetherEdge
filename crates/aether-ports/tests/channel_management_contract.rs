@@ -13,7 +13,6 @@ fn logging() -> ChannelLoggingPolicy {
     ChannelLoggingPolicy::default()
         .with_enabled(true)
         .with_level("debug")
-        .with_file("/var/log/aether/channel-7.log")
 }
 
 fn parameters() -> ChannelParameters {
@@ -73,12 +72,10 @@ fn logging_policy_has_transport_neutral_defaults_and_accessors() {
     let defaults = ChannelLoggingPolicy::default();
     assert!(!defaults.enabled());
     assert_eq!(defaults.level(), None);
-    assert_eq!(defaults.file(), None);
 
     let configured = logging();
     assert!(configured.enabled());
     assert_eq!(configured.level(), Some("debug"));
-    assert_eq!(configured.file(), Some("/var/log/aether/channel-7.log"));
 }
 
 #[test]

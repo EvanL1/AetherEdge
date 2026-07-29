@@ -177,8 +177,7 @@ fn definition() -> ChannelDefinition {
     .with_logging(
         ChannelLoggingPolicy::default()
             .with_enabled(true)
-            .with_level("never-audit-log-level")
-            .with_file("/var/log/never-audit-channel-file.log"),
+            .with_level("never-audit-log-level"),
     )
 }
 
@@ -197,8 +196,7 @@ fn mutations() -> Vec<ChannelMutation> {
                 .with_logging(
                     ChannelLoggingPolicy::default()
                         .with_enabled(true)
-                        .with_level("also-never-audit-log-level")
-                        .with_file("/var/log/also-never-audit.log"),
+                        .with_level("also-never-audit-log-level"),
                 ),
         ),
         ChannelMutation::delete_with_revision(ChannelId::new(7), ChannelRevision::new(3)),
@@ -285,15 +283,13 @@ async fn every_channel_mutation_is_attempt_audited_before_the_port_and_terminal_
         );
         assert!(records.iter().all(|record| {
             let detail = record.detail().unwrap_or_default();
-            !detail.contains("never-audit-channel-file")
-                && !detail.contains("also-never-audit")
+            !detail.contains("also-never-audit")
                 && !detail.contains("never-audit-parameter-key")
                 && !detail.contains("never-audit-log-level")
                 && !detail.contains("modbus_tcp")
                 && !detail.contains("parameter_sha256")
                 && !detail.contains("logging_enabled")
                 && !detail.contains("logging_level")
-                && !detail.contains("logging_file")
         }));
         if expected_kind == aether_ports::ChannelMutationKind::Update {
             assert!(

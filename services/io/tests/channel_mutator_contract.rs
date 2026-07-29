@@ -224,8 +224,7 @@ fn definition(channel_id: u32, enabled: bool) -> ChannelDefinition {
     .with_logging(
         ChannelLoggingPolicy::default()
             .with_enabled(true)
-            .with_level("debug")
-            .with_file("/var/log/aether/channel.log"),
+            .with_level("debug"),
     )
     .with_enabled(enabled)
 }
@@ -286,7 +285,7 @@ async fn create_defaults_to_stopped_and_persists_typed_config_at_revision_one() 
     assert_eq!(config["parameters"]["nested"]["retry"], 3);
     assert_eq!(config["logging"]["enabled"], true);
     assert_eq!(config["logging"]["level"], "debug");
-    assert_eq!(config["logging"]["file"], "/var/log/aether/channel.log");
+    assert!(config["logging"].get("file").is_none());
 }
 
 #[tokio::test]
@@ -1208,7 +1207,7 @@ async fn update_merges_parameter_keys_replaces_logging_and_restores_typed_runtim
     assert_eq!(config["parameters"]["port"], 502);
     assert_eq!(config["logging"]["enabled"], true);
     assert_eq!(config["logging"]["level"], "warn");
-    assert!(config["logging"]["file"].is_null());
+    assert!(config["logging"].get("file").is_none());
 
     let enabled = mutator
         .mutate(ChannelMutation::enable_with_revision(
@@ -1223,7 +1222,6 @@ async fn update_merges_parameter_keys_replaces_logging_and_restores_typed_runtim
     assert_eq!(runtime_config.parameters["port"], 502);
     assert!(runtime_config.logging.enabled);
     assert_eq!(runtime_config.logging.level.as_deref(), Some("warn"));
-    assert_eq!(runtime_config.logging.file, None);
 }
 
 #[tokio::test]

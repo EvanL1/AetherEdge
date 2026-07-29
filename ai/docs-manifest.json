@@ -1960,6 +1960,34 @@
       "implementation_status": "partial",
       "production_readiness": "not-applicable",
       "context_sensitivity": "internal",
+      "updated": "2026-07-29",
+      "priority": "optional",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
+    },
+    {
+      "id": "edge-docs-adr-0040-deployment-owned-channel-diagnostic-paths",
+      "path": "docs/adr/0040-deployment-owned-channel-diagnostic-paths.md",
+      "canonical_url": "https://github.com/EvanL1/AetherEdge/blob/main/docs/adr/0040-deployment-owned-channel-diagnostic-paths.md",
+      "title": "ADR-0040: Keep channel diagnostic paths deployment-owned",
+      "description": "Accepted and implemented on 2026-08-20.",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "decision",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "inspect-edge-implementation"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "not-applicable",
+      "context_sensitivity": "internal",
       "updated": "2026-07-18",
       "priority": "optional",
       "media_type": "text/markdown",

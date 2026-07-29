@@ -62,7 +62,6 @@ impl fmt::Debug for ChannelParameterValue {
 pub struct ChannelLoggingPolicy {
     enabled: bool,
     level: Option<String>,
-    file: Option<String>,
 }
 
 impl ChannelLoggingPolicy {
@@ -80,13 +79,6 @@ impl ChannelLoggingPolicy {
         self
     }
 
-    /// Selects the channel-specific log file.
-    #[must_use]
-    pub fn with_file(mut self, file: impl Into<String>) -> Self {
-        self.file = Some(file.into());
-        self
-    }
-
     /// Returns whether channel-specific logging is enabled.
     #[must_use]
     pub const fn enabled(&self) -> bool {
@@ -98,12 +90,6 @@ impl ChannelLoggingPolicy {
     pub fn level(&self) -> Option<&str> {
         self.level.as_deref()
     }
-
-    /// Returns the optional log file.
-    #[must_use]
-    pub fn file(&self) -> Option<&str> {
-        self.file.as_deref()
-    }
 }
 
 impl fmt::Debug for ChannelLoggingPolicy {
@@ -112,7 +98,6 @@ impl fmt::Debug for ChannelLoggingPolicy {
             .debug_struct("ChannelLoggingPolicy")
             .field("enabled", &self.enabled)
             .field("level", &self.level.as_ref().map(|_| "[redacted]"))
-            .field("file", &self.file.as_ref().map(|_| "[redacted]"))
             .finish()
     }
 }

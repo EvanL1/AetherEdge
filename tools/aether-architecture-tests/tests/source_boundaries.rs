@@ -621,6 +621,13 @@ fn shared_service_kernel_stays_console_first() {
             "services/io/src/protocols/core/logging.rs",
             "fn set_log_level",
         ),
+        ("libs/common/src/io_config.rs", "pub file: Option<String>"),
+        ("crates/aether-ports/src/channel.rs", "with_file"),
+        (
+            "services/io/src/api/handlers/channel_management_handlers.rs",
+            "logging.file",
+        ),
+        ("services/io/src/channel_mutator.rs", "logging.file"),
         ("services/io/src/api/routes.rs", "/api/admin/logs/files"),
         ("services/io/src/api/routes.rs", "/api/admin/logs/view"),
         ("services/automation/src/routes.rs", "/api/admin/logs/level"),

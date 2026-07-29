@@ -955,7 +955,6 @@ fn logging_to_config(logging: &ChannelLoggingPolicy) -> ChannelLoggingConfig {
     ChannelLoggingConfig {
         enabled: logging.enabled(),
         level: logging.level().map(ToOwned::to_owned),
-        file: logging.file().map(ToOwned::to_owned),
     }
 }
 

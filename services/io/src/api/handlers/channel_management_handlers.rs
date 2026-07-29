@@ -439,9 +439,6 @@ fn logging_policy(logging: crate::dto::ChannelLoggingConfig) -> ChannelLoggingPo
     if let Some(level) = logging.level {
         policy = policy.with_level(level);
     }
-    if let Some(file) = logging.file {
-        policy = policy.with_file(file);
-    }
     policy
 }
 
