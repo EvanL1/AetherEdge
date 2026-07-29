@@ -31,16 +31,16 @@ or target files the service should not own.
    ${AETHER_LOG_DIR:-/app/logs}/io/channels/<sanitized-channel-name>/<date>.log
    ```
 
-5. Existing channel JSON containing `logging.file` remains readable because
-   Serde ignores unknown object fields. A later governed update serializes the
-   canonical logging object without that field.
+5. Reject unknown channel logging properties, including the retired `file`
+   property. AetherEdge is pre-release, so no compatibility reader or migration
+   is retained for a capability that never had runtime effect.
 6. Add an architecture check that rejects restoration of a caller-selected
    logging path.
 
 ## Consequences
 
-- The channel API no longer claims a configuration value that has no runtime
-  effect.
+- The channel API no longer claims or silently ignores a configuration value
+  that has no runtime effect.
 - API callers cannot request arbitrary filesystem writes.
 - Deployment manifests and host policy remain responsible for mounts,
   permissions, capture, retention, and backup.

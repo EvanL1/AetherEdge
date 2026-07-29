@@ -175,6 +175,7 @@ pub use crate::site_schema::{
 
 /// Channel-specific logging configuration
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 #[cfg_attr(feature = "openapi", derive(ToSchema))]
 pub struct ChannelLoggingConfig {
     /// Whether logging is enabled for this channel
@@ -632,18 +633,15 @@ channels:
     }
 
     #[test]
-    fn retired_logging_file_is_ignored_and_not_reserialized() {
-        let logging: ChannelLoggingConfig = serde_json::from_value(serde_json::json!({
+    fn retired_logging_file_is_rejected() {
+        let error = serde_json::from_value::<ChannelLoggingConfig>(serde_json::json!({
             "enabled": true,
             "level": "debug",
             "file": "/tmp/retired.log"
         }))
-        .expect("legacy logging object remains readable");
+        .expect_err("caller-selected diagnostic paths must be rejected");
 
-        assert!(logging.enabled);
-        assert_eq!(logging.level.as_deref(), Some("debug"));
-        let canonical = serde_json::to_value(logging).expect("canonical logging object");
-        assert!(canonical.get("file").is_none());
+        assert!(error.to_string().contains("unknown field `file`"));
     }
 
     #[test]

@@ -1988,7 +1988,7 @@
       "implementation_status": "partial",
       "production_readiness": "not-applicable",
       "context_sensitivity": "internal",
-      "updated": "2026-07-18",
+      "updated": "2026-07-29",
       "priority": "optional",
       "media_type": "text/markdown",
       "capability_refs": [],

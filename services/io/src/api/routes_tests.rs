@@ -381,6 +381,31 @@ async fn channel_mutations_require_real_bearer_auth_and_confirmation_before_side
 }
 
 #[tokio::test]
+async fn channel_mutation_rejects_retired_logging_paths() {
+    let mutator = RecordingChannelMutator::successful(None);
+    let app = recording_channel_router(Arc::clone(&mutator)).await;
+    let request = channel_mutation_request(
+        "POST",
+        "/api/channels",
+        Some(json!({
+            "channel_id": 41,
+            "name": "deployment-owned diagnostics",
+            "protocol": "modbus_tcp",
+            "parameters": {},
+            "logging": {
+                "enabled": true,
+                "level": "debug",
+                "file": "/tmp/retired.log"
+            }
+        })),
+    );
+
+    let response = app.oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(mutator.mutation_count(), 0);
+}
+
+#[tokio::test]
 async fn channel_create_defaults_disabled_and_returns_the_typed_receipt() {
     let mutator = RecordingChannelMutator::successful(None);
     let app = recording_channel_router(Arc::clone(&mutator)).await;
