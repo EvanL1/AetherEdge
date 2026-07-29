@@ -60,7 +60,7 @@ async fn create_test_app() -> Result<axum::Router> {
     let routing_cache = Arc::new(aether_routing::ChannelRoutingCache::new());
 
     // Create the channel manager over an available temporary SHM layout.
-    let channel_manager = Arc::new(aether_io::ChannelManager::new(
+    let channel_manager = Arc::new(aether_io::core::channels::ChannelManager::new(
         support::create_test_shm_handle(),
         routing_cache,
     )?);

@@ -40,9 +40,6 @@ pub mod core {
 
 pub mod store;
 
-// Re-export the authoritative live-state writer.
-pub use store::ShmDataStore;
-
 // Protocol implementations are in crate::protocols. The standard composition
 // selects Modbus TCP/RTU, MQTT, HTTP, CAN, GPIO, IEC 61850, and Aether-485.
 
@@ -58,26 +55,12 @@ pub mod runtime {
     #[cfg(test)]
     pub mod test_utils;
 
-    // Re-export common types
-    pub use lifecycle::{
-        shutdown_handler, shutdown_services, start_cleanup_task, start_communication_service,
-        wait_for_shutdown,
-    };
+    pub use lifecycle::{shutdown_services, start_cleanup_task, start_communication_service};
 }
 
 // Re-export dto at crate root for compatibility
 pub use crate::api::dto;
 pub use channel_mutator::{ChannelRuntimeLifecycle, SqliteChannelMutator};
-
-// Re-export commonly used types
-pub use error::{ErrorExt, IoError, Result};
-
-// Re-export core functionality
-pub use core::channels::ChannelManager;
-pub use core::config::ConfigManager;
-
-// Re-export runtime helpers for convenience
-pub use runtime::{shutdown_services, wait_for_shutdown};
 
 #[cfg(test)]
 pub use runtime::test_utils;

@@ -184,9 +184,9 @@ impl From<anyhow::Error> for IoError {
     }
 }
 
-impl From<crate::protocols::GatewayError> for IoError {
-    fn from(err: crate::protocols::GatewayError) -> Self {
-        use crate::protocols::GatewayError;
+impl From<crate::protocols::core::error::GatewayError> for IoError {
+    fn from(err: crate::protocols::core::error::GatewayError) -> Self {
+        use crate::protocols::core::error::GatewayError;
         match err {
             // Connection errors
             GatewayError::Connection(msg) => IoError::ConnectionError(msg),

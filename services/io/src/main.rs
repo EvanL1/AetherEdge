@@ -20,11 +20,10 @@ use aether_io::{
     core::{
         bootstrap::{self, Args},
         channels::ChannelManager,
-        config::ConfigManager,
+        config::IoSqliteLoader,
     },
     error::IoError,
-    runtime::{start_cleanup_task, start_communication_service},
-    shutdown_services, wait_for_shutdown,
+    runtime::{shutdown_services, start_cleanup_task, start_communication_service},
 };
 use aether_routing::ChannelRoutingCache;
 use aether_shm_bridge::{
@@ -61,8 +60,7 @@ async fn main() -> anyhow::Result<()> {
         "Loading configuration from unified SQLite database: {}",
         db_path
     );
-    let config_manager = Arc::new(ConfigManager::load().await?);
-    let app_config = config_manager.config();
+    let app_config = IoSqliteLoader::new(&db_path).await?.load_config().await?;
 
     // Create SQLite pool for API endpoints (foreign_keys=ON via shared helper)
     let sqlite_pool = sqlx::sqlite::SqlitePoolOptions::new()
@@ -399,7 +397,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Start communication channels
     let configured_count =
-        start_communication_service(config_manager.clone(), Arc::clone(&channel_manager)).await?;
+        start_communication_service(&app_config.channels, Arc::clone(&channel_manager)).await?;
 
     // Start SHM command listener for event-driven M2C dispatch
     // This must be started after channels are created (so they can be registered)
@@ -562,7 +560,7 @@ async fn main() -> anyhow::Result<()> {
     });
 
     // Wait for shutdown and cleanup
-    wait_for_shutdown().await;
+    common::shutdown::wait_for_shutdown().await;
 
     // Signal SHM listener to shutdown
     let _ = shm_listener_shutdown_tx.send(true);

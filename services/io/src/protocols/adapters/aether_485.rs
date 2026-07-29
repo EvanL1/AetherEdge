@@ -32,7 +32,6 @@ use tokio::time::timeout;
 use tokio_serial::{DataBits, Parity, SerialPortBuilderExt, SerialStream, StopBits};
 use tracing::{debug, info, warn};
 
-use crate::protocols::ChannelRuntime;
 use crate::protocols::core::data::{DataBatch, DataPoint};
 use crate::protocols::core::diagnostics::AtomicDiagnostics;
 use crate::protocols::core::error::{GatewayError, Result};
@@ -43,6 +42,7 @@ use crate::protocols::core::{
     AdjustmentCommand, ConnectionState, ControlCommand, Diagnostics, PointFailure, PollResult,
     WriteResult,
 };
+use crate::protocols::gateway::ChannelRuntime;
 
 // ============================================================================
 // Constants

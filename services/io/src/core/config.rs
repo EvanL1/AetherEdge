@@ -1,32 +1,8 @@
-//! # Configuration Management Module
-//!
-//! This module provides configuration management for the communication service.
-//!
-//! ## Features
-//!
-//! - **Multi-format support**: YAML, TOML, JSON auto-detection
-//! - **Type-safe**: Compile-time validation
-//! - **CSV point tables**: Support for loading point definitions from CSV files
-//! - **SQLite database**: Support for loading configuration from SQLite
-//! - **Environment variables**: Override configuration with environment variables
-//!
-//! ## Architecture
-//!
-//! ```text
-//! ConfigManager
-//!   ├── Service Configuration
-//!   ├── Channel Configuration
-//!   └── Point Tables (CSV/SQLite)
-//! ```
+//! SQLite-backed IO configuration and runtime channel snapshots.
 
-#![allow(ambiguous_glob_reexports)]
-
-pub mod manager;
 pub mod sqlite_loader;
 pub mod types;
 
-// Re-export from modules
-pub use manager::*;
 pub use sqlite_loader::IoSqliteLoader;
 
 // Re-export io configuration types
@@ -54,10 +30,3 @@ pub use types::{
     TelemetryPoint,
     install_channel_revision_triggers,
 };
-
-// Re-export common configuration types
-pub use common::{ApiConfig, BaseServiceConfig};
-
-// Legacy aliases for backward compatibility
-pub type AppConfig = IoConfig;
-pub type ServiceConfig = BaseServiceConfig;

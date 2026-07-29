@@ -3,9 +3,9 @@ use std::sync::Arc;
 
 use aether_dataplane::{SlotIo, SlotWriter};
 use aether_domain::PointKind;
-use aether_io::ShmDataStore;
 use aether_io::protocols::core::data::{DataBatch, DataPoint};
 use aether_io::protocols::core::error::GatewayError;
+use aether_io::store::ShmDataStore;
 use aether_routing::{ChannelRoute, ChannelRoutingCache};
 use aether_shm_bridge::{
     ChannelPointManifest, PhysicalPointAddress, ShmAcquisitionStateWriter, ShmRuntimeConfig,

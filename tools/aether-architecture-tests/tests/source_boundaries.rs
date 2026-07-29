@@ -711,6 +711,8 @@ fn io_composition_matches_the_runtime_manifest_authority() {
     for retired in [
         "services/io/src/api/handlers/protocol_handlers.rs",
         "services/io/src/protocols/core/metadata.rs",
+        "services/io/src/core/config/manager.rs",
+        "services/io/src/core/channels/traits.rs",
     ] {
         assert!(
             !root.join(retired).exists(),
@@ -752,6 +754,22 @@ fn io_composition_matches_the_runtime_manifest_authority() {
             "ReconnectConfig",
         ),
         ("services/io/src/protocols/core/slot.rs", "ShardedSlotStore"),
+        ("services/io/src/core/config.rs", "pub type AppConfig"),
+        ("services/io/src/core/config.rs", "pub type ServiceConfig"),
+        (
+            "services/io/src/lib.rs",
+            "pub use core::config::ConfigManager",
+        ),
+        (
+            "services/io/src/lib.rs",
+            "pub use core::channels::ChannelManager",
+        ),
+        ("services/io/src/protocols.rs", "pub mod prelude"),
+        ("services/io/src/core/channels.rs", "pub use factory::"),
+        (
+            "services/io/src/core/channels/converters.rs",
+            "convert_can_to_point_configs",
+        ),
     ] {
         let source = fs::read_to_string(root.join(relative))
             .unwrap_or_else(|error| panic!("failed to read {relative}: {error}"));

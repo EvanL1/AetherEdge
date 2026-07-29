@@ -14,7 +14,7 @@ use anyhow::Result;
 use common::DEFAULT_API_HOST;
 use common::service_bootstrap::ServiceInfo;
 
-use crate::core::config::ConfigManager;
+use crate::core::config::IoSqliteLoader;
 
 /// Command-line arguments for io
 #[derive(Parser)]
@@ -49,22 +49,20 @@ pub fn initialize_logging(service_info: &ServiceInfo) -> Result<()> {
 pub async fn validate_configuration() -> Result<()> {
     debug!("Validating configuration from SQLite database");
 
-    // Load and validate configuration
-    let config_manager = ConfigManager::load().await?;
+    let db_path = common::bootstrap_args::database_path();
+    let config = IoSqliteLoader::new(&db_path).await?.load_config().await?;
     debug!("Configuration loaded successfully");
 
-    // Validate service configuration
-    let service_config = config_manager.service_config();
+    let service_config = &config.service;
     info!("Service: {}", service_config.name);
     if let Some(desc) = &service_config.description {
         info!("Description: {}", desc);
     }
 
     // Validate channels
-    let channels = config_manager.channels();
-    info!("Found {} channel(s)", channels.len());
+    info!("Found {} channel(s)", config.channels.len());
 
-    for channel in channels {
+    for channel in &config.channels {
         info!(
             "  Channel {}: {} (protocol: {})",
             channel.id(),

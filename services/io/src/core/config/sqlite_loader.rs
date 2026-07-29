@@ -8,13 +8,13 @@ use crate::core::config::{
     SIGNAL_POINTS_TABLE, TELEMETRY_POINTS_TABLE, install_channel_revision_triggers,
 };
 use crate::core::config::{
-    AdjustmentPoint, AppConfig, ChannelConfig, ControlPoint, RuntimeChannelConfig, ServiceConfig,
-    SignalPoint, TelemetryPoint,
+    AdjustmentPoint, ChannelConfig, ControlPoint, IoConfig, RuntimeChannelConfig, SignalPoint,
+    TelemetryPoint,
 };
 use crate::core::config::{DEFAULT_PORT, Point};
 use crate::error::{IoError, Result};
-use common::DEFAULT_API_HOST;
 use common::sqlite::ServiceConfigLoader;
+use common::{ApiConfig, BaseServiceConfig, DEFAULT_API_HOST};
 use sqlx::{Row, SqlitePool};
 use std::collections::HashMap;
 use std::path::Path;
@@ -83,7 +83,7 @@ impl IoSqliteLoader {
     }
 
     /// Load complete application configuration from database
-    pub async fn load_config(&self) -> Result<AppConfig> {
+    pub async fn load_config(&self) -> Result<IoConfig> {
         // Load base service configuration
         let base_loader = self.base_loader.as_ref().ok_or_else(|| {
             IoError::ConfigError("Base loader not available (created with with_pool)".to_string())
@@ -94,7 +94,7 @@ impl IoSqliteLoader {
             .map_err(|e| IoError::ConfigError(format!("Failed to load service config: {}", e)))?;
 
         // Convert to io config
-        let service = ServiceConfig {
+        let service = BaseServiceConfig {
             name: service_config.service_name.clone(),
             description: service_config
                 .extra_config
@@ -109,7 +109,7 @@ impl IoSqliteLoader {
         };
 
         // Create API configuration
-        let api = crate::core::config::ApiConfig {
+        let api = ApiConfig {
             host: DEFAULT_API_HOST.to_string(),
             port: service_config.port,
         };
@@ -117,7 +117,7 @@ impl IoSqliteLoader {
         // Load channels
         let channels = self.load_channels().await?;
 
-        Ok(AppConfig {
+        Ok(IoConfig {
             service,
             api,
             channels,

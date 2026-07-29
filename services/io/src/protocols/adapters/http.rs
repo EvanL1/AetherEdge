@@ -32,12 +32,12 @@ use std::sync::atomic::{AtomicU8, Ordering};
 use std::time::Duration;
 use tracing::{debug, info};
 
-use crate::protocols::ChannelRuntime;
 use crate::protocols::core::data::DataBatch;
 use crate::protocols::core::diagnostics::AtomicDiagnostics;
 use crate::protocols::core::error::{GatewayError, Result};
 use crate::protocols::core::json_mapper::{JsonMapper, JsonMappingConfig};
 use crate::protocols::core::traits::{ConnectionState, DataEventReceiver, Diagnostics, PollResult};
+use crate::protocols::gateway::ChannelRuntime;
 
 /// HTTP method for requests
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]

@@ -6,7 +6,7 @@
 use std::time::Duration;
 
 use crate::core::channels::ChannelManager;
-use crate::core::config::ConfigManager;
+use crate::core::config::ChannelConfig;
 use crate::error::Result;
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
@@ -38,13 +38,10 @@ const SERVICE_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(30);
 /// Returns the total number of configured channels.
 /// # Lock-free channel_manager
 pub async fn start_communication_service(
-    config_manager: Arc<ConfigManager>,
+    configs: &[Arc<ChannelConfig>],
     channel_manager: Arc<ChannelManager>,
 ) -> Result<usize> {
     debug!("start_communication_service called");
-
-    // Get channel configurations
-    let configs = config_manager.channels();
 
     if configs.is_empty() {
         warn!("No channels configured");
@@ -347,13 +344,6 @@ pub fn start_cleanup_task(
     (handle, token)
 }
 
-/// Wait for shutdown signal (Ctrl+C or SIGTERM on Unix)
-///
-/// Re-exports the common shutdown handler for backwards compatibility.
-pub async fn wait_for_shutdown() {
-    common::shutdown::wait_for_shutdown().await
-}
-
 /// Perform graceful shutdown of all services
 ///
 /// # Lock-free channel_manager
@@ -392,7 +382,7 @@ pub async fn shutdown_services(
 #[allow(clippy::disallowed_methods)] // Test code - unwrap is acceptable
 mod tests {
     use super::*;
-    use crate::core::config::ConfigManager;
+    use crate::core::config::IoSqliteLoader;
     use sqlx::SqlitePool;
     use std::sync::Arc;
     use tempfile::TempDir;
@@ -470,6 +460,16 @@ mod tests {
         (temp_dir, db_path.to_string_lossy().to_string())
     }
 
+    async fn load_test_channels(db_path: &str) -> Vec<Arc<ChannelConfig>> {
+        IoSqliteLoader::new(db_path)
+            .await
+            .unwrap()
+            .load_config()
+            .await
+            .unwrap()
+            .channels
+    }
+
     /// Helper: Add test channels to database
     async fn add_test_channels(db_path: &str, enabled: bool) {
         let pool = SqlitePool::connect(&format!("sqlite://{}", db_path))
@@ -500,7 +500,7 @@ mod tests {
         let (_temp_dir, db_path) = create_test_database().await;
         add_test_channels(&db_path, true).await;
 
-        let config_manager = Arc::new(ConfigManager::from_sqlite(&db_path).await.unwrap());
+        let channels = load_test_channels(&db_path).await;
         let channel_manager = Arc::new(
             ChannelManager::new(
                 crate::test_utils::create_test_shm_handle(),
@@ -509,7 +509,7 @@ mod tests {
             .unwrap(),
         );
 
-        let result = start_communication_service(config_manager, channel_manager).await;
+        let result = start_communication_service(&channels, channel_manager).await;
 
         assert!(result.is_ok(), "Service startup should succeed");
         let configured_count = result.unwrap();
@@ -524,7 +524,7 @@ mod tests {
         let (_temp_dir, db_path) = create_test_database().await;
         // Don't add any channels
 
-        let config_manager = Arc::new(ConfigManager::from_sqlite(&db_path).await.unwrap());
+        let channels = load_test_channels(&db_path).await;
         let channel_manager = Arc::new(
             ChannelManager::new(
                 crate::test_utils::create_test_shm_handle(),
@@ -533,7 +533,7 @@ mod tests {
             .unwrap(),
         );
 
-        let result = start_communication_service(config_manager, channel_manager).await;
+        let result = start_communication_service(&channels, channel_manager).await;
 
         assert!(
             result.is_ok(),
@@ -548,7 +548,7 @@ mod tests {
         let (_temp_dir, db_path) = create_test_database().await;
         add_test_channels(&db_path, false).await; // disabled channels
 
-        let config_manager = Arc::new(ConfigManager::from_sqlite(&db_path).await.unwrap());
+        let channels = load_test_channels(&db_path).await;
         let channel_manager = Arc::new(
             ChannelManager::new(
                 crate::test_utils::create_test_shm_handle(),
@@ -557,7 +557,7 @@ mod tests {
             .unwrap(),
         );
 
-        let result = start_communication_service(config_manager, channel_manager).await;
+        let result = start_communication_service(&channels, channel_manager).await;
 
         assert!(
             result.is_ok(),
@@ -579,7 +579,7 @@ mod tests {
         let (_temp_dir, db_path) = create_test_database().await;
         add_test_channels(&db_path, true).await;
 
-        let config_manager = Arc::new(ConfigManager::from_sqlite(&db_path).await.unwrap());
+        let channels = load_test_channels(&db_path).await;
         let channel_manager = Arc::new(
             ChannelManager::new(
                 crate::test_utils::create_test_shm_handle(),
@@ -589,7 +589,7 @@ mod tests {
         );
 
         // Start service first
-        let _ = start_communication_service(config_manager, channel_manager.clone()).await;
+        let _ = start_communication_service(&channels, channel_manager.clone()).await;
 
         // Now shutdown
         shutdown_handler(channel_manager.clone()).await;
@@ -623,7 +623,7 @@ mod tests {
         let (_temp_dir, db_path) = create_test_database().await;
         add_test_channels(&db_path, true).await;
 
-        let config_manager = Arc::new(ConfigManager::from_sqlite(&db_path).await.unwrap());
+        let channels = load_test_channels(&db_path).await;
         let channel_manager = Arc::new(
             ChannelManager::new(
                 crate::test_utils::create_test_shm_handle(),
@@ -633,7 +633,7 @@ mod tests {
         );
 
         // Start service
-        let _ = start_communication_service(config_manager, channel_manager.clone()).await;
+        let _ = start_communication_service(&channels, channel_manager.clone()).await;
 
         // Shutdown twice
         shutdown_handler(channel_manager.clone()).await;
@@ -691,7 +691,7 @@ mod tests {
         let (_temp_dir, db_path) = create_test_database().await;
         add_test_channels(&db_path, true).await;
 
-        let config_manager = Arc::new(ConfigManager::from_sqlite(&db_path).await.unwrap());
+        let channels = load_test_channels(&db_path).await;
         let channel_manager = Arc::new(
             ChannelManager::new(
                 crate::test_utils::create_test_shm_handle(),
@@ -701,7 +701,7 @@ mod tests {
         );
 
         // Start service
-        let configured_count = start_communication_service(config_manager, channel_manager.clone())
+        let configured_count = start_communication_service(&channels, channel_manager.clone())
             .await
             .unwrap();
 
@@ -726,7 +726,7 @@ mod tests {
         let (_temp_dir, db_path) = create_test_database().await;
         add_test_channels(&db_path, true).await;
 
-        let config_manager = Arc::new(ConfigManager::from_sqlite(&db_path).await.unwrap());
+        let channels = load_test_channels(&db_path).await;
         let channel_manager = Arc::new(
             ChannelManager::new(
                 crate::test_utils::create_test_shm_handle(),
@@ -736,7 +736,7 @@ mod tests {
         );
 
         // Start service includes connection phase
-        let result = start_communication_service(config_manager, channel_manager).await;
+        let result = start_communication_service(&channels, channel_manager).await;
 
         assert!(
             result.is_ok(),
@@ -749,7 +749,7 @@ mod tests {
         let (_temp_dir, db_path) = create_test_database().await;
         add_test_channels(&db_path, true).await;
 
-        let config_manager = Arc::new(ConfigManager::from_sqlite(&db_path).await.unwrap());
+        let channels = load_test_channels(&db_path).await;
         let channel_manager = Arc::new(
             ChannelManager::new(
                 crate::test_utils::create_test_shm_handle(),
@@ -759,7 +759,7 @@ mod tests {
         );
 
         // Even if connections fail, startup should succeed
-        let result = start_communication_service(config_manager, channel_manager).await;
+        let result = start_communication_service(&channels, channel_manager).await;
 
         assert!(
             result.is_ok(),
@@ -785,7 +785,7 @@ mod tests {
         }
         pool.close().await;
 
-        let config_manager = Arc::new(ConfigManager::from_sqlite(&db_path).await.unwrap());
+        let channels = load_test_channels(&db_path).await;
         let channel_manager = Arc::new(
             ChannelManager::new(
                 crate::test_utils::create_test_shm_handle(),
@@ -795,7 +795,7 @@ mod tests {
         );
 
         let start_time = std::time::Instant::now();
-        let result = start_communication_service(config_manager, channel_manager).await;
+        let result = start_communication_service(&channels, channel_manager).await;
         let elapsed = start_time.elapsed();
 
         assert!(result.is_ok(), "Parallel channel creation should succeed");

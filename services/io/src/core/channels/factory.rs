@@ -40,7 +40,9 @@ use crate::protocols::core::error::Result;
 use crate::protocols::gateway::ChannelRuntime;
 
 #[cfg(feature = "modbus")]
-use crate::protocols::adapters::modbus::{ModbusChannel, ModbusChannelConfig};
+use crate::protocols::adapters::modbus::ModbusChannel;
+#[cfg(feature = "modbus")]
+use crate::protocols::adapters::modbus_config::ModbusChannelConfig;
 #[cfg(feature = "modbus")]
 use crate::protocols::core::point::PointConfig;
 

@@ -15,9 +15,6 @@ use crate::error::{IoError, Result};
 use crate::store::ShmDataStore;
 use aether_shm_bridge::{ShmChannelHealthWriterHandle, ShmWriterHandle};
 
-// Re-export types for backwards compatibility
-pub use crate::core::channels::channel_entry::{ChannelMetadata, unix_timestamp_ms};
-
 // ============================================================================
 // Channel Manager
 // ============================================================================

@@ -37,11 +37,8 @@ use crate::protocols::core::traits::{
 use crate::protocols::gateway::ChannelRuntime;
 use async_trait::async_trait;
 
-// Re-export from extracted modules (preserves external API)
 use super::modbus_client::ModbusClientWrapper;
-pub use super::modbus_config::{
-    ConnectionMode, ModbusChannelConfig, ModbusChannelParamsConfig, ModbusMappingConfig,
-};
+use super::modbus_config::{ConnectionMode, ModbusChannelConfig};
 use super::modbus_logging::create_packet_callback;
 
 // Type alias for grouped points: (slave_id, function_code) -> Arc<Vec<PointConfig>>

@@ -97,7 +97,7 @@ pub struct ChannelEntry {
     /// Channel configuration
     pub channel_config: Arc<ChannelConfig>,
     /// Direct command sender for M2C business commands (control/adjustment)
-    pub command_tx: Option<tokio::sync::mpsc::Sender<super::traits::ChannelCommand>>,
+    pub command_tx: Option<tokio::sync::mpsc::Sender<super::types::ChannelCommand>>,
     /// Cached connection state for non-blocking access (updated by unified task)
     cached_connection_state: Arc<AtomicU8>,
     /// Cached diagnostics for non-blocking access (updated by unified task after each poll)
@@ -197,7 +197,7 @@ impl ChannelEntry {
         // Create business command channel (for control/adjustment from M2C SHM)
         // Buffer size 1024 prevents backpressure drops during burst M2C traffic
         let (business_tx, business_rx) =
-            tokio::sync::mpsc::channel::<super::traits::ChannelCommand>(1024);
+            tokio::sync::mpsc::channel::<super::types::ChannelCommand>(1024);
 
         // Create shared connection state cache (initialized as Connecting)
         let cached_state = Arc::new(AtomicU8::new(

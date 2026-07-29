@@ -14,8 +14,7 @@ use tracing::{debug, error, info, warn};
 
 use common::PointType;
 
-use crate::core::channels::traits::ChannelCommand;
-use crate::core::channels::types::ProtocolCommand;
+use crate::core::channels::types::{ChannelCommand, ProtocolCommand};
 use crate::protocols::core::logging::{ChannelLogConfig, ChannelLogHandler};
 use crate::protocols::core::traits::{DataEvent, DataEventReceiver, PollResult};
 use crate::protocols::gateway::ChannelRuntime;

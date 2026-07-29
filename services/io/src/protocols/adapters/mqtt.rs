@@ -79,7 +79,6 @@ fn parse_broker_url(broker: &str) -> Result<(&str, u16)> {
     Ok((host, port))
 }
 
-use crate::protocols::ChannelRuntime;
 use crate::protocols::core::data::DataBatch;
 use crate::protocols::core::diagnostics::AtomicDiagnostics;
 use crate::protocols::core::error::{GatewayError, Result};
@@ -87,6 +86,7 @@ use crate::protocols::core::json_mapper::{JsonMapper, JsonMappingConfig};
 use crate::protocols::core::traits::{
     ConnectionState, DataEvent, DataEventReceiver, DataEventSender, Diagnostics, PollResult,
 };
+use crate::protocols::gateway::ChannelRuntime;
 
 /// MQTT subscription configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]

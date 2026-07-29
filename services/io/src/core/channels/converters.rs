@@ -348,23 +348,6 @@ pub fn convert_to_can_point_configs(runtime_config: &RuntimeChannelConfig) -> Ve
     configs
 }
 
-/// Convert runtime CAN mappings to point configuration metadata.
-///
-/// This conversion is used to register points with the data store for proper
-/// data transformation and storage.
-/// Parses CAN configuration from each point's protocol_mappings JSON field.
-#[cfg(all(feature = "can", target_os = "linux"))]
-pub fn convert_can_to_point_configs(runtime_config: &RuntimeChannelConfig) -> Vec<PointConfig> {
-    convert_all_points(runtime_config, &|base: &Point| {
-        let json_str = base.protocol_mappings.as_ref()?;
-        let mapping: CanProtocolMapping = serde_json::from_str(json_str).ok()?;
-        Some(ProtocolAddress::Generic(format!(
-            "can_id:0x{:X},start_bit:{},len:{}",
-            mapping.can_id, mapping.start_bit, mapping.bit_length
-        )))
-    })
-}
-
 // ============================================================================
 // Unit Tests
 // ============================================================================
