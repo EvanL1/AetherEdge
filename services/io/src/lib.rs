@@ -21,10 +21,8 @@ pub mod api {
     pub mod routes;
 
     pub mod handlers {
-        pub mod admin_handlers;
         pub mod channel_handlers;
         pub mod channel_management_handlers;
-        pub mod control_handlers;
         pub mod health;
         pub mod mapping_handlers;
         pub mod point_handlers;

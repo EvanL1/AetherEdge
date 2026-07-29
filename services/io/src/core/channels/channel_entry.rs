@@ -13,7 +13,6 @@ use tracing::warn;
 
 use crate::core::config::ChannelConfig;
 use crate::error::{IoError, Result};
-use crate::protocols::core::logging::ChannelLogHandler;
 use crate::protocols::gateway::ChannelRuntime;
 use crate::runtime::reconnect::{AutoRecoveryPolicy, ReconnectPolicy};
 use crate::store::ShmDataStore;
@@ -176,7 +175,6 @@ impl ChannelEntry {
         channel_config: Arc<ChannelConfig>,
         protocol_type: String,
         poll_interval_ms: u64,
-        log_handler: Arc<dyn ChannelLogHandler>,
         command_guard: CommandGuard,
     ) -> Result<Self> {
         let poll_interval_ms = validated_poll_interval_ms(poll_interval_ms)?;
@@ -241,7 +239,6 @@ impl ChannelEntry {
             poll_interval_ms,
             cached_state: cached_state_clone,
             cached_diagnostics: cached_diagnostics_clone,
-            log_handler,
             watchdog_heartbeat_ms: heartbeat_clone,
             reconnect_total_attempts: attempts_clone,
             reconnect_failed: failed_clone,
@@ -426,28 +423,6 @@ impl ChannelEntry {
             .map_err(|_| crate::error::IoError::channel_not_found(self.channel_config.id()))?;
 
         Ok(())
-    }
-
-    /// Set the channel log level dynamically.
-    ///
-    /// Sends a SetLogLevel command to the unified channel task.
-    /// Valid levels: "debug" (verbose), "info" (standard), "error" (minimal)
-    pub async fn set_log_level(&self, level: &str) -> crate::error::Result<()> {
-        use super::types::ProtocolCommand;
-
-        let (response_tx, response_rx) = tokio::sync::oneshot::channel();
-        self.protocol_tx
-            .send(ProtocolCommand::SetLogLevel {
-                level: level.to_string(),
-                response_tx,
-            })
-            .await
-            .map_err(|_| crate::error::IoError::channel_not_found(self.channel_config.id()))?;
-
-        response_rx
-            .await
-            .map_err(|_| crate::error::IoError::channel_not_found(self.channel_config.id()))?
-            .map_err(crate::error::IoError::ValidationError)
     }
 
     /// Get the channel ID from metadata name (parsed from config)

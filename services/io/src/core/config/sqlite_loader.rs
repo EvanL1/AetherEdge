@@ -2,17 +2,17 @@
 //!
 //! Loads channel configurations, point tables, and mappings from SQLite database
 
-#[cfg(test)]
-use crate::core::config::{
-    ADJUSTMENT_POINTS_TABLE, CHANNELS_TABLE, CONTROL_POINTS_TABLE, SERVICE_CONFIG_TABLE,
-    SIGNAL_POINTS_TABLE, TELEMETRY_POINTS_TABLE, install_channel_revision_triggers,
-};
 use crate::core::config::{
     AdjustmentPoint, ChannelConfig, ControlPoint, IoConfig, RuntimeChannelConfig, SignalPoint,
     TelemetryPoint,
 };
 use crate::core::config::{DEFAULT_PORT, Point};
 use crate::error::{IoError, Result};
+#[cfg(test)]
+use common::site_schema::{
+    ADJUSTMENT_POINTS_TABLE, CHANNELS_TABLE, CONTROL_POINTS_TABLE, SERVICE_CONFIG_TABLE,
+    SIGNAL_POINTS_TABLE, TELEMETRY_POINTS_TABLE, install_channel_revision_triggers,
+};
 use common::sqlite::ServiceConfigLoader;
 use common::{ApiConfig, BaseServiceConfig, DEFAULT_API_HOST};
 use sqlx::{Row, SqlitePool};

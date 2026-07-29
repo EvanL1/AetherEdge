@@ -39,7 +39,6 @@ use crate::api::single_point_handlers::{
 };
 
 use crate::api::property_handlers::{delete_property, upsert_property};
-use common::admin_api::{get_log_level, set_log_level};
 
 // Service-local OpenAPI document consumed by the gateway-owned Swagger UI.
 #[cfg(feature = "openapi")]
@@ -76,9 +75,6 @@ use common::admin_api::{get_log_level, set_log_level};
         crate::api::global_routing_handlers::get_routing_by_channel_handler,
         crate::api::product_handlers::list_products,
         crate::api::product_handlers::get_product_points,
-        // Admin endpoints
-        common::admin_api::set_log_level,
-        common::admin_api::get_log_level,
     ),
     components(
         schemas(
@@ -93,17 +89,13 @@ use common::admin_api::{get_log_level, set_log_level};
             crate::config::Product,
             crate::config::MeasurementPoint,
             crate::config::ActionPoint,
-            crate::config::PropertyTemplate,
-            // Admin schemas
-            common::admin_api::SetLogLevelRequest,
-            common::admin_api::LogLevelResponse
+            crate::config::PropertyTemplate
         )
     ),
     tags(
         (name = "automation", description = "Instance, topology, routing, and action orchestration"),
         (name = "instances", description = "Instance lifecycle and configuration"),
-        (name = "products", description = "Product template management (read-only)"),
-        (name = "admin", description = "Administration and service management")
+        (name = "products", description = "Product template management (read-only)")
     ),
     modifiers(&SecurityAddon),
     info(
@@ -216,11 +208,6 @@ pub fn create_routes(state: Arc<AppState>) -> Router {
         // Product management endpoints (read-only)
         .route("/api/products", get(list_products))
         .route("/api/products/{product_name}/points", get(get_product_points))
-        // Host-local dynamic log filter
-        .route(
-            "/api/admin/logs/level",
-            get(get_log_level).post(set_log_level),
-        )
         // Apply HTTP request logging middleware
         .layer(axum::middleware::from_fn(common::logging::http_request_logger))
         .layer(DefaultBodyLimit::max(1024 * 1024)) // 1 MB request body limit
@@ -359,7 +346,7 @@ mod openapi_tests {
             })
             .count();
         assert_eq!(
-            operation_count, 39,
+            operation_count, 37,
             "OpenAPI operation count changed; re-audit Router parity before updating this contract"
         );
     }

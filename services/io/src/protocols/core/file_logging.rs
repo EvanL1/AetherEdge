@@ -27,7 +27,6 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{BufWriter, Write};
 use std::path::PathBuf;
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicU8, Ordering};
 
 use async_trait::async_trait;
 use chrono::{Local, NaiveDate};
@@ -58,24 +57,6 @@ impl FileLogLevel {
             _ => Self::Info,
         }
     }
-
-    /// Convert to u8 for atomic storage.
-    #[must_use]
-    pub const fn as_u8(self) -> u8 {
-        match self {
-            Self::Info => 0,
-            Self::Debug => 1,
-        }
-    }
-
-    /// Convert from u8 (atomic load).
-    #[must_use]
-    pub const fn from_u8(v: u8) -> Self {
-        match v {
-            1 => Self::Debug,
-            _ => Self::Info,
-        }
-    }
 }
 
 // ============================================================================
@@ -95,7 +76,6 @@ struct OpenFile {
 /// Writes channel logs to per-channel, per-day log files.
 /// Thread-safe through internal `Mutex` on file handles.
 ///
-/// The log level can be changed dynamically at runtime via `set_level()`.
 pub struct ChannelFileLogHandler {
     /// Base directory for log files.
     base_dir: PathBuf,
@@ -103,8 +83,8 @@ pub struct ChannelFileLogHandler {
     channel_names: HashMap<u32, String>,
     /// Open file handles: channel_id -> (date, writer).
     open_files: Mutex<HashMap<u32, OpenFile>>,
-    /// Log level filter (stored as AtomicU8 for hot-reload support).
-    level: AtomicU8,
+    /// Log level selected by the governed channel configuration.
+    level: FileLogLevel,
 }
 
 impl ChannelFileLogHandler {
@@ -122,29 +102,15 @@ impl ChannelFileLogHandler {
             base_dir: base_dir.into(),
             channel_names: HashMap::new(),
             open_files: Mutex::new(HashMap::new()),
-            level: AtomicU8::new(FileLogLevel::default().as_u8()),
+            level: FileLogLevel::default(),
         }
     }
 
     /// Set the log level (builder pattern).
     #[must_use]
-    pub fn with_level(self, level: FileLogLevel) -> Self {
-        self.level.store(level.as_u8(), Ordering::Relaxed);
+    pub fn with_level(mut self, level: FileLogLevel) -> Self {
+        self.level = level;
         self
-    }
-
-    /// Get the current log level.
-    #[must_use]
-    pub fn level(&self) -> FileLogLevel {
-        FileLogLevel::from_u8(self.level.load(Ordering::Relaxed))
-    }
-
-    /// Set the log level dynamically at runtime.
-    ///
-    /// This method is thread-safe and can be called while the handler is
-    /// actively processing log events.
-    pub fn set_level(&self, level: FileLogLevel) {
-        self.level.store(level.as_u8(), Ordering::Relaxed);
     }
 
     /// Register a channel with its name.
@@ -411,7 +377,7 @@ impl ChannelFileLogHandler {
     /// - **Info**: Errors, connections, disconnections, control writes, **point values** (key events)
     /// - **Debug**: All of Info + raw packets, poll cycles, state changes, reconnects
     fn should_log(&self, event: &ChannelLogEvent) -> bool {
-        let level = self.level(); // Atomic read for hot-reload support
+        let level = self.level;
         match event {
             // Always log these at Info level (key events)
             ChannelLogEvent::Error { .. } => true,
@@ -599,11 +565,6 @@ impl ChannelLogHandler for ChannelFileLogHandler {
             self.write_log(channel_id, &line);
         });
     }
-
-    fn set_log_level(&self, level: &str) {
-        let new_level = FileLogLevel::parse(Some(level));
-        self.set_level(new_level);
-    }
 }
 
 impl Drop for ChannelFileLogHandler {
@@ -686,34 +647,6 @@ mod tests {
         let content = fs::read_to_string(&log_file).expect("Failed to read log file");
         assert!(content.contains(">>> modbus [slave=1 fc=0x03]"));
         assert!(content.contains("00 01 00 00 00 06 01 03 00 64 00 0A"));
-    }
-
-    #[test]
-    fn test_dynamic_level_change() {
-        let handler = ChannelFileLogHandler::new("/tmp").with_level(FileLogLevel::Info);
-
-        // Initial level should be Info
-        assert_eq!(handler.level(), FileLogLevel::Info);
-
-        // Change to Debug dynamically
-        handler.set_level(FileLogLevel::Debug);
-        assert_eq!(handler.level(), FileLogLevel::Debug);
-
-        // Change back to Info
-        handler.set_level(FileLogLevel::Info);
-        assert_eq!(handler.level(), FileLogLevel::Info);
-
-        // Test via trait method (simulates API call)
-        use crate::protocols::core::logging::ChannelLogHandler;
-        handler.set_log_level("debug");
-        assert_eq!(handler.level(), FileLogLevel::Debug);
-
-        handler.set_log_level("info");
-        assert_eq!(handler.level(), FileLogLevel::Info);
-
-        // Invalid level should default to Info
-        handler.set_log_level("invalid");
-        assert_eq!(handler.level(), FileLogLevel::Info);
     }
 
     #[test]

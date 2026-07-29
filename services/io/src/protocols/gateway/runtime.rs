@@ -90,14 +90,6 @@ pub trait ChannelRuntime: Send + Sync {
     ///
     /// Default implementation does nothing.
     fn set_log_config(&mut self, _config: ChannelLogConfig) {}
-
-    /// Get the log handler for this channel.
-    ///
-    /// Returns `None` by default. Protocols that support hot-reload of log levels
-    /// should override this to return their handler reference.
-    fn log_handler(&self) -> Option<Arc<dyn ChannelLogHandler>> {
-        None
-    }
 }
 
 /// Channel communication mode.

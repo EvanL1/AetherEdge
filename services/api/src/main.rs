@@ -120,8 +120,6 @@ where
         routes_auth::get_auth_stats,
         routes_auth::cleanup_tokens,
         routes_auth::validate_token,
-        common::admin_api::get_log_level,
-        common::admin_api::set_log_level,
     ),
     components(schemas(
         models::UserCreate,
@@ -146,13 +144,10 @@ where
         models::Role,
         models::RoleInfo,
         models::UserWithRole,
-        common::admin_api::SetLogLevelRequest,
-        common::admin_api::LogLevelResponse,
     )),
     tags(
         (name = "Auth", description = "Authentication and user management"),
         (name = "Meta", description = "Service metadata and health"),
-        (name = "admin", description = "Authenticated runtime administration"),
     ),
     modifiers(&SecurityAddon),
     info(
@@ -178,24 +173,6 @@ impl utoipa::Modify for SecurityAddon {
                         .build(),
                 ),
             );
-        }
-
-        let bearer = || {
-            vec![utoipa::openapi::security::SecurityRequirement::new(
-                "bearer_auth",
-                Vec::<String>::new(),
-            )]
-        };
-        for (path, item) in &mut openapi.paths.paths {
-            if !path.starts_with("/api/admin/") {
-                continue;
-            }
-            if let Some(operation) = item.get.as_mut() {
-                operation.security = Some(bearer());
-            }
-            if let Some(operation) = item.post.as_mut() {
-                operation.security = Some(bearer());
-            }
         }
     }
 }
@@ -257,20 +234,6 @@ fn build_router(state: Arc<AppState>) -> Router {
 
     let api_v1 = Router::new().merge(protected_v1).nest("/auth", auth_routes);
 
-    // /api/admin/* — runtime log-filter control. Must require auth: leaving
-    // this open lets an attacker quietly escalate log verbosity. Grouped into
-    // its own Router so the require_jwt layer covers
-    // any future admin route added inside.
-    let admin_routes = Router::new()
-        .route(
-            "/logs/level",
-            get(common::admin_api::get_log_level).post(common::admin_api::set_log_level),
-        )
-        .layer(axum::middleware::from_fn_with_state(
-            Arc::clone(&state),
-            middleware_auth::require_jwt,
-        ));
-
     let cors = CorsLayer::new()
         .allow_origin(Any)
         .allow_methods(Any)
@@ -279,8 +242,7 @@ fn build_router(state: Arc<AppState>) -> Router {
     let app = Router::new()
         .route("/", get(service_info))
         .route("/health", get(health_check))
-        .nest("/api/v1", api_v1)
-        .nest("/api/admin", admin_routes);
+        .nest("/api/v1", api_v1);
 
     #[cfg(feature = "swagger-ui")]
     let app = {
@@ -572,8 +534,6 @@ mod openapi_tests {
             ("/", "get"),
             ("/health", "get"),
             ("/api/v1/auth/validate", "get"),
-            ("/api/admin/logs/level", "get"),
-            ("/api/admin/logs/level", "post"),
         ] {
             assert!(
                 specification["paths"][path][method].is_object(),
@@ -597,13 +557,12 @@ mod openapi_tests {
     }
 
     #[test]
-    fn protected_reads_and_admin_routes_require_bearer_authentication() {
+    fn protected_reads_require_bearer_authentication() {
         let specification = document();
         for (path, method) in [
             ("/api/v1/auth/validate", "get"),
             ("/api/v1/auth/users", "get"),
             ("/api/v1/auth/users/{id}", "get"),
-            ("/api/admin/logs/level", "get"),
         ] {
             assert_eq!(
                 specification["paths"][path][method]["security"][0]["bearer_auth"],

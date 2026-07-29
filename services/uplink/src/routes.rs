@@ -41,8 +41,6 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/netApi/certificate/upload", post(cert_upload))
         .route("/netApi/certificate/info", get(cert_info))
         .route("/netApi/certificate/{cert_type}", delete(cert_delete))
-        // Admin API (shared endpoints from common lib)
-        .route("/api/admin/logs/level", get(common::admin_api::get_log_level).post(common::admin_api::set_log_level))
         .with_state(state);
 
     #[cfg(feature = "openapi")]
@@ -77,8 +75,6 @@ async fn openapi_document() -> Json<utoipa::openapi::OpenApi> {
         cert_upload,
         cert_info,
         cert_delete,
-        common::admin_api::get_log_level,
-        common::admin_api::set_log_level,
     ),
     components(schemas(
         NetConfig,
@@ -87,15 +83,12 @@ async fn openapi_document() -> Json<utoipa::openapi::OpenApi> {
         SystemMetrics,
         crate::models::UplinkDataResponse<NetConfig>,
         crate::models::AlarmQueuedResponse,
-        common::admin_api::SetLogLevelRequest,
-        common::admin_api::LogLevelResponse,
     )),
     tags(
         (name = "Health",      description = "Health checks and service information"),
         (name = "Alarm",       description = "Alarm broadcast and configuration"),
         (name = "MQTT",        description = "MQTT connection configuration and control"),
         (name = "Certificate", description = "TLS certificate management"),
-        (name = "admin",       description = "Host-local service administration"),
     ),
     info(
         title = "Aether Uplink Service API",
@@ -110,19 +103,10 @@ mod openapi_tests {
     use super::*;
 
     #[test]
-    fn openapi_metadata_and_admin_routes_match_the_router() {
+    fn openapi_metadata_and_operation_count_match_the_router() {
         let specification = serde_json::to_value(ApiDoc::openapi()).expect("serialize OpenAPI");
         assert_eq!(specification["info"]["title"], "Aether Uplink Service API");
         assert_eq!(specification["info"]["version"], env!("CARGO_PKG_VERSION"));
-        for (path, method) in [
-            ("/api/admin/logs/level", "get"),
-            ("/api/admin/logs/level", "post"),
-        ] {
-            assert!(
-                specification["paths"][path][method].is_object(),
-                "missing {method} {path}"
-            );
-        }
         let operation_count = specification["paths"]
             .as_object()
             .expect("paths object")
@@ -147,7 +131,7 @@ mod openapi_tests {
                     .count()
             })
             .sum::<usize>();
-        assert_eq!(operation_count, 15, "Router/OpenAPI operation drift");
+        assert_eq!(operation_count, 13, "Router/OpenAPI operation drift");
         assert!(specification["paths"]["/netApi/inst-sync"].is_null());
     }
 

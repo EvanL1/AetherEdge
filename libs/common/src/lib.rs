@@ -9,7 +9,6 @@ pub mod site_schema;
 pub mod sqlite;
 
 // Common modules
-pub mod admin_api;
 pub mod api_types;
 pub mod automation_config;
 pub mod io_config;

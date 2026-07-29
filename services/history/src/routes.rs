@@ -91,8 +91,6 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/hisApi/storage", get(get_storage).put(update_storage))
         .route("/hisApi/storage/test", axum::routing::post(test_storage))
         .route("/hisApi/storage/reconnect", axum::routing::post(reconnect_storage))
-        // Admin API (shared endpoints from common lib)
-        .route("/api/admin/logs/level", get(common::admin_api::get_log_level).post(common::admin_api::set_log_level))
         .with_state(state);
 
     #[cfg(feature = "openapi")]
@@ -192,8 +190,6 @@ struct HistoryMessageResponse {
         update_storage,
         test_storage,
         reconnect_storage,
-        common::admin_api::get_log_level,
-        common::admin_api::set_log_level,
     ),
     components(schemas(
         HistoryRecord,
@@ -210,8 +206,6 @@ struct HistoryMessageResponse {
         BatchQueryRequest,
         BatchQueryResponse,
         SeriesResult,
-        common::admin_api::SetLogLevelRequest,
-        common::admin_api::LogLevelResponse,
     )),
     tags(
         (name = "Data",    description = "Historical data queries"),
@@ -219,7 +213,6 @@ struct HistoryMessageResponse {
         (name = "Config",  description = "Service configuration"),
         (name = "Storage", description = "Storage backend configuration and control"),
         (name = "Health",  description = "Health checks"),
-        (name = "admin",   description = "Host-local service administration"),
     ),
     info(
         title = "Aether History Service API",
@@ -247,19 +240,10 @@ mod openapi_tests {
     }
 
     #[test]
-    fn openapi_metadata_and_admin_routes_match_the_router() {
+    fn openapi_metadata_and_operation_count_match_the_router() {
         let specification = specification();
         assert_eq!(specification["info"]["title"], "Aether History Service API");
         assert_eq!(specification["info"]["version"], env!("CARGO_PKG_VERSION"));
-        for (path, method) in [
-            ("/api/admin/logs/level", "get"),
-            ("/api/admin/logs/level", "post"),
-        ] {
-            assert!(
-                specification["paths"][path][method].is_object(),
-                "missing {method} {path}"
-            );
-        }
         let operation_count = specification["paths"]
             .as_object()
             .expect("paths object")
@@ -284,7 +268,7 @@ mod openapi_tests {
                     .count()
             })
             .sum::<usize>();
-        assert_eq!(operation_count, 17, "Router/OpenAPI operation drift");
+        assert_eq!(operation_count, 15, "Router/OpenAPI operation drift");
     }
 
     #[test]

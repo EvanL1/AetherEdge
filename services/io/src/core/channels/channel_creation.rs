@@ -170,13 +170,12 @@ impl ChannelManager {
     /// Configure logging for a channel based on ChannelLoggingConfig.
     ///
     /// Sets up both tracing and file logging handlers when enabled.
-    /// Returns the composite log handler for hot-reload support.
     fn configure_channel_logging(
         protocol: &mut Box<dyn ChannelRuntime>,
         channel_id: u32,
         channel_name: &str,
         logging_config: &crate::core::config::ChannelLoggingConfig,
-    ) -> Arc<dyn ChannelLogHandler> {
+    ) {
         // Create composite handler with tracing
         let mut composite = CompositeLogHandler::new().with_handler(Arc::new(TracingLogHandler));
 
@@ -197,9 +196,8 @@ impl ChannelManager {
             );
         }
 
-        // Create Arc and clone for return value (for hot-reload support)
         let handler: Arc<dyn ChannelLogHandler> = Arc::new(composite);
-        protocol.set_log_handler(handler.clone());
+        protocol.set_log_handler(handler);
 
         // Configure log config based on logging level
         let log_config = if logging_config.enabled {
@@ -216,7 +214,6 @@ impl ChannelManager {
         };
 
         protocol.set_log_config(log_config);
-        handler
     }
 
     /// Create channel
@@ -402,7 +399,7 @@ impl ChannelManager {
         let mut protocol =
             create_modbus_channel(channel_id, host, port, point_configs, io_timeout_ms);
 
-        let log_handler = Self::configure_channel_logging(
+        Self::configure_channel_logging(
             &mut protocol,
             channel_id,
             runtime_config.name(),
@@ -419,7 +416,6 @@ impl ChannelManager {
             base_config,
             protocol_label,
             poll_interval_ms,
-            log_handler,
             command_guard(runtime_config)?,
         )
     }
@@ -449,7 +445,7 @@ impl ChannelManager {
         let mut protocol =
             create_modbus_rtu_channel(channel_id, device, baud_rate, point_configs, io_timeout_ms);
 
-        let log_handler = Self::configure_channel_logging(
+        Self::configure_channel_logging(
             &mut protocol,
             channel_id,
             runtime_config.name(),
@@ -466,7 +462,6 @@ impl ChannelManager {
             base_config,
             protocol_label,
             poll_interval_ms,
-            log_handler,
             command_guard(runtime_config)?,
         )
     }
@@ -485,7 +480,7 @@ impl ChannelManager {
 
         let mut protocol = create_gpio_channel(channel_id, runtime_config)?;
 
-        let log_handler = Self::configure_channel_logging(
+        Self::configure_channel_logging(
             &mut protocol,
             channel_id,
             runtime_config.name(),
@@ -501,7 +496,6 @@ impl ChannelManager {
             base_config,
             "gpio".to_string(),
             poll_interval_ms,
-            log_handler,
             command_guard(runtime_config)?,
         )
     }
@@ -537,7 +531,7 @@ impl ChannelManager {
 
         let mut protocol = create_can_channel(channel_id, can_interface, can_point_configs)?;
 
-        let log_handler = Self::configure_channel_logging(
+        Self::configure_channel_logging(
             &mut protocol,
             channel_id,
             runtime_config.name(),
@@ -553,7 +547,6 @@ impl ChannelManager {
             base_config,
             "can".to_string(),
             poll_interval_ms,
-            log_handler,
             command_guard(runtime_config)?,
         )
     }
@@ -574,7 +567,7 @@ impl ChannelManager {
         let mut protocol =
             create_aether_485_channel(channel_id, runtime_config.name(), params, runtime_config);
 
-        let log_handler = Self::configure_channel_logging(
+        Self::configure_channel_logging(
             &mut protocol,
             channel_id,
             runtime_config.name(),
@@ -589,7 +582,6 @@ impl ChannelManager {
             base_config,
             "aether_485".to_string(),
             poll_interval_ms,
-            log_handler,
             command_guard(runtime_config)?,
         )
     }
@@ -604,7 +596,7 @@ impl ChannelManager {
     ) -> Result<ChannelEntry> {
         let store = self.create_data_store();
         let mut protocol = create_mqtt_channel(channel_id, runtime_config.name(), runtime_config)?;
-        let log_handler = Self::configure_channel_logging(
+        Self::configure_channel_logging(
             &mut protocol,
             channel_id,
             runtime_config.name(),
@@ -617,7 +609,6 @@ impl ChannelManager {
             base_config,
             "mqtt".to_string(),
             poll_interval_ms,
-            log_handler,
             command_guard(runtime_config)?,
         )
     }
@@ -633,7 +624,7 @@ impl ChannelManager {
         let store = self.create_data_store();
         let (mut protocol, poll_interval_ms) =
             create_http_channel(channel_id, runtime_config.name(), runtime_config)?;
-        let log_handler = Self::configure_channel_logging(
+        Self::configure_channel_logging(
             &mut protocol,
             channel_id,
             runtime_config.name(),
@@ -645,7 +636,6 @@ impl ChannelManager {
             base_config,
             "http".to_string(),
             poll_interval_ms,
-            log_handler,
             command_guard(runtime_config)?,
         )
     }
@@ -804,7 +794,7 @@ impl ChannelManager {
                 point_configs,
             ));
 
-        let log_handler = Self::configure_channel_logging(
+        Self::configure_channel_logging(
             &mut protocol,
             channel_id,
             runtime_config.name(),
@@ -817,7 +807,6 @@ impl ChannelManager {
             base_config,
             "iec61850".to_string(),
             poll_interval_ms,
-            log_handler,
             command_guard(runtime_config)?,
         )
     }

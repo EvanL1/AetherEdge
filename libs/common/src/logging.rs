@@ -1,15 +1,8 @@
 //! Console-first tracing and HTTP access-log middleware for local services.
 
-use std::sync::{Mutex, OnceLock};
-
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::layer::SubscriberExt;
-use tracing_subscriber::reload;
 use tracing_subscriber::util::SubscriberInitExt;
-
-type EnvFilterReloadHandle = reload::Handle<EnvFilter, tracing_subscriber::Registry>;
-static LOG_FILTER_HANDLE: OnceLock<EnvFilterReloadHandle> = OnceLock::new();
-static CURRENT_LOG_LEVEL: OnceLock<Mutex<String>> = OnceLock::new();
 
 /// Initialize process logging on stdout/stderr. The host runtime owns capture,
 /// rotation, retention, and retrieval through journald or container logs.
@@ -17,44 +10,13 @@ pub fn init(service_name: &str) -> Result<(), Box<dyn std::error::Error>> {
     let filter_text = std::env::var("RUST_LOG")
         .unwrap_or_else(|_| format!("info,{service_name}=debug,api_access=info"));
     let filter = EnvFilter::try_new(&filter_text)?;
-    let (filter_layer, filter_handle) = reload::Layer::new(filter);
 
     tracing_subscriber::registry()
-        .with(filter_layer)
+        .with(filter)
         .with(tracing_subscriber::fmt::layer())
         .try_init()?;
 
-    let _ = LOG_FILTER_HANDLE.set(filter_handle);
-    let _ = CURRENT_LOG_LEVEL.set(Mutex::new(filter_text));
     Ok(())
-}
-
-/// Change the process log filter at runtime.
-pub fn set_log_level(level: &str) -> Result<(), String> {
-    let handle = LOG_FILTER_HANDLE
-        .get()
-        .ok_or_else(|| "Logging system not initialized".to_string())?;
-    let filter = EnvFilter::try_new(level)
-        .map_err(|error| format!("Invalid log level '{level}': {error}"))?;
-    handle
-        .reload(filter)
-        .map_err(|error| format!("Failed to reload log filter: {error}"))?;
-    if let Some(current) = CURRENT_LOG_LEVEL.get()
-        && let Ok(mut current) = current.lock()
-    {
-        *current = level.to_string();
-    }
-    tracing::info!(%level, "log filter changed");
-    Ok(())
-}
-
-/// Return the active process log filter.
-pub fn get_log_level() -> String {
-    CURRENT_LOG_LEVEL
-        .get()
-        .and_then(|current| current.lock().ok())
-        .map(|current| current.clone())
-        .unwrap_or_else(|| "unknown".to_string())
 }
 
 /// Redact sensitive fields in JSON string

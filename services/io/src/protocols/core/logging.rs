@@ -462,9 +462,6 @@ impl ChannelLogConfig {
 #[async_trait]
 pub trait ChannelLogHandler: Send + Sync {
     async fn on_log(&self, channel_id: u32, event: ChannelLogEvent);
-
-    /// Set the log level dynamically (for hot-reload support).
-    fn set_log_level(&self, _level: &str) {}
 }
 
 /// Logging context for use within protocol implementations.

@@ -15,7 +15,6 @@ use tracing::{debug, error, info, warn};
 use common::PointType;
 
 use crate::core::channels::types::{ChannelCommand, ProtocolCommand};
-use crate::protocols::core::logging::{ChannelLogConfig, ChannelLogHandler};
 use crate::protocols::core::traits::{DataEvent, DataEventReceiver, PollResult};
 use crate::protocols::gateway::ChannelRuntime;
 use crate::runtime::reconnect::{
@@ -35,7 +34,6 @@ pub(super) struct ChannelPollContext {
     pub poll_interval_ms: NonZeroU64,
     pub cached_state: Arc<AtomicU8>,
     pub cached_diagnostics: Arc<ArcSwapOption<crate::protocols::core::traits::Diagnostics>>,
-    pub log_handler: Arc<dyn ChannelLogHandler>,
     pub watchdog_heartbeat_ms: Arc<AtomicI64>,
     pub reconnect_total_attempts: Arc<AtomicU64>,
     pub reconnect_failed: Arc<AtomicBool>,
@@ -166,37 +164,6 @@ async fn check_online_change(
     }
 }
 
-/// Apply log level to protocol and log handler.
-///
-/// Returns Ok for valid levels ("debug"/"info"/"error"), Err for invalid.
-fn apply_log_level(
-    protocol: &mut dyn ChannelRuntime,
-    log_handler: &dyn ChannelLogHandler,
-    level: &str,
-) -> std::result::Result<(), String> {
-    match level.to_lowercase().as_str() {
-        "debug" | "verbose" => {
-            protocol.set_log_config(ChannelLogConfig::all());
-            log_handler.set_log_level("debug");
-            Ok(())
-        },
-        "info" | "standard" => {
-            protocol.set_log_config(ChannelLogConfig::default());
-            log_handler.set_log_level("info");
-            Ok(())
-        },
-        "error" | "minimal" => {
-            protocol.set_log_config(ChannelLogConfig::errors_only());
-            log_handler.set_log_level("info");
-            Ok(())
-        },
-        other => Err(format!(
-            "Invalid log level '{}', use: debug/info/error",
-            other
-        )),
-    }
-}
-
 /// Run the unified channel task that handles both polling and commands.
 ///
 /// ## Lock-Free Architecture
@@ -284,9 +251,7 @@ pub(super) async fn run_unified_channel_task(
                     info!("Ch{} shutdown received, exiting loop", ctx.channel_id);
                     break;
                 }
-                if handle_protocol_command(
-                    cmd, &mut protocol, &ctx.log_handler, ctx.channel_id,
-                )
+                if handle_protocol_command(cmd, &mut protocol, ctx.channel_id)
                 .await
                 {
                     break;
@@ -360,7 +325,6 @@ enum TickAction {
 async fn handle_protocol_command(
     cmd: ProtocolCommand,
     protocol: &mut Box<dyn ChannelRuntime>,
-    log_handler: &Arc<dyn ChannelLogHandler>,
     channel_id: u32,
 ) -> bool {
     match cmd {
@@ -380,13 +344,6 @@ async fn handle_protocol_command(
             let state: crate::core::channels::types::ConnectionState =
                 protocol.connection_state().into();
             let _ = response_tx.send(state);
-        },
-        ProtocolCommand::SetLogLevel { level, response_tx } => {
-            let result = apply_log_level(protocol.as_mut(), log_handler.as_ref(), &level);
-            if result.is_ok() {
-                info!("Ch{} log level set to {}", channel_id, level);
-            }
-            let _ = response_tx.send(result);
         },
         ProtocolCommand::Shutdown => {
             // Unreachable: the main select! arm peels Shutdown off before
@@ -720,7 +677,7 @@ async fn handle_disconnected(
                     Some(cmd) = protocol_rx.recv() => {
                         let action = handle_backoff_command(
                             cmd, protocol, reconnect_helper,
-                            failed_log_tick_counter, &ctx.log_handler, ctx.channel_id,
+                            failed_log_tick_counter, ctx.channel_id,
                         ).await;
                         if let Some(a) = action {
                             update_cached_state(protocol.as_ref(), &ctx.cached_state);
@@ -771,7 +728,6 @@ async fn handle_backoff_command(
     protocol: &mut Box<dyn ChannelRuntime>,
     reconnect_helper: &mut ReconnectHelper,
     failed_log_tick_counter: &mut u32,
-    log_handler: &Arc<dyn ChannelLogHandler>,
     channel_id: u32,
 ) -> Option<TickAction> {
     match cmd {
@@ -799,10 +755,6 @@ async fn handle_backoff_command(
         ProtocolCommand::GetDiagnostics { response_tx } => {
             let diag = protocol.diagnostics().await.ok();
             let _ = response_tx.send(diag);
-        },
-        ProtocolCommand::SetLogLevel { level, response_tx } => {
-            let result = apply_log_level(protocol.as_mut(), log_handler.as_ref(), &level);
-            let _ = response_tx.send(result);
         },
     }
     None

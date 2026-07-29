@@ -136,6 +136,7 @@ Use the narrowest document that answers the task. The catalog covers every agent
 - [ADR-0036: Retire zero-consumer service aliases](https://github.com/EvanL1/AetherEdge/blob/main/docs/adr/0036-retire-zero-consumer-service-aliases.md): Accepted and implemented on 2026-08-12.
 - [ADR-0037: Keep one governed IO composition](https://github.com/EvanL1/AetherEdge/blob/main/docs/adr/0037-single-governed-io-composition.md): Accepted and implemented on 2026-08-19.
 - [ADR-0038: Compose IO directly from SQLite configuration](https://github.com/EvanL1/AetherEdge/blob/main/docs/adr/0038-direct-io-configuration-composition.md): Accepted and implemented on 2026-08-19.
+- [ADR-0039: Configure logging without a runtime admin API](https://github.com/EvanL1/AetherEdge/blob/main/docs/adr/0039-configured-logging-without-runtime-admin-api.md): Accepted and implemented on 2026-08-20.
 - [Control Strategies as Rules (Moved)](https://github.com/EvanL1/AetherEdge/blob/main/docs/domain/control-strategies.md): Compatibility pointer to the Energy Pack knowledge page
 - [Energy Storage Primer (Moved)](https://github.com/EvanL1/AetherEdge/blob/main/docs/domain/ess-primer.md): Compatibility pointer to the Energy Pack knowledge page
 - [Power Forecasting (Moved)](https://github.com/EvanL1/AetherEdge/blob/main/docs/domain/power-forecasting.md): Compatibility pointer to the downstream AetherEMS knowledge page

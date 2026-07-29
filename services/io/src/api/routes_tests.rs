@@ -3104,6 +3104,8 @@ mod openapi_tests {
             "/api/channels/list",
             "/api/channels/search",
             "/api/channels/{id}/control",
+            "/api/channels/{id}/logging",
+            "/api/admin/logs/level",
             "/api/points",
             "/api/channels/{channel_id}/T/points/{point_id}",
             "/api/channels/{channel_id}/S/points/{point_id}",
@@ -3484,7 +3486,7 @@ mod openapi_tests {
             .sum::<usize>();
 
         assert_eq!(
-            operation_count, 19,
+            operation_count, 16,
             "HTTP operation count changed; re-audit Router/OpenAPI parity before updating this guard"
         );
     }

@@ -573,6 +573,18 @@ fn io_point_topology_is_offline_only() {
 #[test]
 fn shared_service_kernel_stays_console_first() {
     let root = workspace_metadata().workspace_root;
+    for retired in [
+        "libs/common/src/admin_api.rs",
+        "services/io/src/api/handlers/admin_handlers.rs",
+        "services/io/src/api/handlers/control_handlers.rs",
+        "services/automation/src/api/admin_handlers.rs",
+    ] {
+        assert!(
+            !root.join(retired).exists(),
+            "retired runtime log administration surface was restored at {retired}"
+        );
+    }
+
     for (relative, forbidden) in [
         ("libs/common/Cargo.toml", "tracing-appender"),
         ("libs/common/Cargo.toml", "flate2"),
@@ -591,15 +603,36 @@ fn shared_service_kernel_stays_console_first() {
         ("tools/aether/src/core/schema.rs", "channel_templates"),
         ("tools/aether/src/core/exporter.rs", "\"rules\" =>"),
         ("libs/common/src/logging.rs", "DailyRollingWriter"),
-        ("libs/common/src/admin_api.rs", "list_log_files"),
-        ("libs/common/src/admin_api.rs", "view_log_file"),
+        ("libs/common/src/lib.rs", "pub mod admin_api;"),
+        ("libs/common/src/logging.rs", "reload::Layer"),
+        ("libs/common/src/logging.rs", "pub fn set_log_level"),
+        ("libs/common/src/logging.rs", "pub fn get_log_level"),
+        ("services/io/src/api/routes.rs", "/api/admin/logs/level"),
+        (
+            "services/io/src/api/routes.rs",
+            "/api/channels/{id}/logging",
+        ),
+        ("services/io/src/core/channels/types.rs", "SetLogLevel"),
+        (
+            "services/io/src/protocols/gateway/runtime.rs",
+            "fn log_handler",
+        ),
+        (
+            "services/io/src/protocols/core/logging.rs",
+            "fn set_log_level",
+        ),
         ("services/io/src/api/routes.rs", "/api/admin/logs/files"),
         ("services/io/src/api/routes.rs", "/api/admin/logs/view"),
+        ("services/automation/src/routes.rs", "/api/admin/logs/level"),
         ("services/automation/src/routes.rs", "/api/admin/logs/files"),
         ("services/automation/src/routes.rs", "/api/admin/logs/view"),
+        ("services/history/src/routes.rs", "/api/admin/logs/level"),
         ("services/history/src/routes.rs", "/api/admin/logs/files"),
+        ("services/uplink/src/routes.rs", "/api/admin/logs/level"),
         ("services/uplink/src/routes.rs", "/api/admin/logs/files"),
+        ("services/alarm/src/routes.rs", "/api/admin/logs/level"),
         ("services/alarm/src/routes.rs", "/api/admin/logs/files"),
+        ("services/api/src/main.rs", "/logs/level"),
         ("services/api/src/main.rs", "/logs/files"),
         ("services/automation/src/lib.rs", "pub mod reload;"),
         ("config.template/global.yaml", "logging:"),
@@ -712,6 +745,7 @@ fn io_composition_matches_the_runtime_manifest_authority() {
         "services/io/src/api/handlers/protocol_handlers.rs",
         "services/io/src/protocols/core/metadata.rs",
         "services/io/src/core/config/manager.rs",
+        "services/io/src/core/config/types.rs",
         "services/io/src/core/channels/traits.rs",
     ] {
         assert!(

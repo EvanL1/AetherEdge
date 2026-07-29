@@ -17,14 +17,10 @@ use aether_auth_jwt::AccessTokenAuthenticator;
 
 use crate::core::channels::ChannelManager;
 
-// Import handler modules
-use common::admin_api::{get_log_level, set_log_level};
-
 use crate::api::{
     handlers::health::*,
     handlers::{
-        channel_handlers::*, channel_management_handlers::*, control_handlers::*,
-        mapping_handlers::*, point_handlers::*,
+        channel_handlers::*, channel_management_handlers::*, mapping_handlers::*, point_handlers::*,
     },
 };
 
@@ -86,9 +82,6 @@ impl AppState {
         crate::api::handlers::channel_handlers::get_channel_detail_handler,
         crate::api::handlers::channel_handlers::get_channel_status,
 
-        // Per-channel protocol diagnostics
-        crate::api::handlers::control_handlers::set_channel_log_level,
-
         // Point information
         crate::api::handlers::point_handlers::get_point_info_handler,
         crate::api::handlers::point_handlers::get_channel_points_handler,
@@ -106,9 +99,6 @@ impl AppState {
         // Mapping query
         crate::api::handlers::mapping_handlers::get_channel_mappings_handler,
 
-        // Admin endpoints
-        common::admin_api::set_log_level,
-        common::admin_api::get_log_level,
     ),
     components(
         schemas(
@@ -139,15 +129,11 @@ impl AppState {
             crate::dto::PointDefinition,
             crate::dto::GroupedPoints,
             crate::dto::GroupedMappings,
-            crate::dto::PointMappingDetail,
-            // Admin schemas
-            common::admin_api::SetLogLevelRequest,
-            common::admin_api::LogLevelResponse
+            crate::dto::PointMappingDetail
         )
     ),
     tags(
-        (name = "io", description = "Device protocol and field I/O API"),
-        (name = "admin", description = "Administration and service management")
+        (name = "io", description = "Device protocol and field I/O API")
     ),
     modifiers(&SecurityAddon),
     info(
@@ -222,7 +208,6 @@ fn create_api_routes_with_boundary(
         .route("/api/channels/{id}", get(get_channel_detail_handler).put(update_channel_handler).delete(delete_channel_handler))
         .route("/api/channels/{id}/status", get(get_channel_status))
         .route("/api/channels/{id}/enabled", axum::routing::put(set_channel_enabled_handler))
-        .route("/api/channels/{id}/logging", axum::routing::put(set_channel_log_level))
         .route("/api/channels/{id}/points", get(get_channel_points_handler))
         .route("/api/channels/{id}/unmapped-points", get(get_unmapped_points_handler))
         .route("/api/channels/{id}/mappings", get(get_channel_mappings_handler))
@@ -230,11 +215,6 @@ fn create_api_routes_with_boundary(
         .route(
             "/api/channels/{channel_id}/{telemetry_type}/{point_id}",
             get(get_point_info_handler),
-        )
-        // Admin endpoints (log level + file access)
-        .route(
-            "/api/admin/logs/level",
-            get(get_log_level).post(set_log_level),
         )
         .layer(axum::Extension(channel_management));
     #[cfg(feature = "openapi")]

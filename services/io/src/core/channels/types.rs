@@ -180,14 +180,6 @@ pub enum ProtocolCommand {
         response_tx: oneshot::Sender<ConnectionState>,
     },
 
-    /// Set channel log level dynamically
-    SetLogLevel {
-        /// Log level: "info" or "debug"
-        level: String,
-        /// Response channel
-        response_tx: oneshot::Sender<Result<(), String>>,
-    },
-
     /// Shutdown the channel task
     Shutdown,
 }

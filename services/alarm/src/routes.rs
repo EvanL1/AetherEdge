@@ -59,8 +59,6 @@ pub fn create_routes(state: Arc<AppState>) -> Router {
         .route("/alarmApi/monitor/status", get(monitor_status))
         .route("/alarmApi/monitor/check-rule/{id}", post(manual_check_rule))
         .route("/alarmApi/call-data", post(call_data))
-        // Admin API (shared endpoints from common lib)
-        .route("/api/admin/logs/level", get(common::admin_api::get_log_level).post(common::admin_api::set_log_level))
         .with_state(state);
 
     #[cfg(feature = "openapi")]
@@ -101,8 +99,6 @@ async fn openapi_document() -> Json<utoipa::openapi::OpenApi> {
         monitor_status,
         manual_check_rule,
         call_data,
-        common::admin_api::get_log_level,
-        common::admin_api::set_log_level,
     ),
     components(schemas(
         AlertRule,
@@ -123,8 +119,6 @@ async fn openapi_document() -> Json<utoipa::openapi::OpenApi> {
         ApiResponse<AlertResolutionData>,
         ApiResponse<SingleItemData<crate::models::Alert>>,
         ApiResponse<MonitorStatus>,
-        common::admin_api::SetLogLevelRequest,
-        common::admin_api::LogLevelResponse,
     )),
     tags(
         (name = "Rules",   description = "Alarm rule CRUD"),
@@ -132,7 +126,6 @@ async fn openapi_document() -> Json<utoipa::openapi::OpenApi> {
         (name = "Events",  description = "Alert event history and export"),
         (name = "Monitor", description = "Monitor status and manual trigger"),
         (name = "Meta",    description = "Service info"),
-        (name = "admin",   description = "Host-local service administration"),
     ),
     modifiers(&SecurityAddon),
     info(
@@ -207,19 +200,10 @@ mod openapi_tests {
     }
 
     #[test]
-    fn openapi_metadata_and_admin_routes_match_the_router() {
+    fn openapi_metadata_and_operation_count_match_the_router() {
         let specification = specification();
         assert_eq!(specification["info"]["title"], "Aether Alarm Service API");
         assert_eq!(specification["info"]["version"], env!("CARGO_PKG_VERSION"));
-        for (path, method) in [
-            ("/api/admin/logs/level", "get"),
-            ("/api/admin/logs/level", "post"),
-        ] {
-            assert!(
-                specification["paths"][path][method].is_object(),
-                "missing {method} {path}"
-            );
-        }
         let operation_count = specification["paths"]
             .as_object()
             .expect("paths object")
@@ -244,7 +228,7 @@ mod openapi_tests {
                     .count()
             })
             .sum::<usize>();
-        assert_eq!(operation_count, 21, "Router/OpenAPI operation drift");
+        assert_eq!(operation_count, 19, "Router/OpenAPI operation drift");
 
         assert!(
             specification["components"]["securitySchemes"]["bearer_auth"].is_object(),

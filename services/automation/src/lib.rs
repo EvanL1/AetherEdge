@@ -13,9 +13,7 @@ pub mod api {
     //! - product
     //! - health
     //! - single point APIs
-    //! - admin (log level management)
     pub mod action_routing_boundary;
-    pub mod admin_handlers;
     pub mod global_routing_handlers;
     pub mod health_handlers;
     pub mod instance_management_handlers;

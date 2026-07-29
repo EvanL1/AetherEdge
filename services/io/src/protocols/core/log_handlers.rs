@@ -54,12 +54,6 @@ impl ChannelLogHandler for CompositeLogHandler {
             }
         }
     }
-
-    fn set_log_level(&self, level: &str) {
-        for handler in &self.handlers {
-            handler.set_log_level(level);
-        }
-    }
 }
 
 /// Tracing log handler that integrates with the `tracing` crate.
