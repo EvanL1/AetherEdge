@@ -724,7 +724,7 @@ impl AetherMcp {
     ) -> CallToolResult {
         to_call_result(
             self.channels
-                .update_channel(p.channel_id, p.body, p.confirmed, Some(p.expected_revision))
+                .update_channel(p.channel_id, p.body, p.confirmed, p.expected_revision)
                 .await,
         )
     }
@@ -739,7 +739,7 @@ impl AetherMcp {
     ) -> CallToolResult {
         to_call_result(
             self.channels
-                .delete_channel(p.channel_id, p.confirmed, Some(p.expected_revision))
+                .delete_channel(p.channel_id, p.confirmed, p.expected_revision)
                 .await,
         )
     }
@@ -754,7 +754,7 @@ impl AetherMcp {
     ) -> CallToolResult {
         to_call_result(
             self.channels
-                .set_enabled(p.channel_id, true, p.confirmed, Some(p.expected_revision))
+                .set_enabled(p.channel_id, true, p.confirmed, p.expected_revision)
                 .await,
         )
     }
@@ -769,7 +769,7 @@ impl AetherMcp {
     ) -> CallToolResult {
         to_call_result(
             self.channels
-                .set_enabled(p.channel_id, false, p.confirmed, Some(p.expected_revision))
+                .set_enabled(p.channel_id, false, p.confirmed, p.expected_revision)
                 .await,
         )
     }

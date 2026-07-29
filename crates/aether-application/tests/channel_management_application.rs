@@ -184,7 +184,7 @@ fn definition() -> ChannelDefinition {
 fn mutations() -> Vec<ChannelMutation> {
     vec![
         ChannelMutation::create(definition()),
-        ChannelMutation::update_with_revision(
+        ChannelMutation::update(
             ChannelId::new(7),
             ChannelRevision::new(3),
             ChannelPatch::new()
@@ -199,9 +199,9 @@ fn mutations() -> Vec<ChannelMutation> {
                         .with_level("also-never-audit-log-level"),
                 ),
         ),
-        ChannelMutation::delete_with_revision(ChannelId::new(7), ChannelRevision::new(3)),
-        ChannelMutation::enable_with_revision(ChannelId::new(7), ChannelRevision::new(3)),
-        ChannelMutation::disable_with_revision(ChannelId::new(7), ChannelRevision::new(3)),
+        ChannelMutation::delete(ChannelId::new(7), ChannelRevision::new(3)),
+        ChannelMutation::enable(ChannelId::new(7), ChannelRevision::new(3)),
+        ChannelMutation::disable(ChannelId::new(7), ChannelRevision::new(3)),
     ]
 }
 
@@ -353,7 +353,7 @@ async fn denied_or_unconfirmed_mutation_is_rejected_and_never_reaches_the_port()
         let result = application
             .mutate(
                 &request_context,
-                ChannelMutation::enable_with_revision(ChannelId::new(7), ChannelRevision::new(3)),
+                ChannelMutation::enable(ChannelId::new(7), ChannelRevision::new(3)),
             )
             .await;
 
@@ -381,7 +381,7 @@ async fn attempted_audit_must_succeed_before_the_mutation_port_runs() {
     let result = application
         .mutate(
             &context(true, true),
-            ChannelMutation::enable_with_revision(ChannelId::new(7), ChannelRevision::new(3)),
+            ChannelMutation::enable(ChannelId::new(7), ChannelRevision::new(3)),
         )
         .await;
 
@@ -400,7 +400,7 @@ async fn port_failure_is_returned_and_failed_audited() {
     let result = application
         .mutate(
             &context(true, true),
-            ChannelMutation::delete_with_revision(ChannelId::new(7), ChannelRevision::new(3)),
+            ChannelMutation::delete(ChannelId::new(7), ChannelRevision::new(3)),
         )
         .await;
 
@@ -426,7 +426,7 @@ async fn terminal_audit_failure_returns_non_retryable_accepted_outcome() {
     let acceptance = application
         .mutate(
             &context(true, true),
-            ChannelMutation::enable_with_revision(ChannelId::new(7), ChannelRevision::new(3)),
+            ChannelMutation::enable(ChannelId::new(7), ChannelRevision::new(3)),
         )
         .await
         .expect("accepted non-idempotent mutations are not retryable errors");
@@ -458,7 +458,7 @@ async fn committed_desired_state_with_degraded_runtime_is_accepted_for_reconcili
     let acceptance = application
         .mutate(
             &context(true, true),
-            ChannelMutation::enable_with_revision(ChannelId::new(7), ChannelRevision::new(3)),
+            ChannelMutation::enable(ChannelId::new(7), ChannelRevision::new(3)),
         )
         .await
         .expect("committed desired state is accepted even when projection is degraded");
@@ -486,10 +486,22 @@ async fn invalid_common_channel_data_is_rejected_without_port_side_effects() {
             "\t",
             BTreeMap::new(),
         )),
-        ChannelMutation::enable(ChannelId::new(10_000)),
-        ChannelMutation::update(ChannelId::new(7), ChannelPatch::new()),
-        ChannelMutation::update(ChannelId::new(7), ChannelPatch::new().with_name("\n\t")),
-        ChannelMutation::update(ChannelId::new(7), ChannelPatch::new().with_protocol("  ")),
+        ChannelMutation::enable(ChannelId::new(10_000), ChannelRevision::new(1)),
+        ChannelMutation::update(
+            ChannelId::new(7),
+            ChannelRevision::new(1),
+            ChannelPatch::new(),
+        ),
+        ChannelMutation::update(
+            ChannelId::new(7),
+            ChannelRevision::new(1),
+            ChannelPatch::new().with_name("\n\t"),
+        ),
+        ChannelMutation::update(
+            ChannelId::new(7),
+            ChannelRevision::new(1),
+            ChannelPatch::new().with_protocol("  "),
+        ),
         ChannelMutation::create(ChannelDefinition::new(
             None,
             "valid-name",
@@ -531,14 +543,14 @@ async fn invalid_common_channel_data_is_rejected_without_port_side_effects() {
 async fn every_explicit_zero_revision_is_rejected_without_port_side_effects() {
     let zero = ChannelRevision::new(0);
     let invalid_mutations = [
-        ChannelMutation::update_with_revision(
+        ChannelMutation::update(
             ChannelId::new(7),
             zero,
             ChannelPatch::new().with_name("valid"),
         ),
-        ChannelMutation::delete_with_revision(ChannelId::new(7), zero),
-        ChannelMutation::enable_with_revision(ChannelId::new(7), zero),
-        ChannelMutation::disable_with_revision(ChannelId::new(7), zero),
+        ChannelMutation::delete(ChannelId::new(7), zero),
+        ChannelMutation::enable(ChannelId::new(7), zero),
+        ChannelMutation::disable(ChannelId::new(7), zero),
     ];
 
     for mutation in invalid_mutations {

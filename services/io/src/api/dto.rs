@@ -9,21 +9,8 @@ use utoipa::ToSchema;
 
 pub use crate::core::config::{ChannelConfig, ChannelCore, ChannelLoggingConfig};
 pub use common::{
-    AppError, ComponentHealth, ErrorInfo, ErrorResponse, HealthStatus, PaginatedResponse,
-    ServiceStatus as SharedServiceStatus, SuccessResponse,
+    AppError, ErrorInfo, ErrorResponse, HealthStatus, PaginatedResponse, SuccessResponse,
 };
-
-/// service status response
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct ServiceStatus {
-    pub name: String,
-    pub version: String,
-    pub uptime: u64,
-    #[schema(value_type = String, format = "date-time")]
-    pub start_time: DateTime<Utc>,
-    pub channels: u32,
-    pub active_channels: u32,
-}
 
 /// channel status response for list endpoint
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -69,57 +56,6 @@ impl From<crate::core::channels::ChannelStatus> for ChannelStatusDto {
                 .unwrap_or_else(Utc::now),
             statistics: HashMap::new(), // Will be filled by handler
         }
-    }
-}
-
-/// Create a health status with memory and CPU checks
-pub fn create_health_status(
-    status: &str,
-    uptime: u64,
-    memory_usage: u64,
-    cpu_usage: f64,
-) -> HealthStatus {
-    let service_status = match status {
-        "healthy" | "ok" | "OK" => SharedServiceStatus::Healthy,
-        "degraded" => SharedServiceStatus::Degraded,
-        _ => SharedServiceStatus::Unhealthy,
-    };
-
-    let health_check = |ok: bool, msg: String| ComponentHealth {
-        status: if ok {
-            SharedServiceStatus::Healthy
-        } else {
-            SharedServiceStatus::Degraded
-        },
-        message: Some(msg),
-        duration_ms: None,
-    };
-
-    let checks = HashMap::from([
-        (
-            "memory".into(),
-            health_check(
-                memory_usage < 1_073_741_824,
-                format!("Memory usage: {} bytes", memory_usage),
-            ),
-        ),
-        (
-            "cpu".into(),
-            health_check(cpu_usage < 80.0, format!("CPU usage: {:.2}%", cpu_usage)),
-        ),
-    ]);
-
-    HealthStatus {
-        status: service_status,
-        service: "aether-io".to_string(),
-        version: env!("CARGO_PKG_VERSION").to_string(),
-        uptime_seconds: uptime,
-        timestamp: chrono::Utc::now(),
-        checks,
-        system: Some(serde_json::json!({
-            "process_cpu_percent": cpu_usage,
-            "process_memory_mb": memory_usage / 1024 / 1024
-        })),
     }
 }
 
@@ -241,33 +177,15 @@ pub struct ChannelCompletionAudit {
 /// Receipt returned after a channel desired-state mutation was accepted.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct ChannelMutationResult {
-    /// Legacy-compatible channel ID field.
-    #[schema(maximum = 9999)]
-    pub id: u32,
-    /// Explicit typed receipt channel identity.
     #[schema(maximum = 9999)]
     pub channel_id: u32,
-    /// Request-provided name retained for create/update wire compatibility.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub name: Option<String>,
-    /// Request-provided description retained for create/update wire compatibility.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
-    /// Request-provided protocol retained for create/update wire compatibility.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub protocol: Option<String>,
     #[schema(format = "uuid")]
     pub request_id: String,
     pub operation: ChannelMutationOperation,
     #[schema(minimum = 1, maximum = 9223372036854775807_i64)]
     pub resulting_revision: u64,
-    /// Legacy-compatible desired enabled field.
-    pub enabled: bool,
     pub desired_enabled: bool,
     pub runtime_projection: ChannelRuntimeProjectionResult,
-    /// Legacy-compatible runtime status (`running`, `connecting`, `stopped`,
-    /// `degraded`, or `removed`). New clients should use runtime_projection.
-    pub runtime_status: String,
     pub reconciliation_required: bool,
     pub completion_audit: ChannelCompletionAudit,
     /// Channel mutations are non-idempotent and never advertised as safe for
@@ -283,9 +201,6 @@ pub struct ChannelMutationResponse {
     #[schema(default = true, example = true)]
     pub success: bool,
     pub data: ChannelMutationResult,
-    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
-    #[schema(value_type = Object)]
-    pub metadata: HashMap<String, serde_json::Value>,
 }
 
 /// Scope reported by a governed channel runtime reconciliation.
@@ -350,9 +265,6 @@ pub struct ChannelReconciliationResponse {
     #[schema(default = true, example = true)]
     pub success: bool,
     pub data: ChannelReconciliationResult,
-    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
-    #[schema(value_type = Object)]
-    pub metadata: HashMap<String, serde_json::Value>,
 }
 
 /// Complete channel details (configuration + runtime status + statistics)
@@ -478,24 +390,6 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn test_service_status_serialization() {
-        let start_time = Utc::now();
-        let status = ServiceStatus {
-            name: "TestService".to_string(),
-            version: "1.0.0".to_string(),
-            uptime: 3600,
-            start_time,
-            channels: 5,
-            active_channels: 3,
-        };
-
-        let serialized = serde_json::to_string(&status).unwrap();
-        assert!(serialized.contains("TestService"));
-        assert!(serialized.contains("1.0.0"));
-        assert!(serialized.contains("3600"));
-    }
-
-    #[test]
     fn test_channel_status_serialization() {
         let now = Utc::now();
         let mut parameters = HashMap::new();
@@ -516,23 +410,6 @@ mod tests {
         assert!(serialized.contains('1'));
         assert!(serialized.contains("modbus_tcp"));
         assert!(serialized.contains("true"));
-    }
-
-    #[test]
-    fn test_health_status_serialization() {
-        let health = create_health_status("healthy", 7200, 1_024_000, 15.5);
-
-        // Verify health status fields (without comparing enums)
-        assert_eq!(health.service, "aether-io");
-        assert_eq!(health.uptime_seconds, 7200);
-        assert!(health.checks.contains_key("memory"));
-        assert!(health.checks.contains_key("cpu"));
-
-        // Verify serialization contains expected values
-        let serialized = serde_json::to_string(&health).unwrap();
-        assert!(serialized.contains("healthy"));
-        assert!(serialized.contains("7200"));
-        assert!(serialized.contains("aether-io"));
     }
 
     #[test]

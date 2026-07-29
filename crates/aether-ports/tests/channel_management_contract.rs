@@ -92,29 +92,24 @@ fn one_mutation_type_covers_create_update_delete_enable_and_disable() {
         .with_parameters(parameters())
         .with_logging(logging());
     let revision = ChannelRevision::new(3);
-    let update = ChannelMutation::update_with_revision(ChannelId::new(7), revision, patch.clone());
+    let update = ChannelMutation::update(ChannelId::new(7), revision, patch.clone());
     assert_eq!(update.kind(), ChannelMutationKind::Update);
     assert_eq!(update.channel_id(), Some(ChannelId::new(7)));
     assert_eq!(update.expected_revision(), Some(revision));
     assert_eq!(update.patch(), Some(&patch));
     assert_eq!(patch.logging(), Some(&logging()));
 
-    let delete = ChannelMutation::delete_with_revision(ChannelId::new(7), revision);
+    let delete = ChannelMutation::delete(ChannelId::new(7), revision);
     assert_eq!(delete.kind(), ChannelMutationKind::Delete);
     assert_eq!(delete.expected_revision(), Some(revision));
 
-    let enable = ChannelMutation::enable_with_revision(ChannelId::new(7), revision);
+    let enable = ChannelMutation::enable(ChannelId::new(7), revision);
     assert_eq!(enable.kind(), ChannelMutationKind::Enable);
 
-    let disable = ChannelMutation::disable_with_revision(ChannelId::new(7), revision);
+    let disable = ChannelMutation::disable(ChannelId::new(7), revision);
     assert_eq!(disable.kind(), ChannelMutationKind::Disable);
 
     assert_eq!(create.expected_revision(), None);
-
-    assert_eq!(
-        ChannelMutation::update(ChannelId::new(7), patch).expected_revision(),
-        None
-    );
 }
 
 #[test]

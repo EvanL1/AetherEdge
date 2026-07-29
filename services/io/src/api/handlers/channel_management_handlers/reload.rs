@@ -167,7 +167,6 @@ fn reconciliation_response(
                 "runtime reconciliation for {scope_name} accepted; automatic retry is forbidden"
             ),
         },
-        metadata: std::collections::HashMap::new(),
     }
 }
 

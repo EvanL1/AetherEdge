@@ -73,8 +73,7 @@ impl AppState {
 #[derive(OpenApi)]
 #[openapi(
     paths(
-        // Health and service status
-        crate::api::handlers::health::get_service_status,
+        // Health
         crate::api::handlers::health::health_check,
 
         // Channel queries and status
@@ -102,7 +101,6 @@ impl AppState {
     ),
     components(
         schemas(
-            crate::dto::ServiceStatus,
             crate::dto::ChannelStatusResponse,
             crate::dto::ChannelStatusDto,
             crate::dto::ChannelDetail,
@@ -199,8 +197,6 @@ fn create_api_routes_with_boundary(
     let router = Router::new()
         // Health check (top-level for monitoring systems)
         .route("/health", get(health_check))
-        // Service management
-        .route("/api/status", get(get_service_status))
         // Channel management (CRUD)
         .route("/api/channels", get(get_all_channels).post(create_channel_handler))
         .route("/api/channels/reconcile", post(reconcile_channels_handler))

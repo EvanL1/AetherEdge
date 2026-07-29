@@ -174,11 +174,6 @@ pub async fn create_channel_handler(
         ));
     }
 
-    let compatibility = ChannelResponseCompatibility {
-        name: Some(request.name.clone()),
-        description: request.description.clone(),
-        protocol: Some(request.protocol.clone()),
-    };
     let parameters = parameters_from_json(request.parameters)?;
     let mut definition = ChannelDefinition::new(
         request.channel_id.map(ChannelId::new),
@@ -197,7 +192,7 @@ pub async fn create_channel_handler(
     let acceptance = boundary
         .mutate(&headers, ChannelMutation::create(definition))
         .await?;
-    Ok(Json(mutation_response(&acceptance, compatibility)))
+    Ok(Json(mutation_response(&acceptance)))
 }
 
 /// Partially update an existing channel definition using PATCH semantics on
@@ -217,7 +212,7 @@ pub async fn create_channel_handler(
         ("id" = u32, Path, description = "Stable channel identifier below 10000", maximum = 9999),
         ("x-request-id" = Option<String>, Header, format = "uuid", description = "Optional UUID audit correlation ID; a UUID is generated when omitted or invalid"),
         ("x-aether-confirmed" = bool, Header, description = "Required explicit confirmation; must be true"),
-        ("x-aether-expected-revision" = Option<u64>, Header, description = "Optional desired-state revision compare-and-set guard in 1..9223372036854775807", minimum = 1, maximum = 9223372036854775807_i64)
+        ("x-aether-expected-revision" = u64, Header, description = "Required desired-state revision compare-and-set guard in 1..9223372036854775807", minimum = 1, maximum = 9223372036854775807_i64)
     ),
     request_body(
         content = ChannelConfigUpdateRequest,
@@ -259,21 +254,11 @@ pub async fn update_channel_handler(
         ));
     }
 
-    let compatibility = ChannelResponseCompatibility {
-        name: request.name.clone(),
-        description: request.description.clone(),
-        protocol: request.protocol.clone(),
-    };
-    let revision = expected_revision(&headers)?;
+    let revision = required_expected_revision(&headers)?;
     let patch = patch_from_request(request)?;
-    let mutation = match revision {
-        Some(revision) => {
-            ChannelMutation::update_with_revision(ChannelId::new(id), revision, patch)
-        },
-        None => ChannelMutation::update(ChannelId::new(id), patch),
-    };
+    let mutation = ChannelMutation::update(ChannelId::new(id), revision, patch);
     let acceptance = boundary.mutate(&headers, mutation).await?;
-    Ok(Json(mutation_response(&acceptance, compatibility)))
+    Ok(Json(mutation_response(&acceptance)))
 }
 
 /// Enable or disable one channel's desired runtime lifecycle state.
@@ -284,7 +269,7 @@ pub async fn update_channel_handler(
         ("id" = u32, Path, description = "Stable channel identifier below 10000", maximum = 9999),
         ("x-request-id" = Option<String>, Header, format = "uuid", description = "Optional UUID audit correlation ID; a UUID is generated when omitted or invalid"),
         ("x-aether-confirmed" = bool, Header, description = "Required explicit confirmation; must be true"),
-        ("x-aether-expected-revision" = Option<u64>, Header, description = "Optional desired-state revision compare-and-set guard in 1..9223372036854775807", minimum = 1, maximum = 9223372036854775807_i64)
+        ("x-aether-expected-revision" = u64, Header, description = "Required desired-state revision compare-and-set guard in 1..9223372036854775807", minimum = 1, maximum = 9223372036854775807_i64)
     ),
     request_body(
         content = ChannelEnabledRequest,
@@ -313,19 +298,15 @@ pub async fn set_channel_enabled_handler(
 ) -> Result<Json<ChannelMutationResponse>, AppError> {
     let id = path_channel_id(&id)?;
     let request = json_body(payload)?;
-    let revision = expected_revision(&headers)?;
+    let revision = required_expected_revision(&headers)?;
     let channel_id = ChannelId::new(id);
-    let mutation = match (request.enabled, revision) {
-        (true, Some(revision)) => ChannelMutation::enable_with_revision(channel_id, revision),
-        (true, None) => ChannelMutation::enable(channel_id),
-        (false, Some(revision)) => ChannelMutation::disable_with_revision(channel_id, revision),
-        (false, None) => ChannelMutation::disable(channel_id),
+    let mutation = if request.enabled {
+        ChannelMutation::enable(channel_id, revision)
+    } else {
+        ChannelMutation::disable(channel_id, revision)
     };
     let acceptance = boundary.mutate(&headers, mutation).await?;
-    Ok(Json(mutation_response(
-        &acceptance,
-        ChannelResponseCompatibility::default(),
-    )))
+    Ok(Json(mutation_response(&acceptance)))
 }
 
 /// Delete one channel desired configuration and its rebuildable runtime.
@@ -339,7 +320,7 @@ pub async fn set_channel_enabled_handler(
         ("id" = u32, Path, description = "Stable channel identifier below 10000", maximum = 9999),
         ("x-request-id" = Option<String>, Header, format = "uuid", description = "Optional UUID audit correlation ID; a UUID is generated when omitted or invalid"),
         ("x-aether-confirmed" = bool, Header, description = "Required explicit confirmation; must be true"),
-        ("x-aether-expected-revision" = Option<u64>, Header, description = "Optional desired-state revision compare-and-set guard in 1..9223372036854775807", minimum = 1, maximum = 9223372036854775807_i64)
+        ("x-aether-expected-revision" = u64, Header, description = "Required desired-state revision compare-and-set guard in 1..9223372036854775807", minimum = 1, maximum = 9223372036854775807_i64)
     ),
     responses(
         (status = 200, description = "Accepted non-idempotent desired-state mutation. A pending or degraded runtime projection is still accepted and must not be retried automatically; retryable=false. An incomplete completion audit is reported with request_id for operator reconciliation; do not retry automatically.", body = ChannelMutationResponse),
@@ -361,17 +342,11 @@ pub async fn delete_channel_handler(
     headers: HeaderMap,
 ) -> Result<Json<ChannelMutationResponse>, AppError> {
     let id = path_channel_id(&id)?;
-    let revision = expected_revision(&headers)?;
+    let revision = required_expected_revision(&headers)?;
     let channel_id = ChannelId::new(id);
-    let mutation = revision.map_or_else(
-        || ChannelMutation::delete(channel_id),
-        |revision| ChannelMutation::delete_with_revision(channel_id, revision),
-    );
+    let mutation = ChannelMutation::delete(channel_id, revision);
     let acceptance = boundary.mutate(&headers, mutation).await?;
-    Ok(Json(mutation_response(
-        &acceptance,
-        ChannelResponseCompatibility::default(),
-    )))
+    Ok(Json(mutation_response(&acceptance)))
 }
 
 fn expected_revision(headers: &HeaderMap) -> Result<Option<ChannelRevision>, AppError> {
@@ -385,6 +360,12 @@ fn expected_revision(headers: &HeaderMap) -> Result<Option<ChannelRevision>, App
         AppError::bad_request("x-aether-expected-revision must be an unsigned integer")
     })?;
     Ok(Some(ChannelRevision::new(revision)))
+}
+
+fn required_expected_revision(headers: &HeaderMap) -> Result<ChannelRevision, AppError> {
+    expected_revision(headers)?.ok_or_else(|| {
+        AppError::bad_request("x-aether-expected-revision is required for existing channels")
+    })
 }
 
 pub(super) fn path_channel_id(value: &str) -> Result<u32, AppError> {
@@ -483,17 +464,7 @@ fn parameter_from_json(value: Value) -> Result<ChannelParameterValue, AppError> 
     }
 }
 
-#[derive(Default)]
-struct ChannelResponseCompatibility {
-    name: Option<String>,
-    description: Option<String>,
-    protocol: Option<String>,
-}
-
-fn mutation_response(
-    acceptance: &ChannelMutationAcceptance,
-    compatibility: ChannelResponseCompatibility,
-) -> ChannelMutationResponse {
+fn mutation_response(acceptance: &ChannelMutationAcceptance) -> ChannelMutationResponse {
     let operation = match acceptance.kind() {
         ChannelMutationKind::Create => ChannelMutationOperation::Create,
         ChannelMutationKind::Update => ChannelMutationOperation::Update,
@@ -535,13 +506,6 @@ fn mutation_response(
     };
     let channel_id = acceptance.channel_id().get();
     let desired_enabled = acceptance.desired_enabled();
-    let runtime_status = match runtime_projection {
-        ChannelRuntimeProjectionResult::Stopped => "stopped",
-        ChannelRuntimeProjectionResult::ActivationPending => "connecting",
-        ChannelRuntimeProjectionResult::Active => "running",
-        ChannelRuntimeProjectionResult::Degraded => "degraded",
-        ChannelRuntimeProjectionResult::Removed => "removed",
-    };
     let message = format!(
         "channel {} {} accepted; automatic retry is forbidden",
         channel_id,
@@ -551,24 +515,17 @@ fn mutation_response(
     ChannelMutationResponse {
         success: true,
         data: ChannelMutationResult {
-            id: channel_id,
             channel_id,
-            name: compatibility.name,
-            description: compatibility.description,
-            protocol: compatibility.protocol,
             request_id: acceptance.request_id().to_string(),
             operation,
             resulting_revision: acceptance.resulting_revision().get(),
-            enabled: desired_enabled,
             desired_enabled,
             runtime_projection,
-            runtime_status: runtime_status.to_string(),
             reconciliation_required: acceptance.reconciliation_required(),
             completion_audit,
             retryable: acceptance.is_retryable(),
             message,
         },
-        metadata: std::collections::HashMap::new(),
     }
 }
 

@@ -391,7 +391,7 @@ async fn governed_physical_mutations_reject_zero_poll_interval_before_commit_or_
         .expect("valid enabled channel");
     let calls_before_update = runtime.calls();
     let update_error = mutator
-        .mutate(ChannelMutation::update_with_revision(
+        .mutate(ChannelMutation::update(
             ChannelId::new(37),
             ChannelRevision::new(1),
             ChannelPatch::new().with_parameters(poll_zero),
@@ -426,7 +426,7 @@ async fn governed_physical_mutations_reject_zero_poll_interval_before_commit_or_
     .await
     .expect("stage invalid legacy desired state");
     let enable_error = mutator
-        .mutate(ChannelMutation::enable_with_revision(
+        .mutate(ChannelMutation::enable(
             ChannelId::new(38),
             ChannelRevision::new(2),
         ))
@@ -551,7 +551,7 @@ async fn auto_id_allocation_uses_lowest_free_identity_without_reusing_tombstones
         .await
         .expect("create identity that will be tombstoned");
     mutator
-        .mutate(ChannelMutation::delete_with_revision(
+        .mutate(ChannelMutation::delete(
             ChannelId::new(1),
             ChannelRevision::new(1),
         ))
@@ -682,7 +682,7 @@ async fn revision_trigger_covers_legacy_updates_without_double_incrementing_cas_
     assert_eq!(revision, 2);
 
     let stale = mutator
-        .mutate(ChannelMutation::update_with_revision(
+        .mutate(ChannelMutation::update(
             ChannelId::new(9),
             ChannelRevision::new(1),
             ChannelPatch::new().with_name("stale"),
@@ -692,7 +692,7 @@ async fn revision_trigger_covers_legacy_updates_without_double_incrementing_cas_
     assert_eq!(stale.kind(), PortErrorKind::Conflict);
 
     let receipt = mutator
-        .mutate(ChannelMutation::update_with_revision(
+        .mutate(ChannelMutation::update(
             ChannelId::new(9),
             ChannelRevision::new(2),
             ChannelPatch::new().with_name("governed-writer"),
@@ -708,48 +708,6 @@ async fn revision_trigger_covers_legacy_updates_without_double_incrementing_cas_
 }
 
 #[tokio::test]
-async fn revisionless_compatibility_updates_are_serialized_by_channel() {
-    let pool = test_pool().await;
-    let runtime = Arc::new(FakeRuntime::default());
-    let mutator = adapter(pool.clone(), runtime);
-    mutator
-        .mutate(ChannelMutation::create(definition(21, false)))
-        .await
-        .expect("create channel");
-
-    let first = {
-        let mutator = mutator.clone();
-        tokio::spawn(async move {
-            mutator
-                .mutate(ChannelMutation::update(
-                    ChannelId::new(21),
-                    ChannelPatch::new().with_name("revisionless-a"),
-                ))
-                .await
-        })
-    };
-    let second = {
-        let mutator = mutator.clone();
-        tokio::spawn(async move {
-            mutator
-                .mutate(ChannelMutation::update(
-                    ChannelId::new(21),
-                    ChannelPatch::new().with_name("revisionless-b"),
-                ))
-                .await
-        })
-    };
-
-    first.await.expect("first task").expect("first update");
-    second.await.expect("second task").expect("second update");
-    let revision: i64 = sqlx::query_scalar("SELECT revision FROM channels WHERE channel_id = 21")
-        .fetch_one(&pool)
-        .await
-        .expect("resulting revision");
-    assert_eq!(revision, 3);
-}
-
-#[tokio::test]
 async fn enable_reconciles_runtime_drift_even_when_desired_value_is_unchanged() {
     let pool = test_pool().await;
     let runtime = Arc::new(FakeRuntime::default());
@@ -761,7 +719,7 @@ async fn enable_reconciles_runtime_drift_even_when_desired_value_is_unchanged() 
     runtime.set_active(10, false);
 
     let receipt = mutator
-        .mutate(ChannelMutation::enable_with_revision(
+        .mutate(ChannelMutation::enable(
             ChannelId::new(10),
             ChannelRevision::new(1),
         ))
@@ -787,7 +745,7 @@ async fn same_state_enable_rebuilds_a_present_but_stale_runtime_projection() {
         .expect("create enabled channel");
     runtime.set_runtime_name(18, "stale-runtime-name");
     let receipt = mutator
-        .mutate(ChannelMutation::enable_with_revision(
+        .mutate(ChannelMutation::enable(
             ChannelId::new(18),
             ChannelRevision::new(1),
         ))
@@ -829,7 +787,7 @@ async fn same_state_reconcile_reports_latest_desired_fact_when_legacy_writer_rac
         let mutator = Arc::clone(&mutator);
         tokio::spawn(async move {
             mutator
-                .mutate(ChannelMutation::enable_with_revision(
+                .mutate(ChannelMutation::enable(
                     ChannelId::new(25),
                     ChannelRevision::new(1),
                 ))
@@ -930,7 +888,7 @@ async fn update_reports_latest_desired_fact_when_legacy_writer_races_activation(
         let mutator = Arc::clone(&mutator);
         tokio::spawn(async move {
             mutator
-                .mutate(ChannelMutation::update_with_revision(
+                .mutate(ChannelMutation::update(
                     ChannelId::new(28),
                     ChannelRevision::new(1),
                     ChannelPatch::new().with_name("governed-update-name"),
@@ -984,7 +942,7 @@ async fn enable_reports_latest_desired_fact_when_legacy_writer_races_activation(
         let mutator = Arc::clone(&mutator);
         tokio::spawn(async move {
             mutator
-                .mutate(ChannelMutation::enable_with_revision(
+                .mutate(ChannelMutation::enable(
                     ChannelId::new(29),
                     ChannelRevision::new(1),
                 ))
@@ -1037,7 +995,7 @@ async fn runtime_validation_blocks_enable_but_never_blocks_safe_disable() {
         .expect("inject adapter validation failure");
 
     let disabled = mutator
-        .mutate(ChannelMutation::disable_with_revision(
+        .mutate(ChannelMutation::disable(
             ChannelId::new(23),
             ChannelRevision::new(2),
         ))
@@ -1051,7 +1009,7 @@ async fn runtime_validation_blocks_enable_but_never_blocks_safe_disable() {
     assert!(!runtime.is_active(23));
 
     let error = mutator
-        .mutate(ChannelMutation::enable_with_revision(
+        .mutate(ChannelMutation::enable(
             ChannelId::new(23),
             ChannelRevision::new(3),
         ))
@@ -1081,7 +1039,7 @@ async fn malformed_persisted_config_never_blocks_safe_disable() {
         .expect("inject malformed legacy config");
 
     let receipt = mutator
-        .mutate(ChannelMutation::disable_with_revision(
+        .mutate(ChannelMutation::disable(
             ChannelId::new(30),
             ChannelRevision::new(2),
         ))
@@ -1112,7 +1070,7 @@ async fn malformed_persisted_config_never_blocks_safe_delete() {
         .expect("inject malformed legacy config");
 
     let receipt = mutator
-        .mutate(ChannelMutation::delete_with_revision(
+        .mutate(ChannelMutation::delete(
             ChannelId::new(31),
             ChannelRevision::new(2),
         ))
@@ -1146,7 +1104,7 @@ async fn update_commits_desired_config_and_reports_runtime_reconcile_failure() {
     runtime.fail_next_ensure();
 
     let receipt = mutator
-        .mutate(ChannelMutation::update_with_revision(
+        .mutate(ChannelMutation::update(
             ChannelId::new(11),
             ChannelRevision::new(1),
             ChannelPatch::new().with_name("updated-channel"),
@@ -1178,7 +1136,7 @@ async fn update_merges_parameter_keys_replaces_logging_and_restores_typed_runtim
         .expect("create disabled channel");
 
     let receipt = mutator
-        .mutate(ChannelMutation::update_with_revision(
+        .mutate(ChannelMutation::update(
             ChannelId::new(17),
             ChannelRevision::new(1),
             ChannelPatch::new()
@@ -1210,7 +1168,7 @@ async fn update_merges_parameter_keys_replaces_logging_and_restores_typed_runtim
     assert!(config["logging"].get("file").is_none());
 
     let enabled = mutator
-        .mutate(ChannelMutation::enable_with_revision(
+        .mutate(ChannelMutation::enable(
             ChannelId::new(17),
             ChannelRevision::new(2),
         ))
@@ -1243,7 +1201,7 @@ async fn disable_fences_first_and_restores_runtime_when_database_rejects_commit(
     .expect("failure trigger");
 
     let error = mutator
-        .mutate(ChannelMutation::disable_with_revision(
+        .mutate(ChannelMutation::disable(
             ChannelId::new(12),
             ChannelRevision::new(1),
         ))
@@ -1281,7 +1239,7 @@ async fn disable_conflict_never_restores_stale_runtime_over_newer_disabled_desir
         let mutator = Arc::clone(&mutator);
         tokio::spawn(async move {
             mutator
-                .mutate(ChannelMutation::disable_with_revision(
+                .mutate(ChannelMutation::disable(
                     ChannelId::new(32),
                     ChannelRevision::new(1),
                 ))
@@ -1330,7 +1288,7 @@ async fn delete_conflict_never_restores_runtime_for_a_recreated_identity() {
         let mutator = Arc::clone(&mutator);
         tokio::spawn(async move {
             mutator
-                .mutate(ChannelMutation::delete_with_revision(
+                .mutate(ChannelMutation::delete(
                     ChannelId::new(33),
                     ChannelRevision::new(1),
                 ))
@@ -1402,7 +1360,7 @@ async fn delete_refuses_action_routes_without_fencing_or_cascading_them() {
     let calls_before = runtime.calls();
 
     let error = mutator
-        .mutate(ChannelMutation::delete_with_revision(
+        .mutate(ChannelMutation::delete(
             ChannelId::new(13),
             ChannelRevision::new(1),
         ))
@@ -1454,7 +1412,7 @@ async fn delete_refuses_measurement_routes_without_fencing_or_cascading_them() {
     let calls_before = runtime.calls();
 
     let error = mutator
-        .mutate(ChannelMutation::delete_with_revision(
+        .mutate(ChannelMutation::delete(
             ChannelId::new(15),
             ChannelRevision::new(1),
         ))
@@ -1510,7 +1468,7 @@ async fn delete_is_atomic_for_owned_rows_and_leaves_no_runtime_zombie() {
     .expect("channel routing row");
 
     let receipt = mutator
-        .mutate(ChannelMutation::delete_with_revision(
+        .mutate(ChannelMutation::delete(
             ChannelId::new(14),
             ChannelRevision::new(1),
         ))
@@ -1549,7 +1507,7 @@ async fn delete_and_recreate_advances_revision_so_old_cas_tokens_cannot_hit_new_
     assert_eq!(created.resulting_revision(), ChannelRevision::new(1));
 
     let deleted = mutator
-        .mutate(ChannelMutation::delete_with_revision(
+        .mutate(ChannelMutation::delete(
             ChannelId::new(26),
             ChannelRevision::new(1),
         ))
@@ -1574,7 +1532,7 @@ async fn delete_and_recreate_advances_revision_so_old_cas_tokens_cannot_hit_new_
 
     for stale in [ChannelRevision::new(1), ChannelRevision::new(2)] {
         let error = mutator
-            .mutate(ChannelMutation::update_with_revision(
+            .mutate(ChannelMutation::update(
                 ChannelId::new(26),
                 stale,
                 ChannelPatch::new().with_name("must-not-hit-new-entity"),
@@ -1617,7 +1575,7 @@ async fn delete_database_failure_rolls_back_owned_rows_and_restores_runtime() {
     .expect("failure trigger");
 
     let error = mutator
-        .mutate(ChannelMutation::delete_with_revision(
+        .mutate(ChannelMutation::delete(
             ChannelId::new(22),
             ChannelRevision::new(1),
         ))
@@ -1653,7 +1611,7 @@ async fn fence_failure_prevents_disable_commit() {
     runtime.fail_next_fence();
 
     let error = mutator
-        .mutate(ChannelMutation::disable_with_revision(
+        .mutate(ChannelMutation::disable(
             ChannelId::new(15),
             ChannelRevision::new(1),
         ))
@@ -1685,7 +1643,7 @@ async fn exhausted_revision_fails_permanently_without_mutating_state() {
         .expect("exhaust revision");
 
     let error = mutator
-        .mutate(ChannelMutation::update_with_revision(
+        .mutate(ChannelMutation::update(
             ChannelId::new(16),
             ChannelRevision::new(i64::MAX as u64),
             ChannelPatch::new().with_name("must-not-commit"),
@@ -1827,7 +1785,7 @@ async fn single_reconciliation_and_mutation_share_the_channel_lifecycle_gate() {
         let adapter = Arc::clone(&adapter);
         tokio::spawn(async move {
             adapter
-                .mutate(ChannelMutation::update_with_revision(
+                .mutate(ChannelMutation::update(
                     ChannelId::new(12),
                     ChannelRevision::new(1),
                     ChannelPatch::new().with_name("latest-name"),

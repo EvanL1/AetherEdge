@@ -40,10 +40,11 @@ it does not move live-state authority into SQLite.
    parameters. Parameter and logging values are redacted from debug and audit
    records.
 3. SQLite is authoritative for desired channel configuration in the default
-   composition. A `revision` column starts at one. Explicit revisions use SQL
-   compare-and-set; revisionless compatibility calls are serialized by channel
-   and the schema trigger increments revisions for remaining legacy writers.
-   Deletion persists a per-identity revision high-water mark, so recreating the
+   composition. A `revision` column starts at one. Every online update, delete,
+   enable, and disable command requires that revision and uses SQL
+   compare-and-set. The schema trigger still increments revisions for offline
+   import and independently commissioned database writes. Deletion persists a
+   per-identity revision high-water mark, so recreating the
    same numeric ID advances beyond every token issued to the deleted entity and
    cannot suffer an ABA match. Automatic allocation never reuses a tombstoned
    ID because history, alarms, logs, and external integrations still identify
@@ -76,10 +77,11 @@ it does not move live-state authority into SQLite.
    separate high-risk use case that coordinates every referencing aggregate.
 8. HTTP, CLI, and MCP use the same application commands. HTTP independently
    verifies the signed access token and forwards the generated or validated
-   request ID, explicit confirmation, and optional expected revision. The
-   first-party Rust CLI and MCP catalog require the revision returned by the
-   latest channel read for update, delete, enable, and disable; they fail
-   before HTTP when it is absent or zero. Swagger
+   request ID, explicit confirmation, and required expected revision. The
+   revision returned by the latest channel read is mandatory for update,
+   delete, enable, and disable; first-party clients fail before HTTP when it is
+   absent or zero, and HTTP rejects other callers before the application port.
+   Swagger
    UI documents the exact security headers, typed accepted receipt, degraded
    semantics, and 400/403/404/409/422/503/504 failure categories. CLI and MCP
    attach Bearer credentials only to loopback HTTP or certificate-validated
@@ -97,19 +99,13 @@ it does not move live-state authority into SQLite.
   partial-update semantics. Top-level protocol parameter keys are merged.
   Rename it or change its merge behavior only after every supported client
   consumes a versioned replacement.
-- Expected revision remains optional at the HTTP/application compatibility
-  boundary while existing clients migrate. The Rust CLI and MCP catalog now
-  require and send it; offline sync/import atomically advances the affected
-  heads instead of entering this online path. Remove the revisionless
-  constructors only after the web client, export/re-import consumers, and
-  supported downstream SDKs all read and send revisions, and the compatibility
-  matrix rejects older clients explicitly.
-- Legacy response aliases may remain alongside the typed receipt until those
-  same consumers use `runtime_projection`, `desired_enabled`, and
-  `resulting_revision`.
-- The old route-factory signature installs an unavailable command boundary and
-  therefore fails closed. Remove it after every production and test
-  composition root injects the governed application explicitly.
+- The revisionless HTTP/application compatibility path and its constructors met
+  their removal criteria and were retired by
+  [ADR-0041](0041-cas-only-channel-mutations.md). Offline sync/import atomically
+  advances affected heads instead of entering this online path.
+- Legacy mutation receipt aliases met their removal criteria and were retired
+  by ADR-0041. The canonical receipt uses `channel_id`, `runtime_projection`,
+  `desired_enabled`, and `resulting_revision`.
 - Direct lifecycle and ID-migration handler modules have no accepted fallback
   role and are removed in this change.
 - The former `POST /api/channels/reload` compatibility alias and
@@ -143,8 +139,8 @@ it does not move live-state authority into SQLite.
 - Runtime projection can legitimately be degraded after desired state commits;
   operators and clients must reconcile by request ID rather than blindly
   retrying.
-- The staged optional-revision form remains less strict than the final CAS-only
-  API and must be tracked against the removal criteria above.
+- Existing-resource online mutations require a fresh revision read, so callers
+  must handle an explicit conflict instead of issuing a blind write.
 - Offline sync remains a separate desired-state import and must not be
   advertised as an online application command or run beside configuration
   owners.

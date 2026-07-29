@@ -266,7 +266,7 @@ impl SqliteChannelMutator {
     async fn update(
         &self,
         channel_id: ChannelId,
-        expected_revision: Option<ChannelRevision>,
+        expected_revision: ChannelRevision,
         patch: ChannelPatch,
     ) -> PortResult<ChannelMutationReceipt> {
         validate_channel_id(channel_id)?;
@@ -318,7 +318,7 @@ impl SqliteChannelMutator {
     async fn set_enabled(
         &self,
         channel_id: ChannelId,
-        expected_revision: Option<ChannelRevision>,
+        expected_revision: ChannelRevision,
         enabled: bool,
     ) -> PortResult<ChannelMutationReceipt> {
         validate_channel_id(channel_id)?;
@@ -456,7 +456,7 @@ impl SqliteChannelMutator {
     async fn delete(
         &self,
         channel_id: ChannelId,
-        expected_revision: Option<ChannelRevision>,
+        expected_revision: ChannelRevision,
     ) -> PortResult<ChannelMutationReceipt> {
         validate_channel_id(channel_id)?;
         let lock = self.channel_lock(channel_id);
@@ -1311,15 +1311,10 @@ async fn same_channel_entity(pool: &SqlitePool, initial: &StoredChannel) -> bool
     }
 }
 
-fn verify_expected_revision(
-    expected: Option<ChannelRevision>,
-    actual: ChannelRevision,
-) -> PortResult<()> {
-    if let Some(expected) = expected {
-        revision_i64(expected)?;
-        if expected != actual {
-            return Err(conflict("channel revision is stale"));
-        }
+fn verify_expected_revision(expected: ChannelRevision, actual: ChannelRevision) -> PortResult<()> {
+    revision_i64(expected)?;
+    if expected != actual {
+        return Err(conflict("channel revision is stale"));
     }
     Ok(())
 }

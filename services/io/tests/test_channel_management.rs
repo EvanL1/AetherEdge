@@ -104,12 +104,26 @@ async fn make_request(
     uri: &str,
     body: Option<serde_json::Value>,
 ) -> Result<(StatusCode, serde_json::Value)> {
+    let revision = matches!(method, "PUT" | "DELETE").then_some(1);
+    make_request_with_revision(app, method, uri, body, revision).await
+}
+
+async fn make_request_with_revision(
+    app: &mut axum::Router,
+    method: &str,
+    uri: &str,
+    body: Option<serde_json::Value>,
+    revision: Option<u64>,
+) -> Result<(StatusCode, serde_json::Value)> {
     let mut req_builder = Request::builder()
         .method(method)
         .uri(uri)
         .header("authorization", format!("Bearer {ADMIN_ACCESS_TOKEN}"))
         .header("x-request-id", TEST_REQUEST_ID)
         .header("x-aether-confirmed", "true");
+    if let Some(revision) = revision {
+        req_builder = req_builder.header("x-aether-expected-revision", revision.to_string());
+    }
 
     let body_bytes = if let Some(json_body) = body {
         req_builder = req_builder.header("content-type", "application/json");
@@ -167,12 +181,10 @@ async fn test_create_channel_with_auto_id() -> Result<()> {
     assert_eq!(status, StatusCode::OK, "Response: {:?}", body);
     assert_eq!(body["success"], true);
     assert!(
-        body["data"]["id"].as_u64().is_some(),
+        body["data"]["channel_id"].as_u64().is_some(),
         "Should have auto-assigned ID"
     );
-    assert_eq!(body["data"]["name"], "Test Modbus Channel");
-    assert_eq!(body["data"]["protocol"], "modbus_tcp");
-    assert_eq!(body["data"]["enabled"], true);
+    assert_eq!(body["data"]["desired_enabled"], true);
 
     Ok(())
 }
@@ -199,8 +211,7 @@ async fn test_create_channel_with_manual_id() -> Result<()> {
 
     assert_eq!(status, StatusCode::OK, "Response: {:?}", body);
     assert_eq!(body["success"], true);
-    assert_eq!(body["data"]["id"], 5001);
-    assert_eq!(body["data"]["name"], "Manual ID Channel");
+    assert_eq!(body["data"]["channel_id"], 5001);
 
     Ok(())
 }
@@ -293,8 +304,8 @@ async fn test_create_channel_disabled() -> Result<()> {
 
     assert_eq!(status, StatusCode::OK, "Response: {:?}", body);
     assert_eq!(body["success"], true);
-    assert_eq!(body["data"]["enabled"], false);
-    assert_eq!(body["data"]["runtime_status"], "stopped");
+    assert_eq!(body["data"]["desired_enabled"], false);
+    assert_eq!(body["data"]["runtime_projection"], "stopped");
 
     Ok(())
 }
@@ -329,7 +340,7 @@ async fn test_update_channel_name() -> Result<()> {
 
     assert_eq!(status, StatusCode::OK, "Response: {:?}", body);
     assert_eq!(body["success"], true);
-    assert_eq!(body["data"]["name"], "Updated Name");
+    assert_eq!(body["data"]["operation"], "update");
 
     Ok(())
 }
@@ -472,22 +483,23 @@ async fn test_enable_disable_channel() -> Result<()> {
 
     assert_eq!(status, StatusCode::OK, "Response: {:?}", body);
     assert_eq!(body["success"], true);
-    assert_eq!(body["data"]["enabled"], false);
-    assert_eq!(body["data"]["runtime_status"], "stopped");
+    assert_eq!(body["data"]["desired_enabled"], false);
+    assert_eq!(body["data"]["runtime_projection"], "stopped");
 
     // Re-enable the channel
     let enable_payload = json!({ "enabled": true });
-    let (status, body) = make_request(
+    let (status, body) = make_request_with_revision(
         &mut app,
         "PUT",
         "/api/channels/4001/enabled",
         Some(enable_payload),
+        Some(2),
     )
     .await?;
 
     assert_eq!(status, StatusCode::OK, "Response: {:?}", body);
     assert_eq!(body["success"], true);
-    assert_eq!(body["data"]["enabled"], true);
+    assert_eq!(body["data"]["desired_enabled"], true);
 
     Ok(())
 }
@@ -707,7 +719,7 @@ async fn test_sequential_channel_id_assignment() -> Result<()> {
     let (status, body1) =
         make_request(&mut app, "POST", "/api/channels", Some(create_payload1)).await?;
     assert_eq!(status, StatusCode::OK);
-    let first_id = body1["data"]["id"].as_u64().unwrap();
+    let first_id = body1["data"]["channel_id"].as_u64().unwrap();
 
     // Create second channel with auto-assigned ID
     let create_payload2 = json!({
@@ -720,7 +732,7 @@ async fn test_sequential_channel_id_assignment() -> Result<()> {
     let (status, body2) =
         make_request(&mut app, "POST", "/api/channels", Some(create_payload2)).await?;
     assert_eq!(status, StatusCode::OK);
-    let second_id = body2["data"]["id"].as_u64().unwrap();
+    let second_id = body2["data"]["channel_id"].as_u64().unwrap();
 
     // Second ID should be greater than first
     assert!(

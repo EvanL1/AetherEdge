@@ -571,6 +571,69 @@ fn io_point_topology_is_offline_only() {
 }
 
 #[test]
+fn io_channel_commands_stay_cas_only_and_canonical() {
+    let root = workspace_metadata().workspace_root;
+    for (relative, forbidden) in [
+        (
+            "crates/aether-ports/src/channel.rs",
+            "expected_revision: Option<ChannelRevision>",
+        ),
+        ("crates/aether-ports/src/channel.rs", "update_with_revision"),
+        ("crates/aether-ports/src/channel.rs", "delete_with_revision"),
+        ("crates/aether-ports/src/channel.rs", "enable_with_revision"),
+        (
+            "crates/aether-ports/src/channel.rs",
+            "disable_with_revision",
+        ),
+        ("services/io/src/api/routes.rs", "/api/status"),
+        ("services/io/src/api/dto.rs", "pub struct ServiceStatus"),
+        (
+            "services/io/src/api/dto.rs",
+            "pub metadata: HashMap<String, serde_json::Value>",
+        ),
+        (
+            "services/io/src/api/handlers/channel_management_handlers.rs",
+            "ChannelResponseCompatibility",
+        ),
+        (
+            "tools/aether/src/channels.rs",
+            "expected_revision: Option<u64>",
+        ),
+    ] {
+        let source = fs::read_to_string(root.join(relative))
+            .unwrap_or_else(|error| panic!("failed to read {relative}: {error}"));
+        assert!(
+            !source.contains(forbidden),
+            "{relative} restored revisionless or duplicate channel surface {forbidden}"
+        );
+    }
+
+    let dto =
+        fs::read_to_string(root.join("services/io/src/api/dto.rs")).expect("read IO DTO source");
+    let receipt_start = dto
+        .find("pub struct ChannelMutationResult")
+        .expect("channel mutation receipt DTO");
+    let receipt_end = dto[receipt_start..]
+        .find("pub struct ChannelMutationResponse")
+        .map(|offset| receipt_start + offset)
+        .expect("channel mutation response DTO");
+    let receipt = &dto[receipt_start..receipt_end];
+    for retired in [
+        "pub id:",
+        "pub name:",
+        "pub description:",
+        "pub protocol:",
+        "pub enabled:",
+        "pub runtime_status:",
+    ] {
+        assert!(
+            !receipt.contains(retired),
+            "channel mutation receipt restored duplicate field {retired}"
+        );
+    }
+}
+
+#[test]
 fn shared_service_kernel_stays_console_first() {
     let root = workspace_metadata().workspace_root;
     for retired in [

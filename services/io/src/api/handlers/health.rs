@@ -10,46 +10,7 @@ use std::collections::HashMap;
 use std::time::Instant;
 
 use crate::api::routes::{AppState, get_service_start_time};
-use crate::dto::{AppError, HealthStatus, ServiceStatus, SuccessResponse};
-
-/// io runtime summary: total channels, active channels, uptime, and version.
-///
-/// Does not perform dependency checks (no SHM / SQLite probe) — reads only the
-/// in-memory channel manager state. Use this to display "how long io has been
-/// running / how many channels it manages" on the dashboard. For actual health checks
-/// use `/health`, which returns 503 on failure.
-#[utoipa::path(
-    get,
-    path = "/api/status",
-    responses(
-        (status = 200, description = "Service status retrieved", body = crate::dto::ServiceStatus)
-    ),
-    tag = "io"
-)]
-pub async fn get_service_status(
-    State(state): State<AppState>,
-) -> Result<Json<SuccessResponse<ServiceStatus>>, AppError> {
-    // Direct access without RwLock (lock-free)
-    let manager = &state.channel_manager;
-    let total_channels = manager.channel_count();
-    let active_channels = manager.running_channel_count().await;
-
-    // Get actual service start time and calculate uptime
-    let start_time = get_service_start_time();
-    let uptime_duration = Utc::now() - start_time;
-    let uptime_seconds = uptime_duration.num_seconds().max(0) as u64;
-
-    let status = ServiceStatus {
-        name: "Aether I/O Service".to_string(),
-        version: env!("CARGO_PKG_VERSION").to_string(),
-        uptime: uptime_seconds,
-        start_time,
-        channels: u32::try_from(total_channels).unwrap_or(u32::MAX),
-        active_channels: u32::try_from(active_channels).unwrap_or(u32::MAX),
-    };
-
-    Ok(Json(SuccessResponse::new(status)))
-}
+use crate::dto::{AppError, HealthStatus, SuccessResponse};
 
 /// Health check endpoint
 ///
