@@ -2,7 +2,6 @@
 Description=Aether Edge automation runtime (aether-automation)
 PartOf=aether.target
 After=aether-io.service
-Requires=aether-io.service
 
 [Service]
 Type=simple

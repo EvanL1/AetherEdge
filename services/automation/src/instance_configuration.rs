@@ -13,7 +13,7 @@ use std::sync::Arc;
 use aether_application::{MANAGE_INSTANCE_CAPABILITY, RequestContext, SafetyPolicy};
 use aether_domain::InstanceName;
 use aether_ports::{AuditOutcome, AuditRecord, AuditSink, PortError};
-use sqlx::Sqlite;
+use sqlx::{Sqlite, SqlitePool};
 
 use crate::error::AutomationError;
 use crate::instance_manager::InstanceManager;
@@ -307,6 +307,7 @@ struct CommittedMutation {
 /// configuration. HTTP is only an adapter; tests and future CLI/MCP transports
 /// invoke the same typed command.
 pub struct InstanceConfigurationApplication {
+    pool: SqlitePool,
     manager: Arc<InstanceManager>,
     audit: Arc<dyn AuditSink>,
     policy: SafetyPolicy,
@@ -314,8 +315,9 @@ pub struct InstanceConfigurationApplication {
 
 impl InstanceConfigurationApplication {
     #[must_use]
-    pub fn new(manager: Arc<InstanceManager>, audit: Arc<dyn AuditSink>) -> Self {
+    pub fn new(pool: SqlitePool, manager: Arc<InstanceManager>, audit: Arc<dyn AuditSink>) -> Self {
         Self {
+            pool,
             manager,
             audit,
             policy: SafetyPolicy,
@@ -327,7 +329,7 @@ impl InstanceConfigurationApplication {
         let revision = sqlx::query_scalar::<_, i64>(
             "SELECT revision FROM configuration_revisions WHERE scope = 'instances'",
         )
-        .fetch_optional(self.manager.pool())
+        .fetch_optional(&self.pool)
         .await
         .map_err(database_error)?
         .ok_or_else(|| {
@@ -459,7 +461,7 @@ impl InstanceConfigurationApplication {
             .get_definition(&request.product_name)
             .map_err(|error| AutomationError::InvalidData(format!("unknown product: {error}")))?;
 
-        let mut transaction = self.manager.pool().begin().await.map_err(database_error)?;
+        let mut transaction = self.pool.begin().await.map_err(database_error)?;
         if let Some(parent_id) = request.parent_id {
             let parent_exists =
                 sqlx::query_scalar::<_, i64>("SELECT 1 FROM instances WHERE instance_id = ?")
@@ -535,7 +537,7 @@ impl InstanceConfigurationApplication {
             validate_name(name)?;
         }
 
-        let mut transaction = self.manager.pool().begin().await.map_err(database_error)?;
+        let mut transaction = self.pool.begin().await.map_err(database_error)?;
         let (current_name, product_name) = sqlx::query_as::<_, (String, String)>(
             "SELECT instance_name, product_name FROM instances WHERE instance_id = ?",
         )
@@ -613,7 +615,7 @@ impl InstanceConfigurationApplication {
         value: serde_json::Value,
         expected_revision: InstanceConfigurationRevision,
     ) -> Result<CommittedMutation, AutomationError> {
-        let mut transaction = self.manager.pool().begin().await.map_err(database_error)?;
+        let mut transaction = self.pool.begin().await.map_err(database_error)?;
         let (product_name, property) = self
             .validate_property(&mut transaction, instance_id, property_id)
             .await?;
@@ -658,7 +660,7 @@ impl InstanceConfigurationApplication {
         property_id: i32,
         expected_revision: InstanceConfigurationRevision,
     ) -> Result<CommittedMutation, AutomationError> {
-        let mut transaction = self.manager.pool().begin().await.map_err(database_error)?;
+        let mut transaction = self.pool.begin().await.map_err(database_error)?;
         let (_, property) = self
             .validate_property(&mut transaction, instance_id, property_id)
             .await?;
@@ -728,7 +730,7 @@ impl InstanceConfigurationApplication {
         instance_id: u32,
         expected_revision: InstanceConfigurationRevision,
     ) -> Result<CommittedMutation, AutomationError> {
-        let mut transaction = self.manager.pool().begin().await.map_err(database_error)?;
+        let mut transaction = self.pool.begin().await.map_err(database_error)?;
         let rows = sqlx::query_as::<_, (i64, String)>(
             "WITH RECURSIVE subtree(instance_id) AS (\
                SELECT instance_id FROM instances WHERE instance_id = ? \

@@ -9,6 +9,7 @@ readonly AGENT_INSTRUCTIONS="$ROOT_DIR/AGENTS.md"
 readonly PULL_REQUEST_TEMPLATE="$ROOT_DIR/.github/PULL_REQUEST_TEMPLATE.md"
 readonly CODE_CHECK_WORKFLOW="$ROOT_DIR/.github/workflows/rust-check.yml"
 readonly RELEASE_WORKFLOW="$ROOT_DIR/.github/workflows/release.yml"
+readonly SECURITY_WORKFLOW="$ROOT_DIR/.github/workflows/security.yml"
 readonly TOPOLOGY_SOAK_WORKFLOW="$ROOT_DIR/.github/workflows/topology-soak.yml"
 readonly QUICK_CHECK="$ROOT_DIR/scripts/quick-check.sh"
 readonly ARCHITECTURE_CHECK="$ROOT_DIR/scripts/check-architecture.sh"
@@ -79,6 +80,23 @@ assert_contains "$CODE_CHECK_WORKFLOW" \
     'cargo nextest run --workspace --lib --bins --tests'
 assert_contains "$CODE_CHECK_WORKFLOW" \
     'cargo check --manifest-path firmware/Cargo.toml --target thumbv7em-none-eabihf'
+assert_contains "$CODE_CHECK_WORKFLOW" 'required-checks:'
+assert_contains "$CODE_CHECK_WORKFLOW" 'name: Required Checks'
+assert_contains "$CODE_CHECK_WORKFLOW" 'if: ${{ always() }}'
+assert_contains "$SECURITY_WORKFLOW" '.github/workflows/rust-check.yml'
+for required_job in \
+    policy-check \
+    submodule-check \
+    ignored-tests \
+    quality-check \
+    firmware-check \
+    unit-tests \
+    coverage-report \
+    config-validation \
+    integration-tests \
+    e2e-tests; do
+    assert_contains "$CODE_CHECK_WORKFLOW" "- $required_job"
+done
 for retired_package in \
     aether-redis-bridge \
     aether-postgres-history \
@@ -113,6 +131,7 @@ for required_path in \
     'crates/aether-dataplane/**' \
     'crates/aether-ports/**' \
     'libs/aether-shm-bridge/**' \
+    'services/automation/**' \
     'services/history/**' \
     'services/io/**' \
     'services/uplink/**'; do

@@ -117,7 +117,11 @@ impl RoutingFixture {
             Arc::new(ProductLoader::with_library(pool.clone(), Arc::new(library))),
             runtime_topology,
         ));
-        let mutator = SqliteActionRoutingMutator::new(Arc::clone(&manager));
+        let mutator = SqliteActionRoutingMutator::new(
+            pool.clone(),
+            Arc::clone(manager.product_loader()),
+            Arc::clone(manager.runtime_topology()),
+        );
         Self {
             _models: models,
             pool,
@@ -140,19 +144,26 @@ impl RoutingFixture {
             SafetyPolicy,
         ));
         let action_routing = Arc::new(ActionRoutingApplication::new(
-            Arc::new(SqliteActionRoutingMutator::new(Arc::clone(&self.manager))),
+            Arc::new(SqliteActionRoutingMutator::new(
+                self.pool.clone(),
+                Arc::clone(self.manager.product_loader()),
+                Arc::clone(self.manager.runtime_topology()),
+            )),
             Arc::clone(&audit_port),
             SafetyPolicy,
         ));
         let measurement_routing = Arc::new(MeasurementRoutingApplication::new(
-            Arc::new(SqliteMeasurementRoutingMutator::new(Arc::clone(
-                &self.manager,
-            ))),
+            Arc::new(SqliteMeasurementRoutingMutator::new(
+                self.pool.clone(),
+                Arc::clone(self.manager.product_loader()),
+                Arc::clone(self.manager.runtime_topology()),
+            )),
             Arc::clone(&audit_port),
             SafetyPolicy,
         ));
         let instance_configuration = Arc::new(
             aether_automation::instance_configuration::InstanceConfigurationApplication::new(
+                self.pool.clone(),
                 Arc::clone(&self.manager),
                 audit_port,
             ),
@@ -664,7 +675,11 @@ async fn action_commit_invalidates_measurement_commands_fenced_by_the_same_head(
         PointId::new(5),
     )
     .expect("acquisition-owned destination");
-    let measurement_mutator = SqliteMeasurementRoutingMutator::new(Arc::clone(&fixture.manager));
+    let measurement_mutator = SqliteMeasurementRoutingMutator::new(
+        fixture.pool.clone(),
+        Arc::clone(fixture.manager.product_loader()),
+        Arc::clone(fixture.manager.runtime_topology()),
+    );
     let error = measurement_mutator
         .mutate(MeasurementRoutingMutation::upsert(
             MeasurementRoute::new(

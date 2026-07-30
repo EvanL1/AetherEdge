@@ -329,7 +329,11 @@ async fn topology_changes_notify_subscription_rebuilders_but_no_ops_do_not() {
         Arc::new(ProductLoader::new(pool.clone())),
         Arc::clone(&topology),
     ));
-    let mutator = SqliteActionRoutingMutator::new(manager);
+    let mutator = SqliteActionRoutingMutator::new(
+        pool.clone(),
+        Arc::clone(manager.product_loader()),
+        Arc::clone(manager.runtime_topology()),
+    );
     let before_rollback = topology.load();
     let error = mutator
         .mutate_revisioned(RevisionedActionRoutingMutation::delete(

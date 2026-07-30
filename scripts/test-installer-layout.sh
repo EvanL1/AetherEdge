@@ -608,6 +608,8 @@ echo "Testing bare-metal fresh-install rollback and guards..."
 assert_not_contains "$BARE_METAL_INSTALLER" 'Existing install context'
 assert_contains "$BARE_METAL_INSTALLER" 'restore_previous_binaries'
 assert_contains "$BARE_METAL_INSTALLER" 'INSTALL_COMPLETED=true'
+assert_not_contains "$ROOT_DIR/scripts/systemd/aether-automation.service" \
+    'Requires=aether-io.service'
 swap_guard_line=$(grep -nF 'BINARIES_SWAPPED=true' "$BARE_METAL_INSTALLER" | head -1 | cut -d: -f1)
 binary_publish_line=$(grep -nF 'mv "$BINARY_STAGE" "$INSTALL_DIR/bin"' "$BARE_METAL_INSTALLER" | head -1 | cut -d: -f1)
 [[ "$swap_guard_line" -lt "$binary_publish_line" ]] \

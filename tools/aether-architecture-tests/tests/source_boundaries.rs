@@ -1648,6 +1648,64 @@ fn automation_rule_runtime_and_dead_surface_keep_single_ownership() {
 }
 
 #[test]
+fn automation_storage_and_rule_http_keep_explicit_ownership() {
+    let root = workspace_metadata().workspace_root;
+    let manager = fs::read_to_string(root.join("services/automation/src/instance_manager.rs"))
+        .expect("automation instance manager");
+    assert!(
+        !manager.contains("pub fn pool("),
+        "InstanceManager must not expose SQLite as a service locator"
+    );
+
+    let main =
+        fs::read_to_string(root.join("services/automation/src/main.rs")).expect("automation main");
+    assert!(
+        !main.contains("instance_manager.pool()"),
+        "the composition root must receive SQLite explicitly instead of borrowing it from InstanceManager"
+    );
+    assert!(
+        !main.contains("instance_manager.runtime_topology()"),
+        "the composition root must receive runtime topology explicitly instead of locating it through InstanceManager"
+    );
+
+    for adapter in [
+        "services/automation/src/instance_configuration.rs",
+        "services/automation/src/infra/action_routing.rs",
+        "services/automation/src/infra/measurement_routing.rs",
+    ] {
+        let source = fs::read_to_string(root.join(adapter)).expect("automation SQLite adapter");
+        assert!(
+            !source.contains("manager.pool()"),
+            "{adapter} must own its SQLite handle explicitly"
+        );
+    }
+
+    let rule_routes = fs::read_to_string(root.join("services/automation/src/api/rule_routes.rs"))
+        .expect("automation rule HTTP adapter");
+    for forbidden in ["sqlx::", "SqlitePool", "RuleScheduler", "StateStore"] {
+        assert!(
+            !rule_routes.contains(forbidden),
+            "rule HTTP adapter must use internal rule queries instead of owning {forbidden}"
+        );
+    }
+    assert!(
+        !rule_routes.contains("application: Option<"),
+        "mounted rule routes must require complete application composition"
+    );
+
+    let lib = fs::read_to_string(root.join("services/automation/src/lib.rs"))
+        .expect("read automation lib");
+    assert!(
+        !lib.contains("pub use aether_rules"),
+        "the Automation service crate must not republish the rule library surface"
+    );
+    assert!(
+        !lib.contains("pub mod runtime {"),
+        "empty compatibility modules must not return to Automation"
+    );
+}
+
+#[test]
 fn service_internal_models_do_not_depend_on_http_dtos() {
     let root = workspace_metadata().workspace_root;
 

@@ -1,7 +1,6 @@
 //! `aether-automation` — instance, rule, and action orchestration service.
 //!
-//! Model management service supporting measurement/action separation architecture.
-//! Rule Engine API is integrated on the same port (6002).
+//! Owns commissioned instances, logical routing, and deterministic rules.
 
 use std::{net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
 
@@ -11,15 +10,17 @@ use tracing::{debug, error, info, warn};
 // aether-automation imports
 use aether_automation::infra::{
     application_control::RuleActionApplication, rule_live_state::ShmRuleLiveState,
-    rule_runtime::RuleRuntimeCoordinator,
+    rule_queries::RuleQueries, rule_runtime::RuleRuntimeCoordinator,
 };
 use aether_automation::{
-    AutomationError, DEFAULT_TICK_MS, Result, RuleScheduler,
+    AutomationError, Result,
     api::rule_routes::{RuleEngineState, create_rule_routes},
     bootstrap, routes,
 };
 use aether_calc::MemoryStateStore;
-use aether_rules::{PointWatchDispatcher, PointWatchHint, WatchEvent};
+use aether_rules::{
+    DEFAULT_TICK_MS, PointWatchDispatcher, PointWatchHint, RuleScheduler, WatchEvent,
+};
 use aether_shm_bridge::{
     PointWatchEvent, PointWatchEventListener, SubscriptionBitmap, automation_bitmap_path_from_shm,
     default_shm_path, point_watch_socket_from_shm,
@@ -40,7 +41,10 @@ async fn main() -> Result<()> {
     debug!("Shutdown token initialized");
 
     // Create application state with all initialized components
-    let state = bootstrap::create_app_state(&service_info).await?;
+    let composition = bootstrap::compose_automation(&service_info).await?;
+    let state = composition.state;
+    let sqlite_pool = composition.sqlite_pool;
+    let runtime_topology = composition.runtime_topology;
 
     // Create API routes using the routes module. The gateway is the only
     // process that serves Swagger UI; this loopback service publishes its spec.
@@ -49,8 +53,6 @@ async fn main() -> Result<()> {
     // ============================================================================
     // Initialize Rule Engine (integrated on port 6002)
     // ============================================================================
-    let sqlite_pool = state.instance_manager.pool().clone();
-
     // Load tick_ms from global config (SQLite key-value table)
     let tick_ms: u64 = sqlx::query_scalar::<_, String>(
         "SELECT value FROM service_config WHERE service_name = 'global' AND key = 'rules.tick_ms'",
@@ -67,7 +69,6 @@ async fn main() -> Result<()> {
     let shm_path = default_shm_path();
     debug!("SHM path: {}", shm_path.display());
 
-    let runtime_topology = Arc::clone(state.instance_manager.runtime_topology());
     match runtime_topology.refresh(&sqlite_pool).await {
         Ok(_) => info!("Coherent point/health/routing topology configured"),
         Err(error) => warn!(
@@ -555,14 +556,12 @@ async fn main() -> Result<()> {
         rule_audit,
         aether_application::SafetyPolicy,
     ));
-    let rule_state = Arc::new(
-        RuleEngineState::new(sqlite_pool, Arc::clone(&scheduler))
-            .with_execution_boundary(rule_application, Arc::clone(&state.control_authenticator))
-            .with_mutation_boundary(
-                rule_mutation_application,
-                Arc::clone(&state.control_authenticator),
-            ),
-    );
+    let rule_state = Arc::new(RuleEngineState::new(
+        Arc::new(RuleQueries::new(sqlite_pool, Arc::clone(&scheduler))),
+        rule_application,
+        rule_mutation_application,
+        Arc::clone(&state.control_authenticator),
+    ));
     let rule_routes = create_rule_routes(rule_state);
 
     // Merge rule routes into the main app (both on port 6002)
@@ -586,7 +585,7 @@ async fn main() -> Result<()> {
     socket.bind(addr)?;
     let listener = socket.listen(1024)?;
 
-    info!("Model Service (with Rule Engine) started on {}", addr);
+    info!("Automation service started on {}", addr);
     info!("");
     info!("Model API endpoints (port {}):", state.config.api.port);
     info!("  GET /health - Health check");
@@ -666,6 +665,6 @@ async fn main() -> Result<()> {
         },
     }
 
-    info!("Model Service (with Rule Engine) shutdown complete");
+    info!("Automation service shutdown complete");
     Ok(())
 }

@@ -59,35 +59,19 @@ pub struct InstanceTopology {
 pub async fn export_instances(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<SuccessResponse<InstanceTopology>>, AutomationError> {
-    let pool = &state.instance_manager.pool;
+    let commissioned =
+        state.instance_manager.list_instances().await.map_err(|e| {
+            AutomationError::InternalError(format!("Failed to query instances: {}", e))
+        })?;
 
-    // Query all instances with parent_id
-    #[allow(clippy::type_complexity)]
-    let rows: Vec<(u32, String, String, Option<u32>, Option<String>)> = sqlx::query_as(
-        r#"
-        SELECT instance_id, instance_name, product_name, parent_id, properties
-        FROM instances
-        ORDER BY instance_id
-        "#,
-    )
-    .fetch_all(pool)
-    .await
-    .map_err(|e| AutomationError::InternalError(format!("Failed to query instances: {}", e)))?;
-
-    let instances: Vec<InstanceExport> = rows
+    let instances = commissioned
         .into_iter()
-        .map(|(id, name, product, parent_id, props_json)| {
-            let properties = props_json
-                .and_then(|s| serde_json::from_str(&s).ok())
-                .unwrap_or(json!({}));
-
-            InstanceExport {
-                id,
-                name,
-                product,
-                parent_id,
-                properties,
-            }
+        .map(|instance| InstanceExport {
+            id: instance.core.instance_id,
+            name: instance.core.instance_name,
+            product: instance.core.product_name,
+            parent_id: instance.core.parent_id,
+            properties: json!(instance.core.properties),
         })
         .collect();
 
