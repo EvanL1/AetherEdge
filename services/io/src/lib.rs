@@ -18,6 +18,7 @@ pub mod api {
     //! Provides HTTP API endpoints for the communication service.
 
     pub mod dto;
+    pub mod error_response;
     pub mod routes;
 
     pub mod handlers {
@@ -74,8 +75,9 @@ pub mod runtime {
     pub use reconnect::{ReconnectContext, ReconnectError, ReconnectHelper, ReconnectPolicy};
 }
 
-// Re-export dto at crate root for compatibility
-pub use crate::api::dto;
+// Private compatibility alias for HTTP modules during the namespace migration.
+// Internal runtime modules are forbidden from depending on this name.
+use crate::api::dto;
 pub use channel_mutator::{ChannelRuntimeLifecycle, SqliteChannelMutator};
 
 // Re-export commonly used types

@@ -203,7 +203,7 @@ async fn test_product_hierarchy() -> Result<()> {
 }
 
 #[tokio::test]
-async fn test_product_exists() -> Result<()> {
+async fn test_product_lookup() -> Result<()> {
     // 1. Create test environment
     let env = TestEnv::create().await?;
 
@@ -211,15 +211,15 @@ async fn test_product_exists() -> Result<()> {
     let product_loader = energy_product_loader(env.pool().clone());
 
     // 3. Verify selected products exist
-    assert!(product_loader.product_exists("Battery"));
-    assert!(product_loader.product_exists("PCS"));
-    assert!(product_loader.product_exists("Station"));
-    assert!(product_loader.product_exists("ESS"));
-    assert!(product_loader.product_exists("Generator"));
+    assert!(product_loader.get_product("Battery").is_ok());
+    assert!(product_loader.get_product("PCS").is_ok());
+    assert!(product_loader.get_product("Station").is_ok());
+    assert!(product_loader.get_product("ESS").is_ok());
+    assert!(product_loader.get_product("Generator").is_ok());
 
     // 4. Verify non-existent products don't exist
-    assert!(!product_loader.product_exists("NonExistentProduct"));
-    assert!(!product_loader.product_exists("FakeProduct"));
+    assert!(product_loader.get_product("NonExistentProduct").is_err());
+    assert!(product_loader.get_product("FakeProduct").is_err());
 
     // 5. Cleanup
     env.cleanup().await?;

@@ -38,8 +38,6 @@ pub use service_config::{
     // Config types
     ApiConfig,
     BaseServiceConfig,
-    // Reload
-    ChannelReloadResult,
     // Enums
     ComparisonOperator,
     // Validation
@@ -54,15 +52,11 @@ pub use service_config::{
     ENV_RULES_URL,
     FourRemote,
     GenericValidator,
-    InstanceReloadResult,
     LOCALHOST_HOST,
     LogRotationConfig,
     LoggingConfig,
     PointRole,
     PointType,
-    ReloadResult,
-    ReloadableService,
-    RuleReloadResult,
     SERVICE_CONFIG_TABLE,
     SYNC_METADATA_TABLE,
     // Database types
@@ -99,7 +93,7 @@ pub use api_types::{
 
 // Re-export AppError when axum feature is enabled
 #[cfg(feature = "axum")]
-pub use api_types::AppError;
+pub use api_types::{AppError, status_for_error_category};
 
 // Startup dependency checker
 #[cfg(feature = "dependency")]

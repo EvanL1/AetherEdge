@@ -17,8 +17,8 @@ use axum::{
 use common::SuccessResponse;
 use std::sync::Arc;
 
+use crate::api::dto::{InstanceMutationConfirmation, InstancePropertyPoint, UpsertPropertyRequest};
 use crate::app_state::AppState;
-use crate::dto::{InstanceMutationConfirmation, InstancePropertyPoint, UpsertPropertyRequest};
 use crate::error::AutomationError;
 use crate::instance_configuration::{
     InstanceConfigurationMutation, InstanceConfigurationPayload, InstanceConfigurationRevision,
@@ -73,14 +73,16 @@ pub async fn upsert_property(
         },
     )
     .await?;
-    let InstanceConfigurationPayload::Property(updated) = acceptance.payload() else {
+    let governance = super::instance_management_handlers::governance_response(&acceptance);
+    let InstanceConfigurationPayload::Property(updated) = acceptance.into_payload() else {
         return Err(AutomationError::InternalError(
             "property upsert returned an unexpected payload".to_string(),
         ));
     };
+    let updated = InstancePropertyPoint::from(updated);
     Ok(Json(SuccessResponse::new(serde_json::json!({
         "property": updated,
-        "governance": super::instance_management_handlers::governance_response(&acceptance)
+        "governance": governance
     }))))
 }
 
@@ -132,13 +134,15 @@ pub async fn delete_property(
         },
     )
     .await?;
-    let InstanceConfigurationPayload::Property(updated) = acceptance.payload() else {
+    let governance = super::instance_management_handlers::governance_response(&acceptance);
+    let InstanceConfigurationPayload::Property(updated) = acceptance.into_payload() else {
         return Err(AutomationError::InternalError(
             "property deletion returned an unexpected payload".to_string(),
         ));
     };
+    let updated = InstancePropertyPoint::from(updated);
     Ok(Json(SuccessResponse::new(serde_json::json!({
         "property": updated,
-        "governance": super::instance_management_handlers::governance_response(&acceptance)
+        "governance": governance
     }))))
 }

@@ -34,79 +34,67 @@ pub async fn health_check(
     let mut overall_healthy = true;
     let mut errors = Vec::new();
 
-    // Check SQLite connectivity using direct query
+    // One bounded instance query proves both SQLite connectivity and the
+    // commissioned-instance read path without exposing the pool to HTTP.
     let sqlite_start = Instant::now();
-    let sqlite_status = match sqlx::query("SELECT 1")
-        .fetch_optional(&state.instance_manager.pool)
+    let sqlite_status = match state
+        .instance_manager
+        .list_instances_paginated(None, 1, 1)
         .await
     {
-        Ok(_) => {
+        Ok((count, _)) => {
+            let duration_ms = sqlite_start.elapsed().as_millis();
             checks.insert(
                 "sqlite".to_string(),
                 json!({
                     "status": "healthy",
                     "message": "Connected",
-                    "duration_ms": sqlite_start.elapsed().as_millis()
+                    "duration_ms": duration_ms
+                }),
+            );
+            checks.insert(
+                "instances".to_string(),
+                json!({
+                    "status": "healthy",
+                    "count": count,
+                    "duration_ms": duration_ms
                 }),
             );
             "connected"
         },
         Err(e) => {
             overall_healthy = false;
-            let err_msg = format!("Ping failed: {}", e);
+            let err_msg = format!("Instance query failed: {}", e);
             errors.push(format!("sqlite: {}", err_msg));
+            let duration_ms = sqlite_start.elapsed().as_millis();
             checks.insert(
                 "sqlite".to_string(),
                 json!({
                     "status": "unhealthy",
                     "message": err_msg,
-                    "duration_ms": sqlite_start.elapsed().as_millis()
+                    "duration_ms": duration_ms
+                }),
+            );
+            checks.insert(
+                "instances".to_string(),
+                json!({
+                    "status": "unhealthy",
+                    "message": "Commissioned instances are unavailable",
+                    "duration_ms": duration_ms
                 }),
             );
             "error"
         },
     };
 
-    // Check instance manager
-    let instance_start = Instant::now();
-    match state
-        .instance_manager
-        .list_instances_paginated(None, 1, 1)
-        .await
-    {
-        Ok((count, _)) => {
-            checks.insert(
-                "instances".to_string(),
-                json!({
-                    "status": "healthy",
-                    "count": count,
-                    "duration_ms": instance_start.elapsed().as_millis()
-                }),
-            );
-        },
-        Err(e) => {
-            overall_healthy = false;
-            let err_msg = format!("Failed to list instances: {}", e);
-            errors.push(format!("instances: {}", err_msg));
-            checks.insert(
-                "instances".to_string(),
-                json!({
-                    "status": "unhealthy",
-                    "message": err_msg,
-                    "duration_ms": instance_start.elapsed().as_millis()
-                }),
-            );
-        },
-    }
-
     // Report the validated active Pack/site product-library size.
     let product_start = Instant::now();
-    let products = state.instance_manager.product_loader().get_all_products();
+    let product_count = state.instance_manager.product_loader().product_count();
     checks.insert(
         "products".to_string(),
         json!({
             "status": "healthy",
-            "count": products.len(),
+            "count": product_count,
             "duration_ms": product_start.elapsed().as_millis()
         }),
     );

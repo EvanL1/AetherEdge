@@ -12,15 +12,16 @@ use tracing::{error, info};
 #[cfg(feature = "openapi")]
 use utoipa::{OpenApi, ToSchema};
 
+use crate::api::dto::{
+    BatchQueryRequest, BatchQueryResponse, DataStats, LatestParams, QueryRangeParams,
+    ServiceConfig, StorageConfigRequest, StorageTestRequest,
+};
+#[cfg(feature = "openapi")]
+use crate::api::dto::{HistoryRecord, SeriesResult};
 use crate::backend_null::NullBackend;
 use crate::backend_sqlite::SqliteHistoryBackend;
 use crate::db_config;
-use crate::models::{
-    BatchQueryRequest, BatchQueryResponse, DataStats, LatestParams, QueryRangeParams,
-    ServiceConfig, StorageConfigRequest, StorageSettings, StorageTestRequest,
-};
-#[cfg(feature = "openapi")]
-use crate::models::{HistoryRecord, SeriesResult};
+use crate::models::DataStats as HistoryStats;
 use crate::state::AppState;
 use crate::storage::StorageBackend;
 
@@ -531,29 +532,27 @@ async fn query_range(
     State(state): State<Arc<AppState>>,
     Query(params): Query<QueryRangeParams>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    let (default_page, max_page, max_days) = {
+    let query = {
         let cfg = state.config.read().await;
+        params.into_query(&cfg)
+    }
+    .map_err(|error| {
         (
-            cfg.default_page_size,
-            cfg.max_page_size,
-            cfg.max_time_range_days,
+            StatusCode::BAD_REQUEST,
+            Json(json!({"success": false, "message": error.to_string()})),
         )
-    };
-
-    let page = params.page.unwrap_or(1).max(1);
-    let page_size = params
-        .page_size
-        .unwrap_or(default_page)
-        .min(max_page)
-        .max(1);
+    })?;
+    let page = query.page;
+    let page_size = query.page_size;
 
     let backend = state.storage.read().await.clone();
-    match backend
-        .query_range(&params, default_page, max_page, max_days)
-        .await
-    {
+    match backend.query_range(&query).await {
         Ok((data, total)) => {
             let has_more = (page * page_size) < total;
+            let data = data
+                .into_iter()
+                .map(crate::api::dto::HistoryRecord::from)
+                .collect::<Vec<_>>();
             Ok(Json(json!({
                 "success": true,
                 "message": format!("Found {} record(s)", data.len()),
@@ -598,11 +597,14 @@ async fn query_latest(
         .query_latest(&params.series_key, &params.point_id)
         .await
     {
-        Ok(Some(record)) => Ok(Json(json!({
-            "success": true,
-            "message": "Query successful",
-            "data": record,
-        }))),
+        Ok(Some(record)) => {
+            let record = crate::api::dto::HistoryRecord::from(record);
+            Ok(Json(json!({
+                "success": true,
+                "message": "Query successful",
+                "data": record,
+            })))
+        },
         Ok(None) => Err((
             StatusCode::NOT_FOUND,
             Json(json!({"success": false, "message": "No data available"})),
@@ -680,16 +682,19 @@ async fn batch_query(
         ));
     }
 
-    let limit = req
-        .limit_per_series
+    let BatchQueryRequest {
+        start_time: start_time_text,
+        end_time: end_time_text,
+        series,
+        limit_per_series,
+    } = req;
+    let limit = limit_per_series
         .unwrap_or(DEFAULT_LIMIT)
         .clamp(1, MAX_LIMIT);
-
-    let pairs: Vec<(String, String)> = req
-        .series
-        .iter()
-        .map(|s| (s.series_key.clone(), s.point_id.clone()))
-        .collect();
+    let pairs = series
+        .into_iter()
+        .map(|series| (series.series_key, series.point_id))
+        .collect::<Vec<_>>();
 
     let backend = state.storage.read().await.clone();
     match backend
@@ -698,9 +703,9 @@ async fn batch_query(
     {
         Ok(series) => {
             let resp = BatchQueryResponse {
-                start_time: req.start_time,
-                end_time: req.end_time,
-                series,
+                start_time: start_time_text,
+                end_time: end_time_text,
+                series: series.into_iter().map(Into::into).collect(),
             };
             Ok(Json(json!({
                 "success": true,
@@ -728,17 +733,14 @@ async fn data_range(
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     let backend = state.storage.read().await.clone();
     match backend.get_stats().await {
-        Ok(stats) => Ok(Json(json!({
-            "success": true,
-            "message": "OK",
-            "data": {
-                "earliest_timestamp": stats.earliest_timestamp,
-                "latest_timestamp":   stats.latest_timestamp,
-                "total_points":       stats.total_points,
-                "channels":           stats.channels,
-                "data_types":         stats.data_types,
-            }
-        }))),
+        Ok(stats) => {
+            let stats = DataStats::from(stats);
+            Ok(Json(json!({
+                "success": true,
+                "message": "OK",
+                "data": stats,
+            })))
+        },
         Err(e) => {
             error!("data_range error: {}", e);
             Err((
@@ -796,7 +798,7 @@ async fn list_channels(
     responses((status = 200, description = "Runtime metrics (total points, channel count, buffer depth, etc.)")))]
 async fn metrics(State(state): State<Arc<AppState>>) -> Json<Value> {
     let backend = state.storage.read().await.clone();
-    let stats = backend.get_stats().await.unwrap_or_else(|_| DataStats {
+    let stats = backend.get_stats().await.unwrap_or_else(|_| HistoryStats {
         earliest_timestamp: None,
         latest_timestamp: None,
         total_points: 0,
@@ -828,7 +830,7 @@ async fn metrics(State(state): State<Arc<AppState>>) -> Json<Value> {
 #[cfg_attr(feature = "openapi", utoipa::path(get, path = "/hisApi/config", tag = "Config",
     responses((status = 200, description = "Current service configuration", body = HistoryConfigResponse))))]
 async fn get_config(State(state): State<Arc<AppState>>) -> Json<Value> {
-    let cfg = state.config.read().await.clone();
+    let cfg = ServiceConfig::from(&*state.config.read().await);
     Json(json!({ "success": true, "message": "OK", "data": cfg }))
 }
 
@@ -846,9 +848,9 @@ async fn get_config(State(state): State<Arc<AppState>>) -> Json<Value> {
     )))]
 async fn update_config(
     State(state): State<Arc<AppState>>,
-    Json(mut new_cfg): Json<ServiceConfig>,
+    Json(new_cfg): Json<ServiceConfig>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    new_cfg.normalize();
+    let new_cfg = crate::models::ServiceConfig::from(new_cfg);
     if let Err(e) = db_config::save_config(&state.sqlite, &new_cfg).await {
         error!("Failed to save config: {}", e);
         return Err((
@@ -939,17 +941,8 @@ async fn update_storage(
         ));
     }
 
-    let dsn = if req.backend == "sqlite" {
-        req.database.clone()
-    } else {
-        req.to_dsn()
-    };
-
-    let new_ss = StorageSettings {
-        enabled: req.enabled,
-        backend: req.backend.clone(),
-        url: dsn,
-    };
+    let disabling = !req.enabled;
+    let new_ss = req.into_settings();
 
     if let Err(e) = db_config::save_storage(&state.sqlite, &new_ss).await {
         error!("Failed to persist storage config: {}", e);
@@ -960,7 +953,7 @@ async fn update_storage(
     }
 
     // If disabling, immediately swap in NullBackend so writes stop.
-    if !req.enabled {
+    if disabling {
         *state.storage.write().await = Arc::new(NullBackend);
         info!("Storage disabled, writes stopped");
     }

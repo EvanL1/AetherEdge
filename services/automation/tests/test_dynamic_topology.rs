@@ -327,11 +327,13 @@ async fn topology_changes_notify_subscription_rebuilders_but_no_ops_do_not() {
     let manager = Arc::new(InstanceManager::new(
         pool.clone(),
         Arc::new(ProductLoader::new(pool.clone())),
+        Arc::clone(&topology),
     ));
-    manager
-        .set_runtime_topology(Arc::clone(&topology))
-        .expect("install runtime topology");
-    let mutator = SqliteActionRoutingMutator::new(manager);
+    let mutator = SqliteActionRoutingMutator::new(
+        pool.clone(),
+        Arc::clone(manager.product_loader()),
+        Arc::clone(manager.runtime_topology()),
+    );
     let before_rollback = topology.load();
     let error = mutator
         .mutate_revisioned(RevisionedActionRoutingMutation::delete(
@@ -349,13 +351,48 @@ async fn topology_changes_notify_subscription_rebuilders_but_no_ops_do_not() {
         .await
         .expect("rollback restoration signal");
 
+    // Measurement cancellation has the same exact-generation restoration
+    // guarantee without revoking the independent command plane.
+    let before_abandoned_measurement = topology.load();
+    let abandoned_measurement = Arc::clone(&topology)
+        .begin_measurement_routing_mutation()
+        .await;
+    assert!(topology.load().measurement_route(100, 6).is_none());
+    assert!(topology.load().action_route(100, 1).is_some());
+    drop(abandoned_measurement);
+    tokio::time::timeout(std::time::Duration::from_secs(1), async {
+        loop {
+            if Arc::ptr_eq(&topology.load(), &before_abandoned_measurement) {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("abandoned measurement restoration");
+    assert!(topology.load().measurement_route(100, 6).is_some());
+    assert!(topology.load().action_route(100, 1).is_some());
+
     // Cancellation and early-return paths rely on the lease's Drop fallback.
     // It retains the refresh guard until the asynchronous restoration obtains
     // the command publication lock.
     let before_abandoned_mutation = topology.load();
     let abandoned_mutation = Arc::clone(&topology).begin_action_routing_mutation().await;
     assert!(topology.load().action_route(100, 1).is_none());
+    let pinned_revoked_generation = Arc::clone(&topology).pin_command().await;
     drop(abandoned_mutation);
+    let refresh_topology = Arc::clone(&topology);
+    let refresh_pool = pool.clone();
+    let mut blocked_refresh =
+        tokio::spawn(async move { refresh_topology.refresh(&refresh_pool).await });
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(25), &mut blocked_refresh)
+            .await
+            .is_err(),
+        "periodic refresh must remain behind an abandoned mutation's restoration"
+    );
+    assert!(topology.load().action_route(100, 1).is_none());
+    drop(pinned_revoked_generation);
     tokio::time::timeout(std::time::Duration::from_secs(1), async {
         loop {
             if Arc::ptr_eq(&topology.load(), &before_abandoned_mutation) {
@@ -367,6 +404,12 @@ async fn topology_changes_notify_subscription_rebuilders_but_no_ops_do_not() {
     .await
     .expect("abandoned mutation restoration");
     assert!(topology.load().action_route(100, 1).is_some());
+    assert!(
+        !blocked_refresh
+            .await
+            .expect("blocked refresh task")
+            .expect("refresh after exact restoration")
+    );
 
     // A governed action-route mutation revokes commands before its SQLite
     // transaction. Periodic refresh is excluded by the retained lease until
@@ -408,4 +451,128 @@ async fn topology_changes_notify_subscription_rebuilders_but_no_ops_do_not() {
     let revoked = topology.load();
     assert!(revoked.action_route(100, 2).is_none());
     assert!(revoked.measurement_route(100, 6).is_some());
+}
+
+#[tokio::test]
+async fn command_limits_publish_with_their_route_and_fail_closed_when_invalid() {
+    let pool = create_topology_pool().await;
+    let directory = tempfile::tempdir().expect("temporary SHM directory");
+    let point_path = directory.path().join("live.shm");
+    let health_path = directory.path().join("health.shm");
+    let snapshot = aether_sqlite_topology::load_sqlite_live_topology(&pool)
+        .await
+        .expect("initial topology snapshot");
+    let _point_writer = ShmWriterHandle::create_published_at_epoch(
+        ShmRuntimeConfig::new(&point_path, 256),
+        Arc::new(snapshot.point_manifest().clone()),
+        None,
+        300,
+    )
+    .expect("publish point plane");
+    let _health_writer = ShmChannelHealthWriterHandle::create_at_epoch(
+        &health_path,
+        Arc::new(snapshot.health_manifest().clone()),
+        300,
+    )
+    .expect("publish health plane");
+    commit_topology_publication(&point_path, &health_path, 300).expect("commit topology");
+    let topology = Arc::new(
+        AutomationTopologyHandle::new_lazy(
+            point_path,
+            health_path,
+            snapshot,
+            Arc::new(ShmDeviceCommandSink::new()),
+        )
+        .expect("compose topology"),
+    );
+    assert!(topology.refresh(&pool).await.expect("initial publication"));
+
+    let first = topology.load();
+    let first_manifest = Arc::clone(first.point_manifest());
+    let pinned = Arc::clone(&topology).pin_command().await;
+    assert_eq!(
+        pinned
+            .generation()
+            .command_route(100, 1)
+            .expect("initial command route")
+            .constraints()
+            .maximum(),
+        Some(100.0)
+    );
+    sqlx::query(
+        "UPDATE adjustment_points SET max_value = 50.0, step = 0.5 \
+         WHERE channel_id = 10 AND point_id = 0",
+    )
+    .execute(&pool)
+    .await
+    .expect("change only command constraints");
+    let refresh_topology = Arc::clone(&topology);
+    let refresh_pool = pool.clone();
+    let mut publication =
+        tokio::spawn(async move { refresh_topology.refresh(&refresh_pool).await });
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(25), &mut publication)
+            .await
+            .is_err(),
+        "constraint publication must wait for the pinned command generation"
+    );
+    assert_eq!(
+        topology
+            .load()
+            .command_route(100, 1)
+            .expect("current command route")
+            .constraints()
+            .maximum(),
+        Some(100.0)
+    );
+    drop(pinned);
+    assert!(
+        publication
+            .await
+            .expect("constraint publication task")
+            .expect("constraint publication")
+    );
+    let second = topology.load();
+    assert_ne!(second.sequence(), first.sequence());
+    assert!(Arc::ptr_eq(second.point_manifest(), &first_manifest));
+    assert_eq!(
+        second
+            .command_route(100, 1)
+            .expect("published command route")
+            .constraints()
+            .maximum(),
+        Some(50.0)
+    );
+
+    sqlx::query(
+        "UPDATE adjustment_points SET step = 0.0 \
+         WHERE channel_id = 10 AND point_id = 0",
+    )
+    .execute(&pool)
+    .await
+    .expect("corrupt command constraints");
+    let error = topology
+        .refresh(&pool)
+        .await
+        .expect_err("invalid constraints must fail closed");
+    assert_eq!(error.kind(), PortErrorKind::InvalidData);
+    assert!(
+        topology.load().action_route(100, 1).is_none(),
+        "the last valid command policy must not survive invalid persisted constraints"
+    );
+
+    sqlx::query(
+        "UPDATE adjustment_points SET step = 1.0 \
+         WHERE channel_id = 10 AND point_id = 0",
+    )
+    .execute(&pool)
+    .await
+    .expect("repair command constraints");
+    assert!(
+        topology
+            .refresh(&pool)
+            .await
+            .expect("publish repaired command policy")
+    );
+    assert!(topology.load().action_route(100, 1).is_some());
 }

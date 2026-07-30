@@ -25,11 +25,21 @@ use crate::product_loader::ProductLoader;
 use aether_pack::{ActivePackSet, load_active_packs};
 use aether_store_local::SqliteAuditSink;
 
+/// Concrete resources selected by the Automation composition root.
+///
+/// HTTP handlers receive only `state`; the SQLite handle remains available to
+/// `main` for composing runtime adapters that intentionally own persistence.
+pub struct AutomationComposition {
+    pub state: Arc<AppState>,
+    pub sqlite_pool: SqlitePool,
+    pub runtime_topology: Arc<crate::infra::runtime_topology::AutomationTopologyHandle>,
+}
+
 /// Initialize service info for unified bootstrap
 pub fn create_service_info() -> ServiceInfo {
     ServiceInfo::new(
         "aether-automation",
-        "Model Service - Instance & Routing Management",
+        "Instance, Routing, and Rule Automation",
         6002,
     )
 }
@@ -366,25 +376,28 @@ pub async fn load_products(
 }
 
 /// Setup the SQLite/SHM instance manager.
-pub async fn setup_instance_manager(
+async fn setup_instance_manager(
     sqlite_pool: &SqlitePool,
     product_loader: Arc<ProductLoader>,
+    runtime_topology: Arc<crate::infra::runtime_topology::AutomationTopologyHandle>,
 ) -> Result<Arc<InstanceManager>> {
-    let instance_manager = Arc::new(InstanceManager::new(sqlite_pool.clone(), product_loader));
+    let instance_manager = Arc::new(InstanceManager::new(
+        sqlite_pool.clone(),
+        product_loader,
+        runtime_topology,
+    ));
 
     // Instances loaded by aether (may be empty on first startup)
     let instance_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM instances")
         .fetch_one(sqlite_pool)
         .await
-        .unwrap_or(0);
+        .map_err(|error| AutomationError::DatabaseError(error.to_string()))?;
 
     if instance_count == 0 {
         warn!("No instances in DB — run `aether sync` to load instance config");
     } else {
         info!("{} instances loaded", instance_count);
     }
-
-    instance_manager.populate_name_cache().await?;
 
     Ok(instance_manager)
 }
@@ -489,23 +502,10 @@ pub async fn validate_routing_integrity(sqlite_pool: &SqlitePool) -> Result<()> 
     Ok(())
 }
 
-/// Create application state with all initialized components
-pub async fn create_app_state(service_info: &ServiceInfo) -> Result<Arc<AppState>> {
+/// Compose Automation's application state and concrete runtime adapters.
+pub async fn compose_automation(service_info: &ServiceInfo) -> Result<AutomationComposition> {
     // Initialize environment
     init_environment(service_info)?;
-
-    // Wait for io to be healthy before opening SHM (io must create the SHM file first)
-    let io_base = common::io_url();
-    let io_health = format!("{io_base}/health");
-    if let Err(e) = common::dependency::wait_for_dependency(
-        "aether-io",
-        &io_health,
-        std::time::Duration::from_secs(30),
-    )
-    .await
-    {
-        warn!("io health check failed: {e}. Continuing startup (SHM may be unavailable).");
-    }
 
     // Check system requirements
     let requirements = SystemRequirements {
@@ -535,8 +535,31 @@ pub async fn create_app_state(service_info: &ServiceInfo) -> Result<Arc<AppState
     // in main, after IO's canonical generation becomes available.
     let shm_dispatch = Arc::new(aether_shm_bridge::ShmDeviceCommandSink::new());
 
-    let instance_manager =
-        setup_instance_manager(&sqlite_pool, Arc::clone(&product_loader)).await?;
+    let point_path = aether_shm_bridge::default_shm_path();
+    let health_path = std::env::var("AETHER_CHANNEL_HEALTH_SHM_PATH")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| aether_shm_bridge::channel_health_path_from_shm(&point_path));
+    let runtime_topology = Arc::new(
+        crate::infra::runtime_topology::AutomationTopologyHandle::from_sqlite_lazy(
+            point_path,
+            health_path,
+            &sqlite_pool,
+            Arc::clone(&shm_dispatch),
+        )
+        .await
+        .map_err(|error| {
+            AutomationError::DispatchDegraded(format!(
+                "failed to compose the automation runtime topology: {error}"
+            ))
+        })?,
+    );
+
+    let instance_manager = setup_instance_manager(
+        &sqlite_pool,
+        Arc::clone(&product_loader),
+        Arc::clone(&runtime_topology),
+    )
+    .await?;
 
     let audit_sink = SqliteAuditSink::initialize(sqlite_pool.clone())
         .await
@@ -553,9 +576,11 @@ pub async fn create_app_state(service_info: &ServiceInfo) -> Result<Arc<AppState
         aether_application::SafetyPolicy,
     ));
     let action_routing_mutator: Arc<dyn aether_ports::AutomationActionRoutingMutator> = Arc::new(
-        crate::infra::action_routing::SqliteActionRoutingMutator::new(Arc::clone(
-            &instance_manager,
-        )),
+        crate::infra::action_routing::SqliteActionRoutingMutator::new(
+            sqlite_pool.clone(),
+            Arc::clone(&product_loader),
+            Arc::clone(&runtime_topology),
+        ),
     );
     let action_routing_application = Arc::new(aether_application::ActionRoutingApplication::new(
         action_routing_mutator,
@@ -564,9 +589,11 @@ pub async fn create_app_state(service_info: &ServiceInfo) -> Result<Arc<AppState
     ));
     let measurement_routing_mutator: Arc<dyn aether_ports::AutomationMeasurementRoutingMutator> =
         Arc::new(
-            crate::infra::measurement_routing::SqliteMeasurementRoutingMutator::new(Arc::clone(
-                &instance_manager,
-            )),
+            crate::infra::measurement_routing::SqliteMeasurementRoutingMutator::new(
+                sqlite_pool.clone(),
+                product_loader,
+                Arc::clone(&runtime_topology),
+            ),
         );
     let measurement_routing_application =
         Arc::new(aether_application::MeasurementRoutingApplication::new(
@@ -576,6 +603,7 @@ pub async fn create_app_state(service_info: &ServiceInfo) -> Result<Arc<AppState
         ));
     let instance_configuration_application = Arc::new(
         crate::instance_configuration::InstanceConfigurationApplication::new(
+            sqlite_pool.clone(),
             Arc::clone(&instance_manager),
             audit_sink,
         ),
@@ -586,14 +614,18 @@ pub async fn create_app_state(service_info: &ServiceInfo) -> Result<Arc<AppState
     );
 
     // Create application state
-    Ok(Arc::new(AppState::new(
-        config,
-        instance_manager,
-        control_application,
-        action_routing_application,
-        measurement_routing_application,
-        instance_configuration_application,
-        control_authenticator,
-        shm_dispatch,
-    )))
+    Ok(AutomationComposition {
+        state: Arc::new(AppState::new(
+            config,
+            instance_manager,
+            control_application,
+            action_routing_application,
+            measurement_routing_application,
+            instance_configuration_application,
+            control_authenticator,
+            shm_dispatch,
+        )),
+        sqlite_pool,
+        runtime_topology,
+    })
 }

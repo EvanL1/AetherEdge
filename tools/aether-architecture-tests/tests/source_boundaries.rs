@@ -248,7 +248,7 @@ impl BoundaryVisitor<'_> {
         self.package_name == "aether-io"
             && self
                 .module_path
-                .get(0)
+                .first()
                 .is_some_and(|module| module == "protocols")
             && self
                 .module_path
@@ -1224,6 +1224,582 @@ fn io_runtime_snapshot_and_channel_state_keep_single_ownership() {
 }
 
 #[test]
+fn automation_starts_without_an_io_http_liveness_dependency() {
+    let root = workspace_metadata().workspace_root;
+    let bootstrap = fs::read_to_string(root.join("services/automation/src/bootstrap.rs"))
+        .expect("automation bootstrap source");
+    for forbidden in ["common::io_url", "wait_for_dependency"] {
+        assert!(
+            !bootstrap.contains(forbidden),
+            "automation must discover IO availability through its typed lazy SHM topology, not {forbidden}"
+        );
+    }
+
+    let manifest = fs::read_to_string(root.join("services/automation/Cargo.toml"))
+        .expect("automation manifest");
+    assert!(
+        !manifest.contains("\"dependency\""),
+        "automation must not retain the HTTP dependency-polling feature"
+    );
+
+    let manager = fs::read_to_string(root.join("services/automation/src/instance_manager.rs"))
+        .expect("automation instance manager");
+    for forbidden in [
+        "OnceLock",
+        "set_runtime_topology",
+        "if let Some(topology)",
+        "SELECT (SELECT COUNT(*) FROM measurement_routing",
+    ] {
+        assert!(
+            !manager.contains(forbidden),
+            "automation must require one coherent runtime topology instead of restoring {forbidden}"
+        );
+    }
+}
+
+#[test]
+fn automation_rule_runtime_and_dead_surface_keep_single_ownership() {
+    let root = workspace_metadata().workspace_root;
+    let main =
+        fs::read_to_string(root.join("services/automation/src/main.rs")).expect("automation main");
+    let mutation = fs::read_to_string(root.join("services/automation/src/infra/rule_mutation.rs"))
+        .expect("rule mutation adapter");
+    let runtime = fs::read_to_string(root.join("services/automation/src/infra/rule_runtime.rs"))
+        .expect("rule runtime coordinator");
+    for duplicate in [
+        "mark_unready(",
+        ".rebuild_point_watch(",
+        "with_topology_guard",
+    ] {
+        assert!(
+            !main.contains(duplicate) && !mutation.contains(duplicate),
+            "rule/PointWatch publication must remain owned by RuleRuntimeCoordinator, not {duplicate}"
+        );
+    }
+    assert!(
+        runtime.contains("pub struct RuleRuntimeCoordinator")
+            && runtime.contains("reload_gate: Mutex<()>")
+            && runtime.contains(".rebuild_point_watch(")
+            && runtime.contains("pub fn topology_changes(")
+            && !main.contains("runtime_topology.subscribe()"),
+        "automation must retain one serialized, typed rule/PointWatch publication coordinator"
+    );
+    let topology =
+        fs::read_to_string(root.join("services/automation/src/infra/runtime_topology.rs"))
+            .expect("automation runtime topology");
+    assert!(
+        topology.contains("pub struct RoutingMutationLease")
+            && !topology.contains("ActionRoutingMutationLease")
+            && !topology.contains("MeasurementRoutingMutationLease"),
+        "logical routing must retain one plane-aware mutation lease"
+    );
+    let command_dispatch =
+        fs::read_to_string(root.join("services/automation/src/infra/application_control.rs"))
+            .expect("automation command dispatcher");
+    for forbidden in ["sqlx::", "control_points", "adjustment_points"] {
+        assert!(
+            !command_dispatch.contains(forbidden),
+            "command dispatch must use the pinned runtime snapshot instead of restoring {forbidden}"
+        );
+    }
+    assert!(
+        command_dispatch.contains(".command_route(")
+            && command_dispatch.contains("routed.constraints()"),
+        "command dispatch must resolve the target and limits from one immutable generation"
+    );
+
+    assert!(
+        !root
+            .join("services/automation/src/infra/channel_health.rs")
+            .try_exists()
+            .expect("retired channel-health adapter path"),
+        "automation must not restore the unused second channel-health reader"
+    );
+
+    let instance_data = fs::read_to_string(root.join("services/automation/src/instance_data.rs"))
+        .expect("instance data adapter");
+    assert!(
+        !instance_data.contains("pub async fn get_instance_points("),
+        "InstanceManager must not restore the duplicate JSON point projection"
+    );
+    let manager = fs::read_to_string(root.join("services/automation/src/instance_manager.rs"))
+        .expect("automation instance manager");
+    assert!(
+        !manager.contains("name_cache")
+            && !manager.contains("get_instance_id(")
+            && !manager.contains("populate_name_cache("),
+        "automation must not rebuild an unused process-local instance-name index"
+    );
+    let single_point_handlers =
+        fs::read_to_string(root.join("services/automation/src/api/single_point_handlers.rs"))
+            .expect("single-point handlers");
+    assert!(
+        !single_point_handlers.contains(".routing_revision()"),
+        "point detail and its ETag revision must come from one SQLite snapshot"
+    );
+    assert!(
+        instance_data.contains("routing_revision: i64")
+            && instance_data.contains("configuration_revisions cr")
+            && instance_data.contains("name: mp.name,")
+            && instance_data.contains("name: ap.name,"),
+        "single-point reads must load route and revision together and consume product points"
+    );
+    assert!(
+        instance_data.contains("routing_snapshot(RoutingScope::Instance(instance_id))")
+            && !instance_data.contains("FROM measurement_routing mr")
+            && !instance_data.contains("FROM action_routing ar")
+            && !instance_data.contains("m_routing_query")
+            && !instance_data.contains("a_routing_query"),
+        "instance points must reuse the one typed routing snapshot instead of duplicating SQL"
+    );
+    let instance_queries =
+        fs::read_to_string(root.join("services/automation/src/api/instance_query_handlers.rs"))
+            .expect("instance query handlers");
+    assert!(
+        !instance_queries.contains("InstancePointsResponse still needs it")
+            && !instance_queries.contains("instance.instance_name().to_string()"),
+        "the points handler must not pre-load the instance before its typed repository query"
+    );
+    assert!(
+        !instance_queries.contains("RawQuery")
+            && !instance_queries.contains("product_cache")
+            && !instance_queries.contains("parse_ids_param")
+            && instance_queries.contains("InstanceSearchResponseDto")
+            && instance_queries.contains("InstanceListResponseDto")
+            && instance_queries.contains("InstancePickerResponseDto")
+            && instance_queries.contains("serde(deny_unknown_fields)")
+            && !instance_queries.contains("instance_manager.pool")
+            && manager.contains("find_instances")
+            && manager.contains("QueryBuilder::<sqlx::Sqlite>"),
+        "instance search must remain typed, bounded, and backed by one batch ID query"
+    );
+    let uplink_mqtt =
+        fs::read_to_string(root.join("services/uplink/src/mqtt.rs")).expect("uplink MQTT adapter");
+    let automation_client =
+        fs::read_to_string(root.join("services/uplink/src/automation_client.rs"))
+            .expect("uplink Automation client");
+    assert!(
+        automation_client.contains("decode_instance_list")
+            && automation_client.contains("MAX_INSTANCE_RESPONSE_BYTES")
+            && automation_client.contains("read_bounded_response")
+            && !uplink_mqtt.contains("reqwest::")
+            && !uplink_mqtt.contains("AutomationInstanceListResponse")
+            && !uplink_mqtt.contains("AutomationActionBody"),
+        "uplink must keep bounded Automation HTTP decoding behind its typed loopback client"
+    );
+    for internal_source in [
+        "services/automation/src/instance_data.rs",
+        "services/automation/src/instance_configuration.rs",
+    ] {
+        let source = fs::read_to_string(root.join(internal_source))
+            .expect("automation internal read-model source");
+        assert!(
+            !source.contains("crate::dto") && !source.contains("api::dto"),
+            "{internal_source} must return internal read models, not HTTP/OpenAPI DTOs"
+        );
+    }
+    let instance_query = fs::read_to_string(root.join("services/automation/src/instance_query.rs"))
+        .expect("automation internal instance read models");
+    for wire_surface in ["serde::", "Serialize", "Deserialize", "ToSchema", "axum::"] {
+        assert!(
+            !instance_query.contains(wire_surface),
+            "internal instance read models must not depend on wire surface {wire_surface}"
+        );
+    }
+    let automation_lib =
+        fs::read_to_string(root.join("services/automation/src/lib.rs")).expect("automation lib");
+    assert!(
+        !automation_lib.contains("\npub mod dto;")
+            && automation_lib.contains("pub mod api")
+            && automation_lib.contains("    pub mod dto;"),
+        "HTTP DTOs must remain namespaced under api instead of being re-exported at crate root"
+    );
+    let application_control =
+        fs::read_to_string(root.join("services/automation/src/infra/application_control.rs"))
+            .expect("automation application control");
+    for transport_surface in [
+        "axum::",
+        "HeaderMap",
+        "command_invocation_from_headers",
+        "completion_audit_response",
+    ] {
+        assert!(
+            !application_control.contains(transport_surface),
+            "application control must not depend on HTTP surface {transport_surface}"
+        );
+    }
+    let http_boundary =
+        fs::read_to_string(root.join("services/automation/src/api/http_boundary.rs"))
+            .expect("automation HTTP boundary");
+    assert!(
+        http_boundary.contains("command_invocation_from_headers")
+            && http_boundary.contains("completion_audit_response"),
+        "HTTP header extraction and response projection must remain in the API adapter"
+    );
+    let automation_error = fs::read_to_string(root.join("services/automation/src/error.rs"))
+        .expect("automation errors");
+    for wire_surface in [
+        "axum::",
+        "common::AppError",
+        "AetherErrorTrait",
+        "http_status(",
+    ] {
+        assert!(
+            !automation_error.contains(wire_surface),
+            "transport-neutral AutomationError must not depend on {wire_surface}"
+        );
+    }
+    assert!(
+        !root
+            .join("services/automation/src/rule_routes.rs")
+            .try_exists()
+            .expect("legacy root rule routes")
+            && root
+                .join("services/automation/src/api/rule_routes.rs")
+                .try_exists()
+                .expect("HTTP rule routes"),
+        "rule HTTP handlers must remain inside the API adapter"
+    );
+    let automation_src = root.join("services/automation/src");
+    for path in rust_files_under(&automation_src) {
+        let relative = path
+            .strip_prefix(&automation_src)
+            .expect("automation source path");
+        if relative.starts_with("api")
+            || relative == Path::new("main.rs")
+            || relative == Path::new("routes.rs")
+        {
+            continue;
+        }
+        let source = fs::read_to_string(&path).expect("automation internal source");
+        for wire_surface in [
+            "api::dto",
+            "axum::",
+            "utoipa",
+            "HeaderMap",
+            "SuccessResponse",
+            "IntoResponse",
+            "common::AppError",
+        ] {
+            assert!(
+                !source.contains(wire_surface),
+                "{} must not depend on HTTP surface {wire_surface}",
+                relative.display()
+            );
+        }
+    }
+    let app_state = fs::read_to_string(root.join("services/automation/src/app_state.rs"))
+        .expect("automation app state");
+    for forwarding_method in [
+        "pub async fn get_instance_id(",
+        "pub async fn populate_name_cache(",
+        "pub fn update_name_cache(",
+    ] {
+        assert!(
+            !app_state.contains(forwarding_method),
+            "AppState must not restore unused forwarding method {forwarding_method}"
+        );
+    }
+
+    let dto = fs::read_to_string(root.join("services/automation/src/api/dto.rs"))
+        .expect("automation DTOs");
+    assert!(
+        dto.contains("pub logical_routing_revision: u64"),
+        "instance points must expose the shared route CAS head"
+    );
+    let rule_routes = fs::read_to_string(root.join("services/automation/src/api/rule_routes.rs"))
+        .expect("automation rule routes");
+    for retired in [
+        "pub struct RoutingRequest",
+        "RoutingUpdate",
+        "RoutingType",
+        "RoutingValidationRequest",
+        "SinglePointRoutingRequest",
+        "ToggleRoutingRequest",
+        "RoutingMutationConfirmation",
+        "InstanceResult",
+        "pub struct InstanceDetail {",
+        "RuleVariableSchema",
+        "PeriodDeltaNodeSchema",
+        "VueFlowPeriodDeltaNode",
+        "PeriodDeltaConfigSchema",
+    ] {
+        assert!(
+            !dto.contains(retired) && !rule_routes.contains(retired),
+            "automation restored unused DTO {retired}"
+        );
+    }
+
+    let routes = fs::read_to_string(root.join("services/automation/src/routes.rs"))
+        .expect("automation routes");
+    for retired_route in [
+        ".route(\"/api/instances/reload\"",
+        ".route(\"/api/instances/{id}/routing/validate\"",
+        ".post(create_instance_routing)",
+        ".put(update_instance_routing)",
+        ".delete(delete_instance_routing)",
+        ".route(\"/api/routing/instances/",
+        ".route(\"/api/routing/channels/",
+    ] {
+        assert!(
+            !routes.contains(retired_route),
+            "automation restored ambiguous or ungoverned mutation route {retired_route}"
+        );
+    }
+    assert!(
+        !root
+            .join("services/automation/src/reload.rs")
+            .try_exists()
+            .expect("retired automation reload adapter path"),
+        "automation must not restore the unused generic reload adapter"
+    );
+    assert!(
+        !root
+            .join("services/automation/src/api/routing_management_handlers.rs")
+            .try_exists()
+            .expect("retired routing validation handler path"),
+        "automation must not restore the inaccurate duplicate routing validator"
+    );
+    let common_service_config = fs::read_to_string(root.join("libs/common/src/service_config.rs"))
+        .expect("common service configuration");
+    assert!(
+        !common_service_config.contains("trait ReloadableService")
+            && !common_service_config.contains("struct ReloadResult"),
+        "common must not restore service-specific reload ownership"
+    );
+
+    let routing_cli =
+        fs::read_to_string(root.join("tools/aether/src/routing.rs")).expect("routing CLI");
+    for retired_command in [
+        "RoutingCommands::Create",
+        "RoutingCommands::Batch",
+        "RoutingCommands::DeleteInstance",
+        "RoutingCommands::DeleteChannel",
+    ] {
+        assert!(
+            !routing_cli.contains(retired_command),
+            "CLI restored broken routing compatibility command {retired_command}"
+        );
+    }
+    assert!(
+        routing_cli.contains("\"expected_revision\": expected_revision"),
+        "CLI routing mutations must keep the shared CAS revision in their wire bodies"
+    );
+
+    for handler in [
+        "services/automation/src/api/global_routing_handlers.rs",
+        "services/automation/src/api/routing_query_handlers.rs",
+        "services/automation/src/api/single_point_handlers.rs",
+    ] {
+        let source = fs::read_to_string(root.join(handler)).expect("routing HTTP adapter");
+        assert!(
+            !source.contains("sqlx::"),
+            "{handler} must use the single typed routing query boundary"
+        );
+    }
+    let routing_loader = fs::read_to_string(root.join("services/automation/src/routing_loader.rs"))
+        .expect("routing snapshot loader");
+    assert!(
+        routing_loader.contains("pub(crate) struct RoutingSnapshot")
+            && routing_loader.contains("UNION ALL")
+            && routing_loader.contains("transaction.commit().await?"),
+        "routing queries must retain one revision-consistent SQLite snapshot loader"
+    );
+    let instance_routing =
+        fs::read_to_string(root.join("services/automation/src/instance_routing.rs"))
+            .expect("instance routing boundary");
+    for retired_query in ["get_measurement_routing", "get_action_routing"] {
+        assert!(
+            !instance_routing.contains(retired_query),
+            "automation restored split routing query {retired_query}"
+        );
+    }
+
+    let product_loader = fs::read_to_string(root.join("services/automation/src/product_loader.rs"))
+        .expect("automation product loader");
+    for retired in [
+        "pub fn get_all_products(",
+        "pub fn get_product_hierarchy(",
+        "pub fn product_exists(",
+    ] {
+        assert!(
+            !product_loader.contains(retired),
+            "ProductLoader must not restore test-only cloning surface {retired}"
+        );
+    }
+    assert!(
+        product_loader.contains(
+            "pub(crate) fn get_definition(&self, product_name: &str) -> Result<&ProductDefinition>",
+        ) && product_loader.contains("property_id: i32::try_from(point.id)"),
+        "internal product validation must borrow Pack authority and narrow property IDs strictly"
+    );
+    for validator in [
+        "services/automation/src/instance_manager.rs",
+        "services/automation/src/instance_configuration.rs",
+        "services/automation/src/infra/measurement_routing.rs",
+        "services/automation/src/infra/action_routing.rs",
+    ] {
+        let source = fs::read_to_string(root.join(validator)).expect("product validator source");
+        assert!(
+            !source.contains(".get_product(") && source.contains(".get_definition("),
+            "{validator} must not deep-convert an entire Product DTO for validation"
+        );
+    }
+}
+
+#[test]
+fn automation_storage_and_rule_http_keep_explicit_ownership() {
+    let root = workspace_metadata().workspace_root;
+    let manager = fs::read_to_string(root.join("services/automation/src/instance_manager.rs"))
+        .expect("automation instance manager");
+    assert!(
+        !manager.contains("pub fn pool("),
+        "InstanceManager must not expose SQLite as a service locator"
+    );
+
+    let main =
+        fs::read_to_string(root.join("services/automation/src/main.rs")).expect("automation main");
+    assert!(
+        !main.contains("instance_manager.pool()"),
+        "the composition root must receive SQLite explicitly instead of borrowing it from InstanceManager"
+    );
+    assert!(
+        !main.contains("instance_manager.runtime_topology()"),
+        "the composition root must receive runtime topology explicitly instead of locating it through InstanceManager"
+    );
+
+    for adapter in [
+        "services/automation/src/instance_configuration.rs",
+        "services/automation/src/infra/action_routing.rs",
+        "services/automation/src/infra/measurement_routing.rs",
+    ] {
+        let source = fs::read_to_string(root.join(adapter)).expect("automation SQLite adapter");
+        assert!(
+            !source.contains("manager.pool()"),
+            "{adapter} must own its SQLite handle explicitly"
+        );
+    }
+
+    let rule_routes = fs::read_to_string(root.join("services/automation/src/api/rule_routes.rs"))
+        .expect("automation rule HTTP adapter");
+    for forbidden in ["sqlx::", "SqlitePool", "RuleScheduler", "StateStore"] {
+        assert!(
+            !rule_routes.contains(forbidden),
+            "rule HTTP adapter must use internal rule queries instead of owning {forbidden}"
+        );
+    }
+    assert!(
+        !rule_routes.contains("application: Option<"),
+        "mounted rule routes must require complete application composition"
+    );
+
+    let lib = fs::read_to_string(root.join("services/automation/src/lib.rs"))
+        .expect("read automation lib");
+    assert!(
+        !lib.contains("pub use aether_rules"),
+        "the Automation service crate must not republish the rule library surface"
+    );
+    assert!(
+        !lib.contains("pub mod runtime {"),
+        "empty compatibility modules must not return to Automation"
+    );
+}
+
+#[test]
+fn service_internal_models_do_not_depend_on_http_dtos() {
+    let root = workspace_metadata().workspace_root;
+
+    for relative in [
+        "services/history/src/models.rs",
+        "services/history/src/storage.rs",
+        "services/history/src/collector.rs",
+        "services/alarm/src/models.rs",
+        "services/alarm/src/db.rs",
+        "services/alarm/src/monitor.rs",
+        "services/alarm/src/notification.rs",
+        "services/uplink/src/config_model.rs",
+        "services/uplink/src/db_config.rs",
+        "services/uplink/src/state.rs",
+        "services/uplink/src/system_monitor.rs",
+        "services/uplink/src/models.rs",
+        "services/uplink/src/mqtt.rs",
+        "services/api/src/read_models.rs",
+        "services/api/src/db.rs",
+        "services/api/src/auth.rs",
+    ] {
+        let source = fs::read_to_string(root.join(relative)).expect("service internal source");
+        for forbidden in ["utoipa", "ToSchema", "IntoParams", "api::dto"] {
+            assert!(
+                !source.contains(forbidden),
+                "{relative} must not depend on HTTP/OpenAPI surface {forbidden}"
+            );
+        }
+    }
+
+    for relative in [
+        "services/api/src/read_models.rs",
+        "services/api/src/db.rs",
+        "services/api/src/auth.rs",
+    ] {
+        let source = fs::read_to_string(root.join(relative)).expect("API internal source");
+        for forbidden in ["axum::", "crate::models"] {
+            assert!(
+                !source.contains(forbidden),
+                "{relative} must not depend on HTTP DTO surface {forbidden}"
+            );
+        }
+    }
+
+    let uplink_mqtt =
+        fs::read_to_string(root.join("services/uplink/src/mqtt.rs")).expect("uplink MQTT source");
+    for forbidden in [
+        "reqwest::",
+        ".http_client",
+        "AutomationInstanceListResponse",
+        "AutomationActionBody",
+        "AlarmReplayRequest",
+    ] {
+        assert!(
+            !uplink_mqtt.contains(forbidden),
+            "MQTT session ownership must not include loopback HTTP surface {forbidden}"
+        );
+    }
+
+    let io_error =
+        fs::read_to_string(root.join("services/io/src/error.rs")).expect("IO internal errors");
+    let io_error = io_error
+        .split("#[cfg(test)]")
+        .next()
+        .expect("IO production error source");
+    for forbidden in [
+        "AetherErrorTrait",
+        "common::AppError",
+        "status_for_error_category",
+    ] {
+        assert!(
+            !io_error.contains(forbidden),
+            "IO internal errors must not depend on HTTP projection {forbidden}"
+        );
+    }
+    let io_lib = fs::read_to_string(root.join("services/io/src/lib.rs")).expect("IO library root");
+    assert!(
+        !io_lib.contains("pub use crate::api::dto") && !io_lib.contains("pub use api::dto"),
+        "IO HTTP DTOs must not be publicly re-exported from the crate root"
+    );
+
+    let errors_manifest =
+        fs::read_to_string(root.join("libs/errors/Cargo.toml")).expect("errors manifest");
+    let errors_source = fs::read_to_string(root.join("libs/errors/src/lib.rs"))
+        .expect("transport-neutral errors source");
+    for forbidden in ["axum", "http_status", "into_http_response"] {
+        assert!(
+            !errors_manifest.contains(forbidden) && !errors_source.contains(forbidden),
+            "shared errors must remain transport-neutral and not restore {forbidden}"
+        );
+    }
+}
+
+#[test]
 fn cfg_test_detection_is_structural() {
     let item: Item = syn::parse_quote! {
         #[cfg(any(test, feature = "fixture"))]
@@ -1260,6 +1836,22 @@ fn inspect_snippet(package_name: &str, modules: &[&str], source: &str) -> BTreeS
         visitor.visit_item(item);
     }
     violations
+}
+
+fn rust_files_under(directory: &Path) -> Vec<PathBuf> {
+    let mut files = Vec::new();
+    let mut pending = vec![directory.to_path_buf()];
+    while let Some(current) = pending.pop() {
+        for entry in fs::read_dir(current).expect("source directory") {
+            let path = entry.expect("source entry").path();
+            if path.is_dir() {
+                pending.push(path);
+            } else if path.extension().is_some_and(|extension| extension == "rs") {
+                files.push(path);
+            }
+        }
+    }
+    files
 }
 
 fn workspace_metadata() -> MetadataDocument {

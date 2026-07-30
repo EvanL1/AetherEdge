@@ -4,7 +4,7 @@ use jsonwebtoken::{Algorithm, DecodingKey, EncodingKey, Header, Validation, deco
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::models::{RefreshTokenInfo, TokenResponse, UserWithRole};
+use crate::read_models::{IssuedTokenPair, RefreshTokenInfo, UserProfile};
 
 // ── JWT Claims ────────────────────────────────────────────────────────────────
 
@@ -38,7 +38,7 @@ pub fn verify_password(md5_password: &str, hash: &str) -> bool {
 // ── Token Creation ────────────────────────────────────────────────────────────
 
 pub fn create_access_token(
-    user: &UserWithRole,
+    user: &UserProfile,
     secret: &str,
     expire_minutes: i64,
 ) -> Result<String> {
@@ -65,7 +65,7 @@ pub fn create_access_token(
 
 /// Creates a refresh token and returns (token_string, token_id, token_info).
 pub fn create_refresh_token(
-    user: &UserWithRole,
+    user: &UserProfile,
     secret: &str,
     expire_days: i64,
 ) -> Result<(String, String, RefreshTokenInfo)> {
@@ -92,7 +92,6 @@ pub fn create_refresh_token(
 
     let info = RefreshTokenInfo {
         user_id: user.id,
-        username: user.username.clone(),
         expires_at: now + expire_days * 86400,
     };
 
@@ -100,16 +99,16 @@ pub fn create_refresh_token(
 }
 
 pub fn create_token_pair(
-    user: &UserWithRole,
+    user: &UserProfile,
     secret: &str,
     access_expire_minutes: i64,
     refresh_expire_days: i64,
-) -> Result<(TokenResponse, String, RefreshTokenInfo)> {
+) -> Result<(IssuedTokenPair, String, RefreshTokenInfo)> {
     let access_token = create_access_token(user, secret, access_expire_minutes)?;
     let (refresh_token, token_id, token_info) =
         create_refresh_token(user, secret, refresh_expire_days)?;
 
-    let response = TokenResponse {
+    let response = IssuedTokenPair {
         access_token,
         refresh_token,
         token_type: "bearer".to_string(),

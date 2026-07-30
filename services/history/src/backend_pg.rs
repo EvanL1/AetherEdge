@@ -9,8 +9,8 @@ use sqlx::PgPool;
 use tracing::{error, info};
 
 use crate::models::{
-    DataPoint, DataStats, HistoryRecord, QueryRangeParams, SeriesPoint, SeriesResult, fmt_ts,
-    parse_time, source_from_key,
+    DataPoint, DataStats, HistoryRangeQuery, HistoryRecord, SeriesPoint, SeriesResult, fmt_ts,
+    source_from_key,
 };
 use crate::storage::StorageBackend;
 
@@ -96,39 +96,9 @@ impl StorageBackend for PostgresBackend {
 
     async fn query_range(
         &self,
-        params: &QueryRangeParams,
-        default_page_size: i64,
-        max_page_size: i64,
-        max_time_range_days: i64,
+        query: &HistoryRangeQuery,
     ) -> anyhow::Result<(Vec<HistoryRecord>, i64)> {
-        let page = params.page.unwrap_or(1).max(1);
-        let page_size = params
-            .page_size
-            .unwrap_or(default_page_size)
-            .min(max_page_size)
-            .max(1);
-        let offset = (page - 1) * page_size;
-
-        let end = params
-            .end_time
-            .as_deref()
-            .map(parse_time)
-            .transpose()?
-            .unwrap_or_else(Utc::now);
-
-        let start = params
-            .start_time
-            .as_deref()
-            .map(parse_time)
-            .transpose()?
-            .unwrap_or_else(|| end - Duration::hours(24));
-
-        let min_allowed = end - Duration::days(max_time_range_days);
-        let start = if start < min_allowed {
-            min_allowed
-        } else {
-            start
-        };
+        let offset = (query.page - 1) * query.page_size;
 
         struct Row {
             time: DateTime<Utc>,
@@ -145,11 +115,11 @@ impl StorageBackend for PostgresBackend {
              ORDER BY time DESC
              LIMIT $5 OFFSET $6",
         )
-        .bind(&params.series_key)
-        .bind(&params.point_id)
-        .bind(start)
-        .bind(end)
-        .bind(page_size)
+        .bind(&query.series_key)
+        .bind(&query.point_id)
+        .bind(query.start_time)
+        .bind(query.end_time)
+        .bind(query.page_size)
         .bind(offset)
         .fetch_all(&self.pool)
         .await?
@@ -168,10 +138,10 @@ impl StorageBackend for PostgresBackend {
              WHERE series_key = $1 AND point_id = $2
                AND time >= $3 AND time <= $4",
         )
-        .bind(&params.series_key)
-        .bind(&params.point_id)
-        .bind(start)
-        .bind(end)
+        .bind(&query.series_key)
+        .bind(&query.point_id)
+        .bind(query.start_time)
+        .bind(query.end_time)
         .fetch_one(&self.pool)
         .await
         .map(|(n,)| n)

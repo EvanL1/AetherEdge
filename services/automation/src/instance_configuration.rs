@@ -13,11 +13,11 @@ use std::sync::Arc;
 use aether_application::{MANAGE_INSTANCE_CAPABILITY, RequestContext, SafetyPolicy};
 use aether_domain::InstanceName;
 use aether_ports::{AuditOutcome, AuditRecord, AuditSink, PortError};
-use sqlx::Sqlite;
+use sqlx::{Sqlite, SqlitePool};
 
-use crate::dto::InstancePropertyPoint;
 use crate::error::AutomationError;
 use crate::instance_manager::InstanceManager;
+use crate::instance_query::InstancePropertyView;
 use crate::product_loader::{CreateInstanceRequest, Instance};
 
 const INSTANCES_REVISION_SCOPE: &str = "instances";
@@ -174,14 +174,14 @@ impl InstanceConfigurationMutationKind {
 }
 
 /// Operation-specific committed data.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum InstanceConfigurationPayload {
     Created(Instance),
     Updated {
         instance_id: u32,
         instance_name: String,
     },
-    Property(InstancePropertyPoint),
+    Property(InstancePropertyView),
     Deleted {
         root_instance_id: u32,
         deleted_instance_ids: Vec<u32>,
@@ -245,7 +245,7 @@ impl InstanceConfigurationAuditStatus {
 
 /// Accepted non-idempotent instance command. A degraded cache publication or
 /// terminal audit never makes the already committed command safe to retry.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct InstanceConfigurationAcceptance {
     request_id: String,
     kind: InstanceConfigurationMutationKind,
@@ -269,6 +269,11 @@ impl InstanceConfigurationAcceptance {
     #[must_use]
     pub const fn payload(&self) -> &InstanceConfigurationPayload {
         &self.payload
+    }
+
+    #[must_use]
+    pub fn into_payload(self) -> InstanceConfigurationPayload {
+        self.payload
     }
 
     #[must_use]
@@ -302,6 +307,7 @@ struct CommittedMutation {
 /// configuration. HTTP is only an adapter; tests and future CLI/MCP transports
 /// invoke the same typed command.
 pub struct InstanceConfigurationApplication {
+    pool: SqlitePool,
     manager: Arc<InstanceManager>,
     audit: Arc<dyn AuditSink>,
     policy: SafetyPolicy,
@@ -309,8 +315,9 @@ pub struct InstanceConfigurationApplication {
 
 impl InstanceConfigurationApplication {
     #[must_use]
-    pub fn new(manager: Arc<InstanceManager>, audit: Arc<dyn AuditSink>) -> Self {
+    pub fn new(pool: SqlitePool, manager: Arc<InstanceManager>, audit: Arc<dyn AuditSink>) -> Self {
         Self {
+            pool,
             manager,
             audit,
             policy: SafetyPolicy,
@@ -322,7 +329,7 @@ impl InstanceConfigurationApplication {
         let revision = sqlx::query_scalar::<_, i64>(
             "SELECT revision FROM configuration_revisions WHERE scope = 'instances'",
         )
-        .fetch_optional(self.manager.pool())
+        .fetch_optional(&self.pool)
         .await
         .map_err(database_error)?
         .ok_or_else(|| {
@@ -451,10 +458,10 @@ impl InstanceConfigurationApplication {
         validate_name(&request.instance_name)?;
         self.manager
             .product_loader()
-            .get_product(&request.product_name)
+            .get_definition(&request.product_name)
             .map_err(|error| AutomationError::InvalidData(format!("unknown product: {error}")))?;
 
-        let mut transaction = self.manager.pool().begin().await.map_err(database_error)?;
+        let mut transaction = self.pool.begin().await.map_err(database_error)?;
         if let Some(parent_id) = request.parent_id {
             let parent_exists =
                 sqlx::query_scalar::<_, i64>("SELECT 1 FROM instances WHERE instance_id = ?")
@@ -530,7 +537,7 @@ impl InstanceConfigurationApplication {
             validate_name(name)?;
         }
 
-        let mut transaction = self.manager.pool().begin().await.map_err(database_error)?;
+        let mut transaction = self.pool.begin().await.map_err(database_error)?;
         let (current_name, product_name) = sqlx::query_as::<_, (String, String)>(
             "SELECT instance_name, product_name FROM instances WHERE instance_id = ?",
         )
@@ -608,7 +615,7 @@ impl InstanceConfigurationApplication {
         value: serde_json::Value,
         expected_revision: InstanceConfigurationRevision,
     ) -> Result<CommittedMutation, AutomationError> {
-        let mut transaction = self.manager.pool().begin().await.map_err(database_error)?;
+        let mut transaction = self.pool.begin().await.map_err(database_error)?;
         let (product_name, property) = self
             .validate_property(&mut transaction, instance_id, property_id)
             .await?;
@@ -636,7 +643,7 @@ impl InstanceConfigurationApplication {
 
         Ok(CommittedMutation {
             kind: InstanceConfigurationMutationKind::UpsertProperty,
-            payload: InstanceConfigurationPayload::Property(InstancePropertyPoint {
+            payload: InstanceConfigurationPayload::Property(InstancePropertyView {
                 property_id: property.property_id,
                 name: property.name,
                 unit: property.unit,
@@ -653,7 +660,7 @@ impl InstanceConfigurationApplication {
         property_id: i32,
         expected_revision: InstanceConfigurationRevision,
     ) -> Result<CommittedMutation, AutomationError> {
-        let mut transaction = self.manager.pool().begin().await.map_err(database_error)?;
+        let mut transaction = self.pool.begin().await.map_err(database_error)?;
         let (_, property) = self
             .validate_property(&mut transaction, instance_id, property_id)
             .await?;
@@ -674,7 +681,7 @@ impl InstanceConfigurationApplication {
 
         Ok(CommittedMutation {
             kind: InstanceConfigurationMutationKind::DeleteProperty,
-            payload: InstanceConfigurationPayload::Property(InstancePropertyPoint {
+            payload: InstanceConfigurationPayload::Property(InstancePropertyView {
                 property_id: property.property_id,
                 name: property.name,
                 unit: property.unit,
@@ -702,17 +709,19 @@ impl InstanceConfigurationApplication {
         let product = self
             .manager
             .product_loader()
-            .get_product(&product_name)
+            .get_definition(&product_name)
             .map_err(|error| AutomationError::InvalidData(error.to_string()))?;
         let property = product
             .properties
-            .into_iter()
-            .find(|property| property.property_id == property_id)
+            .iter()
+            .find(|property| i32::try_from(property.id).ok() == Some(property_id))
             .ok_or_else(|| {
                 AutomationError::InvalidData(format!(
                     "property_id {property_id} is not declared by product {product_name}"
                 ))
             })?;
+        let property = crate::product_loader::convert_point_to_property(property)
+            .map_err(|error| AutomationError::InvalidData(error.to_string()))?;
         Ok((product_name, property))
     }
 
@@ -721,7 +730,7 @@ impl InstanceConfigurationApplication {
         instance_id: u32,
         expected_revision: InstanceConfigurationRevision,
     ) -> Result<CommittedMutation, AutomationError> {
-        let mut transaction = self.manager.pool().begin().await.map_err(database_error)?;
+        let mut transaction = self.pool.begin().await.map_err(database_error)?;
         let rows = sqlx::query_as::<_, (i64, String)>(
             "WITH RECURSIVE subtree(instance_id) AS (\
                SELECT instance_id FROM instances WHERE instance_id = ? \
@@ -801,23 +810,15 @@ impl InstanceConfigurationApplication {
     }
 
     async fn publish_committed_configuration(&self) -> InstanceConfigurationRuntimeStatus {
-        let mut failures = Vec::new();
-        if let Err(error) = self.manager.populate_name_cache().await {
-            failures.push(format!("instance name index refresh failed: {error}"));
-        }
         if let Err(error) = self.manager.refresh_routing().await {
             // Production runtime topology revokes command routing on failed
             // refresh and reconciliation retries from SQLite. This boundary
             // never writes the retired compatibility routing cache.
-            failures.push(format!("logical routing refresh failed: {error}"));
-        }
-        if failures.is_empty() {
-            InstanceConfigurationRuntimeStatus::Refreshed
-        } else {
-            let failure = failures.join("; ");
+            let failure = format!("logical routing refresh failed: {error}");
             tracing::error!(%failure, "committed instance configuration requires reconciliation");
-            InstanceConfigurationRuntimeStatus::Degraded { failure }
+            return InstanceConfigurationRuntimeStatus::Degraded { failure };
         }
+        InstanceConfigurationRuntimeStatus::Refreshed
     }
 
     async fn record_audit(

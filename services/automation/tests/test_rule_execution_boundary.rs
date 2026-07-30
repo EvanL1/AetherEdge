@@ -4,13 +4,16 @@
 
 use std::sync::{Arc, Mutex};
 
-use aether_application::{RuleExecutionApplication, SafetyPolicy};
-use aether_automation::infra::application_control::ControlAuthenticator;
-use aether_automation::rule_routes::{RuleEngineState, create_rule_routes};
+use aether_application::{RuleExecutionApplication, RuleMutationApplication, SafetyPolicy};
+use aether_automation::api::rule_routes::{RuleEngineState, create_rule_routes};
+use aether_automation::infra::{
+    application_control::ControlAuthenticator, rule_mutation::SqliteRuleMutator,
+    rule_queries::RuleQueries, rule_runtime::RuleRuntimeCoordinator,
+};
 use aether_domain::{RuleId, TimestampMs};
 use aether_ports::{
-    AuditRecord, AuditSink, AutomationRuleExecutor, PortError, PortErrorKind, PortResult,
-    RuleExecutionReceipt,
+    AuditRecord, AuditSink, AutomationRuleExecutor, AutomationRuleMutator, PortError,
+    PortErrorKind, PortResult, RuleExecutionReceipt,
 };
 use aether_rules::{MemoryRuleLiveState, RuleScheduler};
 use aether_store_local::MemoryAuditSink;
@@ -115,14 +118,21 @@ async fn application_router_with_audit(
     let executor = Arc::new(RecordingRuleExecutor::default());
     let application = Arc::new(RuleExecutionApplication::new(
         executor.clone(),
-        audit,
+        Arc::clone(&audit),
         SafetyPolicy,
     ));
+    let runtime = Arc::new(RuleRuntimeCoordinator::new(Arc::clone(&scheduler)));
+    let mutator: Arc<dyn AutomationRuleMutator> =
+        Arc::new(SqliteRuleMutator::new(pool.clone(), runtime));
+    let mutation_application = Arc::new(RuleMutationApplication::new(mutator, audit, SafetyPolicy));
     let authenticator =
         Arc::new(ControlAuthenticator::new(JWT_SECRET, None).expect("valid test JWT secret"));
-    let state = Arc::new(
-        RuleEngineState::new(pool, scheduler).with_execution_boundary(application, authenticator),
-    );
+    let state = Arc::new(RuleEngineState::new(
+        Arc::new(RuleQueries::new(pool, scheduler)),
+        application,
+        mutation_application,
+        authenticator,
+    ));
     (create_rule_routes(state), executor)
 }
 

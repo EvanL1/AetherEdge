@@ -17,11 +17,12 @@
 
 #![allow(clippy::disallowed_methods)] // Integration test - unwrap is acceptable
 
-use aether_application::{RuleMutationApplication, SafetyPolicy};
+use aether_application::{RuleExecutionApplication, RuleMutationApplication, SafetyPolicy};
+use aether_automation::api::rule_routes::{RuleEngineState, create_rule_routes};
 use aether_automation::infra::{
     application_control::ControlAuthenticator, rule_mutation::SqliteRuleMutator,
+    rule_queries::RuleQueries, rule_runtime::RuleRuntimeCoordinator,
 };
-use aether_automation::rule_routes::{RuleEngineState, create_rule_routes};
 use aether_ports::{
     AuditRecord, AuditSink, AutomationRuleMutator, PortError, PortErrorKind, PortResult,
 };
@@ -121,15 +122,27 @@ async fn create_test_app_with_audit(
     ));
 
     // Create rule engine state
+    let runtime = Arc::new(RuleRuntimeCoordinator::new(Arc::clone(&scheduler)));
     let mutator: Arc<dyn AutomationRuleMutator> =
-        Arc::new(SqliteRuleMutator::new(pool.clone(), Arc::clone(&scheduler)));
-    let application = Arc::new(RuleMutationApplication::new(mutator, audit, SafetyPolicy));
+        Arc::new(SqliteRuleMutator::new(pool.clone(), runtime));
+    let application = Arc::new(RuleMutationApplication::new(
+        mutator,
+        Arc::clone(&audit),
+        SafetyPolicy,
+    ));
+    let execution_application = Arc::new(RuleExecutionApplication::new(
+        Arc::clone(&scheduler) as Arc<dyn aether_ports::AutomationRuleExecutor>,
+        audit,
+        SafetyPolicy,
+    ));
     let authenticator =
         Arc::new(ControlAuthenticator::new(JWT_SECRET, None).expect("valid JWT secret"));
-    let state = Arc::new(
-        RuleEngineState::new(pool.clone(), scheduler)
-            .with_mutation_boundary(application, authenticator),
-    );
+    let state = Arc::new(RuleEngineState::new(
+        Arc::new(RuleQueries::new(pool.clone(), scheduler)),
+        execution_application,
+        application,
+        authenticator,
+    ));
 
     // Create router
     let router = create_rule_routes(state);

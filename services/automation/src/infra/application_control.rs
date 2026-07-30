@@ -2,30 +2,22 @@
 
 use std::sync::Arc;
 
-use aether_application::{
-    Actor, ApplicationError, CompletionAuditStatus, ControlApplication, RequestContext,
-};
+use aether_application::{Actor, ApplicationError, ControlApplication, RequestContext};
 use aether_auth_jwt::{
     AccessTokenAuthenticator, AuthenticationError as AccessTokenAuthenticationError,
 };
-use aether_domain::{
-    ChannelCommandAddress, ChannelId, CommandConstraints, CommandId, ControlCommand,
-    PhysicalDeviceCommand, PointId, PointKind, TimestampMs,
-};
+use aether_domain::{CommandId, ControlCommand, PhysicalDeviceCommand, PointKind, TimestampMs};
 use aether_ports::{
     CommandDispatcher, CommandReceipt, CommandTopologyFence, DeviceCommandSink, PortError,
     PortErrorKind, PortResult,
 };
 use aether_rules::{RuleActionCommand, RuleActionCommandFacade};
 use async_trait::async_trait;
-use axum::http::HeaderMap;
 use subtle::ConstantTimeEq;
 use thiserror::Error;
 
 use crate::instance_manager::InstanceManager;
 
-const AUTHORIZATION_HEADER: &str = "authorization";
-const REQUEST_ID_HEADER: &str = "x-request-id";
 const MIN_SERVICE_TOKEN_BYTES: usize = 32;
 
 /// Fixed identity commissioned for deterministic rule-engine device actions.
@@ -66,9 +58,7 @@ impl ControlAuthenticator {
         Self::new(&jwt_secret, uplink_token.as_deref())
     }
 
-    fn authenticate(&self, headers: &HeaderMap) -> Result<Actor, AuthenticationError> {
-        let authorization = header_text(headers, AUTHORIZATION_HEADER)
-            .ok_or(AuthenticationError::MissingCredentials)?;
+    pub(crate) fn authenticate(&self, authorization: &str) -> Result<Actor, AuthenticationError> {
         let (scheme, credential) = authorization
             .split_once(' ')
             .ok_or(AuthenticationError::InvalidCredentials)?;
@@ -104,8 +94,6 @@ impl ControlAuthenticator {
 /// failed.
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum AuthenticationError {
-    #[error("control authentication credentials are required")]
-    MissingCredentials,
     #[error("invalid control authentication credentials")]
     InvalidCredentials,
     #[error("invalid control authentication configuration: {0}")]
@@ -130,55 +118,6 @@ fn map_access_token_error(error: AccessTokenAuthenticationError) -> Authenticati
             AuthenticationError::Configuration(message)
         },
     }
-}
-
-/// Authenticated application invocation plus its binary command identifier.
-pub struct CommandInvocation {
-    context: RequestContext,
-    command_id: CommandId,
-}
-
-impl CommandInvocation {
-    /// Returns the transport-neutral application request context.
-    #[must_use]
-    pub const fn context(&self) -> &RequestContext {
-        &self.context
-    }
-
-    /// Returns the command identifier derived from the request UUID.
-    #[must_use]
-    pub const fn command_id(&self) -> CommandId {
-        self.command_id
-    }
-}
-
-/// Converts authenticated transport credentials into an application context.
-///
-/// Identity and permissions are derived exclusively from a verified JWT or
-/// configured service credential. `x-aether-actor-*` headers are ignored.
-pub fn command_invocation_from_headers(
-    authenticator: &ControlAuthenticator,
-    headers: &HeaderMap,
-    confirmed: bool,
-    timestamp: TimestampMs,
-) -> CommandInvocation {
-    let request_uuid = header_text(headers, REQUEST_ID_HEADER)
-        .and_then(|value| uuid::Uuid::parse_str(value).ok())
-        .unwrap_or_else(uuid::Uuid::new_v4);
-    // Authentication failures still enter ControlApplication as a denied
-    // actor so the mandatory audit sink records the rejected command attempt.
-    let actor = authenticator
-        .authenticate(headers)
-        .unwrap_or_else(|_| Actor::new("unauthenticated"));
-
-    CommandInvocation {
-        context: RequestContext::new(request_uuid.to_string(), actor, confirmed, timestamp),
-        command_id: CommandId::new(request_uuid.as_u128()),
-    }
-}
-
-fn header_text<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
-    headers.get(name)?.to_str().ok().map(str::trim)
 }
 
 /// Routes deterministic rule actions through the same governed application
@@ -235,25 +174,6 @@ impl RuleActionCommandFacade for RuleActionApplication {
     }
 }
 
-/// Public HTTP representation of an accepted operation's terminal audit state.
-///
-/// The persistence error itself remains in server logs. Clients receive only a
-/// stable non-retryable status so they cannot mistake an accepted command for a
-/// safe retry opportunity.
-pub(crate) fn completion_audit_response(status: &CompletionAuditStatus) -> serde_json::Value {
-    match status {
-        CompletionAuditStatus::Recorded => serde_json::json!({
-            "status": "recorded",
-            "retryable": false
-        }),
-        CompletionAuditStatus::Incomplete { .. } => serde_json::json!({
-            "status": "incomplete",
-            "retryable": false,
-            "message": "operation was accepted but its terminal audit is incomplete; do not retry"
-        }),
-    }
-}
-
 fn rule_action_port_error(error: ApplicationError) -> PortError {
     match error {
         ApplicationError::AuditUnavailable(error) | ApplicationError::Port(error) => error,
@@ -298,99 +218,27 @@ impl AutomationCommandDispatcher {
                 ));
             },
         };
-        // Pin routing and health from one service generation across the whole
-        // command decision. The SQLite constraint read may await, but a later
-        // topology publication cannot alter this retained immutable view.
-        let topology = self.manager.runtime_topology.get().ok_or_else(|| {
-            PortError::new(
-                PortErrorKind::Unavailable,
-                "coherent command topology is not configured",
-            )
-        })?;
-        let runtime = Arc::clone(topology).pin_command().await;
+        // Pin routing, limits, health, and the command writer across the whole
+        // command decision so no field can cross topology generations.
+        let runtime = Arc::clone(self.manager.runtime_topology())
+            .pin_command()
+            .await;
         validate_command_topology_fence(fence, Some(runtime.generation().sequence()))?;
         let routed = runtime
             .generation()
-            .action_route(logical.instance_id().get(), logical.point_id().get())
+            .command_route(logical.instance_id().get(), logical.point_id().get())
             .ok_or_else(|| {
                 PortError::new(
                     PortErrorKind::Rejected,
                     format!("no enabled physical route for logical target {logical:?}"),
                 )
             })?;
-        if !routed.kind().is_writable() {
-            return Err(PortError::new(
-                PortErrorKind::Rejected,
-                "logical command route resolved to a read-only physical point",
-            ));
-        }
-        let (channel_id, physical_kind, physical_point_id) = (
-            routed.channel_id().get(),
-            routed.kind(),
-            routed.point_id().get(),
-        );
-
-        let constraints = match physical_kind {
-            PointKind::Command => {
-                let exists = sqlx::query_scalar::<_, i64>(
-                    "SELECT 1 FROM control_points WHERE channel_id = ? AND point_id = ?",
-                )
-                .bind(i64::from(channel_id))
-                .bind(i64::from(physical_point_id))
-                .fetch_optional(&self.manager.pool)
-                .await
-                .map_err(database_port_error)?;
-                if exists.is_none() {
-                    return Err(PortError::new(
-                        PortErrorKind::Rejected,
-                        format!(
-                            "route target C:{}:{} has no configured command point",
-                            channel_id, physical_point_id
-                        ),
-                    ));
-                }
-                CommandConstraints::unbounded()
-            },
-            PointKind::Action => {
-                let limits = sqlx::query_as::<_, (Option<f64>, Option<f64>, f64)>(
-                    "SELECT min_value, max_value, step FROM adjustment_points
-                     WHERE channel_id = ? AND point_id = ?",
-                )
-                .bind(i64::from(channel_id))
-                .bind(i64::from(physical_point_id))
-                .fetch_optional(&self.manager.pool)
-                .await
-                .map_err(database_port_error)?
-                .ok_or_else(|| {
-                    PortError::new(
-                        PortErrorKind::Rejected,
-                        format!(
-                            "route target A:{}:{} has no configured action point",
-                            channel_id, physical_point_id
-                        ),
-                    )
-                })?;
-                CommandConstraints::new(limits.0, limits.1, Some(limits.2)).map_err(|error| {
-                    PortError::new(
-                        PortErrorKind::Rejected,
-                        format!(
-                            "invalid limits for A:{}:{}: {error}",
-                            channel_id, physical_point_id
-                        ),
-                    )
-                })?
-            },
-            PointKind::Telemetry | PointKind::Status => {
-                return Err(PortError::new(
-                    PortErrorKind::Rejected,
-                    "logical command route resolved to a read-only physical point",
-                ));
-            },
-        };
+        let physical_target = routed.target();
+        let channel_id = physical_target.channel_id().get();
 
         let now = TimestampMs::new(chrono::Utc::now().timestamp_millis().max(0) as u64);
         command
-            .validate_at(now, constraints)
+            .validate_at(now, routed.constraints())
             .map_err(|error| PortError::new(PortErrorKind::Rejected, error.to_string()))?;
 
         let health = runtime.generation().channel_health(channel_id)?;
@@ -410,12 +258,6 @@ impl AutomationCommandDispatcher {
             },
         }
 
-        let physical_target = ChannelCommandAddress::new(
-            ChannelId::new(channel_id),
-            physical_kind,
-            PointId::new(physical_point_id),
-        )
-        .map_err(|error| PortError::new(PortErrorKind::Rejected, error.to_string()))?;
         let physical = PhysicalDeviceCommand::new(
             command.id(),
             physical_target,
@@ -469,13 +311,6 @@ fn validate_command_topology_fence(
         ));
     }
     Ok(())
-}
-
-fn database_port_error(error: sqlx::Error) -> PortError {
-    PortError::new(
-        PortErrorKind::Unavailable,
-        format!("command configuration database unavailable: {error}"),
-    )
 }
 
 #[cfg(test)]

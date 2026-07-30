@@ -1,7 +1,6 @@
 //! `aether-automation` — instance, rule, and action orchestration service.
 //!
-//! Model management service supporting measurement/action separation architecture.
-//! Rule Engine API is integrated on the same port (6002).
+//! Owns commissioned instances, logical routing, and deterministic rules.
 
 use std::{net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
 
@@ -10,19 +9,21 @@ use tracing::{debug, error, info, warn};
 
 // aether-automation imports
 use aether_automation::infra::{
-    application_control::RuleActionApplication,
-    rule_live_state::ShmRuleLiveState,
-    runtime_topology::{AutomationTopologyHandle, PointWatchReadiness},
+    application_control::RuleActionApplication, rule_live_state::ShmRuleLiveState,
+    rule_queries::RuleQueries, rule_runtime::RuleRuntimeCoordinator,
 };
 use aether_automation::{
-    AutomationError, DEFAULT_TICK_MS, Result, RuleScheduler, bootstrap, routes,
-    rule_routes::{RuleEngineState, create_rule_routes},
+    AutomationError, Result,
+    api::rule_routes::{RuleEngineState, create_rule_routes},
+    bootstrap, routes,
 };
 use aether_calc::MemoryStateStore;
-use aether_rules::{PointWatchDispatcher, PointWatchHint, WatchEvent};
+use aether_rules::{
+    DEFAULT_TICK_MS, PointWatchDispatcher, PointWatchHint, RuleScheduler, WatchEvent,
+};
 use aether_shm_bridge::{
     PointWatchEvent, PointWatchEventListener, SubscriptionBitmap, automation_bitmap_path_from_shm,
-    channel_health_path_from_shm, default_shm_path, point_watch_socket_from_shm,
+    default_shm_path, point_watch_socket_from_shm,
 };
 
 #[cfg(feature = "openapi")]
@@ -40,7 +41,10 @@ async fn main() -> Result<()> {
     debug!("Shutdown token initialized");
 
     // Create application state with all initialized components
-    let state = bootstrap::create_app_state(&service_info).await?;
+    let composition = bootstrap::compose_automation(&service_info).await?;
+    let state = composition.state;
+    let sqlite_pool = composition.sqlite_pool;
+    let runtime_topology = composition.runtime_topology;
 
     // Create API routes using the routes module. The gateway is the only
     // process that serves Swagger UI; this loopback service publishes its spec.
@@ -49,8 +53,6 @@ async fn main() -> Result<()> {
     // ============================================================================
     // Initialize Rule Engine (integrated on port 6002)
     // ============================================================================
-    let sqlite_pool = state.instance_manager.pool().clone();
-
     // Load tick_ms from global config (SQLite key-value table)
     let tick_ms: u64 = sqlx::query_scalar::<_, String>(
         "SELECT value FROM service_config WHERE service_name = 'global' AND key = 'rules.tick_ms'",
@@ -67,37 +69,6 @@ async fn main() -> Result<()> {
     let shm_path = default_shm_path();
     debug!("SHM path: {}", shm_path.display());
 
-    let topology_snapshot = aether_sqlite_topology::load_sqlite_live_topology(&sqlite_pool)
-        .await
-        .map_err(|error| {
-            AutomationError::DispatchDegraded(format!(
-                "failed to load the canonical runtime topology from SQLite: {error}"
-            ))
-        })?;
-    let health_path = std::env::var("AETHER_CHANNEL_HEALTH_SHM_PATH")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| channel_health_path_from_shm(&shm_path));
-    let runtime_topology = Arc::new(
-        AutomationTopologyHandle::new_lazy(
-            shm_path.clone(),
-            health_path,
-            topology_snapshot,
-            Arc::clone(&state.shm_dispatch),
-        )
-        .map_err(|error| {
-            AutomationError::DispatchDegraded(format!(
-                "failed to compose the automation runtime topology: {error}"
-            ))
-        })?,
-    );
-    state
-        .instance_manager
-        .set_runtime_topology(Arc::clone(&runtime_topology))
-        .map_err(|error| {
-            AutomationError::DispatchDegraded(format!(
-                "failed to install the automation runtime topology: {error}"
-            ))
-        })?;
     match runtime_topology.refresh(&sqlite_pool).await {
         Ok(_) => info!("Coherent point/health/routing topology configured"),
         Err(error) => warn!(
@@ -417,43 +388,35 @@ async fn main() -> Result<()> {
     }
 
     let scheduler = Arc::new(scheduler);
-    // A PointWatch hint is dispatched only after the subscription index has
-    // been rebuilt for this exact automation topology sequence.
-    let point_watch_readiness = Arc::new(PointWatchReadiness::new());
+    let rule_runtime = Arc::new(match pw_bitmap {
+        Some(bitmap) => RuleRuntimeCoordinator::new(Arc::clone(&scheduler)).with_point_watch(
+            Arc::clone(&runtime_topology),
+            bitmap,
+            pw_manifest_source,
+        ),
+        None => RuleRuntimeCoordinator::new(Arc::clone(&scheduler)),
+    });
 
     info!(
         "Rule scheduler: tick_ms={}, max_concurrency={}",
         tick_ms, max_concurrency
     );
 
-    // Load rules, then rebuild PointWatch from one pinned service generation.
-    // The rebuild gate keeps this rule/index/bitmap publication serialized
-    // with topology-driven and governed-rule refreshes.
-    let initial_rebuild = point_watch_readiness.lock_rebuild().await;
-    let initial_subscription_view = Arc::clone(&runtime_topology).pin_command().await;
-    point_watch_readiness.mark_unready();
-    match scheduler.reload_rules().await {
-        Ok(count) => {
-            let generation = initial_subscription_view.generation();
-            let point_watch_rebuilt = generation
-                .rebuild_point_watch(&scheduler, pw_bitmap.as_deref())
-                .await;
-            let manifest_matches = pw_manifest_source.load().is_some_and(|manifest| {
-                manifest.layout_hash() == generation.point_manifest().layout_hash()
-                    && manifest.slot_count() == generation.point_manifest().slot_count()
-            });
-            if point_watch_rebuilt && manifest_matches {
-                point_watch_readiness.mark_ready(generation.sequence());
+    // One coordinator owns every scheduler/PointWatch publication, including
+    // startup, topology changes, and governed rule mutations.
+    match rule_runtime.reload().await {
+        Ok(refresh) => {
+            info!("Rule Engine: loaded {} rules", refresh.rule_count());
+            if let Some(error) = refresh.point_watch_failure() {
+                warn!("PointWatch subscriptions remain gated: {error}");
             }
-            info!("Rule Engine: loaded {} rules", count);
         },
         Err(e) => warn!("Rule Engine: failed to load rules: {}", e),
     }
-    drop(initial_subscription_view);
-    drop(initial_rebuild);
 
-    // Refresh the full SQLite + point/health topology periodically. A failed
-    // candidate is transient and leaves the current generation untouched.
+    // Refresh the full SQLite + point/health topology periodically. Transient
+    // physical failures retain the current generation; invalid persisted
+    // topology revokes commands until a complete candidate can be published.
     {
         let refresh_topology = Arc::clone(&runtime_topology);
         let refresh_pool = sqlite_pool.clone();
@@ -482,13 +445,8 @@ async fn main() -> Result<()> {
 
     // Every successful topology replacement rebuilds PointWatch routing and
     // bitmap subscriptions from the newly published service generation.
-    {
-        let mut changes = runtime_topology.subscribe();
-        let subscription_scheduler = Arc::clone(&scheduler);
-        let subscription_topology = Arc::clone(&runtime_topology);
-        let subscription_manifest = pw_manifest_source.clone();
-        let subscription_bitmap = pw_bitmap.clone();
-        let subscription_ready = Arc::clone(&point_watch_readiness);
+    if let Some(mut changes) = rule_runtime.topology_changes() {
+        let subscription_runtime = Arc::clone(&rule_runtime);
         let subscription_token = shutdown_token.clone();
         tokio::spawn(async move {
             loop {
@@ -497,37 +455,23 @@ async fn main() -> Result<()> {
                         if changed.is_err() {
                             break;
                         }
-                        let _rebuild = subscription_ready.lock_rebuild().await;
-                        let view = Arc::clone(&subscription_topology).pin_command().await;
-                        subscription_ready.mark_unready();
-                        match subscription_scheduler.reload_rules().await {
-                            Ok(count) => {
-                                let generation = view.generation();
-                                let point_watch_rebuilt = generation
-                                    .rebuild_point_watch(
-                                        &subscription_scheduler,
-                                        subscription_bitmap.as_deref(),
-                                    )
-                                    .await;
-                                let manifest_matches = subscription_manifest
-                                    .load()
-                                    .is_some_and(|manifest| {
-                                        manifest.layout_hash()
-                                            == generation.point_manifest().layout_hash()
-                                            && manifest.slot_count()
-                                                == generation.point_manifest().slot_count()
-                                    });
-                                if point_watch_rebuilt && manifest_matches {
-                                    subscription_ready.mark_ready(generation.sequence());
+                        match subscription_runtime.reload().await {
+                            Ok(refresh) => {
+                                if let Some(error) = refresh.point_watch_failure() {
+                                    warn!(
+                                        "PointWatch subscriptions remain gated for topology sequence {}: {error}",
+                                        refresh.topology_sequence().unwrap_or_default()
+                                    );
+                                } else if let Some(sequence) = refresh.topology_sequence() {
                                     info!(
                                         "PointWatch subscriptions refreshed for topology sequence {} ({} rules)",
-                                        generation.sequence(),
-                                        count
+                                        sequence,
+                                        refresh.rule_count()
                                     );
                                 } else {
-                                    warn!(
-                                        "PointWatch subscriptions remain gated: command manifest is not ready for topology sequence {}",
-                                        generation.sequence()
+                                    debug!(
+                                        "Rules refreshed after a topology change ({} rules)",
+                                        refresh.rule_count()
                                     );
                                 }
                             },
@@ -535,7 +479,6 @@ async fn main() -> Result<()> {
                                 "PointWatch subscription refresh failed; scheduler tick fallback remains active: {error}"
                             ),
                         }
-                        drop(view);
                     },
                     _ = subscription_token.cancelled() => break,
                 }
@@ -555,7 +498,7 @@ async fn main() -> Result<()> {
         // held briefly (just for the try_send hash lookup, no .await inside).
         let dispatcher_for_bridge = Arc::clone(&dispatcher_arc);
         let topology_for_bridge = Arc::clone(&runtime_topology);
-        let ready_for_bridge = Arc::clone(&point_watch_readiness);
+        let runtime_for_bridge = Arc::clone(&rule_runtime);
         let shutdown_token_bridge = shutdown_token.clone();
         tokio::spawn(async move {
             loop {
@@ -564,7 +507,7 @@ async fn main() -> Result<()> {
                         match ev {
                             Some(e) => {
                                 let view = Arc::clone(&topology_for_bridge).pin_command().await;
-                                if !ready_for_bridge.accepts(view.generation(), e)
+                                if !runtime_for_bridge.accepts_point_watch(view.generation(), e)
                                 {
                                     continue;
                                 }
@@ -605,13 +548,7 @@ async fn main() -> Result<()> {
     let rule_mutator: Arc<dyn aether_ports::AutomationRuleMutator> = Arc::new(
         aether_automation::infra::rule_mutation::SqliteRuleMutator::new(
             sqlite_pool.clone(),
-            Arc::clone(&scheduler),
-        )
-        .with_topology_guard(
-            Arc::clone(&runtime_topology),
-            Arc::clone(&point_watch_readiness),
-            pw_bitmap,
-            pw_manifest_source,
+            rule_runtime,
         ),
     );
     let rule_mutation_application = Arc::new(aether_application::RuleMutationApplication::new(
@@ -619,14 +556,12 @@ async fn main() -> Result<()> {
         rule_audit,
         aether_application::SafetyPolicy,
     ));
-    let rule_state = Arc::new(
-        RuleEngineState::new(sqlite_pool, Arc::clone(&scheduler))
-            .with_execution_boundary(rule_application, Arc::clone(&state.control_authenticator))
-            .with_mutation_boundary(
-                rule_mutation_application,
-                Arc::clone(&state.control_authenticator),
-            ),
-    );
+    let rule_state = Arc::new(RuleEngineState::new(
+        Arc::new(RuleQueries::new(sqlite_pool, Arc::clone(&scheduler))),
+        rule_application,
+        rule_mutation_application,
+        Arc::clone(&state.control_authenticator),
+    ));
     let rule_routes = create_rule_routes(rule_state);
 
     // Merge rule routes into the main app (both on port 6002)
@@ -650,7 +585,7 @@ async fn main() -> Result<()> {
     socket.bind(addr)?;
     let listener = socket.listen(1024)?;
 
-    info!("Model Service (with Rule Engine) started on {}", addr);
+    info!("Automation service started on {}", addr);
     info!("");
     info!("Model API endpoints (port {}):", state.config.api.port);
     info!("  GET /health - Health check");
@@ -730,6 +665,6 @@ async fn main() -> Result<()> {
         },
     }
 
-    info!("Model Service (with Rule Engine) shutdown complete");
+    info!("Automation service shutdown complete");
     Ok(())
 }

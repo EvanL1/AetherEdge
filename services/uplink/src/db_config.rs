@@ -3,7 +3,7 @@ use sqlx::SqlitePool;
 use std::borrow::Cow;
 use tracing::info;
 
-use crate::models::NetConfig;
+use crate::config_model::UplinkConfig;
 
 const DEFAULTS: &[(&str, &str, &str)] = &[
     ("product_sn", "AetherHub", "Product serial number"),
@@ -108,7 +108,7 @@ pub async fn create_config_table(pool: &SqlitePool) -> anyhow::Result<()> {
     Ok(())
 }
 
-pub async fn load_config(pool: &SqlitePool) -> anyhow::Result<NetConfig> {
+pub async fn load_config(pool: &SqlitePool) -> anyhow::Result<UplinkConfig> {
     use std::collections::HashMap;
 
     let rows: Vec<(String, String)> = sqlx::query_as("SELECT key, value FROM uplink_config")
@@ -118,7 +118,7 @@ pub async fn load_config(pool: &SqlitePool) -> anyhow::Result<NetConfig> {
 
     let get = |k: &str, d: &str| map.get(k).cloned().unwrap_or_else(|| d.to_string());
 
-    let mut cfg = NetConfig {
+    let mut cfg = UplinkConfig {
         product_sn: get("product_sn", "AetherHub"),
         device_sn: get("device_sn", "auto"),
         broker_host: get("broker_host", "localhost"),
@@ -157,7 +157,7 @@ pub async fn load_config(pool: &SqlitePool) -> anyhow::Result<NetConfig> {
     Ok(cfg)
 }
 
-pub async fn save_config(pool: &SqlitePool, cfg: &NetConfig) -> anyhow::Result<()> {
+pub async fn save_config(pool: &SqlitePool, cfg: &UplinkConfig) -> anyhow::Result<()> {
     let mut cfg = cfg.clone();
     cfg.normalize();
     let pairs: Vec<(&str, Cow<'_, str>)> = vec![

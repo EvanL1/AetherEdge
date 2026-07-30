@@ -3,7 +3,7 @@ use utoipa::ToSchema;
 
 // ── Role ──────────────────────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow, ToSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct Role {
     pub id: i64,
     pub name_en: String,
@@ -14,19 +14,6 @@ pub struct Role {
 }
 
 // ── User ──────────────────────────────────────────────────────────────────────
-
-#[allow(dead_code)]
-#[derive(Debug, Clone, sqlx::FromRow)]
-pub struct UserRow {
-    pub id: i64,
-    pub username: String,
-    pub password_hash: String,
-    pub role_id: i64,
-    pub is_active: bool,
-    pub last_login: Option<String>,
-    pub created_at: Option<String>,
-    pub updated_at: Option<String>,
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct UserWithRole {
@@ -183,18 +170,9 @@ pub struct UserUpdateSuccess {
     pub data: Option<UserWithRole>,
 }
 
-/// Stored refresh token metadata (in-memory)
-#[allow(dead_code)]
-#[derive(Debug, Clone)]
-pub struct RefreshTokenInfo {
-    pub user_id: i64,
-    pub username: String,
-    pub expires_at: i64,
-}
-
 // ── Calculated Points ─────────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow, ToSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct CalculatedPoint {
     pub id: i64,
     pub name: String,
@@ -225,4 +203,68 @@ pub struct NetworkConfig {
     pub gateway: String,
     pub dns1: String,
     pub dns2: String,
+}
+
+impl From<crate::read_models::RoleRecord> for Role {
+    fn from(value: crate::read_models::RoleRecord) -> Self {
+        Self {
+            id: value.id,
+            name_en: value.name_en,
+            name_zh: value.name_zh,
+            description: value.description,
+            created_at: value.created_at,
+            updated_at: value.updated_at,
+        }
+    }
+}
+
+impl From<crate::read_models::RoleProfile> for RoleInfo {
+    fn from(value: crate::read_models::RoleProfile) -> Self {
+        Self {
+            id: value.id,
+            name_en: value.name_en,
+            name_zh: value.name_zh,
+            description: value.description,
+        }
+    }
+}
+
+impl From<crate::read_models::UserProfile> for UserWithRole {
+    fn from(value: crate::read_models::UserProfile) -> Self {
+        Self {
+            id: value.id,
+            username: value.username,
+            is_active: value.is_active,
+            last_login: value.last_login,
+            created_at: value.created_at,
+            updated_at: value.updated_at,
+            role: value.role.into(),
+        }
+    }
+}
+
+impl From<crate::read_models::IssuedTokenPair> for TokenResponse {
+    fn from(value: crate::read_models::IssuedTokenPair) -> Self {
+        Self {
+            access_token: value.access_token,
+            refresh_token: value.refresh_token,
+            token_type: value.token_type,
+            expires_in: value.expires_in,
+        }
+    }
+}
+
+impl From<crate::read_models::CalculatedPointRecord> for CalculatedPoint {
+    fn from(value: crate::read_models::CalculatedPointRecord) -> Self {
+        Self {
+            id: value.id,
+            name: value.name,
+            formula: value.formula,
+            unit: value.unit,
+            imgurl: value.imgurl,
+            description: value.description,
+            created_at: value.created_at,
+            updated_at: value.updated_at,
+        }
+    }
 }

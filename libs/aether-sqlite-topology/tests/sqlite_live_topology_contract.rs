@@ -14,7 +14,7 @@ async fn live_topology_pool() -> sqlx::SqlitePool {
         "CREATE TABLE telemetry_points (channel_id INTEGER, point_id INTEGER)",
         "CREATE TABLE signal_points (channel_id INTEGER, point_id INTEGER)",
         "CREATE TABLE control_points (channel_id INTEGER, point_id INTEGER)",
-        "CREATE TABLE adjustment_points (channel_id INTEGER, point_id INTEGER)",
+        "CREATE TABLE adjustment_points (channel_id INTEGER, point_id INTEGER, min_value REAL, max_value REAL, step REAL DEFAULT 1.0)",
         "CREATE TABLE measurement_routing (instance_id INTEGER, channel_id INTEGER, channel_type TEXT, channel_point_id INTEGER, measurement_id INTEGER, enabled INTEGER)",
         "CREATE TABLE action_routing (instance_id INTEGER, channel_id INTEGER, channel_type TEXT, channel_point_id INTEGER, action_id INTEGER, enabled INTEGER)",
     ] {
@@ -337,4 +337,100 @@ async fn unchanged_snapshot_preserves_the_deterministic_digest() {
         .expect("unchanged live topology");
 
     assert_eq!(first.digest(), second.digest());
+}
+
+#[tokio::test]
+async fn command_routes_embed_validated_constraints_from_the_same_snapshot() {
+    let pool = live_topology_pool().await;
+    insert_channel_points(&pool).await;
+    sqlx::query(
+        "UPDATE adjustment_points SET min_value = -10.0, max_value = 10.0, step = 0.5 \
+         WHERE channel_id = 7 AND point_id = 3",
+    )
+    .execute(&pool)
+    .await
+    .expect("action constraints");
+    sqlx::query("INSERT INTO action_routing VALUES (10, 7, 'A', 3, 5, 1)")
+        .execute(&pool)
+        .await
+        .expect("action route");
+    sqlx::query("INSERT INTO action_routing VALUES (10, 7, 'C', 0, 6, 1)")
+        .execute(&pool)
+        .await
+        .expect("command route");
+
+    let snapshot = load_sqlite_live_topology(&pool)
+        .await
+        .expect("coherent command topology");
+
+    let action = snapshot.command_route(10, 5).expect("action target");
+    assert_eq!(action.target().kind(), PointKind::Action);
+    assert_eq!(action.constraints().minimum(), Some(-10.0));
+    assert_eq!(action.constraints().maximum(), Some(10.0));
+    assert_eq!(action.constraints().step(), Some(0.5));
+    let command = snapshot
+        .command_route(10, 6)
+        .expect("binary command target");
+    assert_eq!(command.target().kind(), PointKind::Command);
+    assert_eq!(command.constraints().minimum(), Some(0.0));
+    assert_eq!(command.constraints().maximum(), Some(1.0));
+    assert_eq!(command.constraints().step(), Some(1.0));
+}
+
+#[tokio::test]
+async fn invalid_command_constraints_fail_closed() {
+    let pool = live_topology_pool().await;
+    insert_channel_points(&pool).await;
+    sqlx::query(
+        "UPDATE adjustment_points SET min_value = 10.0, max_value = 5.0, step = 0.0 \
+         WHERE channel_id = 7 AND point_id = 3",
+    )
+    .execute(&pool)
+    .await
+    .expect("invalid action constraints");
+    sqlx::query("INSERT INTO action_routing VALUES (10, 7, 'A', 3, 5, 1)")
+        .execute(&pool)
+        .await
+        .expect("action route");
+
+    let error = load_sqlite_live_topology(&pool)
+        .await
+        .expect_err("invalid constraints must not enter a runtime snapshot");
+
+    assert_eq!(error.kind(), PortErrorKind::InvalidData);
+}
+
+#[tokio::test]
+async fn constraint_only_change_advances_the_deterministic_digest() {
+    let pool = live_topology_pool().await;
+    insert_channel_points(&pool).await;
+    sqlx::query("INSERT INTO action_routing VALUES (10, 7, 'A', 3, 5, 1)")
+        .execute(&pool)
+        .await
+        .expect("action route");
+    let first = load_sqlite_live_topology(&pool)
+        .await
+        .expect("first command topology");
+
+    sqlx::query(
+        "UPDATE adjustment_points SET min_value = -5.0, max_value = 5.0, step = 0.25 \
+         WHERE channel_id = 7 AND point_id = 3",
+    )
+    .execute(&pool)
+    .await
+    .expect("replace only command constraints");
+    let second = load_sqlite_live_topology(&pool)
+        .await
+        .expect("second command topology");
+
+    assert_eq!(
+        first.action_route(10, 5),
+        second.action_route(10, 5),
+        "the physical route is unchanged"
+    );
+    assert_eq!(
+        first.point_manifest().layout_hash(),
+        second.point_manifest().layout_hash()
+    );
+    assert_ne!(first.digest(), second.digest());
 }

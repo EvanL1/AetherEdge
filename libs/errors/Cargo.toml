@@ -26,9 +26,6 @@ reqwest = { workspace = true }
 # Logging
 tracing = { workspace = true }
 
-# Web framework (optional, for http_status and into_http_response)
-axum = { workspace = true, optional = true }
-
 # Schema generation (optional)
 schemars = { version = "0.8", optional = true }
 
@@ -36,7 +33,6 @@ schemars = { version = "0.8", optional = true }
 default = []
 redis = ["dep:redis"]
 schema = ["schemars"]
-axum-support = ["axum"]
 
 [lints]
 workspace = true

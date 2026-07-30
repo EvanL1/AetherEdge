@@ -62,7 +62,7 @@ drift (see [Rule Engine](../concepts/rule-engine.md) for the invariant).
 
 ## Via the HTTP API
 
-automation serves the rule API (`services/automation/src/rule_routes.rs`);
+automation serves the rule API (`services/automation/src/api/rule_routes.rs`);
 applications reach it through the authenticated gateway under
 `/api/v1/automation`. The gateway Swagger selector at
 `http://<edge-host>:6005/docs` exposes the Automation OpenAPI document; the

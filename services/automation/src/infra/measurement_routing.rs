@@ -8,20 +8,31 @@ use aether_ports::{
     MeasurementRoutingMutationReceipt, PortError, PortErrorKind, PortResult,
 };
 use async_trait::async_trait;
+use sqlx::SqlitePool;
 
-use crate::infra::runtime_topology::MeasurementRoutingMutationLease;
-use crate::instance_manager::InstanceManager;
+use crate::infra::runtime_topology::{AutomationTopologyHandle, RoutingMutationLease};
+use crate::product_loader::ProductLoader;
 
 /// Applies validated measurement-route CAS mutations to authoritative SQLite.
 pub struct SqliteMeasurementRoutingMutator {
-    manager: Arc<InstanceManager>,
+    pool: SqlitePool,
+    product_loader: Arc<ProductLoader>,
+    runtime_topology: Arc<AutomationTopologyHandle>,
 }
 
 impl SqliteMeasurementRoutingMutator {
     /// Creates the adapter over automation's configuration and runtime topology.
     #[must_use]
-    pub fn new(manager: Arc<InstanceManager>) -> Self {
-        Self { manager }
+    pub fn new(
+        pool: SqlitePool,
+        product_loader: Arc<ProductLoader>,
+        runtime_topology: Arc<AutomationTopologyHandle>,
+    ) -> Self {
+        Self {
+            pool,
+            product_loader,
+            runtime_topology,
+        }
     }
 
     async fn validate_upsert(
@@ -60,9 +71,8 @@ impl SqliteMeasurementRoutingMutator {
         })?;
         let (instance_name, product_name) = instance;
         let product = self
-            .manager
-            .product_loader()
-            .get_product(&product_name)
+            .product_loader
+            .get_definition(&product_name)
             .map_err(|error| {
                 tracing::error!(
                     instance_id,
@@ -78,7 +88,7 @@ impl SqliteMeasurementRoutingMutator {
         if !product
             .measurements
             .iter()
-            .any(|measurement| measurement.measurement_id == measurement_id)
+            .any(|measurement| measurement.id == measurement_id)
         {
             return Err(invalid(format!(
                 "measurement point {measurement_id} is not declared by instance {instance_id}"
@@ -105,25 +115,9 @@ impl SqliteMeasurementRoutingMutator {
 
     async fn publish_committed_routes(
         &self,
-        topology_lease: Option<MeasurementRoutingMutationLease>,
+        topology_lease: RoutingMutationLease,
     ) -> PortResult<()> {
-        if let Some(topology_lease) = topology_lease {
-            return topology_lease
-                .publish(self.manager.pool())
-                .await
-                .map(|_| ());
-        }
-
-        self.manager
-            .refresh_routing()
-            .await
-            .map(|_| ())
-            .map_err(|error| {
-                PortError::new(
-                    PortErrorKind::Unavailable,
-                    format!("committed measurement routing validation failed: {error}"),
-                )
-            })
+        topology_lease.publish(&self.pool).await.map(|_| ())
     }
 }
 
@@ -143,42 +137,37 @@ impl AutomationMeasurementRoutingMutator for SqliteMeasurementRoutingMutator {
             ));
         }
 
-        let mut topology_lease = match self.manager.runtime_topology() {
-            Some(topology) => Some(
-                Arc::clone(topology)
-                    .begin_measurement_routing_mutation()
-                    .await,
-            ),
-            None => None,
-        };
+        let mut topology_lease = Arc::clone(&self.runtime_topology)
+            .begin_measurement_routing_mutation()
+            .await;
 
-        let staged: PortResult<_> =
-            async {
-                let mut transaction =
-                    self.manager.pool().begin().await.map_err(|error| {
-                        storage_error("begin measurement-routing mutation", error)
-                    })?;
-                let resulting_revision = sqlx::query_scalar::<_, i64>(
-                    "UPDATE configuration_revisions \
+        let staged: PortResult<_> = async {
+            let mut transaction = self
+                .pool
+                .begin()
+                .await
+                .map_err(|error| storage_error("begin measurement-routing mutation", error))?;
+            let resulting_revision = sqlx::query_scalar::<_, i64>(
+                "UPDATE configuration_revisions \
                  SET revision = revision + 1, updated_at = CURRENT_TIMESTAMP \
                  WHERE scope = 'logical_routing' AND revision = ? \
                  RETURNING revision",
+            )
+            .bind(expected.get() as i64)
+            .fetch_optional(&mut *transaction)
+            .await
+            .map_err(|error| storage_error("compare logical-routing revision", error))?
+            .ok_or_else(|| {
+                PortError::new(
+                    PortErrorKind::Conflict,
+                    format!(
+                        "logical routing changed concurrently; expected revision {}",
+                        expected.get()
+                    ),
                 )
-                .bind(expected.get() as i64)
-                .fetch_optional(&mut *transaction)
-                .await
-                .map_err(|error| storage_error("compare logical-routing revision", error))?
-                .ok_or_else(|| {
-                    PortError::new(
-                        PortErrorKind::Conflict,
-                        format!(
-                            "logical routing changed concurrently; expected revision {}",
-                            expected.get()
-                        ),
-                    )
-                })?;
+            })?;
 
-                let affected_routes = match mutation {
+            let affected_routes = match mutation {
                 MeasurementRoutingMutation::Upsert { route, .. } => {
                     let route_key = route.key();
                     let instance_id = route_key.instance_id().get();
@@ -268,34 +257,30 @@ impl AutomationMeasurementRoutingMutator for SqliteMeasurementRoutingMutator {
                 },
             };
 
-                if matches!(
-                    mutation,
-                    MeasurementRoutingMutation::Delete { .. }
-                        | MeasurementRoutingMutation::SetEnabled { .. }
-                ) && affected_routes != 1
-                {
-                    return Err(PortError::new(
-                        PortErrorKind::NotFound,
-                        "measurement route is not commissioned",
-                    ));
-                }
-                Ok((transaction, affected_routes, resulting_revision))
+            if matches!(
+                mutation,
+                MeasurementRoutingMutation::Delete { .. }
+                    | MeasurementRoutingMutation::SetEnabled { .. }
+            ) && affected_routes != 1
+            {
+                return Err(PortError::new(
+                    PortErrorKind::NotFound,
+                    "measurement route is not commissioned",
+                ));
             }
-            .await;
+            Ok((transaction, affected_routes, resulting_revision))
+        }
+        .await;
 
         let (transaction, affected_routes, resulting_revision) = match staged {
             Ok(staged) => staged,
             Err(error) => {
-                if let Some(topology_lease) = topology_lease.take() {
-                    topology_lease.restore().await;
-                }
+                topology_lease.restore().await;
                 return Err(error);
             },
         };
 
-        if let Some(topology_lease) = topology_lease.as_mut() {
-            topology_lease.commit_started();
-        }
+        topology_lease.commit_started();
         transaction
             .commit()
             .await

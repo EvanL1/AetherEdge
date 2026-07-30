@@ -785,22 +785,13 @@ impl GpioPinConfig {
 }
 
 /// GPIO channel configuration.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct GpioChannelConfig {
     /// Driver type selection.
     pub driver: GpioDriverType,
 
     /// Pin configurations.
     pub pins: Vec<GpioPinConfig>,
-}
-
-impl Default for GpioChannelConfig {
-    fn default() -> Self {
-        Self {
-            driver: GpioDriverType::default(),
-            pins: Vec::new(),
-        }
-    }
 }
 
 impl GpioChannelConfig {

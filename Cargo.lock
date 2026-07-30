@@ -2069,7 +2069,6 @@ name = "errors"
 version = "0.0.1"
 dependencies = [
  "anyhow",
- "axum",
  "redis",
  "reqwest",
  "schemars 0.8.22",
