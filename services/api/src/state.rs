@@ -5,7 +5,7 @@ use dashmap::DashMap;
 use sqlx::SqlitePool;
 
 use crate::config::GatewayConfig;
-use crate::models::RefreshTokenInfo;
+use crate::read_models::RefreshTokenInfo;
 use crate::ws::WsHub;
 
 pub struct AppState {

@@ -628,50 +628,6 @@ pub trait AetherErrorTrait: std::error::Error + Send + Sync + 'static {
         if self.is_retryable() { 3 } else { 0 }
     }
 
-    /// Convert to HTTP status code
-    #[cfg(feature = "axum-support")]
-    fn http_status(&self) -> axum::http::StatusCode {
-        use axum::http::StatusCode;
-        match self.category() {
-            ErrorCategory::Configuration => StatusCode::BAD_REQUEST,
-            ErrorCategory::Validation => StatusCode::UNPROCESSABLE_ENTITY,
-            ErrorCategory::NotFound => StatusCode::NOT_FOUND,
-            ErrorCategory::Permission => StatusCode::FORBIDDEN,
-            ErrorCategory::Conflict => StatusCode::CONFLICT,
-            ErrorCategory::Timeout => StatusCode::REQUEST_TIMEOUT,
-            ErrorCategory::Network => StatusCode::SERVICE_UNAVAILABLE,
-            ErrorCategory::ResourceBusy => StatusCode::SERVICE_UNAVAILABLE,
-            ErrorCategory::ResourceExhausted => StatusCode::TOO_MANY_REQUESTS,
-            _ => StatusCode::INTERNAL_SERVER_ERROR,
-        }
-    }
-
-    /// Convert into an Axum HTTP response
-    #[cfg(feature = "axum-support")]
-    #[allow(clippy::disallowed_methods)] // json! macro internally uses unwrap (safe for known valid JSON)
-    fn into_http_response(self) -> axum::response::Response
-    where
-        Self: Sized,
-    {
-        use axum::response::{IntoResponse, Json};
-        use serde_json::json;
-
-        let mut response = json!({
-            "error_code": self.error_code(),
-            "message": self.to_string(),
-            "category": format!("{:?}", self.category()),
-            "retryable": self.is_retryable(),
-            "retry_delay_ms": self.retry_delay_ms(),
-        });
-
-        // Add suggestion if available
-        if let Some(suggestion) = self.suggestion() {
-            response["suggestion"] = json!(suggestion);
-        }
-
-        (self.http_status(), Json(response)).into_response()
-    }
-
     /// Get log level
     fn log_level(&self) -> tracing::Level {
         use tracing::Level;

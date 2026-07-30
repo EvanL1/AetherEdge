@@ -16,15 +16,16 @@ use tracing::error;
 #[cfg(feature = "openapi")]
 use utoipa::OpenApi;
 
-use crate::db::{self};
-#[cfg(feature = "openapi")]
-use crate::models::AlertEvent;
-use crate::models::{
-    AlertQueryParams, AlertResolutionData, AlertRule, ApiResponse, CompletionAuditData,
-    CreateRuleData, CreateRuleRequest, EventQueryParams, MonitorStatus, RuleIdData,
-    RuleQueryParams, SingleItemData, UpdateRuleRequest,
+use crate::api::dto::{
+    Alert as AlertDto, AlertEvent as AlertEventDto, AlertQueryParams, AlertResolutionData,
+    AlertRule as AlertRuleDto, ApiResponse, CompletionAuditData, CreateRuleData, CreateRuleRequest,
+    EventQueryParams, MonitorStatus as MonitorStatusDto, PagedData, RuleIdData, RuleQueryParams,
+    SingleItemData, UpdateRuleRequest,
 };
+use crate::db::{self};
+use crate::models::AlertRule;
 use crate::monitor;
+use crate::notification::{AlarmCountSnapshot, AlarmNotification};
 use crate::state::AppState;
 
 // ============================================================================
@@ -109,24 +110,24 @@ async fn openapi_document() -> Json<utoipa::openapi::OpenApi> {
         common::admin_api::view_log_file,
     ),
     components(schemas(
-        AlertRule,
-        crate::models::Alert,
-        AlertEvent,
+        AlertRuleDto,
+        AlertDto,
+        AlertEventDto,
         CreateRuleRequest,
         UpdateRuleRequest,
-        MonitorStatus,
+        MonitorStatusDto,
         CreateRuleData,
         RuleIdData,
         AlertResolutionData,
         CompletionAuditData,
-        SingleItemData<AlertRule>,
-        SingleItemData<crate::models::Alert>,
+        SingleItemData<AlertRuleDto>,
+        SingleItemData<AlertDto>,
         ApiResponse<CreateRuleData>,
-        ApiResponse<SingleItemData<AlertRule>>,
+        ApiResponse<SingleItemData<AlertRuleDto>>,
         ApiResponse<RuleIdData>,
         ApiResponse<AlertResolutionData>,
-        ApiResponse<SingleItemData<crate::models::Alert>>,
-        ApiResponse<MonitorStatus>,
+        ApiResponse<SingleItemData<AlertDto>>,
+        ApiResponse<MonitorStatusDto>,
         common::admin_api::SetLogLevelRequest,
         common::admin_api::LogLevelResponse,
     )),
@@ -427,9 +428,11 @@ async fn list_rules(
     State(state): State<Arc<AppState>>,
     Query(params): Query<RuleQueryParams>,
 ) -> impl IntoResponse {
-    match db::list_rules(&state.db, &params).await {
+    let filter = params.into();
+    match db::list_rules(&state.db, &filter).await {
         Ok(paged) => {
             let msg = format!("Found {} rule(s)", paged.total);
+            let paged = PagedData::<AlertRuleDto>::from_page(paged);
             Json(ApiResponse::ok(msg, paged)).into_response()
         },
         Err(e) => {
@@ -525,6 +528,7 @@ async fn create_rule(
         Err(_) => None,
     };
     let logical_key = rule.as_ref().map(AlertRule::logical_key);
+    let rule = rule.map(Into::into);
     log_incomplete_alarm_audit(&acceptance);
     let audit = completion_audit_data(acceptance.completion_audit());
     Json(ApiResponse::ok(
@@ -551,12 +555,13 @@ async fn create_rule(
 #[utoipa::path(get, path = "/alarmApi/rules/{id}", tag = "Rules",
     params(("id" = i64, Path, description = "Rule ID")),
     responses(
-        (status = 200, description = "Rule detail", body = ApiResponse<SingleItemData<AlertRule>>),
+        (status = 200, description = "Rule detail", body = ApiResponse<SingleItemData<AlertRuleDto>>),
         (status = 404, description = "Rule not found"),
     ))]
 async fn get_rule(State(state): State<Arc<AppState>>, Path(id): Path<i64>) -> impl IntoResponse {
     match db::get_rule_by_id(&state.db, id).await {
         Ok(Some(rule)) => {
+            let rule = AlertRuleDto::from(rule);
             // Return list format for compatibility with alarm-py (data.list[0])
             Json(ApiResponse::ok(
                 "Rule retrieved",
@@ -798,9 +803,10 @@ async fn rules_by_channel(
         Ok(list) => {
             let total = list.len() as i64;
             let page_size = total.max(1);
+            let list = list.into_iter().map(AlertRuleDto::from).collect();
             Json(ApiResponse::ok(
                 format!("Found {} rule(s) for channel {}", total, channel_id),
-                crate::models::PagedData {
+                PagedData {
                     total,
                     list,
                     page: 1,
@@ -833,12 +839,13 @@ async fn list_alerts(
     State(state): State<Arc<AppState>>,
     Query(params): Query<AlertQueryParams>,
 ) -> impl IntoResponse {
-    match db::list_alerts(&state.db, &params).await {
-        Ok(paged) => Json(ApiResponse::ok(
-            format!("Found {} active alert(s)", paged.total),
-            paged,
-        ))
-        .into_response(),
+    let filter = params.into();
+    match db::list_alerts(&state.db, &filter).await {
+        Ok(paged) => {
+            let message = format!("Found {} active alert(s)", paged.total);
+            let paged = PagedData::<AlertDto>::from_page(paged);
+            Json(ApiResponse::ok(message, paged)).into_response()
+        },
         Err(e) => {
             error!("list_alerts: {}", e);
             server_error("Failed to query alerts")
@@ -854,12 +861,13 @@ async fn list_alerts(
 #[utoipa::path(get, path = "/alarmApi/alerts/{id}", tag = "Alerts",
     params(("id" = i64, Path, description = "Alert ID")),
     responses(
-        (status = 200, description = "Alert detail", body = ApiResponse<SingleItemData<crate::models::Alert>>),
+        (status = 200, description = "Alert detail", body = ApiResponse<SingleItemData<AlertDto>>),
         (status = 404, description = "Alert not found"),
     ))]
 async fn get_alert(State(state): State<Arc<AppState>>, Path(id): Path<i64>) -> impl IntoResponse {
     match db::get_alert_by_id(&state.db, id).await {
         Ok(Some(alert)) => {
+            let alert = AlertDto::from(alert);
             // Return list format for compatibility with alarm-py (data.list[0])
             Json(ApiResponse::ok(
                 "Alert retrieved",
@@ -953,12 +961,13 @@ async fn list_events(
     State(state): State<Arc<AppState>>,
     Query(params): Query<EventQueryParams>,
 ) -> impl IntoResponse {
-    match db::list_events(&state.db, &params).await {
-        Ok(paged) => Json(ApiResponse::ok(
-            format!("Found {} event(s)", paged.total),
-            paged,
-        ))
-        .into_response(),
+    let filter = params.into();
+    match db::list_events(&state.db, &filter).await {
+        Ok(paged) => {
+            let message = format!("Found {} event(s)", paged.total);
+            let paged = PagedData::<AlertEventDto>::from_page(paged);
+            Json(ApiResponse::ok(message, paged)).into_response()
+        },
         Err(e) => {
             error!("list_events: {}", e);
             server_error("Failed to query alert events")
@@ -986,7 +995,8 @@ async fn export_events_csv(
     State(state): State<Arc<AppState>>,
     Query(params): Query<EventQueryParams>,
 ) -> impl IntoResponse {
-    let events = match db::get_all_events_for_export(&state.db, &params).await {
+    let filter = params.into();
+    let events = match db::get_all_events_for_export(&state.db, &filter).await {
         Ok(e) => e,
         Err(e) => {
             error!("export_events_csv: {}", e);
@@ -1016,7 +1026,7 @@ async fn export_events_csv(
         "Duration (Seconds)",
     ]);
 
-    for ev in &events {
+    for ev in events {
         let triggered_str = ev.triggered_at.map(format_timestamp).unwrap_or_default();
         let recovered_str = ev.recovered_at.map(format_timestamp).unwrap_or_default();
         let duration_str = ev.duration.map(|d| d.to_string()).unwrap_or_default();
@@ -1024,17 +1034,17 @@ async fn export_events_csv(
         let _ = wtr.write_record(&[
             ev.id.to_string(),
             ev.rule_id.to_string(),
-            ev.rule_name.clone(),
-            ev.service_type.clone(),
+            ev.rule_name,
+            ev.service_type,
             ev.channel_id.to_string(),
-            ev.data_type.clone(),
+            ev.data_type,
             ev.point_id.to_string(),
             ev.warning_level.to_string(),
-            ev.operator.clone(),
+            ev.operator,
             ev.threshold_value.to_string(),
             ev.trigger_value.map(|v| v.to_string()).unwrap_or_default(),
             ev.recovery_value.map(|v| v.to_string()).unwrap_or_default(),
-            ev.event_type.clone(),
+            ev.event_type,
             triggered_str,
             recovered_str,
             duration_str,
@@ -1091,9 +1101,9 @@ async fn alert_statistics(State(state): State<Arc<AppState>>) -> impl IntoRespon
 /// silently hung — `running=true` + `last_check_time` stale by N×interval
 /// is the diagnostic signal.
 #[utoipa::path(get, path = "/alarmApi/monitor/status", tag = "Monitor",
-    responses((status = 200, description = "Monitor loop status", body = ApiResponse<MonitorStatus>)))]
+    responses((status = 200, description = "Monitor loop status", body = ApiResponse<MonitorStatusDto>)))]
 async fn monitor_status(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    let ms = state.monitor_status.read().await.clone();
+    let ms = MonitorStatusDto::from(&*state.monitor_status.read().await);
     Json(ApiResponse::ok("Monitor status retrieved", ms))
 }
 
@@ -1147,7 +1157,10 @@ async fn call_data(State(state): State<Arc<AppState>>) -> impl IntoResponse {
 
     if alerts.is_empty() {
         if let Ok(counts) = db::get_active_alarm_counts(&state.db).await {
-            state.broadcaster.send_alarm_count(&counts).await;
+            state
+                .notifier
+                .publish_counts(AlarmCountSnapshot::from(&counts))
+                .await;
         }
         return Json(ApiResponse::ok(
             "No active alerts",
@@ -1166,13 +1179,24 @@ async fn call_data(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     }
 
     let alarm_count = alerts.len();
-    state
-        .broadcaster
-        .broadcast_active_alerts(&alerts, &rule_map)
-        .await;
+    for alert in &alerts {
+        if let Some(rule) = rule_map.get(&alert.rule_id) {
+            state
+                .notifier
+                .replay_alarm(AlarmNotification::triggered(
+                    alert.id,
+                    rule,
+                    alert.current_value,
+                ))
+                .await;
+        }
+    }
 
     if let Ok(counts) = db::get_active_alarm_counts(&state.db).await {
-        state.broadcaster.send_alarm_count(&counts).await;
+        state
+            .notifier
+            .publish_counts(AlarmCountSnapshot::from(&counts))
+            .await;
     }
 
     Json(ApiResponse::ok(
@@ -1542,26 +1566,23 @@ mod tests {
             .await
             .expect("create alarm database tables");
         let config = Arc::new(crate::config::AlarmConfig::default());
-        let broadcaster = crate::broadcast::Broadcaster::new(
-            reqwest::Client::new(),
-            "http://127.0.0.1:1".to_string(),
-            "http://127.0.0.1:1".to_string(),
-        );
+        let notifier: Arc<dyn crate::notification::AlarmNotifier> =
+            Arc::new(crate::broadcast::HttpAlarmNotifier::new(
+                reqwest::Client::new(),
+                "http://127.0.0.1:1".to_string(),
+                "http://127.0.0.1:1".to_string(),
+            ));
         let alarm_store = Arc::new(crate::alarm_rule_mutation::SqliteAlarmRuleMutator::new(
             db.clone(),
-            broadcaster.clone(),
+            Arc::clone(&notifier),
         ));
         let audit: Arc<dyn aether_ports::AuditSink> =
             Arc::new(aether_store_local::MemoryAuditSink::new());
         Arc::new(AppState {
             db: db.clone(),
             live_values: Arc::new(NoLiveValues),
-            broadcaster: crate::broadcast::Broadcaster::new(
-                reqwest::Client::new(),
-                config.api_url.clone(),
-                config.uplink_url.clone(),
-            ),
-            monitor_status: Arc::new(tokio::sync::RwLock::new(MonitorStatus {
+            notifier,
+            monitor_status: Arc::new(tokio::sync::RwLock::new(crate::models::MonitorStatus {
                 running: false,
                 last_check_time: None,
                 check_interval: config.data_fetch_interval,

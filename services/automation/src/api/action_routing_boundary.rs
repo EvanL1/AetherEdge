@@ -8,11 +8,10 @@ use aether_ports::{
     ActionRoute, ActionRouteKey, LogicalRoutingRevision, RevisionedActionRoutingMutation,
 };
 use axum::http::HeaderMap;
-use common::FourRemote;
 use serde_json::{Value, json};
 
+use crate::api::dto::{ActionRoutingFourRemote, ActionRoutingUpsertBody};
 use crate::app_state::AppState;
-use crate::dto::{ActionRoutingFourRemote, ActionRoutingUpsertBody, RoutingRequest};
 use crate::error::AutomationError;
 
 /// Converts a single-point HTTP payload into a typed action-routing mutation.
@@ -33,34 +32,6 @@ pub fn single_point_mutation(
         destination_kind,
         request.channel_point_id,
         request.enabled,
-        expected_revision,
-    )
-}
-
-/// Converts the legacy generic routing payload without permitting it to bypass
-/// the application command.
-pub fn generic_action_mutation(
-    instance_id: u32,
-    request: &RoutingRequest,
-) -> Result<RevisionedActionRoutingMutation, AutomationError> {
-    let expected_revision = revision(request.expected_revision)?;
-    let destination_kind = match request.four_remote {
-        Some(FourRemote::Control) => Some(PointKind::Command),
-        Some(FourRemote::Adjustment) => Some(PointKind::Action),
-        Some(FourRemote::Telemetry | FourRemote::Signal) => {
-            return Err(AutomationError::InvalidRouting(
-                "action routes may target only C or A channel points".to_string(),
-            ));
-        },
-        None => None,
-    };
-    mutation_from_parts(
-        instance_id,
-        request.point_id,
-        request.channel_id,
-        destination_kind,
-        request.channel_point_id,
-        true,
         expected_revision,
     )
 }
@@ -114,7 +85,7 @@ pub async fn apply(
     mutation: RevisionedActionRoutingMutation,
 ) -> Result<ActionRoutingMutationAcceptance, AutomationError> {
     let timestamp = TimestampMs::new(chrono::Utc::now().timestamp_millis().max(0) as u64);
-    let invocation = crate::infra::application_control::command_invocation_from_headers(
+    let invocation = crate::api::http_boundary::command_invocation_from_headers(
         &state.control_authenticator,
         headers,
         confirmed,
@@ -163,7 +134,7 @@ pub fn response_data(
         "operation": acceptance.kind().as_str(),
         "affected_routes": acceptance.affected_routes(),
         "resulting_revision": acceptance.resulting_revision().get(),
-        "audit": crate::infra::application_control::completion_audit_response(
+        "audit": crate::api::http_boundary::completion_audit_response(
             acceptance.completion_audit()
         ),
         "runtime": {

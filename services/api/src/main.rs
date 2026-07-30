@@ -38,6 +38,7 @@ mod middleware_auth;
 mod models;
 #[cfg(feature = "swagger-ui")]
 mod openapi_gateway;
+mod read_models;
 mod routes_auth;
 mod routes_broadcast;
 mod routes_config;

@@ -16,6 +16,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
 use crate::db;
+use crate::notification::{AlarmCountSnapshot, AlarmNotification};
 use crate::state::AppState;
 
 pub async fn run_monitor(state: Arc<AppState>, shutdown: CancellationToken) {
@@ -253,8 +254,8 @@ async fn check_single_rule(state: Arc<AppState>, rule: crate::models::AlertRule)
                         rule.rule_name, current_value, rule.operator, rule.value
                     );
                     state
-                        .broadcaster
-                        .send_alarm_triggered(alert_id, &rule, current_value)
+                        .notifier
+                        .publish_alarm(AlarmNotification::triggered(alert_id, &rule, current_value))
                         .await;
                     send_alarm_count_broadcast(&state).await;
                 },
@@ -275,8 +276,13 @@ async fn check_single_rule(state: Arc<AppState>, rule: crate::models::AlertRule)
                     rule.rule_name, current_value
                 );
                 state
-                    .broadcaster
-                    .send_alarm_recovery(alert.id, &rule, Some(current_value), "条件恢复")
+                    .notifier
+                    .publish_alarm(AlarmNotification::recovered(
+                        alert.id,
+                        &rule,
+                        Some(current_value),
+                        "条件恢复",
+                    ))
                     .await;
                 send_alarm_count_broadcast(&state).await;
             },
@@ -291,13 +297,12 @@ async fn check_single_rule(state: Arc<AppState>, rule: crate::models::AlertRule)
 }
 
 async fn send_alarm_count_broadcast(state: &Arc<AppState>) {
-    send_alarm_count(&state.db, &state.broadcaster).await;
-}
-
-async fn send_alarm_count(pool: &sqlx::SqlitePool, broadcaster: &crate::broadcast::Broadcaster) {
-    match db::get_active_alarm_counts(pool).await {
+    match db::get_active_alarm_counts(&state.db).await {
         Ok(counts) => {
-            broadcaster.send_alarm_count(&counts).await;
+            state
+                .notifier
+                .publish_counts(AlarmCountSnapshot::from(&counts))
+                .await;
         },
         Err(e) => {
             error!("Failed to get alarm counts: {}", e);

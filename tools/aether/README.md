@@ -128,7 +128,8 @@ Docker Compose runtime and fails if that composition is not present.
 | `aether rules update <id> ... --confirmed` | Change rule policy; requires `AETHER_ACCESS_TOKEN` |
 | `aether rules delete <id> --confirmed` | Delete a rule; `--force` only skips the prompt |
 | `aether rules execute <id> --confirmed` | Evaluate a rule and submit selected actions to the local command plane; requires explicit confirmation and `AETHER_ACCESS_TOKEN` |
-| `aether routing action upsert/delete/enable/disable ... --confirmed` | Govern one physical C/A command route; requires `AETHER_ACCESS_TOKEN` |
+| `aether routing measurement upsert/delete/enable/disable ... --expected-revision <REV> --confirmed` | Govern one T/S measurement route; requires `AETHER_ACCESS_TOKEN` |
+| `aether routing action upsert/delete/enable/disable ... --expected-revision <REV> --confirmed` | Govern one physical C/A command route; requires `AETHER_ACCESS_TOKEN` |
 
 The production MCP catalog contains 45 tools: 23 read-only tools are always
 registered, while `aether mcp --allow-write` adds exactly 22 governed writes:

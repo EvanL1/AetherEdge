@@ -29,7 +29,7 @@ use aether_store_local::SqliteAuditSink;
 use async_trait::async_trait;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
-use axum::routing::{get, post};
+use axum::routing::get;
 use http_body_util::BodyExt;
 use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
 use serde::Serialize;
@@ -82,14 +82,21 @@ impl Fixture {
         )
         .expect("model fixture");
         let library = ProductLibrary::load(Some(models.path())).expect("load model fixture");
+        let runtime_topology = Arc::new(
+            aether_automation::infra::runtime_topology::AutomationTopologyHandle::from_sqlite_lazy(
+                models.path().join("live.shm"),
+                models.path().join("health.shm"),
+                &pool,
+                Arc::new(aether_shm_bridge::ShmDeviceCommandSink::new()),
+            )
+            .await
+            .expect("lazy runtime topology"),
+        );
         let manager = Arc::new(InstanceManager::new(
             pool.clone(),
             Arc::new(ProductLoader::with_library(pool.clone(), Arc::new(library))),
+            runtime_topology,
         ));
-        manager
-            .populate_name_cache()
-            .await
-            .expect("initial name cache");
         let audit: Arc<dyn AuditSink> = Arc::new(
             SqliteAuditSink::initialize(pool.clone())
                 .await
@@ -174,7 +181,24 @@ impl Fixture {
             )
             .route(
                 "/api/instances",
-                post(aether_automation::api::instance_management_handlers::create_instance),
+                get(aether_automation::api::instance_query_handlers::list_instances)
+                    .post(aether_automation::api::instance_management_handlers::create_instance),
+            )
+            .route(
+                "/api/instances/list",
+                get(aether_automation::api::instance_query_handlers::list_instances_slim),
+            )
+            .route(
+                "/api/instances/{id}",
+                get(aether_automation::api::instance_query_handlers::get_instance),
+            )
+            .route(
+                "/api/instances/{id}/data",
+                get(aether_automation::api::instance_query_handlers::get_instance_data),
+            )
+            .route(
+                "/api/instances/search",
+                get(aether_automation::api::instance_query_handlers::search_instances),
             )
             .with_state(state)
     }
@@ -187,6 +211,148 @@ fn confirmed_context(request_id: &str) -> RequestContext {
         true,
         TimestampMs::new(1_720_000_000_000),
     )
+}
+
+async fn get_json(router: &axum::Router, uri: &str) -> (StatusCode, serde_json::Value) {
+    let response = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(uri)
+                .body(Body::empty())
+                .expect("query request"),
+        )
+        .await
+        .expect("query response");
+    let status = response.status();
+    let body = serde_json::from_slice(
+        &response
+            .into_body()
+            .collect()
+            .await
+            .expect("query body")
+            .to_bytes(),
+    )
+    .unwrap_or_else(|_| json!({}));
+    (status, body)
+}
+
+#[tokio::test]
+async fn instance_search_is_typed_bounded_and_strict() {
+    let fixture = Fixture::new().await;
+    fixture
+        .create("one", 1, "alpha-one", None, 1)
+        .await
+        .unwrap();
+    fixture
+        .create("two", 2, "alpha-two", None, 2)
+        .await
+        .unwrap();
+    fixture.create("three", 3, "beta", None, 3).await.unwrap();
+    let router = fixture.router();
+
+    let (status, body) = get_json(
+        &router,
+        "/api/instances/search?keyword=alpha&ids=2,3,99&limit=10",
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body.pointer("/data/list/0/instance_id"), Some(&json!(2)));
+    assert_eq!(body.pointer("/data/list/1"), None);
+    assert_eq!(body.pointer("/data/list/0/points"), None);
+    assert_eq!(body.pointer("/data/limit"), Some(&json!(10)));
+
+    for uri in [
+        "/api/instances/search?ids=2,nope",
+        "/api/instances/search?limit=0",
+        "/api/instances/search?limit=201",
+        "/api/instances/search?unknown=value",
+    ] {
+        let (status, _) = get_json(&router, uri).await;
+        assert!(
+            status.is_client_error(),
+            "{uri} must fail closed, got {status}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn instance_lists_are_typed_and_pagination_fails_closed() {
+    let fixture = Fixture::new().await;
+    fixture.create("one", 1, "one", None, 1).await.unwrap();
+    fixture.create("two", 2, "two", None, 2).await.unwrap();
+    fixture.create("three", 3, "three", None, 3).await.unwrap();
+    let router = fixture.router();
+
+    let (status, body) = get_json(
+        &router,
+        "/api/instances?product_name=Fixture&page=2&page_size=1",
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body.pointer("/data/total"), Some(&json!(3)));
+    assert_eq!(body.pointer("/data/page"), Some(&json!(2)));
+    assert_eq!(body.pointer("/data/page_size"), Some(&json!(1)));
+    assert_eq!(body.pointer("/data/list/0/instance_id"), Some(&json!(2)));
+    assert_eq!(body.pointer("/data/list/0/points"), None);
+
+    let (status, body) = get_json(&router, "/api/instances/list").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body.pointer("/data/list/0/id"), Some(&json!(1)));
+    assert_eq!(body.pointer("/data/list/0/name"), Some(&json!("one")));
+
+    for uri in [
+        "/api/instances?page=0",
+        "/api/instances?page_size=0",
+        "/api/instances?page_size=101",
+        "/api/instances?product=Fixture",
+        "/api/instances?unknown=value",
+    ] {
+        let (status, _) = get_json(&router, uri).await;
+        assert!(
+            status.is_client_error(),
+            "{uri} must fail closed, got {status}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn instance_detail_and_live_data_are_typed_and_strict() {
+    let fixture = Fixture::new().await;
+    fixture.create("one", 1, "one", None, 1).await.unwrap();
+    let router = fixture.router();
+
+    let (status, detail) = get_json(&router, "/api/instances/1").await;
+    assert_eq!(status, StatusCode::OK, "{detail}");
+    assert_eq!(
+        detail.pointer("/data/instance/instance_id"),
+        Some(&json!(1))
+    );
+    assert_eq!(
+        detail.pointer("/data/instance/properties/serial"),
+        Some(&json!("one"))
+    );
+
+    let (status, all_data) = get_json(&router, "/api/instances/1/data").await;
+    assert_eq!(status, StatusCode::OK, "{all_data}");
+    assert!(all_data.pointer("/data/measurements").is_some());
+    assert!(all_data.pointer("/data/actions").is_some());
+    assert!(all_data.pointer("/data/properties").is_none());
+
+    let (status, measurements) = get_json(&router, "/api/instances/1/data?type=measurement").await;
+    assert_eq!(status, StatusCode::OK, "{measurements}");
+    assert_eq!(measurements.pointer("/data"), Some(&json!({})));
+
+    for uri in [
+        "/api/instances/1/data?type=property",
+        "/api/instances/1/data?unknown=value",
+    ] {
+        let (status, _) = get_json(&router, uri).await;
+        assert!(
+            status.is_client_error(),
+            "{uri} must fail closed, got {status}"
+        );
+    }
 }
 
 #[tokio::test]
@@ -235,9 +401,6 @@ async fn create_and_atomic_rename_advance_only_instances_revision_and_publish_na
         acceptance.payload(),
         InstanceConfigurationPayload::Updated { instance_name, .. } if instance_name == "after"
     ));
-    assert_eq!(fixture.manager.get_instance_id("after").await.unwrap(), 7);
-    assert!(fixture.manager.get_instance_id("before").await.is_err());
-
     let (instance_name, route_name, property): (String, String, String) = sqlx::query_as(
         "SELECT i.instance_name, r.instance_name, p.value_json FROM instances i \
          JOIN measurement_routing r USING(instance_id) \
@@ -369,7 +532,7 @@ async fn single_property_commands_share_instances_revision_and_preserve_siblings
 }
 
 #[tokio::test]
-async fn committed_revision_is_returned_when_cache_publication_requires_reconciliation() {
+async fn committed_revision_is_returned_when_runtime_publication_requires_reconciliation() {
     let fixture = Fixture::new().await;
     sqlx::query("DROP TABLE action_routing")
         .execute(&fixture.pool)
@@ -402,10 +565,11 @@ async fn committed_revision_is_returned_when_cache_publication_requires_reconcil
     assert_eq!(
         fixture
             .manager
-            .get_instance_id("committed-degraded")
+            .get_instance(7)
             .await
-            .unwrap(),
-        7
+            .unwrap()
+            .instance_name(),
+        "committed-degraded"
     );
 }
 

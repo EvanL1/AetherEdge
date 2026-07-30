@@ -4,6 +4,7 @@
 #![allow(dead_code)]
 
 use aether_application::{Actor, RequestContext};
+use aether_automation::infra::runtime_topology::AutomationTopologyHandle;
 use aether_automation::instance_configuration::{
     InstanceConfigurationApplication, InstanceConfigurationMutation, InstanceConfigurationPayload,
     InstanceConfigurationRevision, initialize_instance_configuration_revision,
@@ -13,6 +14,7 @@ use aether_automation::{AutomationError, InstanceManager};
 use aether_domain::TimestampMs;
 use aether_pack::ProductLibrary;
 use aether_ports::AuditSink;
+use aether_shm_bridge::ShmDeviceCommandSink;
 use anyhow::Result;
 use sqlx::SqlitePool;
 use std::path::Path;
@@ -24,6 +26,20 @@ pub fn energy_product_loader(pool: SqlitePool) -> ProductLoader {
     let directory = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../packs/energy/models");
     let library = ProductLibrary::load(Some(&directory)).expect("load Energy Pack model fixture");
     ProductLoader::with_library(pool, Arc::new(library))
+}
+
+async fn lazy_runtime_topology(pool: &SqlitePool) -> Arc<AutomationTopologyHandle> {
+    let root = std::env::temp_dir().join(format!("aether-automation-{}", uuid::Uuid::new_v4()));
+    Arc::new(
+        AutomationTopologyHandle::from_sqlite_lazy(
+            root.join("live.shm"),
+            root.join("health.shm"),
+            pool,
+            Arc::new(ShmDeviceCommandSink::new()),
+        )
+        .await
+        .expect("compose lazy automation topology"),
+    )
 }
 
 /// Test-only facade that keeps legacy lifecycle suites on the governed online
@@ -45,11 +61,12 @@ impl GovernedInstanceManager {
         .fetch_one(&pool)
         .await
         .expect("current instances revision");
-        let manager = Arc::new(InstanceManager::new(pool, Arc::new(product_loader)));
-        manager
-            .populate_name_cache()
-            .await
-            .expect("initial instance index");
+        let runtime_topology = lazy_runtime_topology(&pool).await;
+        let manager = Arc::new(InstanceManager::new(
+            pool,
+            Arc::new(product_loader),
+            runtime_topology,
+        ));
         let audit: Arc<dyn AuditSink> = Arc::new(aether_store_local::MemoryAuditSink::new());
         let application = InstanceConfigurationApplication::new(Arc::clone(&manager), audit);
         Self {
@@ -172,6 +189,7 @@ impl TestEnv {
 
 async fn init_test_schema(pool: &SqlitePool) -> Result<()> {
     common::test_utils::schema::init_automation_schema(pool).await?;
+    common::test_utils::schema::init_io_schema(pool).await?;
     sqlx::query(
         r#"
         CREATE TABLE IF NOT EXISTS calculations (

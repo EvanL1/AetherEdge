@@ -840,112 +840,54 @@ Usage: aether routing list [OPTIONS]
 aether routing list --instance 9
 ```
 
+The list response includes `logical_routing_revision`. Pass that value to the
+next mutation with `--expected-revision`; after a successful mutation use the
+returned `resulting_revision`. Every mutation also requires
+`AETHER_ACCESS_TOKEN` and `--confirmed`.
+
+### routing measurement
+
+Govern one T/S source for a logical measurement point:
+
+```bash
+AETHER_ACCESS_TOKEN='<signed access JWT>' aether routing measurement upsert \
+  9 101 --channel-id 1001 --channel-type t --channel-point-id 101 \
+  --expected-revision 7 --confirmed
+
+AETHER_ACCESS_TOKEN='<signed access JWT>' aether routing measurement disable \
+  9 101 --expected-revision 8 --confirmed
+
+AETHER_ACCESS_TOKEN='<signed access JWT>' aether routing measurement enable \
+  9 101 --expected-revision 9 --confirmed
+
+AETHER_ACCESS_TOKEN='<signed access JWT>' aether routing measurement delete \
+  9 101 --expected-revision 10 --confirmed
+```
+
 ### routing action
 
-Governed single-route commands for physical C/A destinations. Every operation
-requires `AETHER_ACCESS_TOKEN` and `--confirmed`; changing a route does not
-execute a device command.
+Govern one C/A destination for a logical action point. Changing the route does
+not execute a device command.
 
 ```bash
 AETHER_ACCESS_TOKEN='<signed access JWT>' aether routing action upsert \
-  9 1 --channel-id 1001 --channel-type c --channel-point-id 7 --confirmed
+  9 1 --channel-id 1001 --channel-type c --channel-point-id 7 \
+  --expected-revision 11 --confirmed
 
-AETHER_ACCESS_TOKEN='<signed access JWT>' \
-  aether routing action delete 9 1 --confirmed
+AETHER_ACCESS_TOKEN='<signed access JWT>' aether routing action disable \
+  9 1 --expected-revision 12 --confirmed
 
-AETHER_ACCESS_TOKEN='<signed access JWT>' \
-  aether routing action enable 9 1 --confirmed
+AETHER_ACCESS_TOKEN='<signed access JWT>' aether routing action enable \
+  9 1 --expected-revision 13 --confirmed
 
-AETHER_ACCESS_TOKEN='<signed access JWT>' \
-  aether routing action disable 9 1 --confirmed
+AETHER_ACCESS_TOKEN='<signed access JWT>' aether routing action delete \
+  9 1 --expected-revision 14 --confirmed
 ```
 
-`upsert` accepts `--disabled` to commission a route without activating it.
-The older `routing create --point-type a ... --confirmed` form remains a
-compatibility alias for enabled upsert.
-
-### routing create
-
-Create a single routing entry for an instance.
-
-```
-Usage: aether routing create [OPTIONS] --point-type <POINT_TYPE> --point-id <POINT_ID> --channel-id <CHANNEL_ID> --four-remote <FOUR_REMOTE> --channel-point-id <CHANNEL_POINT_ID> <INSTANCE_ID>
-```
-
-| Flag | Description |
-|------|-------------|
-| `-t, --point-type <POINT_TYPE>` | Point type: `m` (measurement) or `a` (action) |
-| `-p, --point-id <POINT_ID>` | Instance point ID |
-| `--channel-id <CHANNEL_ID>` | Channel ID |
-| `-r, --four-remote <FOUR_REMOTE>` | Four-remote type: `t` (telemetry), `s` (signal), `c` (control), `a` (adjustment) |
-| `-P, --channel-point-id <CHANNEL_POINT_ID>` | Channel point ID |
-| `--confirmed` | Explicitly confirm an action route that changes a physical command target; requires `AETHER_ACCESS_TOKEN` |
-
-```bash
-aether routing create 9 --point-type m --point-id 101 \
-  --channel-id 1001 --four-remote t --channel-point-id 101
-
-AETHER_ACCESS_TOKEN='<signed access JWT>' aether routing create 9 \
-  --point-type a --point-id 1 --channel-id 1001 \
-  --four-remote c --channel-point-id 7 --confirmed
-```
-
-### routing batch
-
-Batch upsert routing from JSON file or stdin.
-
-The compatibility batch accepts measurement entries only. Action entries fail
-closed until a governed batch application command is available; create action
-routes one at a time with `routing create ... --point-type a --confirmed`.
-
-```
-Usage: aether routing batch [OPTIONS] --file <FILE> <INSTANCE_ID>
-```
-
-| Flag | Description |
-|------|-------------|
-| `--file <FILE>` | Path to JSON file with routing entries (use `-` for stdin) |
-
-```bash
-aether routing batch 9 --file routing.json
-```
-
-### routing delete-instance
-
-Delete all routing for an instance. Takes the instance name, not the numeric
-ID.
-
-```
-Usage: aether routing delete-instance [OPTIONS] <INSTANCE_NAME>
-```
-
-| Flag | Description |
-|------|-------------|
-| `-f, --force` | Skip confirmation |
-| `--confirmed` | Confirm deletion of physical action routes; requires `AETHER_ACCESS_TOKEN` |
-
-```bash
-AETHER_ACCESS_TOKEN='<signed access JWT>' \
-  aether routing delete-instance bat-01 --force --confirmed
-```
-
-### routing delete-channel
-
-Delete all routing for a channel.
-
-```
-Usage: aether routing delete-channel [OPTIONS] <CHANNEL_ID>
-```
-
-| Flag | Description |
-|------|-------------|
-| `-f, --force` | Skip confirmation |
-| `--confirmed` | Confirm deletion of physical action routes; requires `AETHER_ACCESS_TOKEN` |
-
-```bash
-AETHER_ACCESS_TOKEN='<signed access JWT>' \
-  aether routing delete-channel 1001 --force --confirmed
-```
+Both `upsert` commands accept `--disabled` to commission a route without
+activating it. Routing mutations are intentionally single-route operations:
+there is no generic batch or mixed measurement/action delete command because
+those operations cannot provide one unambiguous revision-fenced transaction.
 
 ## aether services
 

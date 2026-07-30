@@ -1,6 +1,5 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use utoipa::ToSchema;
 
 use crate::trace_context::{self, TraceParent};
 
@@ -20,6 +19,42 @@ pub struct PropertyEntry {
     pub data_type: String,
     /// Point-id → current SHM value mapping.
     pub value: HashMap<String, serde_json::Value>,
+}
+
+/// Gateway metrics on the MQTT property wire.
+#[derive(Serialize)]
+pub struct SystemMetricsPayload {
+    pub cpu_usage_percent: f32,
+    pub memory_total_gb: f64,
+    pub memory_used_gb: f64,
+    pub memory_available_gb: f64,
+    pub memory_usage_percent: f64,
+    pub disk_total_gb: f64,
+    pub disk_used_gb: f64,
+    pub disk_free_gb: f64,
+    pub disk_usage_percent: f64,
+    pub network_bytes_sent: u64,
+    pub network_bytes_recv: u64,
+    pub system_uptime_hours: f64,
+}
+
+impl From<crate::system_monitor::SystemMetricsSnapshot> for SystemMetricsPayload {
+    fn from(value: crate::system_monitor::SystemMetricsSnapshot) -> Self {
+        Self {
+            cpu_usage_percent: value.cpu_usage_percent,
+            memory_total_gb: value.memory_total_gb,
+            memory_used_gb: value.memory_used_gb,
+            memory_available_gb: value.memory_available_gb,
+            memory_usage_percent: value.memory_usage_percent,
+            disk_total_gb: value.disk_total_gb,
+            disk_used_gb: value.disk_used_gb,
+            disk_free_gb: value.disk_free_gb,
+            disk_usage_percent: value.disk_usage_percent,
+            network_bytes_sent: value.network_bytes_sent,
+            network_bytes_recv: value.network_bytes_recv,
+            system_uptime_hours: value.system_uptime_hours,
+        }
+    }
 }
 
 /// Uploaded to `status/{productSN}/{deviceSN}`.
@@ -146,249 +181,6 @@ pub struct CommandReply {
     pub traceparent: Option<TraceParent>,
 }
 
-// ── Dynamic service configuration ────────────────────────────────────────────
-
-fn always_omit_mqtt_password(_: &Option<String>) -> bool {
-    true
-}
-
-/// MQTT gateway service configuration (`POST /netApi/mqtt/config`).
-///
-/// Changes take effect immediately — uplink reconnects to the broker without
-/// requiring a service restart.
-#[derive(Clone, Serialize, Deserialize, ToSchema)]
-#[schema(example = json!({
-    "product_sn": "AetherHub",
-    "device_sn": "auto",
-    "broker_host": "mqtt.example.com",
-    "broker_port": 8883,
-    "broker_keepalive_secs": 120,
-    "client_id": "auto",
-    "username": null,
-    "password": null,
-    "ssl_enabled": false,
-    "reconnect_delay_secs": 10,
-    "reconnect_max_attempts": 50,
-    "report_interval_secs": 50,
-    "report_batch_size": 50,
-    "system_monitor_enabled": true,
-    "system_monitor_interval_secs": 10,
-    "telemetry_enabled": false,
-    "telemetry_interval_secs": 30,
-    "subscribe_patterns": ["inst:*:M", "inst:*:A"],
-    "exclude_patterns": [],
-    "alarm_url": "http://localhost:6007",
-    "automation_url": "http://localhost:6002"
-}))]
-pub struct NetConfig {
-    // -- Device identity --
-    /// Product serial number, used to construct MQTT topic prefixes such as
-    /// `status/{product_sn}/{device_sn}`.
-    #[schema(example = "AetherHub")]
-    pub product_sn: String,
-
-    /// Device serial number. Set to `"auto"` to read from hardware (tried in
-    /// order: `/proc/device-tree/serial-number`, env var `DEVICE_SN`, hostname).
-    #[schema(example = "auto")]
-    pub device_sn: String,
-
-    // -- MQTT broker --
-    /// MQTT broker host address (IP or hostname).
-    #[schema(example = "mqtt.example.com")]
-    pub broker_host: String,
-
-    /// MQTT broker port. Typically 8883 for TLS, 1883 for plain-text.
-    #[schema(example = 8883, minimum = 1, maximum = 65535)]
-    pub broker_port: u16,
-
-    /// MQTT keep-alive interval in seconds. The connection is re-established if
-    /// no heartbeat is received within this period.
-    #[schema(example = 120, minimum = 5)]
-    pub broker_keepalive_secs: u64,
-
-    /// MQTT client ID. Set to `"auto"` to use the resolved `device_sn`.
-    #[schema(example = "auto")]
-    pub client_id: String,
-
-    // -- Auth --
-    /// MQTT username (optional). Omit or set to null to connect without credentials.
-    #[schema(example = json!(null))]
-    #[serde(default)]
-    pub username: Option<String>,
-
-    /// MQTT password (optional). Used together with `username`. Omit or send
-    /// `null` on update to retain the stored secret; send an empty string to
-    /// clear it. The value is never returned by read APIs.
-    #[schema(write_only, example = json!(null))]
-    #[serde(default, skip_serializing_if = "always_omit_mqtt_password")]
-    pub password: Option<String>,
-
-    // -- TLS --
-    /// Enable TLS/SSL encrypted connection. The certificate directory is fixed
-    /// at `/app/config/cert` inside the container (override with `CERT_DIR` env
-    /// var); it is bind-mounted from the host at startup and cannot be changed
-    /// via this API.
-    #[schema(example = false)]
-    pub ssl_enabled: bool,
-
-    // -- Reconnect --
-    /// Seconds to wait before attempting a reconnect after a disconnect.
-    #[schema(example = 10, minimum = 1)]
-    pub reconnect_delay_secs: u64,
-
-    /// Maximum number of reconnect attempts before giving up. Reconnection
-    /// resumes only after a manual trigger.
-    #[schema(example = 50, minimum = 1)]
-    pub reconnect_max_attempts: u32,
-
-    // -- Data forwarding --
-    /// Telemetry reporting interval in seconds. SHM data is batch-published to
-    /// MQTT at this cadence.
-    #[schema(example = 50, minimum = 1)]
-    pub report_interval_secs: u64,
-
-    /// Maximum number of data points per reporting batch. Excess points are
-    /// deferred to the next interval.
-    #[schema(example = 50, minimum = 1)]
-    pub report_batch_size: usize,
-
-    // -- System monitor --
-    /// Enable periodic system resource monitoring (CPU, memory, disk, network)
-    /// published via MQTT.
-    #[schema(example = true)]
-    pub system_monitor_enabled: bool,
-
-    /// System resource sampling interval in seconds.
-    #[schema(example = 10, minimum = 1)]
-    pub system_monitor_interval_secs: u64,
-
-    // -- Ops telemetry (ADR-0016) --
-    /// Publish acquisition-path telemetry (per-channel connectivity) to the
-    /// `telemetry` topic. Carries no point values.
-    ///
-    /// Off by default, and deliberately so. `telemetry/{productSN}/{deviceSN}`
-    /// is a topic no fielded broker policy grants yet, and a broker that
-    /// answers an unauthorised PUBLISH by closing the connection — AWS IoT Core
-    /// does — would turn this into a reconnect loop that takes property and
-    /// alarm egress down with it. Enable only once the broker policy allows the
-    /// topic. Observability must not become an availability dependency.
-    #[serde(default)]
-    #[schema(example = false)]
-    pub telemetry_enabled: bool,
-
-    /// Telemetry sampling interval in seconds.
-    #[serde(default = "default_telemetry_interval_secs")]
-    #[schema(example = 30, minimum = 1)]
-    pub telemetry_interval_secs: u64,
-
-    // -- Live-state source --
-    /// Logical group subscription patterns using `*` and `?` glob wildcards.
-    ///
-    /// Only SQLite-discovered groups matching at least one pattern are sampled.
-    /// Example: `inst:*:M` matches all instance measurement groups.
-    #[schema(example = json!(["inst:*:M", "inst:*:A"]))]
-    pub subscribe_patterns: Vec<String>,
-
-    /// Exclusion patterns (**regular-expression syntax**, unlike the glob patterns above).
-    ///
-    /// Any key matching at least one pattern is excluded from reporting. Example:
-    /// `["^inst:0:"]` excludes all keys for channel 0.
-    #[schema(example = json!([]))]
-    pub exclude_patterns: Vec<String>,
-
-    // -- Service URLs --
-    /// alarm base URL, used for reverse alarm-broadcast notifications.
-    #[schema(example = "http://localhost:6007")]
-    pub alarm_url: String,
-
-    /// automation 服务地址，用于设备同步查询
-    #[schema(example = "http://localhost:6002")]
-    pub automation_url: String,
-}
-
-impl std::fmt::Debug for NetConfig {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter
-            .debug_struct("NetConfig")
-            .field("product_sn", &self.product_sn)
-            .field("device_sn", &self.device_sn)
-            .field("broker_host", &self.broker_host)
-            .field("broker_port", &self.broker_port)
-            .field("broker_keepalive_secs", &self.broker_keepalive_secs)
-            .field("client_id", &self.client_id)
-            .field("username", &self.username)
-            .field("password", &self.password.as_ref().map(|_| "[REDACTED]"))
-            .field("ssl_enabled", &self.ssl_enabled)
-            .field("reconnect_delay_secs", &self.reconnect_delay_secs)
-            .field("reconnect_max_attempts", &self.reconnect_max_attempts)
-            .field("report_interval_secs", &self.report_interval_secs)
-            .field("report_batch_size", &self.report_batch_size)
-            .field("system_monitor_enabled", &self.system_monitor_enabled)
-            .field(
-                "system_monitor_interval_secs",
-                &self.system_monitor_interval_secs,
-            )
-            .field("telemetry_enabled", &self.telemetry_enabled)
-            .field("telemetry_interval_secs", &self.telemetry_interval_secs)
-            .field("subscribe_patterns", &self.subscribe_patterns)
-            .field("exclude_patterns", &self.exclude_patterns)
-            .field("alarm_url", &self.alarm_url)
-            .field("automation_url", &self.automation_url)
-            .finish()
-    }
-}
-
-impl Default for NetConfig {
-    fn default() -> Self {
-        Self {
-            product_sn: "AetherHub".to_string(),
-            device_sn: "auto".to_string(),
-            broker_host: "localhost".to_string(),
-            broker_port: 8883,
-            broker_keepalive_secs: 120,
-            client_id: "auto".to_string(),
-            username: None,
-            password: None,
-            ssl_enabled: false,
-            reconnect_delay_secs: 10,
-            reconnect_max_attempts: 50,
-            report_interval_secs: 50,
-            report_batch_size: 50,
-            system_monitor_enabled: true,
-            system_monitor_interval_secs: 10,
-            telemetry_enabled: false,
-            telemetry_interval_secs: default_telemetry_interval_secs(),
-            subscribe_patterns: vec!["inst:*:M".to_string(), "inst:*:A".to_string()],
-            exclude_patterns: vec![],
-            alarm_url: "http://localhost:6007".to_string(),
-            automation_url: "http://localhost:6002".to_string(),
-        }
-    }
-}
-
-const fn default_telemetry_interval_secs() -> u64 {
-    30
-}
-
-impl NetConfig {
-    pub fn normalize(&mut self) {
-        self.broker_port = self.broker_port.max(1);
-        self.broker_keepalive_secs = self.broker_keepalive_secs.max(1);
-        self.reconnect_delay_secs = self.reconnect_delay_secs.max(1);
-        self.reconnect_max_attempts = self.reconnect_max_attempts.max(1);
-        self.report_interval_secs = self.report_interval_secs.max(1);
-        self.report_batch_size = self.report_batch_size.max(1);
-        self.system_monitor_interval_secs = self.system_monitor_interval_secs.max(1);
-        self.telemetry_interval_secs = self.telemetry_interval_secs.max(1);
-    }
-
-    pub fn preserve_write_only_secrets_from(&mut self, current: &Self) {
-        if self.password.is_none() {
-            self.password.clone_from(&current.password);
-        }
-    }
-}
-
 /// Trace-context propagation across the cloud↔gateway envelope (ADR-0016).
 ///
 /// Every assertion here is a compatibility claim about a wire format that is
@@ -471,127 +263,4 @@ mod envelope_tests {
         assert_eq!(request.traceparent, None);
         assert_eq!(request.field, "setpoint");
     }
-}
-
-#[cfg(test)]
-mod config_tests {
-    use super::*;
-
-    #[test]
-    fn normalize_clamps_zero_runtime_values() {
-        let mut cfg = NetConfig {
-            broker_port: 0,
-            broker_keepalive_secs: 0,
-            reconnect_delay_secs: 0,
-            reconnect_max_attempts: 0,
-            report_interval_secs: 0,
-            report_batch_size: 0,
-            system_monitor_interval_secs: 0,
-            telemetry_interval_secs: 0,
-            ..NetConfig::default()
-        };
-
-        cfg.normalize();
-
-        assert_eq!(cfg.broker_port, 1);
-        assert_eq!(cfg.broker_keepalive_secs, 1);
-        assert_eq!(cfg.reconnect_delay_secs, 1);
-        assert_eq!(cfg.reconnect_max_attempts, 1);
-        assert_eq!(cfg.report_interval_secs, 1);
-        assert_eq!(cfg.report_batch_size, 1);
-        assert_eq!(cfg.system_monitor_interval_secs, 1);
-        assert_eq!(cfg.telemetry_interval_secs, 1);
-    }
-
-    #[test]
-    fn mqtt_password_is_accepted_but_never_serialized() {
-        let mut input =
-            serde_json::to_value(NetConfig::default()).expect("serialize default config");
-        input["password"] = serde_json::json!("private-broker-secret");
-        let config: NetConfig = serde_json::from_value(input).expect("deserialize MQTT password");
-        assert_eq!(config.password.as_deref(), Some("private-broker-secret"));
-
-        let serialized = serde_json::to_value(&config).expect("serialize redacted config");
-        assert!(
-            serialized.get("password").is_none(),
-            "MQTT password must never appear in API serialization"
-        );
-        let debug = format!("{config:?}");
-        assert!(!debug.contains("private-broker-secret"));
-        assert!(debug.contains("[REDACTED]"));
-    }
-
-    #[test]
-    fn omitted_password_is_preserved_and_empty_password_clears_it() {
-        let current = NetConfig {
-            password: Some("private-broker-secret".to_string()),
-            ..NetConfig::default()
-        };
-
-        let mut omitted = NetConfig::default();
-        omitted.preserve_write_only_secrets_from(&current);
-        assert_eq!(omitted.password, current.password);
-
-        let mut explicit_clear = NetConfig {
-            password: Some(String::new()),
-            ..NetConfig::default()
-        };
-        explicit_clear.preserve_write_only_secrets_from(&current);
-        assert_eq!(explicit_clear.password.as_deref(), Some(""));
-    }
-}
-
-// ── HTTP API models ───────────────────────────────────────────────────────────
-
-/// Alarm broadcast request body (arbitrary JSON object forwarded as-is to the MQTT alarm topic).
-#[derive(Debug, Deserialize, ToSchema)]
-pub struct AlarmBroadcastRequest(pub serde_json::Value);
-
-/// TLS certificate upload form (`POST /netApi/certificate/upload`, multipart/form-data).
-///
-/// Upload one certificate file per request. Use `cert_type` to specify the
-/// certificate role; the original filename is ignored.
-#[allow(dead_code)]
-#[derive(ToSchema)]
-pub struct CertUploadForm {
-    /// Certificate type. Accepted values: `ca_cert` | `client_cert` | `client_key`.
-    #[schema(example = "ca_cert")]
-    pub cert_type: String,
-
-    /// Certificate file. Supported formats: .pem .crt .key .cer .p12 .pfx. Maximum 1 MB.
-    #[schema(format = Binary, value_type = String)]
-    pub file: String,
-}
-
-/// System resource snapshot.
-#[derive(Debug, Serialize, ToSchema)]
-pub struct SystemMetrics {
-    pub cpu_usage_percent: f32,
-    pub memory_total_gb: f64,
-    pub memory_used_gb: f64,
-    pub memory_available_gb: f64,
-    pub memory_usage_percent: f64,
-    pub disk_total_gb: f64,
-    pub disk_used_gb: f64,
-    pub disk_free_gb: f64,
-    pub disk_usage_percent: f64,
-    pub network_bytes_sent: u64,
-    pub network_bytes_recv: u64,
-    pub system_uptime_hours: f64,
-}
-
-#[allow(dead_code)] // OpenAPI-only compatibility schema.
-#[derive(Debug, ToSchema)]
-pub struct UplinkDataResponse<T> {
-    pub success: bool,
-    pub message: String,
-    pub data: T,
-}
-
-#[allow(dead_code)] // OpenAPI-only compatibility schema.
-#[derive(Debug, ToSchema)]
-pub struct AlarmQueuedResponse {
-    pub success: bool,
-    pub message: String,
-    pub outbox_id: u64,
 }

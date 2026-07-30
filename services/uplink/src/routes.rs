@@ -13,10 +13,11 @@ use tracing::error;
 #[cfg(feature = "openapi")]
 use utoipa::OpenApi;
 
+use crate::api::dto::{
+    AlarmBroadcastRequest, AlarmQueuedResponse, CertUploadForm, NetConfig, NetConfigView,
+    UplinkDataResponse,
+};
 use crate::db_config;
-#[cfg(feature = "openapi")]
-use crate::models::SystemMetrics;
-use crate::models::{AlarmBroadcastRequest, CertUploadForm, NetConfig};
 use crate::mqtt::do_inst_sync;
 use crate::state::AppState;
 use crate::uplink::enqueue_json;
@@ -90,11 +91,11 @@ async fn openapi_document() -> Json<utoipa::openapi::OpenApi> {
     ),
     components(schemas(
         NetConfig,
+        NetConfigView,
         AlarmBroadcastRequest,
         CertUploadForm,
-        SystemMetrics,
-        crate::models::UplinkDataResponse<NetConfig>,
-        crate::models::AlarmQueuedResponse,
+        UplinkDataResponse<NetConfigView>,
+        AlarmQueuedResponse,
         common::admin_api::SetLogLevelRequest,
         common::admin_api::LogLevelResponse,
     )),
@@ -260,7 +261,7 @@ async fn health(State(state): State<Arc<AppState>>) -> Json<Value> {
 #[utoipa::path(post, path = "/netApi/alarm/broadcast", tag = "Alarm",
     request_body = AlarmBroadcastRequest,
     responses(
-        (status = 200, description = "Alarm durably queued in the local outbox", body = crate::models::AlarmQueuedResponse),
+        (status = 200, description = "Alarm durably queued in the local outbox", body = AlarmQueuedResponse),
         (status = 503, description = "The local durable outbox is full or unavailable"),
     ))]
 async fn alarm_broadcast(
@@ -316,10 +317,11 @@ async fn alarm_config(State(state): State<Arc<AppState>>) -> Json<Value> {
 /// is managed through `/netApi/certificate/*`; topics are derived from device
 /// identity. To update connection settings use `POST /netApi/mqtt/config`.
 #[utoipa::path(get, path = "/netApi/mqtt/config", tag = "MQTT",
-    responses((status = 200, description = "Current MQTT configuration with password omitted", body = crate::models::UplinkDataResponse<NetConfig>)))]
+    responses((status = 200, description = "Current MQTT configuration with password omitted", body = UplinkDataResponse<NetConfigView>)))]
 async fn mqtt_get_config(State(state): State<Arc<AppState>>) -> Json<Value> {
-    let cfg = state.config.read().await.clone();
-    Json(json!({ "success": true, "message": "OK", "data": cfg }))
+    let cfg = state.config.read().await;
+    let view = NetConfigView::from(&*cfg);
+    Json(json!({ "success": true, "message": "OK", "data": view }))
 }
 
 /// Update MQTT configuration and immediately trigger a reconnect — no service restart needed.
@@ -339,12 +341,12 @@ async fn mqtt_get_config(State(state): State<Arc<AppState>>) -> Json<Value> {
     ))]
 async fn mqtt_update_config(
     State(state): State<Arc<AppState>>,
-    Json(mut new_cfg): Json<NetConfig>,
+    Json(request): Json<NetConfig>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    let current_cfg = state.config.read().await.clone();
-    new_cfg.preserve_write_only_secrets_from(&current_cfg);
-    // Without this the in-memory copy bypasses load_config() and chunks(0) can panic.
-    new_cfg.normalize();
+    let new_cfg = {
+        let current_cfg = state.config.read().await;
+        request.into_runtime(&current_cfg)
+    };
     if let Err(e) = db_config::save_config(&state.sqlite, &new_cfg).await {
         error!("Save config failed: {}", e);
         return Err((

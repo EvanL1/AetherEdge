@@ -11,7 +11,7 @@ use sqlx::{PgPool, Row};
 use tracing::{info, warn};
 
 use crate::backend_pg::PostgresBackend;
-use crate::models::{DataPoint, DataStats, HistoryRecord, QueryRangeParams, SeriesResult};
+use crate::models::{DataPoint, DataStats, HistoryRangeQuery, HistoryRecord, SeriesResult};
 use crate::storage::StorageBackend;
 
 pub struct TimescaleDbBackend {
@@ -115,19 +115,9 @@ impl StorageBackend for TimescaleDbBackend {
 
     async fn query_range(
         &self,
-        params: &QueryRangeParams,
-        default_page_size: i64,
-        max_page_size: i64,
-        max_time_range_days: i64,
+        query: &HistoryRangeQuery,
     ) -> anyhow::Result<(Vec<HistoryRecord>, i64)> {
-        self.inner
-            .query_range(
-                params,
-                default_page_size,
-                max_page_size,
-                max_time_range_days,
-            )
-            .await
+        self.inner.query_range(query).await
     }
 
     async fn query_latest(

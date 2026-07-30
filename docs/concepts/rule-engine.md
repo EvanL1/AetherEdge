@@ -38,7 +38,7 @@ table must go through the same function:
 
 - `repository::upsert_rule` in `libs/aether-rules/src/repository.rs` (used by
   rule import)
-- the `PUT /api/rules/{id}` handler in `services/automation/src/rule_routes.rs`
+- the `PUT /api/rules/{id}` handler in `services/automation/src/api/rule_routes.rs`
 - the config syncer in `tools/aether/src/core/syncer.rs` (`aether sync`)
 
 One nuance: `POST /api/rules` creates a metadata-only stub — an empty `{}`

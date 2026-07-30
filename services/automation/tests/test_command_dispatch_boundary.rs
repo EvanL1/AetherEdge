@@ -45,7 +45,11 @@ impl DeviceCommandSink for RecordingDeviceSink {
 
 async fn application(
     directory: &tempfile::TempDir,
-) -> (ControlApplication, Arc<RecordingDeviceSink>) {
+) -> (
+    ControlApplication,
+    Arc<RecordingDeviceSink>,
+    sqlx::SqlitePool,
+) {
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(1)
         .connect("sqlite::memory:")
@@ -88,11 +92,6 @@ async fn application(
     .await
     .expect("logical action route");
 
-    let manager = Arc::new(InstanceManager::new(
-        pool.clone(),
-        Arc::new(ProductLoader::new(pool.clone())),
-    ));
-
     let snapshot = aether_sqlite_topology::load_sqlite_live_topology(&pool)
         .await
         .expect("coherent topology snapshot");
@@ -127,20 +126,24 @@ async fn application(
         .expect("automation topology"),
     );
     topology.refresh(&pool).await.expect("topology refresh");
-    manager
-        .set_runtime_topology(topology)
-        .expect("install runtime topology");
+    let manager = Arc::new(InstanceManager::new(
+        pool.clone(),
+        Arc::new(ProductLoader::new(pool.clone())),
+        topology,
+    ));
 
     let sink = Arc::new(RecordingDeviceSink::default());
     let dispatcher: Arc<dyn CommandDispatcher> = Arc::new(AutomationCommandDispatcher::new(
         Arc::clone(&manager),
         Arc::clone(&sink) as Arc<dyn DeviceCommandSink>,
     ));
-    let audit = Arc::new(SqliteAuditSink::initialize(pool).await.expect("audit sink"));
-    (
-        ControlApplication::new(dispatcher, audit, SafetyPolicy),
-        sink,
-    )
+    let audit = Arc::new(
+        SqliteAuditSink::initialize(pool.clone())
+            .await
+            .expect("audit sink"),
+    );
+    let application = ControlApplication::new(dispatcher, audit, SafetyPolicy);
+    (application, sink, pool)
 }
 
 fn context() -> RequestContext {
@@ -164,7 +167,7 @@ fn logical_action(value: f64) -> (CommandId, PointAddress, f64) {
 #[tokio::test]
 async fn real_control_application_routes_and_limits_before_the_physical_sink() {
     let directory = tempfile::tempdir().expect("temporary directory");
-    let (application, sink) = application(&directory).await;
+    let (application, sink, _pool) = application(&directory).await;
     let (id, target, value) = logical_action(42.0);
 
     let receipt = application
@@ -190,13 +193,35 @@ async fn real_control_application_routes_and_limits_before_the_physical_sink() {
 #[tokio::test]
 async fn configured_limits_reject_before_the_physical_sink() {
     let directory = tempfile::tempdir().expect("temporary directory");
-    let (application, sink) = application(&directory).await;
+    let (application, sink, _pool) = application(&directory).await;
     let (id, target, value) = logical_action(101.0);
 
     let error = application
         .write_point(&context(), id, target, value)
         .await
         .expect_err("out-of-range command must fail");
+
+    assert!(error.to_string().contains("outside the allowed range"));
+    assert!(sink.commands().is_empty());
+}
+
+#[tokio::test]
+async fn unpublished_sqlite_limits_cannot_cross_the_pinned_runtime_generation() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let (application, sink, pool) = application(&directory).await;
+    sqlx::query(
+        "UPDATE adjustment_points SET max_value = 200.0 \
+         WHERE channel_id = 2 AND point_id = 5",
+    )
+    .execute(&pool)
+    .await
+    .expect("change only persisted limits");
+    let (id, target, _) = logical_action(101.0);
+
+    let error = application
+        .write_point(&context(), id, target, 101.0)
+        .await
+        .expect_err("unpublished constraints must not enter the command decision");
 
     assert!(error.to_string().contains("outside the allowed range"));
     assert!(sink.commands().is_empty());

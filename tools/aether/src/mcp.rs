@@ -688,6 +688,9 @@ struct RoutingActionUpsertParams {
     /// Whether the new route participates in command dispatch.
     #[serde(default = "default_routing_enabled")]
     enabled: bool,
+    /// Current shared logical-routing revision from the latest routing query.
+    #[schemars(range(min = 1))]
+    expected_revision: u64,
     /// Explicitly confirms this high-risk physical topology change.
     confirmed: bool,
 }
@@ -702,6 +705,9 @@ struct RoutingActionDeleteParams {
     instance_id: u32,
     /// Logical action-point ID within the instance model.
     action_point_id: u32,
+    /// Current shared logical-routing revision from the latest routing query.
+    #[schemars(range(min = 1))]
+    expected_revision: u64,
     /// Explicitly confirms this high-risk physical topology change.
     confirmed: bool,
 }
@@ -714,6 +720,9 @@ struct RoutingActionSetEnabledParams {
     action_point_id: u32,
     /// Whether the route participates in command dispatch.
     enabled: bool,
+    /// Current shared logical-routing revision from the latest routing query.
+    #[schemars(range(min = 1))]
+    expected_revision: u64,
     /// Explicitly confirms this high-risk physical topology change.
     confirmed: bool,
 }
@@ -994,10 +1003,13 @@ impl AetherMcp {
                 .upsert_action_route(
                     p.instance_id,
                     p.action_point_id,
-                    p.channel_id,
-                    &p.channel_type,
-                    p.channel_point_id,
-                    p.enabled,
+                    crate::routing::RoutingTarget {
+                        channel_id: p.channel_id,
+                        channel_type: &p.channel_type,
+                        channel_point_id: p.channel_point_id,
+                        enabled: p.enabled,
+                    },
+                    p.expected_revision,
                     p.confirmed,
                 )
                 .await,
@@ -1014,7 +1026,12 @@ impl AetherMcp {
     ) -> CallToolResult {
         to_call_result(
             self.routing
-                .delete_action_route(p.instance_id, p.action_point_id, p.confirmed)
+                .delete_action_route(
+                    p.instance_id,
+                    p.action_point_id,
+                    p.expected_revision,
+                    p.confirmed,
+                )
                 .await,
         )
     }
@@ -1029,7 +1046,13 @@ impl AetherMcp {
     ) -> CallToolResult {
         to_call_result(
             self.routing
-                .set_action_route_enabled(p.instance_id, p.action_point_id, p.enabled, p.confirmed)
+                .set_action_route_enabled(
+                    p.instance_id,
+                    p.action_point_id,
+                    p.enabled,
+                    p.expected_revision,
+                    p.confirmed,
+                )
                 .await,
         )
     }
@@ -2049,15 +2072,14 @@ mod tests {
     }
 
     // NOTE: `ModelClient::list_instances` GETs bare `/api/instances` with an
-    // optional `?product=` query string -- there's no `/list` suffix (unlike
-    // `channels_list`'s neighboring io route, this one really doesn't
-    // have it).
+    // optional canonical `?product_name=` query string. There is no `/list`
+    // suffix for the full model response.
     #[tokio::test]
     async fn models_instances_forwards_the_product_filter() {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
             .and(path("/api/instances"))
-            .and(query_param("product", "ESS"))
+            .and(query_param("product_name", "ESS"))
             .respond_with(
                 ResponseTemplate::new(200).set_body_json(serde_json::json!({ "instances": [] })),
             )
@@ -2913,6 +2935,7 @@ mod tests {
                 "four_remote": "A",
                 "channel_point_id": 5,
                 "enabled": true,
+                "expected_revision": 9,
                 "confirmed": true
             })))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
@@ -2929,6 +2952,7 @@ mod tests {
                 channel_type: "A".to_string(),
                 channel_point_id: 5,
                 enabled: true,
+                expected_revision: 9,
                 confirmed: true,
             }))
             .await;
@@ -2944,6 +2968,7 @@ mod tests {
             .routing_action_delete(Parameters(RoutingActionDeleteParams {
                 instance_id: 7,
                 action_point_id: 1,
+                expected_revision: 9,
                 confirmed: false,
             }))
             .await;
@@ -2960,6 +2985,7 @@ mod tests {
             .and(header_exists("x-request-id"))
             .and(body_json(serde_json::json!({
                 "enabled": false,
+                "expected_revision": 9,
                 "confirmed": true
             })))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
@@ -2973,6 +2999,7 @@ mod tests {
                 instance_id: 7,
                 action_point_id: 1,
                 enabled: false,
+                expected_revision: 9,
                 confirmed: true,
             }))
             .await;
@@ -3104,10 +3131,13 @@ mod tests {
     }
 
     #[test]
-    fn channel_mutation_mcp_schemas_require_expected_revision() {
+    fn cas_mutation_mcp_schemas_require_expected_revision() {
         for schema in [
             serde_json::to_value(schemars::schema_for!(ChannelsUpdateParams)).unwrap(),
             serde_json::to_value(schemars::schema_for!(ChannelMutationIdParams)).unwrap(),
+            serde_json::to_value(schemars::schema_for!(RoutingActionUpsertParams)).unwrap(),
+            serde_json::to_value(schemars::schema_for!(RoutingActionDeleteParams)).unwrap(),
+            serde_json::to_value(schemars::schema_for!(RoutingActionSetEnabledParams)).unwrap(),
         ] {
             let required = schema["required"]
                 .as_array()

@@ -11,7 +11,7 @@ use crate::auth::create_access_token;
 use crate::config::GatewayConfig;
 use crate::db;
 use crate::live_values::GatewayValueSource;
-use crate::models::{RoleInfo, UserWithRole};
+use crate::read_models::{RoleProfile, UserProfile};
 use crate::state::AppState;
 use crate::ws::WsHub;
 
@@ -89,14 +89,14 @@ pub(crate) fn authorization_headers(role_name: &str) -> HeaderMap {
         "Engineer" => 2,
         _ => 3,
     };
-    let user = UserWithRole {
+    let user = UserProfile {
         id: i64::from(role_id),
         username: format!("{}-test-user", role_name.to_lowercase()),
         is_active: true,
         last_login: None,
         created_at: None,
         updated_at: None,
-        role: RoleInfo {
+        role: RoleProfile {
             id: i64::from(role_id),
             name_en: role_name.to_owned(),
             name_zh: role_name.to_owned(),

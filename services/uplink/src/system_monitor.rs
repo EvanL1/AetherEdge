@@ -2,9 +2,22 @@
 use sysinfo::{Disks, Networks, System};
 use tracing::warn;
 
-use crate::models::SystemMetrics;
+pub struct SystemMetricsSnapshot {
+    pub cpu_usage_percent: f32,
+    pub memory_total_gb: f64,
+    pub memory_used_gb: f64,
+    pub memory_available_gb: f64,
+    pub memory_usage_percent: f64,
+    pub disk_total_gb: f64,
+    pub disk_used_gb: f64,
+    pub disk_free_gb: f64,
+    pub disk_usage_percent: f64,
+    pub network_bytes_sent: u64,
+    pub network_bytes_recv: u64,
+    pub system_uptime_hours: f64,
+}
 
-pub fn collect() -> SystemMetrics {
+pub fn collect() -> SystemMetricsSnapshot {
     let mut sys = System::new_all();
     sys.refresh_all();
 
@@ -24,7 +37,7 @@ pub fn collect() -> SystemMetrics {
 
     let uptime_hours = System::uptime() as f64 / 3600.0;
 
-    SystemMetrics {
+    SystemMetricsSnapshot {
         cpu_usage_percent: cpu,
         memory_total_gb: mem_total as f64 / 1024.0 / 1024.0 / 1024.0,
         memory_used_gb: mem_used as f64 / 1024.0 / 1024.0 / 1024.0,

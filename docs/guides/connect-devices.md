@@ -158,15 +158,19 @@ The bridge is an instance plus routing:
    to an instance point: telemetry and signal points feed instance
    measurement points (M, the `route:c2m` table), and instance action
    points (A) drive channel control and adjustment points (`route:m2c`). Entries can
-   be created through the CLI:
+   be created through the authenticated CLI. Read the current
+   `logical_routing_revision` with `aether routing list`, then submit one
+   revision-fenced route:
 
    ```bash
-   aether routing create 1 --point-type M --point-id 9 \
-     --channel-id 1 --four-remote T --channel-point-id 101
+   AETHER_ACCESS_TOKEN='<signed access JWT>' \
+     aether routing measurement upsert 1 9 \
+       --channel-id 1 --channel-type T --channel-point-id 101 \
+       --expected-revision 7 --confirmed
    ```
 
-   which submits the governed routing command through `aether-api`, or in bulk
-   with `aether routing batch`.
+   This submits one governed routing command through `aether-api`. Successful
+   responses return the revision required by the next mutation.
 
 3. **Run `aether sync`** if the instance or routing was authored in YAML.
    Sync validates the configuration and writes it into SQLite, where the

@@ -15,10 +15,10 @@ use serde_json::json;
 use std::sync::Arc;
 use tracing::{error, info};
 
-use crate::app_state::AppState;
-use crate::dto::{
+use crate::api::dto::{
     ActionRequest, CreateInstanceDto, InstanceMutationConfirmation, UpdateInstanceDto,
 };
+use crate::app_state::AppState;
 use crate::error::AutomationError;
 use crate::instance_configuration::{
     InstanceConfigurationAcceptance, InstanceConfigurationMutation, InstanceConfigurationPayload,
@@ -45,7 +45,7 @@ pub async fn get_instance_configuration_revision(
 #[utoipa::path(
     post,
     path = "/api/instances",
-    request_body = crate::dto::CreateInstanceDto,
+    request_body = crate::api::dto::CreateInstanceDto,
     responses(
         (status = 200, description = "Instance created", body = serde_json::Value,
             example = json!({
@@ -262,7 +262,7 @@ pub(crate) async fn apply_instance_mutation(
 ) -> Result<InstanceConfigurationAcceptance, AutomationError> {
     let timestamp =
         aether_domain::TimestampMs::new(chrono::Utc::now().timestamp_millis().max(0) as u64);
-    let invocation = crate::infra::application_control::command_invocation_from_headers(
+    let invocation = crate::api::http_boundary::command_invocation_from_headers(
         &state.control_authenticator,
         headers,
         confirmed,
@@ -308,53 +308,6 @@ pub(crate) fn governance_response(
     })
 }
 
-/// Reload instances from database
-///
-/// Rebuilds process-local caches from authoritative SQLite configuration.
-///
-#[cfg_attr(feature = "openapi", utoipa::path(
-    post,
-    path = "/api/instances/reload",
-    responses(
-        (status = 200, description = "Instances reloaded from SQLite", body = serde_json::Value),
-        (status = 500, description = "Reload failed", body = serde_json::Value)
-    ),
-    tag = "automation"
-))]
-pub async fn reload_instances_from_db(
-    State(state): State<Arc<AppState>>,
-) -> Result<Json<SuccessResponse<serde_json::Value>>, AutomationError> {
-    // Use unified ReloadableService interface for incremental sync
-    use common::ReloadableService;
-    match ReloadableService::reload_from_database(
-        &*state.instance_manager,
-        &state.instance_manager.pool,
-    )
-    .await
-    {
-        Ok(result) => {
-            info!(
-                "Instances reloaded: {} added, {} updated, {} removed, {} errors",
-                result.added.len(),
-                result.updated.len(),
-                result.removed.len(),
-                result.errors.len()
-            );
-            Ok(Json(SuccessResponse::new(json!({
-                "message": "Instances reloaded successfully",
-                "result": result
-            }))))
-        },
-        Err(e) => {
-            error!("Failed to reload instances: {}", e);
-            Err(AutomationError::InternalError(format!(
-                "Failed to reload instances: {}",
-                e
-            )))
-        },
-    }
-}
-
 // ============================================================================
 // Action Execution
 // ============================================================================
@@ -371,7 +324,7 @@ pub async fn reload_instances_from_db(
         ("id" = u32, Path, description = "Instance ID"),
         ("x-request-id" = Option<String>, Header, description = "Optional UUID audit correlation ID")
     ),
-    request_body = crate::dto::ActionRequest,
+    request_body = crate::api::dto::ActionRequest,
     responses(
         (status = 200, description = "Action accepted by the local command plane. `completed_at_ms` is the local transport-acceptance timestamp retained for compatibility; it is not a device completion time. A terminal-audit append failure is returned here as `audit.status=incomplete` with `retryable=false`, never as a retryable dispatch error.", body = serde_json::Value,
             example = json!({
@@ -402,7 +355,7 @@ pub async fn execute_instance_action(
         AutomationError::InvalidData(format!("action point_id must be numeric: {}", req.point_id))
     })?;
     let timestamp_ms = chrono::Utc::now().timestamp_millis().max(0) as u64;
-    let invocation = crate::infra::application_control::command_invocation_from_headers(
+    let invocation = crate::api::http_boundary::command_invocation_from_headers(
         &state.control_authenticator,
         &headers,
         req.confirmed,
@@ -438,7 +391,7 @@ pub async fn execute_instance_action(
         "value": req.value,
         "command_id": format!("{:032x}", acceptance.command_id().get()),
         "request_id": acceptance.request_id(),
-        "audit": crate::infra::application_control::completion_audit_response(
+        "audit": crate::api::http_boundary::completion_audit_response(
             acceptance.completion_audit()
         ),
         "completed_at_ms": acceptance.completed_at().get()

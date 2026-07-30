@@ -5,10 +5,12 @@ use aether_ports::DurableOutbox;
 use sqlx::SqlitePool;
 use tokio::sync::{Mutex, Notify, RwLock};
 
+use crate::alarm_client::AlarmClient;
+use crate::automation_client::AutomationClient;
 use crate::config::EnvConfig;
+use crate::config_model::UplinkConfig;
 use crate::device::{DeviceIdentity, Topics};
 use crate::live_values::UplinkTopologyHandle;
-use crate::models::NetConfig;
 
 /// Shared application state.
 pub struct AppState {
@@ -21,7 +23,7 @@ pub struct AppState {
     /// Atomically replaceable SQLite + committed point/health read generation.
     pub live_topology: Arc<UplinkTopologyHandle>,
     /// Dynamic config reloaded from `uplink_config`.
-    pub config: Arc<RwLock<NetConfig>>,
+    pub config: Arc<RwLock<UplinkConfig>>,
     /// Resolved device identity (product SN + device SN).
     pub device: Arc<DeviceIdentity>,
     /// MQTT topics derived from device identity.
@@ -35,6 +37,8 @@ pub struct AppState {
     /// When true the MQTT loop stays idle after a disconnect instead of auto-reconnecting.
     /// Set by `POST /netApi/mqtt/disconnect`, cleared by `POST /netApi/mqtt/reconnect`.
     pub disconnect_requested: Arc<AtomicBool>,
-    /// HTTP client for outbound calls (call-alarm → alarm).
-    pub http_client: reqwest::Client,
+    /// Typed loopback client for Automation queries and governed actions.
+    pub automation_client: AutomationClient,
+    /// Typed loopback client for Alarm replay requests.
+    pub alarm_client: AlarmClient,
 }

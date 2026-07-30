@@ -8,7 +8,7 @@ use async_trait::async_trait;
 
 use chrono::{DateTime, Utc};
 
-use crate::models::{DataPoint, DataStats, HistoryRecord, QueryRangeParams, SeriesResult};
+use crate::models::{DataPoint, DataStats, HistoryRangeQuery, HistoryRecord, SeriesResult};
 use crate::storage::StorageBackend;
 
 pub struct NullBackend;
@@ -31,10 +31,7 @@ impl StorageBackend for NullBackend {
 
     async fn query_range(
         &self,
-        _params: &QueryRangeParams,
-        _default_page_size: i64,
-        _max_page_size: i64,
-        _max_time_range_days: i64,
+        _query: &HistoryRangeQuery,
     ) -> anyhow::Result<(Vec<HistoryRecord>, i64)> {
         anyhow::bail!("Storage backend not configured")
     }

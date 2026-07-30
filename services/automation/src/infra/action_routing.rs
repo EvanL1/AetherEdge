@@ -9,7 +9,7 @@ use aether_ports::{
 };
 use async_trait::async_trait;
 
-use crate::infra::runtime_topology::ActionRoutingMutationLease;
+use crate::infra::runtime_topology::RoutingMutationLease;
 use crate::instance_manager::InstanceManager;
 
 /// Applies governed action-routing changes to SQLite and publishes the exact
@@ -65,7 +65,7 @@ impl SqliteActionRoutingMutator {
         let product = self
             .manager
             .product_loader()
-            .get_product(&product_name)
+            .get_definition(&product_name)
             .map_err(|error| {
                 tracing::error!(
                     instance_id,
@@ -78,11 +78,7 @@ impl SqliteActionRoutingMutator {
                     "instance product is unavailable from the active Pack set",
                 )
             })?;
-        if !product
-            .actions
-            .iter()
-            .any(|action| action.action_id == action_id)
-        {
+        if !product.actions.iter().any(|action| action.id == action_id) {
             return Err(PortError::new(
                 PortErrorKind::InvalidData,
                 format!("action point {action_id} is not declared by instance {instance_id}"),
@@ -113,35 +109,22 @@ impl SqliteActionRoutingMutator {
 
     async fn publish_committed_routes(
         &self,
-        topology_lease: Option<ActionRoutingMutationLease>,
+        topology_lease: RoutingMutationLease,
     ) -> PortResult<()> {
-        if let Some(topology_lease) = topology_lease {
-            return match topology_lease.publish(self.manager.pool()).await {
-                Ok(_) => Ok(()),
-                Err(error) => {
-                    // Commands were revoked before the SQLite transaction and
-                    // remain revoked after this failed publication. Periodic
-                    // topology refresh may restore them only from a complete
-                    // later snapshot.
-                    tracing::error!(
-                        error = %error,
-                        "committed action routing could not be published; command routes revoked"
-                    );
-                    Err(error)
-                },
-            };
+        match topology_lease.publish(self.manager.pool()).await {
+            Ok(_) => Ok(()),
+            Err(error) => {
+                // Commands were revoked before the SQLite transaction and
+                // remain revoked after this failed publication. Periodic
+                // topology refresh may restore them only from a complete
+                // later snapshot.
+                tracing::error!(
+                    error = %error,
+                    "committed action routing could not be published; command routes revoked"
+                );
+                Err(error)
+            },
         }
-
-        self.manager
-            .refresh_routing()
-            .await
-            .map(|_| ())
-            .map_err(|error| {
-                PortError::new(
-                    PortErrorKind::Unavailable,
-                    format!("committed action routing validation failed: {error}"),
-                )
-            })
     }
 }
 
@@ -187,10 +170,9 @@ impl AutomationActionRoutingMutator for SqliteActionRoutingMutator {
         // command can observe either the old generation before revocation or
         // the complete committed generation after publication, never an old
         // route during the commit-to-publish window.
-        let mut topology_lease = match self.manager.runtime_topology() {
-            Some(topology) => Some(Arc::clone(topology).begin_action_routing_mutation().await),
-            None => None,
-        };
+        let mut topology_lease = Arc::clone(self.manager.runtime_topology())
+            .begin_action_routing_mutation()
+            .await;
 
         let staged_mutation: PortResult<_> = async {
             let mut transaction = self
@@ -327,9 +309,7 @@ impl AutomationActionRoutingMutator for SqliteActionRoutingMutator {
         let (transaction, affected_routes, resulting_revision) = match staged_mutation {
             Ok(staged) => staged,
             Err(error) => {
-                if let Some(topology_lease) = topology_lease.take() {
-                    topology_lease.restore().await;
-                }
+                topology_lease.restore().await;
                 return Err(error);
             },
         };
@@ -337,9 +317,7 @@ impl AutomationActionRoutingMutator for SqliteActionRoutingMutator {
         // A commit error has an uncertain durable outcome. Disarm restoration
         // before attempting it so neither `?` nor cancellation can republish a
         // pre-commit generation over data that SQLite may already have applied.
-        if let Some(topology_lease) = topology_lease.as_mut() {
-            topology_lease.commit_started();
-        }
+        topology_lease.commit_started();
         transaction
             .commit()
             .await

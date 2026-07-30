@@ -1,5 +1,7 @@
 //! SQLite adapter for the governed alarm-rule mutation port.
 
+use std::sync::Arc;
+
 use aether_domain::{AlarmRuleDefinition, AlarmRuleId, AlarmRuleTarget, AlertId, TimestampMs};
 use aether_ports::{
     AlarmRuleMutation, AlarmRuleMutationKind, AlarmRuleMutationReceipt, AlarmRuleMutator,
@@ -9,22 +11,22 @@ use async_trait::async_trait;
 use chrono::Utc;
 use sqlx::{Sqlite, SqlitePool, Transaction};
 
-use crate::broadcast::Broadcaster;
 use crate::db;
 use crate::models::{Alert, AlertRule};
+use crate::notification::{AlarmCountSnapshot, AlarmNotification, AlarmNotifier};
 
 /// SQLite persistence adapter whose successful receipt also guarantees that
 /// disable/delete alert reconciliation committed atomically with the rule.
 pub struct SqliteAlarmRuleMutator {
     pool: SqlitePool,
-    broadcaster: Broadcaster,
+    notifier: Arc<dyn AlarmNotifier>,
 }
 
 impl SqliteAlarmRuleMutator {
     /// Creates an adapter over the alarm service's local database.
     #[must_use]
-    pub fn new(pool: SqlitePool, broadcaster: Broadcaster) -> Self {
-        Self { pool, broadcaster }
+    pub fn new(pool: SqlitePool, notifier: Arc<dyn AlarmNotifier>) -> Self {
+        Self { pool, notifier }
     }
 
     async fn create(
@@ -211,12 +213,14 @@ impl SqliteAlarmRuleMutator {
 
     async fn broadcast_resolved(&self, rule: &AlertRule, alerts: &[Alert], reason: &str) {
         for alert in alerts {
-            self.broadcaster
-                .send_alarm_recovery(alert.id, rule, None, reason)
+            self.notifier
+                .publish_alarm(AlarmNotification::recovered(alert.id, rule, None, reason))
                 .await;
         }
         if let Ok(counts) = db::get_active_alarm_counts(&self.pool).await {
-            self.broadcaster.send_alarm_count(&counts).await;
+            self.notifier
+                .publish_counts(AlarmCountSnapshot::from(&counts))
+                .await;
         }
     }
 }
@@ -290,16 +294,18 @@ impl AlertResolver for SqliteAlarmRuleMutator {
             created_at: alert.triggered_at,
             updated_at: resolved_at_seconds,
         };
-        self.broadcaster
-            .send_alarm_recovery(
+        self.notifier
+            .publish_alarm(AlarmNotification::recovered(
                 alert.id,
                 &rule,
                 Some(alert.current_value),
                 "manually resolved",
-            )
+            ))
             .await;
         if let Ok(counts) = db::get_active_alarm_counts(&self.pool).await {
-            self.broadcaster.send_alarm_count(&counts).await;
+            self.notifier
+                .publish_counts(AlarmCountSnapshot::from(&counts))
+                .await;
         }
 
         let rule_id = u64::try_from(alert.rule_id)
@@ -519,7 +525,7 @@ mod tests {
     };
 
     use super::SqliteAlarmRuleMutator;
-    use crate::{broadcast::Broadcaster, db};
+    use crate::{broadcast::HttpAlarmNotifier, db, notification::AlarmNotifier};
 
     async fn adapter() -> (SqliteAlarmRuleMutator, sqlx::SqlitePool) {
         let pool = sqlx::sqlite::SqlitePoolOptions::new()
@@ -532,12 +538,13 @@ mod tests {
             .await
             .expect("enable production foreign-key behavior");
         db::create_tables(&pool).await.expect("alarm schema");
-        let broadcaster = Broadcaster::new(
-            reqwest::Client::new(),
-            "http://127.0.0.1:9".to_string(),
-            "http://127.0.0.1:9".to_string(),
-        );
-        (SqliteAlarmRuleMutator::new(pool.clone(), broadcaster), pool)
+        let notifier: std::sync::Arc<dyn AlarmNotifier> =
+            std::sync::Arc::new(HttpAlarmNotifier::new(
+                reqwest::Client::new(),
+                "http://127.0.0.1:9".to_string(),
+                "http://127.0.0.1:9".to_string(),
+            ));
+        (SqliteAlarmRuleMutator::new(pool.clone(), notifier), pool)
     }
 
     fn definition(name: &str, point_id: u32) -> AlarmRuleDefinition {

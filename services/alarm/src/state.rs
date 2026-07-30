@@ -5,16 +5,16 @@ use std::sync::Arc;
 use sqlx::SqlitePool;
 use tokio::sync::RwLock;
 
-use crate::broadcast::Broadcaster;
 use crate::config::AlarmConfig;
 use crate::live_values::AlarmValueSource;
 use crate::models::MonitorStatus;
+use crate::notification::AlarmNotifier;
 
 pub struct AppState {
     pub db: SqlitePool,
     pub live_values: Arc<dyn AlarmValueSource>,
     pub config: Arc<AlarmConfig>,
-    pub broadcaster: Broadcaster,
+    pub notifier: Arc<dyn AlarmNotifier>,
     pub monitor_status: Arc<RwLock<MonitorStatus>>,
     pub rule_application: Arc<aether_application::AlarmRuleApplication>,
     pub alert_resolution_application: Arc<aether_application::AlertResolutionApplication>,

@@ -1,7 +1,7 @@
 use anyhow::Result;
 use sqlx::{Row, SqlitePool};
 
-use crate::models::{CalculatedPoint, Role, RoleInfo, UserRow, UserWithRole};
+use crate::read_models::{CalculatedPointRecord, RoleProfile, RoleRecord, UserProfile, UserRecord};
 
 // ── Schema ────────────────────────────────────────────────────────────────────
 
@@ -89,33 +89,33 @@ pub async fn init_calculated_points(_pool: &SqlitePool) -> Result<()> {
 
 // ── User Queries ──────────────────────────────────────────────────────────────
 
-pub async fn get_user_by_username(pool: &SqlitePool, username: &str) -> Result<Option<UserRow>> {
+pub async fn get_user_by_username(pool: &SqlitePool, username: &str) -> Result<Option<UserRecord>> {
     Ok(
-        sqlx::query_as::<_, UserRow>("SELECT * FROM users WHERE username = ?")
+        sqlx::query_as::<_, UserRecord>("SELECT * FROM users WHERE username = ?")
             .bind(username)
             .fetch_optional(pool)
             .await?,
     )
 }
 
-pub async fn get_user_by_id(pool: &SqlitePool, user_id: i64) -> Result<Option<UserRow>> {
+pub async fn get_user_by_id(pool: &SqlitePool, user_id: i64) -> Result<Option<UserRecord>> {
     Ok(
-        sqlx::query_as::<_, UserRow>("SELECT * FROM users WHERE id = ?")
+        sqlx::query_as::<_, UserRecord>("SELECT * FROM users WHERE id = ?")
             .bind(user_id)
             .fetch_optional(pool)
             .await?,
     )
 }
 
-fn row_to_user_with_role(r: sqlx::sqlite::SqliteRow) -> UserWithRole {
-    UserWithRole {
+fn row_to_user_profile(r: sqlx::sqlite::SqliteRow) -> UserProfile {
+    UserProfile {
         id: r.get("id"),
         username: r.get("username"),
         is_active: r.get("is_active"),
         last_login: r.get("last_login"),
         created_at: r.get("created_at"),
         updated_at: r.get("updated_at"),
-        role: RoleInfo {
+        role: RoleProfile {
             id: r.get("role_id"),
             name_en: r.get("role_name_en"),
             name_zh: r.get("role_name_zh"),
@@ -124,7 +124,7 @@ fn row_to_user_with_role(r: sqlx::sqlite::SqliteRow) -> UserWithRole {
     }
 }
 
-pub async fn get_user_with_role(pool: &SqlitePool, user_id: i64) -> Result<Option<UserWithRole>> {
+pub async fn get_user_with_role(pool: &SqlitePool, user_id: i64) -> Result<Option<UserProfile>> {
     let row = sqlx::query(
         "SELECT u.id, u.username, u.is_active, u.last_login, u.created_at, u.updated_at,
                 r.id AS role_id, r.name_en AS role_name_en, r.name_zh AS role_name_zh,
@@ -136,13 +136,13 @@ pub async fn get_user_with_role(pool: &SqlitePool, user_id: i64) -> Result<Optio
     .fetch_optional(pool)
     .await?;
 
-    Ok(row.map(row_to_user_with_role))
+    Ok(row.map(row_to_user_profile))
 }
 
 pub async fn get_user_with_role_by_username(
     pool: &SqlitePool,
     username: &str,
-) -> Result<Option<UserWithRole>> {
+) -> Result<Option<UserProfile>> {
     let row = sqlx::query(
         "SELECT u.id, u.username, u.is_active, u.last_login, u.created_at, u.updated_at,
                 r.id AS role_id, r.name_en AS role_name_en, r.name_zh AS role_name_zh,
@@ -154,7 +154,7 @@ pub async fn get_user_with_role_by_username(
     .fetch_optional(pool)
     .await?;
 
-    Ok(row.map(row_to_user_with_role))
+    Ok(row.map(row_to_user_profile))
 }
 
 pub async fn create_user(
@@ -223,13 +223,15 @@ pub async fn delete_user(pool: &SqlitePool, user_id: i64) -> Result<bool> {
     Ok(result.rows_affected() > 0)
 }
 
-pub async fn get_all_roles(pool: &SqlitePool) -> Result<Vec<Role>> {
-    Ok(sqlx::query_as::<_, Role>("SELECT * FROM roles ORDER BY id")
-        .fetch_all(pool)
-        .await?)
+pub async fn get_all_roles(pool: &SqlitePool) -> Result<Vec<RoleRecord>> {
+    Ok(
+        sqlx::query_as::<_, RoleRecord>("SELECT * FROM roles ORDER BY id")
+            .fetch_all(pool)
+            .await?,
+    )
 }
 
-pub async fn get_all_users_with_roles(pool: &SqlitePool) -> Result<Vec<UserWithRole>> {
+pub async fn get_all_users_with_roles(pool: &SqlitePool) -> Result<Vec<UserProfile>> {
     let rows = sqlx::query(
         "SELECT u.id, u.username, u.is_active, u.last_login, u.created_at, u.updated_at,
                 r.id AS role_id, r.name_en AS role_name_en, r.name_zh AS role_name_zh,
@@ -240,7 +242,7 @@ pub async fn get_all_users_with_roles(pool: &SqlitePool) -> Result<Vec<UserWithR
     .fetch_all(pool)
     .await?;
 
-    Ok(rows.into_iter().map(row_to_user_with_role).collect())
+    Ok(rows.into_iter().map(row_to_user_profile).collect())
 }
 
 // ── Calculated Points ─────────────────────────────────────────────────────────
@@ -250,7 +252,7 @@ pub async fn get_all_calculated_points(
     offset: i64,
     limit: i64,
     name_filter: Option<&str>,
-) -> Result<(Vec<CalculatedPoint>, i64)> {
+) -> Result<(Vec<CalculatedPointRecord>, i64)> {
     if let Some(filter) = name_filter {
         let like = format!("%{}%", filter);
         let total: i64 =
@@ -259,7 +261,7 @@ pub async fn get_all_calculated_points(
                 .fetch_one(pool)
                 .await?;
 
-        let items = sqlx::query_as::<_, CalculatedPoint>(
+        let items = sqlx::query_as::<_, CalculatedPointRecord>(
             "SELECT * FROM calculated_points WHERE name LIKE ? ORDER BY id LIMIT ? OFFSET ?",
         )
         .bind(&like)
@@ -274,7 +276,7 @@ pub async fn get_all_calculated_points(
             .fetch_one(pool)
             .await?;
 
-        let items = sqlx::query_as::<_, CalculatedPoint>(
+        let items = sqlx::query_as::<_, CalculatedPointRecord>(
             "SELECT * FROM calculated_points ORDER BY id LIMIT ? OFFSET ?",
         )
         .bind(limit)
@@ -289,9 +291,9 @@ pub async fn get_all_calculated_points(
 pub async fn get_calculated_point_by_id(
     pool: &SqlitePool,
     point_id: i64,
-) -> Result<Option<CalculatedPoint>> {
+) -> Result<Option<CalculatedPointRecord>> {
     Ok(
-        sqlx::query_as::<_, CalculatedPoint>("SELECT * FROM calculated_points WHERE id = ?")
+        sqlx::query_as::<_, CalculatedPointRecord>("SELECT * FROM calculated_points WHERE id = ?")
             .bind(point_id)
             .fetch_optional(pool)
             .await?,

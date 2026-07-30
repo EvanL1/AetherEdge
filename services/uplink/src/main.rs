@@ -25,7 +25,11 @@ use tokio_util::sync::CancellationToken;
 use tower_http::cors::{Any, CorsLayer};
 use tracing::info;
 
+mod alarm_client;
+mod api;
+mod automation_client;
 mod config;
+mod config_model;
 mod db_config;
 mod device;
 mod forwarder;
@@ -100,6 +104,9 @@ async fn main() -> anyhow::Result<()> {
     );
 
     // ── App State ─────────────────────────────────────────────────────────────
+    let http_client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()?;
     let state = Arc::new(AppState {
         sqlite,
         outbox,
@@ -112,9 +119,8 @@ async fn main() -> anyhow::Result<()> {
         mqtt_connected: Arc::new(AtomicBool::new(false)),
         reconnect_signal: Arc::new(Notify::new()),
         disconnect_requested: Arc::new(AtomicBool::new(false)),
-        http_client: reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(10))
-            .build()?,
+        automation_client: automation_client::AutomationClient::new(http_client.clone()),
+        alarm_client: alarm_client::AlarmClient::new(http_client),
     });
 
     // ── Background tasks ──────────────────────────────────────────────────────

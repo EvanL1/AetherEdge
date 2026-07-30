@@ -124,6 +124,25 @@ use axum::{
     response::{IntoResponse, Json, Response},
 };
 
+/// Map transport-neutral error categories at the HTTP adapter boundary.
+#[cfg(feature = "axum")]
+#[must_use]
+pub fn status_for_error_category(category: errors::ErrorCategory) -> StatusCode {
+    use errors::ErrorCategory;
+
+    match category {
+        ErrorCategory::Configuration => StatusCode::BAD_REQUEST,
+        ErrorCategory::Validation => StatusCode::UNPROCESSABLE_ENTITY,
+        ErrorCategory::NotFound => StatusCode::NOT_FOUND,
+        ErrorCategory::Permission => StatusCode::FORBIDDEN,
+        ErrorCategory::Conflict => StatusCode::CONFLICT,
+        ErrorCategory::Timeout => StatusCode::REQUEST_TIMEOUT,
+        ErrorCategory::Network | ErrorCategory::ResourceBusy => StatusCode::SERVICE_UNAVAILABLE,
+        ErrorCategory::ResourceExhausted => StatusCode::TOO_MANY_REQUESTS,
+        _ => StatusCode::INTERNAL_SERVER_ERROR,
+    }
+}
+
 /// Application error with HTTP status code
 /// This type implements IntoResponse for seamless integration with axum handlers
 #[cfg(feature = "axum")]

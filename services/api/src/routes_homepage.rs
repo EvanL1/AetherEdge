@@ -47,6 +47,10 @@ pub async fn list_points(
     match db::get_all_calculated_points(&state.db, offset, limit, q.name.as_deref()).await {
         Ok((items, total)) => {
             let pages = (total + limit - 1) / limit;
+            let items = items
+                .into_iter()
+                .map(CalculatedPoint::from)
+                .collect::<Vec<_>>();
             Json(json!({
                 "success": true,
                 "message": "Calculated points retrieved",
@@ -87,12 +91,15 @@ pub async fn get_point(
     Path(point_id): Path<i64>,
 ) -> impl IntoResponse {
     match db::get_calculated_point_by_id(&state.db, point_id).await {
-        Ok(Some(point)) => Json(json!({
-            "success": true,
-            "message": "Calculated point retrieved",
-            "data": point,
-        }))
-        .into_response(),
+        Ok(Some(point)) => {
+            let point = CalculatedPoint::from(point);
+            Json(json!({
+                "success": true,
+                "message": "Calculated point retrieved",
+                "data": point,
+            }))
+            .into_response()
+        },
         Ok(None) => (
             StatusCode::NOT_FOUND,
             Json(json!({"success": false, "message": format!("Calculated point ID {} not found", point_id)})),
@@ -158,12 +165,15 @@ pub async fn update_point(
     .await
     {
         Ok(_) => match db::get_calculated_point_by_id(&state.db, point_id).await {
-            Ok(Some(updated)) => Json(json!({
-                "success": true,
-                "message": "Calculated point updated",
-                "data": updated,
-            }))
-            .into_response(),
+            Ok(Some(updated)) => {
+                let updated = CalculatedPoint::from(updated);
+                Json(json!({
+                    "success": true,
+                    "message": "Calculated point updated",
+                    "data": updated,
+                }))
+                .into_response()
+            },
             _ => (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(json!({"success": false, "message": "Internal server error"})),
