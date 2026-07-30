@@ -7,6 +7,8 @@ mod cloudlink_spool;
 mod data_processing;
 mod file_cloudlink_spool;
 mod file_outbox;
+mod gateway_identity;
+mod gateway_identity_fs;
 mod history;
 mod integration_generation;
 mod live_state;
@@ -27,6 +29,10 @@ pub use cloudlink_spool::MemoryCloudLinkSpool;
 pub use data_processing::{MemoryCovariateSource, MemoryHistoryQuery};
 pub use file_cloudlink_spool::FileCloudLinkSpool;
 pub use file_outbox::FileOutbox;
+pub use gateway_identity::{
+    FileClaimedGatewayIdentitySource, FileGatewayIdentityStore,
+    OsEd25519GatewayIdentityKeyGenerator,
+};
 pub use history::MemoryHistorySink;
 pub use integration_generation::FileIntegrationTopologyGenerationStore;
 pub use live_state::MemoryLiveState;

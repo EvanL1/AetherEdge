@@ -5,6 +5,7 @@
 
 mod alarms;
 mod channels;
+mod cloud;
 mod core;
 mod deploy_mode;
 mod doctor;
@@ -143,6 +144,13 @@ enum Commands {
         /// Show detailed status
         #[arg(short, long)]
         detailed: bool,
+    },
+
+    /// Enroll this gateway identity with AetherCloud
+    #[command(about = "Enroll or inspect the local AetherCloud gateway identity")]
+    Cloud {
+        #[command(subcommand)]
+        command: cloud::CloudCommands,
     },
 
     /// Initialize database schema (migration-only, safe upgrade)
@@ -306,6 +314,17 @@ fn print_banner() {
 
 #[tokio::main]
 async fn main() {
+    if forbidden_enrollment_token_argument_present() {
+        let message = "Enrollment Token cannot be passed as an argument; use the hidden prompt or --token-stdin";
+        if std::env::args_os().any(|argument| argument == "--json")
+            || std::env::var_os("AETHER_JSON").is_some()
+        {
+            output::print_error(message);
+        } else {
+            eprintln!("Error: {message}");
+        }
+        std::process::exit(2);
+    }
     let cli = Cli::parse();
     let json = cli.json || std::env::var("AETHER_JSON").is_ok();
 
@@ -317,6 +336,15 @@ async fn main() {
         }
         std::process::exit(1);
     }
+}
+
+fn forbidden_enrollment_token_argument_present() -> bool {
+    std::env::args_os().skip(1).any(|argument| {
+        argument == "--token"
+            || argument
+                .to_str()
+                .is_some_and(|argument| argument.starts_with("--token="))
+    })
 }
 
 async fn run(cli: Cli) -> Result<()> {
@@ -400,6 +428,14 @@ async fn run(cli: Cli) -> Result<()> {
                 println!("{}", "Configuration Status".bright_cyan());
             }
             status_command(detailed, &db_path, json).await?;
+        },
+        Commands::Cloud { command } => {
+            if host.is_some() {
+                eprintln!(
+                    "warning: --host is ignored for 'cloud' (the Cloud URL is explicit and identity storage is local)"
+                );
+            }
+            cloud::handle_command(command, &db_path, json).await?;
         },
         Commands::Init { force } => {
             if host.is_some() {

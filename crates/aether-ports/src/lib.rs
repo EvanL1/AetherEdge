@@ -10,6 +10,7 @@ mod cloudlink;
 mod control;
 mod data_processing;
 mod error;
+mod gateway_enrollment;
 mod history;
 mod integration;
 mod live_state;
@@ -55,6 +56,16 @@ pub use data_processing::{
     HistoryQuery, HistoryWindow, ProcessorHealth, SourcedSegment,
 };
 pub use error::{PortError, PortErrorKind, PortResult};
+pub use gateway_enrollment::{
+    ClaimPendingGatewayIdentity, ClaimedGatewayIdentity, ClaimedGatewayIdentitySource,
+    ClaimedGatewayIdentityState, CloudEndpointPolicy, CloudEnrollmentClaim, CloudEnrollmentClient,
+    CloudEnrollmentClientError, CloudEnrollmentReceipt, ConfiguredGatewayIdentity,
+    EnrollmentIdempotencyKey, EnrollmentIdempotencyKeyError, GatewayEnrollmentPhase,
+    GatewayEnrollmentStatus, GatewayEnrollmentTarget, GatewayEnrollmentTargetError,
+    GatewayIdentityError, GatewayIdentityInitialization, GatewayIdentityKeyGenerator,
+    GatewayIdentityStore, GatewayPrivateKeySeed, GatewayPublicKey, GatewayPublicKeyFingerprint,
+    GeneratedGatewayIdentityKey, MAX_CLOUD_ENROLLMENT_REVISION,
+};
 pub use history::HistorySink;
 pub use integration::{
     DelegatedDeviceProvider, IntegrationProjectionChange, IntegrationProjectionQuery,

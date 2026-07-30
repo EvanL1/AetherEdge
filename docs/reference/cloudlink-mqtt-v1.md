@@ -5,8 +5,10 @@
 This document describes the experimental CloudLink candidate. The public
 AetherContracts `v0.1.0-alpha.3` release is the sole authority, and AetherEdge and
 AetherCloud commit the same digest-pinned consumer lock. The current claim is
-complete distribution integrity, full fixture execution, and an opt-in real
-dual-product alpha harness, not production interoperability conformance.
+complete distribution integrity, full fixture execution, and historical
+dual-product alpha.3 evidence. The current strict authentication path has only
+an Edge-local real-Broker harness and is not production interoperability
+conformance.
 The public AetherContracts release and compatibility guide define the shared
 protocol; this page only explains the AetherEdge integration.
 
@@ -22,8 +24,9 @@ Implemented by this slice:
 - Runtime Manifest and real `PointSample` business mappings;
 - memory and crash-recoverable file spools removed only by application ACK;
 - an Uplink-owned MQTT v3.1.1/QoS 1 binding for a user-selected broker;
-- deterministic fake-transport tests, an Edge-only Broker harness, and an
-  opt-in real Mosquitto AetherEdge/AetherCloud dual harness.
+- deterministic fake-transport tests and an Edge-only real-Broker harness.
+  Historical dual-product alpha evidence predates the now-required strict
+  challenge composition and does not prove the current authentication path.
 
 Present in the imported experimental subset:
 
@@ -39,7 +42,7 @@ superseded by public alpha.3; migration findings are retained in
 Planned outside this slice:
 
 - production AetherCloud authentication and durable stores;
-- production enrollment/CA/KMS lifecycle;
+- production Cloud Claim deployment, credential issuance, and CA/KMS lifecycle;
 - MQTT 5 enhancements and private-broker bridge/site connector;
 - jointly published ACL templates and production enablement;
 - alarms and operational telemetry on dedicated CloudLink streams;
@@ -91,7 +94,7 @@ facts and provides no command, arbitrary RPC, or physical-control capability.
 | Telemetry identity | Legacy logical map loses timestamp/quality/address | Cloud codec now accepts the Edge fields and optional model | Preserve edge `PointAddress`, timestamp, quality and batch position without fabricating a model; Cloud multi-sample internal indexing remains open |
 | Topology | Coherent SHM publication epoch and snapshot digest | No equivalent batch field | Carry publication epoch and topology digest per batch |
 | Manifest | Closed v1, JCS SHA-256, implemented | Matching runtime-manifest domain shape | Embed the exact verified manifest and checksum |
-| Broker | Configurable legacy endpoint | Alpha MQTT ingress implemented | User-selected shared MQTT v3.1.1 broker is exercised by the dual harness; production authentication remains blocked |
+| Broker | Configurable legacy endpoint | Alpha MQTT ingress implemented | A user-selected shared MQTT v3.1.1 broker is exercised by the Edge-local strict harness; the historical dual harness used the legacy direct-session path, and current joint authentication remains blocked |
 | Control | Legacy write/call topics reach governed application boundary | CloudLink commands planned separately | No CloudLink v1 command topic or payload |
 
 ## Topic policy
@@ -109,6 +112,28 @@ principal. Alpha.3 freezes experimental challenge/session/uplink signing
 objects. Production generic Broker mode still requires key provisioning,
 rotation, revocation, and verifier ownership. The alternate origin model is
 configured trusted-adapter evidence outside the payload for every publish.
+
+## Session authentication sequence
+
+The Edge harness now exercises the exact strict sequence:
+
+```text
+SessionChallengeRequest
+-> strict CloudLinkCodec decode of the Cloud-signed challenge
+-> GatewaySessionAuthenticator verifies the Cloud Ed25519 signature
+-> GatewaySessionAuthenticator signs the complete hello transcript
+-> strict session-accepted validation
+```
+
+A direct session hello, an acceptance received before a verified challenge,
+or a challenge with a bad Cloud signature fails closed. The test Cloud peer
+uses the same authenticator projections to verify the complete
+Gateway-signed transcript instead of accepting a shape-only proof.
+
+This is authentication test evidence, not production key provisioning.
+`session-accepted` in alpha.3 is still not cryptographically bound to
+`challenge_id` and `client_nonce`; alpha.4 must bind the complete current
+handshake transcript.
 
 ## Time, integers, bounds, and digest
 
@@ -201,13 +226,15 @@ Optional credentials use `AETHER_CLOUDLINK_BROKER_USERNAME` and
 `AETHER_CLOUDLINK_BROKER_CA`, with optional client certificate/key variables.
 Tests and errors never print credential values.
 
-The final alpha evidence uses real Mosquitto, this repository's rumqttc
-transport and `FileCloudLinkSpool`, plus AetherCloud's real MQTT adapter and
-application use cases. Run it from AetherCloud:
+The historical alpha.3 evidence used real Mosquitto, this repository's
+rumqttc transport and `FileCloudLinkSpool`, plus AetherCloud's MQTT adapter
+and application use cases. The current cross-repository command is:
 
 ```bash
-pnpm test:cloudlink-dual
+pnpm test:cloudlink-alpha-harness
 ```
+
+That command currently delegates to the dual harness.
 
 It writes `AetherCloud/evidence/cloudlink-alpha3-dual-harness.json` and a
 compatibility copy under `artifacts/cloudlink-alpha/evidence.json`, including
@@ -217,3 +244,11 @@ cursor, a second Cloud ingress process, duplicate/idempotent replay, conflict,
 expiry, out-of-order, a non-durable partial outcome, and explicit data loss.
 Telemetry still replays after its lost ACK. PostgreSQL process-crash durability
 remains blocked, and the Cloud restart result is honestly `unknown-reaccepted`.
+
+The current AetherCloud dual worker still injects only its legacy
+`OpenCloudLinkSession` path. It does not compose challenge issuance or
+Gateway-signed session acceptance, and its bridge explicitly reports
+`gateway-signed-session-disabled` when that seam is absent. Consequently the
+strict Edge now publishes a challenge request and times out waiting for the
+missing Cloud response. This is a cross-repository blocker, not a reason to
+restore direct hello or weaken signature verification.

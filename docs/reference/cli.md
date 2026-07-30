@@ -1,7 +1,7 @@
 ---
 title: CLI Reference
 description: Every aether command - services, sync, doctor, channels, rules, and more
-updated: 2026-07-12
+updated: 2026-07-29
 ---
 
 # CLI Reference
@@ -95,6 +95,45 @@ aether --json runtime-manifest --path ./runtime-manifest.json
 
 There is no full-distribution fallback: a missing, tampered, or incompatible
 manifest is an error even when `packs: []`.
+
+## aether cloud
+
+Generate or inspect the local AetherCloud Gateway enrollment identity. These
+commands do not start CloudLink or report MQTT connectivity.
+
+```text
+Usage: aether cloud [OPTIONS] <COMMAND>
+
+Commands:
+  enroll  Generate or reuse a local key and submit one AetherCloud Claim
+  status  Read local gateway enrollment state without contacting AetherCloud
+  help    Print this message or the help of the given subcommand(s)
+```
+
+Interactive enrollment reads the Enrollment Token through a hidden prompt:
+
+```bash
+aether cloud enroll \
+  --cloud-url https://api.aetheriot.dev \
+  --tenant-id <TENANT_UUID> \
+  --project-id <PROJECT_UUID> \
+  --gateway-id <GATEWAY_UUID>
+```
+
+Non-interactive callers must use `--token-stdin`; there is no token command-line
+option. Development HTTP additionally requires `--allow-insecure-localhost`
+and is restricted to exactly `localhost` or `127.0.0.1`.
+
+```bash
+aether cloud status
+aether --json cloud status
+```
+
+Status reports the immutable Cloud scope, public-key fingerprint, enrollment
+state, and optional claimed revision. It never reports the private key,
+Enrollment Token, complete public key, or a fabricated CloudLink online state.
+See [AetherCloud Gateway enrollment](gateway-enrollment.md) for the state
+machine, retry behavior, storage baseline, and provisional HTTP contract.
 
 ## aether packs
 

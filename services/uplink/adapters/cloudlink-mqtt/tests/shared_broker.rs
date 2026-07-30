@@ -11,8 +11,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use aether_cloudlink::{
-    CandidateMessage, CloudLinkCodec, GatewaySessionAuthenticator, MessageAuthentication,
-    SessionBinding, SessionHello, TopologyBinding, UplinkAuthentication,
+    CandidateMessage, CloudLinkCodec, GatewaySessionAuthenticator, SessionBinding,
+    SessionChallenge, SessionChallengeRequest, TopologyBinding, UplinkAuthentication,
 };
 use aether_cloudlink_mqtt::{
     CLOUDLINK_MQTT_QOS, CLOUDLINK_MQTT_RETAIN, CloudLinkMqttConfig, CloudLinkTlsConfig,
@@ -26,7 +26,9 @@ use aether_ports::{
     CloudLinkTransportMessage, CloudLinkTransportRoute,
 };
 use aether_store_local::{FileCloudLinkSpool, MemoryCloudLinkSpool};
-use ed25519_dalek::SigningKey;
+use base64::Engine as _;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use ed25519_dalek::{Signer as _, SigningKey};
 use rumqttc::tokio_native_tls::native_tls::{Certificate, Identity, TlsConnector};
 use rumqttc::{AsyncClient, Event, Incoming, MqttOptions, Transport};
 use serde_json::{Value, json};
@@ -35,18 +37,34 @@ use tokio::time::{Instant, timeout};
 
 const WAIT: Duration = Duration::from_secs(15);
 const TEST_CREDENTIAL_GENERATION: u64 = 1;
+const TEST_CREDENTIAL_ID: &str = "development-integration-binding";
+const TEST_CLOUD_KEY_ID: &str = "development-cloud-key";
+const TEST_GATEWAY_KEY_ID: &str = "development-integration-key";
+const CHALLENGE_ISSUED_AT_MS: u64 = 1_721_000_000_000;
+const CHALLENGE_EXPIRES_AT_MS: u64 = 1_721_000_060_000;
+// The AetherCloud dual worker's deterministic clock is 2024-07-14T23:33:20.400Z.
+const CHALLENGE_EVALUATION_AT_MS: u64 = CHALLENGE_ISSUED_AT_MS + 401;
 
-fn test_uplink_authentication() -> UplinkAuthentication {
+fn test_session_authenticator() -> GatewaySessionAuthenticator {
     GatewaySessionAuthenticator::new(
-        "development-cloud-key",
+        TEST_CLOUD_KEY_ID,
         SigningKey::from_bytes(&[7_u8; 32])
             .verifying_key()
             .to_bytes(),
-        "development-integration-key",
+        TEST_GATEWAY_KEY_ID,
         [9_u8; 32],
     )
     .expect("test session authenticator")
-    .uplink_authentication()
+}
+
+fn test_uplink_authentication() -> UplinkAuthentication {
+    test_session_authenticator().uplink_authentication()
+}
+
+fn runtime_manifest_fixture() -> Vec<u8> {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../../../config.template/runtime-manifest.json");
+    std::fs::read(path).expect("runtime manifest fixture")
 }
 
 #[derive(Debug)]
@@ -122,9 +140,7 @@ async fn shared_broker_session_manifest_telemetry_ack_and_replay() {
         .expect("send heartbeat");
     wait_heartbeat_ack(&first_transport, &first_session).await;
 
-    let manifest_path =
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../config.template/runtime-manifest.json");
-    let manifest = std::fs::read(manifest_path).expect("runtime manifest fixture");
+    let manifest = runtime_manifest_fixture();
     let manifest_payload =
         CloudLinkCodec::runtime_manifest_report(&manifest, TimestampMs::new(1_721_000_000_123))
             .expect("manifest report");
@@ -278,10 +294,7 @@ async fn external_cloud_dual_harness() {
         .expect("heartbeat send");
     wait_heartbeat_ack(&first_transport, &first_session).await;
 
-    let runtime_manifest = std::fs::read(
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../config.template/runtime-manifest.json"),
-    )
-    .expect("runtime manifest");
+    let runtime_manifest = runtime_manifest_fixture();
     let manifest_payload = CloudLinkCodec::runtime_manifest_report(
         &runtime_manifest,
         TimestampMs::new(1_721_000_000_123),
@@ -675,10 +688,7 @@ async fn external_cloud_dual_phase1_before_edge_restart() {
         .expect("heartbeat send");
     wait_heartbeat_ack(&transport, &session).await;
 
-    let runtime_manifest = std::fs::read(
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../config.template/runtime-manifest.json"),
-    )
-    .expect("runtime manifest");
+    let runtime_manifest = runtime_manifest_fixture();
     let manifest_payload = CloudLinkCodec::runtime_manifest_report(
         &runtime_manifest,
         TimestampMs::new(1_721_000_000_123),
@@ -1261,6 +1271,8 @@ async fn fake_cloud(
 ) {
     let (client, mut event_loop) = fake_cloud_client(&config);
     let mut sessions = 0_u64;
+    let mut challenge_sequence = 0_u64;
+    let mut pending_challenge = None::<(SessionChallengeRequest, SessionChallenge)>;
     let mut telemetry_identity = None::<(String, String, String, String, String)>;
     let mut duplicate_facts = BTreeSet::new();
     loop {
@@ -1295,6 +1307,71 @@ async fn fake_cloud(
                 };
                 match route {
                     CloudLinkTransportRoute::SessionUp => {
+                        let candidate = match CloudLinkCodec::decode(&publication.payload) {
+                            Ok(candidate) => candidate,
+                            Err(error) => {
+                                let _ = observations
+                                    .send(FakeCloudObservation::Failure(format!(
+                                        "fake cloud rejected session message: {error}"
+                                    )))
+                                    .await;
+                                return;
+                            },
+                        };
+                        if let CandidateMessage::SessionChallengeRequest(request) = candidate {
+                            if request.gateway_id() != gateway_id {
+                                let _ = observations
+                                    .send(FakeCloudObservation::Failure(
+                                        "challenge request Gateway ID mismatch".to_string(),
+                                    ))
+                                    .await;
+                                return;
+                            }
+                            challenge_sequence += 1;
+                            let challenge_id =
+                                format!("22222222-2222-4222-8222-{challenge_sequence:012x}");
+                            let cloud_nonce = format!("{challenge_sequence:0>43}");
+                            let challenge =
+                                signed_test_challenge(&gateway_id, &challenge_id, &cloud_nonce);
+                            pending_challenge = Some((request, challenge.clone()));
+                            publish_json(
+                                &client,
+                                topics.topic(CloudLinkTransportRoute::SessionDown),
+                                serde_json::to_value(challenge).expect("challenge JSON value"),
+                            )
+                            .await;
+                            continue;
+                        }
+                        let CandidateMessage::SessionHello(hello) = candidate else {
+                            let _ = observations
+                                .send(FakeCloudObservation::Failure(
+                                    "session topic carried neither challenge request nor hello"
+                                        .to_string(),
+                                ))
+                                .await;
+                            return;
+                        };
+                        let Some((request, challenge)) = pending_challenge.take() else {
+                            let _ = observations
+                                .send(FakeCloudObservation::Failure(
+                                    "direct session hello bypassed the challenge".to_string(),
+                                ))
+                                .await;
+                            return;
+                        };
+                        let authenticator = test_session_authenticator();
+                        let expected_hello = authenticator
+                            .verify_challenge(&challenge, &gateway_id, CHALLENGE_EVALUATION_AT_MS)
+                            .and_then(|verified| authenticator.sign_hello(&verified, &request));
+                        if !expected_hello.is_ok_and(|expected| expected == hello) {
+                            let _ = observations
+                                .send(FakeCloudObservation::Failure(
+                                    "session hello signature is not bound to the issued challenge transcript"
+                                        .to_string(),
+                                ))
+                                .await;
+                            return;
+                        }
                         sessions += 1;
                         let accepted = json!({
                             "schema": "aether.cloudlink.session-accepted.v1",
@@ -1349,6 +1426,10 @@ async fn fake_cloud(
                     CloudLinkTransportRoute::HeartbeatUp => {
                         let mut response = value;
                         response["message_kind"] = json!("heartbeat-ack");
+                        response
+                            .as_object_mut()
+                            .expect("heartbeat object")
+                            .remove("message_authentication");
                         publish_json(
                             &client,
                             topics.topic(CloudLinkTransportRoute::AckDown),
@@ -1428,6 +1509,45 @@ async fn fake_cloud(
                 return;
             },
         }
+    }
+}
+
+fn signed_test_challenge(
+    gateway_id: &str,
+    challenge_id: &str,
+    cloud_nonce: &str,
+) -> SessionChallenge {
+    let signing_projection = json!({
+        "schema": "aether.cloudlink.session-challenge-signing.v1alpha1",
+        "gateway_id": gateway_id,
+        "challenge_id": challenge_id,
+        "cloud_nonce": cloud_nonce,
+        "issued_at_ms": CHALLENGE_ISSUED_AT_MS.to_string(),
+        "expires_at_ms": CHALLENGE_EXPIRES_AT_MS.to_string(),
+    });
+    let signing_bytes =
+        serde_json_canonicalizer::to_vec(&signing_projection).expect("canonical challenge");
+    let cloud_key = SigningKey::from_bytes(&[7_u8; 32]);
+    let signature = URL_SAFE_NO_PAD.encode(cloud_key.sign(&signing_bytes).to_bytes());
+    let wire = json!({
+        "schema": "aether.cloudlink.session-challenge.v1",
+        "protocol": "aether.cloudlink",
+        "message_kind": "session-challenge",
+        "gateway_id": gateway_id,
+        "challenge_id": challenge_id,
+        "cloud_nonce": cloud_nonce,
+        "issued_at_ms": CHALLENGE_ISSUED_AT_MS.to_string(),
+        "expires_at_ms": CHALLENGE_EXPIRES_AT_MS.to_string(),
+        "cloud_signature": {
+            "key_id": TEST_CLOUD_KEY_ID,
+            "algorithm": "Ed25519",
+            "signature": signature,
+        },
+    });
+    match CloudLinkCodec::decode(&serde_json::to_vec(&wire).expect("challenge JSON")) {
+        Ok(CandidateMessage::SessionChallenge(challenge)) => challenge,
+        Ok(other) => panic!("unexpected challenge candidate: {other:?}"),
+        Err(error) => panic!("strict challenge decode failed: {error}"),
     }
 }
 
@@ -1557,14 +1677,10 @@ async fn send_hello_with_nonce(
     acknowledged_position: u64,
     nonce_marker: u64,
 ) {
-    let hello = SessionHello::new_gateway_signed(
+    let request = SessionChallengeRequest::new(
         gateway_id,
-        "development-integration-binding",
+        TEST_CREDENTIAL_ID,
         TEST_CREDENTIAL_GENERATION,
-        "22222222-2222-4222-8222-222222222222",
-        "development-integration-key",
-        MessageAuthentication::new("development-integration-key", "E".repeat(86))
-            .expect("signature shape"),
         vec!["1.0".to_string()],
         format!("{nonce_marker:0>43}"),
         vec![
@@ -1572,7 +1688,40 @@ async fn send_hello_with_nonce(
                 .expect("resume cursor"),
         ],
     )
-    .expect("session hello");
+    .expect("session challenge request");
+    transport
+        .send(CloudLinkTransportMessage::new(
+            CloudLinkTransportRoute::SessionUp,
+            CloudLinkCodec::encode(&request).expect("challenge request JSON"),
+            None,
+        ))
+        .await
+        .expect("send challenge request");
+
+    let challenge = loop {
+        let event = timeout(WAIT, transport.receive())
+            .await
+            .expect("session challenge timeout")
+            .expect("session challenge transport event");
+        if let CloudLinkTransportEvent::Inbound(message) = event
+            && message.route() == CloudLinkTransportRoute::SessionDown
+        {
+            match CloudLinkCodec::decode(message.payload()).expect("strict session response") {
+                CandidateMessage::SessionChallenge(challenge) => break challenge,
+                CandidateMessage::SessionAccepted(_) => {
+                    panic!("Cloud accepted a direct hello without issuing a challenge")
+                },
+                _ => {},
+            }
+        }
+    };
+    let authenticator = test_session_authenticator();
+    let verified = authenticator
+        .verify_challenge(&challenge, gateway_id, CHALLENGE_EVALUATION_AT_MS)
+        .expect("verified Cloud challenge");
+    let hello = authenticator
+        .sign_hello(&verified, &request)
+        .expect("gateway-signed session hello");
     transport
         .send(CloudLinkTransportMessage::new(
             CloudLinkTransportRoute::SessionUp,
@@ -1580,7 +1729,7 @@ async fn send_hello_with_nonce(
             None,
         ))
         .await
-        .expect("send hello");
+        .expect("send signed hello");
 }
 
 async fn wait_session(

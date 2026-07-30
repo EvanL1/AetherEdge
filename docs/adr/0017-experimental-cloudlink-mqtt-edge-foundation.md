@@ -10,11 +10,17 @@ ADR-0026 subsequently assigns all edge CloudLink transport ownership to
 `aether-uplink` and forbids IO or an in-tree extension layer from owning a
 second broker session. The protocol and migration gates below remain in force.
 
+ADR-0028 adds the first local Gateway identity Claim path. Its `claimed` state
+binds a public-key fingerprint only; it does not close this ADR's credential
+lifecycle or authenticated-session production gates.
+
 Both products now pin AetherContracts `v0.1.0-alpha.3` and consume the same
 complete alpha.3 adoption closure with no pending imports. This proves
-distribution integrity and fixture execution. A real Mosquitto dual-product
-alpha run now exists, but it is not production conformance. The legacy MQTT adapter remains the default
-until the exit criteria in this ADR are met.
+distribution integrity and fixture execution. Historical real-Mosquitto
+dual-product alpha.3 evidence exists for the legacy direct-session path, but it
+does not exercise the current strict challenge flow and is not production
+conformance. The legacy MQTT adapter remains the default until the exit
+criteria in this ADR are met.
 
 ## Context
 
@@ -203,9 +209,11 @@ history, safety behavior, or local control.
 
 ## Joint coordination remaining
 
-Release distribution, full fixture execution, and the opt-in real Broker alpha
-harness are complete. Before this candidate can become a production protocol,
-the repositories must still:
+Release distribution and full fixture execution are complete. The Edge-only
+real-Broker harness exercises the strict challenge flow; the current
+cross-repository worker still composes the legacy direct-session path, so joint
+strict-authentication evidence remains blocked. Before this candidate can
+become a production protocol, the repositories must still:
 
 1. implement production per-uplink origin verification and key lifecycle;
 2. align Cloud's internal per-record telemetry indexing with the frozen

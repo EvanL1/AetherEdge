@@ -10,6 +10,7 @@ import {
   findManifestViolations,
   findProductIndexCoverageViolations,
   renderProductLlmsIndex,
+  sourceUpdatedDate,
 } from './build-agent-docs.mjs';
 
 const testDir = path.dirname(fileURLToPath(import.meta.url));
@@ -119,6 +120,15 @@ describe('Edge agent document metadata', () => {
     expect(canonicalUrlFor('ai/docs-manifest.schema.json')).toBe(
       'https://raw.githubusercontent.com/EvanL1/AetherEdge/main/ai/docs-manifest.schema.json'
     );
+  });
+
+  it('uses a valid source-owned date when an uncommitted document has no Git date', () => {
+    expect(sourceUpdatedDate('---\nupdated: 2026-07-29\n---\n\n# New document\n')).toBe(
+      '2026-07-29'
+    );
+    expect(sourceUpdatedDate('---\nupdated: not-a-date\n---\n\n# New document\n')).toBe(null);
+    expect(sourceUpdatedDate('---\nupdated: 2026-02-31\n---\n\n# New document\n')).toBe(null);
+    expect(sourceUpdatedDate('# New document\n')).toBe(null);
   });
 });
 
