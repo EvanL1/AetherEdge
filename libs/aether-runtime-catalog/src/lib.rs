@@ -44,22 +44,102 @@ pub const DEFAULT_IO_PROTOCOL_FEATURES: [&str; 5] =
 /// Compatibility alias for release tooling.
 pub const SHIPPED_IO_PROTOCOL_FEATURES: [&str; 5] = DEFAULT_IO_PROTOCOL_FEATURES;
 
-const KNOWN_IO_PROTOCOL_FEATURES: [&str; 14] = [
-    "aether_485",
-    "ble",
-    "can",
-    "dl645",
-    "gpio",
-    "http",
-    "iec104",
-    "iec61850",
-    "j1939",
-    "matter",
-    "modbus",
-    "mqtt",
-    "opcua",
-    "zigbee",
-];
+#[derive(Clone, Copy)]
+struct IoProtocolAdapter {
+    id: &'static str,
+    target_os: Option<&'static str>,
+}
+
+#[derive(Clone, Copy)]
+struct IoProtocolFeature {
+    implied_features: &'static [&'static str],
+    adapters: &'static [IoProtocolAdapter],
+}
+
+macro_rules! define_io_protocol_features {
+    (
+        $(
+            $feature:literal => {
+                implies: [$($implied:literal),* $(,)?],
+                adapters: [$(($adapter:literal, $target_os:expr)),* $(,)?],
+            }
+        ),* $(,)?
+    ) => {
+        const KNOWN_IO_PROTOCOL_FEATURES: &[&str] = &[$($feature),*];
+
+        fn io_protocol_feature(id: &str) -> Option<IoProtocolFeature> {
+            match id {
+                $(
+                    $feature => Some(IoProtocolFeature {
+                        implied_features: &[$($implied),*],
+                        adapters: &[
+                            $(IoProtocolAdapter {
+                                id: $adapter,
+                                target_os: $target_os,
+                            }),*
+                        ],
+                    }),
+                )*
+                _ => None,
+            }
+        }
+    };
+}
+
+define_io_protocol_features! {
+    "aether_485" => {
+        implies: [],
+        adapters: [("aether_485", None)],
+    },
+    "ble" => {
+        implies: [],
+        adapters: [("ble", None)],
+    },
+    "can" => {
+        implies: [],
+        adapters: [("can", Some("linux"))],
+    },
+    "dl645" => {
+        implies: [],
+        adapters: [("dl645", None)],
+    },
+    "gpio" => {
+        implies: [],
+        adapters: [("di_do", Some("linux"))],
+    },
+    "http" => {
+        implies: [],
+        adapters: [("http", None)],
+    },
+    "iec104" => {
+        implies: [],
+        adapters: [("iec104", None)],
+    },
+    "iec61850" => {
+        implies: [],
+        adapters: [("iec61850", None)],
+    },
+    "j1939" => {
+        implies: ["can"],
+        adapters: [("j1939", Some("linux"))],
+    },
+    "modbus" => {
+        implies: [],
+        adapters: [("modbus_rtu", None), ("modbus_tcp", None)],
+    },
+    "mqtt" => {
+        implies: [],
+        adapters: [("mqtt", None)],
+    },
+    "opcua" => {
+        implies: [],
+        adapters: [("opcua", None)],
+    },
+    "zigbee" => {
+        implies: [],
+        adapters: [("zigbee", None)],
+    },
+}
 
 /// Returns the `aether-io` default protocol feature set.
 #[must_use]
@@ -70,7 +150,7 @@ pub const fn default_io_features() -> &'static [&'static str] {
 /// Returns every protocol-affecting feature understood by manifest v1.
 #[must_use]
 pub const fn known_io_protocol_features() -> &'static [&'static str] {
-    &KNOWN_IO_PROTOCOL_FEATURES
+    KNOWN_IO_PROTOCOL_FEATURES
 }
 
 /// Digest over canonical JSON of every manifest field except `checksum`.
@@ -814,7 +894,7 @@ fn canonical_io_features(features: Vec<String>) -> Result<Vec<String>, RuntimeMa
     let mut resolved = BTreeSet::new();
     for feature in features {
         validate_identifier("io_features", &feature)?;
-        if !KNOWN_IO_PROTOCOL_FEATURES.contains(&feature.as_str()) {
+        if io_protocol_feature(&feature).is_none() {
             return Err(RuntimeManifestError::UnknownIoFeature { id: feature });
         }
         if !resolved.insert(feature.clone()) {
@@ -824,9 +904,19 @@ fn canonical_io_features(features: Vec<String>) -> Result<Vec<String>, RuntimeMa
             });
         }
     }
-    if resolved.contains("j1939") {
-        resolved.insert("can".to_string());
+
+    let mut pending = resolved.iter().cloned().collect::<Vec<_>>();
+    while let Some(feature) = pending.pop() {
+        let Some(definition) = io_protocol_feature(&feature) else {
+            return Err(RuntimeManifestError::UnknownIoFeature { id: feature });
+        };
+        for implied in definition.implied_features {
+            if resolved.insert((*implied).to_string()) {
+                pending.push((*implied).to_string());
+            }
+        }
     }
+
     Ok(resolved.into_iter().collect())
 }
 
@@ -856,24 +946,15 @@ fn parse_package_features(cargo_features: &[String]) -> Result<Vec<String>, Runt
 fn derive_protocols(features: &[String], target_os: &str) -> Vec<String> {
     let mut protocols = BTreeSet::new();
     for feature in features {
-        match feature.as_str() {
-            "modbus" => {
-                protocols.extend(["modbus_rtu".to_string(), "modbus_tcp".to_string()]);
-            },
-            "iec104" => insert(&mut protocols, "iec104"),
-            "opcua" => insert(&mut protocols, "opcua"),
-            "can" if target_os == "linux" => insert(&mut protocols, "can"),
-            "j1939" if target_os == "linux" => insert(&mut protocols, "j1939"),
-            "gpio" if target_os == "linux" => insert(&mut protocols, "di_do"),
-            "dl645" => insert(&mut protocols, "dl645"),
-            "aether_485" => insert(&mut protocols, "aether_485"),
-            "mqtt" => insert(&mut protocols, "mqtt"),
-            "http" => insert(&mut protocols, "http"),
-            "ble" => insert(&mut protocols, "ble"),
-            "zigbee" => insert(&mut protocols, "zigbee"),
-            "matter" => insert(&mut protocols, "matter"),
-            "iec61850" => insert(&mut protocols, "iec61850"),
-            _ => {},
+        if let Some(definition) = io_protocol_feature(feature) {
+            for adapter in definition.adapters {
+                if adapter
+                    .target_os
+                    .is_none_or(|required| required == target_os)
+                {
+                    insert(&mut protocols, adapter.id);
+                }
+            }
         }
     }
     protocols.into_iter().collect()
@@ -1082,6 +1163,17 @@ mod tests {
 
         assert_eq!(linux, ["can", "di_do"]);
         assert!(macos.is_empty());
+    }
+
+    #[test]
+    fn dependent_protocol_features_are_closed_before_adapter_derivation() {
+        let features =
+            normalize_io_protocol_features(["j1939"]).expect("known dependent protocol feature");
+        let protocols = protocol_adapters_for_io_features(["j1939"], "aarch64-unknown-linux-musl")
+            .expect("known Linux protocol feature");
+
+        assert_eq!(features, ["can", "j1939"]);
+        assert_eq!(protocols, ["can", "j1939"]);
     }
 
     #[test]

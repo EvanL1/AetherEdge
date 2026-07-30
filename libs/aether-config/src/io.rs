@@ -1,6 +1,8 @@
 //! Io service configuration structures
 
-use common::serde_helpers::{deserialize_bool_flexible, deserialize_u8_default_zero};
+mod stored_channel_config;
+
+use common::serde_helpers::deserialize_bool_flexible;
 use common::validation::CsvFields;
 use common::{
     ApiConfig, BaseServiceConfig, ConfigValidator, LoggingConfig, ValidationLevel, ValidationResult,
@@ -13,6 +15,8 @@ use std::sync::Arc;
 
 #[cfg(feature = "openapi")]
 use utoipa::ToSchema;
+
+pub use stored_channel_config::{StoredChannelConfig, StoredChannelConfigError};
 
 /// Default API configuration for io (port 6001)
 fn default_io_api() -> ApiConfig {
@@ -96,39 +100,6 @@ pub struct ChannelConfig {
     pub logging: ChannelLoggingConfig,
 }
 
-fn validate_required_string_parameter(
-    channel: &ChannelConfig,
-    result: &mut ValidationResult,
-    parameter: &str,
-) {
-    match channel.parameters.get(parameter) {
-        Some(serde_json::Value::String(value)) if !value.trim().is_empty() => {},
-        _ => result.add_error(format!(
-            "Channel {}: '{parameter}' must be a non-empty string",
-            channel.core.name
-        )),
-    }
-}
-
-fn validate_required_integer_parameter(
-    channel: &ChannelConfig,
-    result: &mut ValidationResult,
-    parameter: &str,
-    maximum: u64,
-) {
-    let valid = channel
-        .parameters
-        .get(parameter)
-        .and_then(serde_json::Value::as_u64)
-        .is_some_and(|value| (1..=maximum).contains(&value));
-    if !valid {
-        result.add_error(format!(
-            "Channel {}: '{parameter}' must be an integer between 1 and {maximum}",
-            channel.core.name
-        ));
-    }
-}
-
 fn validate_optional_timing_parameter(
     channel: &ChannelConfig,
     result: &mut ValidationResult,
@@ -162,11 +133,6 @@ impl ChannelConfig {
     /// Convenient accessor for protocol
     pub fn protocol(&self) -> &str {
         &self.core.protocol
-    }
-
-    /// Convenient accessor for enabled status
-    pub fn is_enabled(&self) -> bool {
-        self.core.enabled
     }
 }
 
@@ -571,112 +537,6 @@ struct ChannelRoutingRecord {
 // Schema SQL constant
 pub const CHANNEL_ROUTING_TABLE: &str = ChannelRoutingRecord::CREATE_TABLE_SQL;
 
-/// Modbus protocol mapping (corresponds to modbus_mappings table)
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "openapi", derive(ToSchema))]
-pub struct ModbusMapping {
-    #[serde(default)] // channel_id from directory context
-    pub channel_id: u32,
-    pub point_id: u32,
-    #[serde(default)] // telemetry_type from filename context
-    pub telemetry_type: String,
-    pub slave_id: u8,
-    pub function_code: u8,
-    pub register_address: u16,
-    pub data_type: String,
-    pub byte_order: String,
-    #[serde(default, deserialize_with = "deserialize_u8_default_zero")]
-    pub bit_position: u8,
-}
-
-/// GPIO protocol mapping for DI/DO (corresponds to gpio_mappings table)
-/// Direction is implicit: Signal=input, Control=output
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "openapi", derive(ToSchema))]
-pub struct GpioMapping {
-    #[serde(default)] // channel_id from directory context
-    pub channel_id: u32,
-    pub point_id: u32,
-    #[serde(default)] // telemetry_type from filename context
-    pub telemetry_type: String,
-    pub gpio_number: u32,
-}
-
-/// IEC 60870-5-104 protocol mapping (corresponds to iec_mappings table)
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "openapi", derive(ToSchema))]
-pub struct IecMapping {
-    #[serde(default)] // channel_id from directory context
-    pub channel_id: u32,
-    pub point_id: u32,
-    #[serde(default)] // telemetry_type from filename context
-    pub telemetry_type: String,
-    pub asdu_address: i32,
-    pub object_address: i32,
-    pub type_id: i32,
-    #[serde(default = "default_cot")]
-    pub cot: i32,
-    #[serde(default)]
-    pub qualifier: i32,
-}
-
-fn default_cot() -> i32 {
-    20 // Default Cause of Transmission
-}
-
-/// gRPC protocol mapping (corresponds to grpc_mappings table)
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "openapi", derive(ToSchema))]
-pub struct GrpcMapping {
-    #[serde(default)] // channel_id from directory context
-    pub channel_id: u32,
-    pub point_id: u32,
-    #[serde(default)] // telemetry_type from filename context
-    pub telemetry_type: String,
-    pub service_name: String,
-    pub method_name: String,
-    pub field_path: Option<String>,
-}
-
-/// CAN protocol mapping (corresponds to can_mappings table)
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "openapi", derive(ToSchema))]
-pub struct CanMapping {
-    #[serde(default)] // channel_id comes from directory context
-    pub channel_id: u32,
-    pub point_id: u32,
-    #[serde(default)] // telemetry_type comes from filename context
-    pub telemetry_type: String,
-    pub can_id: u32,
-    #[serde(default)]
-    pub msg_name: Option<String>,
-    #[serde(default)]
-    pub signal_name: Option<String>,
-    pub start_bit: u32,  // Changed to u32 to match database
-    pub bit_length: u32, // Changed to u32 to match database
-    #[serde(default = "default_byte_order")]
-    pub byte_order: String,
-    #[serde(default = "default_data_type")]
-    pub data_type: String,
-    #[serde(default)]
-    pub signed: bool,
-    #[serde(default = "scale_one")]
-    pub scale: f64,
-    #[serde(default)]
-    pub offset: f64,
-    #[serde(default)]
-    pub min_value: Option<f64>,
-    #[serde(default)]
-    pub max_value: Option<f64>,
-    #[serde(default)]
-    pub unit: Option<String>,
-}
-
-// Default value functions for serde
-fn default_byte_order() -> String {
-    "ABCD".to_string()
-}
-
 fn default_data_type() -> String {
     "uint32".to_string()
 }
@@ -694,109 +554,6 @@ pub trait SqlInsertablePoint {
     ) -> Result<SqliteQueryResult, sqlx::Error>
     where
         E: Executor<'e, Database = Sqlite>;
-}
-
-/// Complete runtime channel configuration
-/// Contains base configuration and points with embedded protocol mappings
-#[derive(Debug, Clone)]
-pub struct RuntimeChannelConfig {
-    /// Base channel configuration (Arc-wrapped for zero-copy sharing)
-    pub base: Arc<ChannelConfig>,
-
-    /// Telemetry points (with embedded protocol_mappings JSON)
-    pub telemetry_points: Vec<TelemetryPoint>,
-
-    /// Signal points (with embedded protocol_mappings JSON)
-    pub signal_points: Vec<SignalPoint>,
-
-    /// Control points (with embedded protocol_mappings JSON)
-    pub control_points: Vec<ControlPoint>,
-
-    /// Adjustment points (with embedded protocol_mappings JSON)
-    pub adjustment_points: Vec<AdjustmentPoint>,
-    // Protocol mappings are now embedded in each point's protocol_mappings field
-}
-
-impl RuntimeChannelConfig {
-    /// Create from base configuration (wraps in Arc for zero-copy sharing)
-    pub fn from_base(base: ChannelConfig) -> Self {
-        Self::from_base_arc(Arc::new(base))
-    }
-
-    /// Create from Arc-wrapped base configuration (zero-copy)
-    pub fn from_base_arc(base: Arc<ChannelConfig>) -> Self {
-        Self {
-            base,
-            telemetry_points: Vec::new(),
-            signal_points: Vec::new(),
-            control_points: Vec::new(),
-            adjustment_points: Vec::new(),
-        }
-    }
-
-    /// Get channel ID
-    pub fn id(&self) -> u32 {
-        self.base.core.id
-    }
-
-    /// Get channel name
-    pub fn name(&self) -> &str {
-        &self.base.core.name
-    }
-
-    /// Get protocol
-    pub fn protocol(&self) -> &str {
-        &self.base.core.protocol
-    }
-
-    /// Check if enabled
-    pub fn is_enabled(&self) -> bool {
-        self.base.core.enabled
-    }
-
-    // ========================================================================
-    // Point Query Methods (Type-Safe)
-    // ========================================================================
-    //
-    // DESIGN PRINCIPLE: point_id is only unique within a point type.
-    // The composite key is (channel_id, point_type, point_id).
-    //
-    // When querying points, you MUST either:
-    // 1. Iterate over a specific type collection (e.g., `for pt in &signal_points`)
-    // 2. Use typed query methods (e.g., `get_control_point(id)`)
-    //
-    // NEVER search across all point types with just a point_id - this was the
-    // root cause of the GPIO mapping bug where signal and control had the same
-    // point_id but different GPIO numbers.
-    // ========================================================================
-
-    /// Get a telemetry point by ID
-    pub fn get_telemetry_point(&self, point_id: u32) -> Option<&TelemetryPoint> {
-        self.telemetry_points
-            .iter()
-            .find(|p| p.base.point_id == point_id)
-    }
-
-    /// Get a signal point by ID
-    pub fn get_signal_point(&self, point_id: u32) -> Option<&SignalPoint> {
-        self.signal_points
-            .iter()
-            .find(|p| p.base.point_id == point_id)
-    }
-
-    /// Get a control point by ID
-    pub fn get_control_point(&self, point_id: u32) -> Option<&ControlPoint> {
-        self.control_points
-            .iter()
-            .find(|p| p.base.point_id == point_id)
-    }
-
-    /// Get an adjustment point by ID
-    pub fn get_adjustment_point(&self, point_id: u32) -> Option<&AdjustmentPoint> {
-        self.adjustment_points
-            .iter()
-            .find(|p| p.base.point_id == point_id)
-    }
 }
 
 // Default value functions
@@ -866,7 +623,6 @@ impl ConfigValidator for IoConfig {
             result.add_warning("No channels configured".to_string());
         }
 
-        let supported_protocols = ["modbus_tcp", "modbus_rtu", "grpc"];
         let mut channel_ids = std::collections::HashSet::new();
         let mut channel_names = std::collections::HashSet::new();
         for channel in &self.channels {
@@ -875,12 +631,6 @@ impl ConfigValidator for IoConfig {
             }
             if !channel_names.insert(&channel.core.name) {
                 result.add_error(format!("Duplicate channel name: {}", channel.core.name));
-            }
-            if !supported_protocols.contains(&channel.core.protocol.as_str()) {
-                result.add_warning(format!(
-                    "Channel {} uses unknown protocol: {}",
-                    channel.core.name, channel.core.protocol
-                ));
             }
         }
 
@@ -900,11 +650,11 @@ impl ConfigValidator for IoConfig {
 impl ChannelConfig {
     /// Validate channel configuration
     pub fn validate(&self, result: &mut ValidationResult, idx: usize) {
-        if self.core.name.is_empty() {
+        if self.core.name.trim().is_empty() {
             result.add_error(format!("Channel {} name cannot be empty", idx));
         }
 
-        if self.core.protocol.is_empty() {
+        if self.core.protocol.trim().is_empty() {
             result.add_error(format!(
                 "Channel {} protocol cannot be empty",
                 self.core.name
@@ -914,23 +664,6 @@ impl ChannelConfig {
         // Zero reaches `tokio::time::interval` as a panic, so this is a
         // protocol-independent schema invariant rather than an adapter default.
         validate_optional_timing_parameter(self, result, "poll_interval_ms");
-
-        // Protocol-specific parameter validation
-        match self.core.protocol.as_str() {
-            "modbus_tcp" => {
-                validate_required_string_parameter(self, result, "host");
-                validate_required_integer_parameter(self, result, "port", u64::from(u16::MAX));
-                validate_optional_timing_parameter(self, result, "read_timeout_ms");
-            },
-            "modbus_rtu" => {
-                validate_required_string_parameter(self, result, "device");
-                validate_required_integer_parameter(self, result, "baud_rate", u64::from(u32::MAX));
-                validate_optional_timing_parameter(self, result, "read_timeout_ms");
-            },
-            _ => {
-                // Other protocols may have different requirements
-            },
-        }
     }
 }
 
@@ -1148,40 +881,18 @@ channels:
     }
 
     #[test]
-    fn modbus_endpoint_schema_rejects_wrong_types_and_numeric_overflow() {
-        for (protocol, parameters) in [
-            ("modbus_tcp", serde_json::json!({"host": 123, "port": 502})),
-            (
-                "modbus_tcp",
-                serde_json::json!({"host": "edge", "port": -1}),
-            ),
-            (
-                "modbus_rtu",
-                serde_json::json!({"device": false, "baud_rate": 9_600}),
-            ),
-            (
-                "modbus_rtu",
-                serde_json::json!({"device": "/dev/ttyUSB0", "baud_rate": -1}),
-            ),
-        ] {
-            assert!(
-                !validate_channel(protocol, parameters).is_valid,
-                "{protocol} must reject an endpoint that could fallback or truncate"
-            );
-        }
-
-        for (protocol, parameters) in [
-            ("modbus_tcp", serde_json::json!({"host": "edge", "port": 1})),
-            (
-                "modbus_rtu",
-                serde_json::json!({"device": "/dev/ttyUSB0", "baud_rate": 1}),
-            ),
-        ] {
-            assert!(
-                validate_channel(protocol, parameters).is_valid,
-                "{protocol} boundary endpoint must remain valid"
-            );
-        }
+    fn shared_channel_validation_keeps_adapter_parameters_opaque() {
+        assert!(
+            validate_channel(
+                "future_protocol",
+                serde_json::json!({"vendor_endpoint": [true, 7, {"mode": "custom"}]})
+            )
+            .is_valid
+        );
+        assert!(
+            validate_channel("modbus_tcp", serde_json::json!({"host": 123, "port": -1})).is_valid,
+            "protocol factories, not shared configuration, own endpoint schemas"
+        );
     }
 
     #[test]
@@ -1192,10 +903,8 @@ channels:
             serde_json::json!(86_400_001),
         ] {
             let result = validate_channel(
-                "modbus_tcp",
+                "future_protocol",
                 serde_json::json!({
-                    "host": "127.0.0.1",
-                    "port": 502,
                     "poll_interval_ms": value
                 }),
             );
@@ -1206,10 +915,8 @@ channels:
         }
         assert!(
             validate_channel(
-                "modbus_tcp",
+                "future_protocol",
                 serde_json::json!({
-                    "host": "127.0.0.1",
-                    "port": 502,
                     "poll_interval_ms": 86_400_000
                 })
             )

@@ -180,7 +180,6 @@ gates):
 | `JWT_SECRET_KEY` | unset (required) | Shared 32-byte-or-longer access-JWT signing/verification secret for aether-api plus governed io, automation, and alarm operations; installers generate it and keep it outside configuration assets |
 | `AETHER_ACCESS_TOKEN` | unset | Signed access JWT the `aether` CLI data plane and MCP attach to every gateway request. A Viewer token covers queries; governed writes — channel commissioning/lifecycle, device commands, action-routing changes, automation/alarm policy, and MCP's 22 write tools — require an Admin or Engineer token |
 | `AETHER_UPLINK_CONTROL_TOKEN` | unset | Separate 32-byte-or-longer service credential used only for uplink-to-automation device commands; installers generate it and never print it |
-| `AETHER_ALLOW_SIMULATION_WRITES` | `false` | Development-only opt-in for io T/S simulation writes into authoritative SHM; keep disabled in production |
 | `AETHER_CONFIG_PATH` | unset | Shared configuration directory used by automation and `aether mcp`; CLI path resolution may set it through deployment context or `--config-path` |
 | `AETHER_DATA_PATH` | unset | Overrides the install-context data directory for the `aether` CLI |
 | `AETHER_INSTALL_CONTEXT_PATH` | `/etc/aether/install.yaml` | Overrides the installed layout descriptor; CLI flags and the two path variables take precedence |

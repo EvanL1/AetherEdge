@@ -1,7 +1,7 @@
 ---
 title: Connect Devices
 description: Configure channels, choose protocols, and map device points to instances
-updated: 2026-07-10
+updated: 2026-07-30
 ---
 
 # Connect Devices
@@ -40,16 +40,14 @@ channels:
     parameters:
       device: "/dev/ttyS4"
       baud_rate: 9600
-      data_bits: 8
-      stop_bits: 1
-      parity: "N"
 ```
 
 The `parameters` block is protocol-specific: Modbus TCP wants a host and
-port, Modbus RTU wants a serial device and line settings, MQTT wants a broker
-URL and subscription topics, and so on. Protocol names are normalized before
-matching (`normalize_protocol_name` in `services/io/src/utils.rs`), so
-`modbus-tcp`, `ModbusTCP`, and `modbus_tcp` all resolve to the same protocol.
+port, Modbus RTU wants a serial device and baud rate, MQTT wants a broker URL
+and subscription topics, and so on. The registry matches canonical names and
+aliases case-insensitively while ignoring `-`, `_`, `.`, and spaces, so
+`modbus-tcp`, `ModbusTCP`, and `modbus_tcp` all resolve to the same protocol
+without allocating a normalized string.
 
 Channels can also be created at runtime without touching YAML:
 
@@ -74,37 +72,73 @@ CSV tables next to the channel YAML and picked up by `aether sync`.
 
 ## Protocol availability
 
-io speaks 14 protocols, but most are behind compile-time Cargo features
-(`services/io/Cargo.toml`), so a given binary usually contains only a
-subset. The default feature set compiles Modbus, GPIO, Aether-485,
-IEC 61850, and CAN.
+IO advertises only protocols that the same binary can construct through its
+production composition root. Most are behind compile-time Cargo features
+(`services/io/Cargo.toml`), so a given binary usually contains only a subset.
+The default feature list selects Modbus, GPIO, Aether-485, IEC 61850, and CAN.
+The production registry composes CAN and GPIO only on Linux: a Linux default
+build advertises all five, while a non-Linux default build does not advertise
+CAN or GPIO.
 
-| Protocol | Compiled by default | Platform notes |
+| Protocol | Selected by default | Platform notes |
 |----------|--------------------:|----------------|
 | Modbus TCP/RTU (`modbus`) | yes | |
 | IEC 60870-5-104 (`iec104`) | no | |
 | IEC 61850 MMS (`iec61850`) | yes | |
 | OPC UA (`opcua`) | no | Optional feature; currently restricted to anonymous `SecurityPolicy::None` sessions. |
-| MQTT (`mqtt`) | no | event-driven JSON payloads; enabling pulls in `json-mapping` |
-| HTTP (`http`) | no | polling and webhook modes; enabling pulls in `json-mapping` |
+| MQTT (`mqtt`) | no | event-driven, read-only JSON payload acquisition |
+| HTTP (`http`) | no | read-only HTTP JSON polling; the unified channel task owns scheduling |
 | DL/T 645-2007 (`dl645`) | no | smart meters over serial or TCP |
 | CAN (`can`) / J1939 (`j1939`) | CAN yes, J1939 no | Linux only; `j1939` implies `can` |
 | GPIO (`gpio`) | yes | Linux only |
-| BLE GATT (`ble`) | no | |
-| Zigbee (`zigbee`) | no | via TCP gateway |
-| Matter (`matter`) | no | |
+| BLE GATT (`ble`) | no | notification/poll acquisition plus governed GATT writes |
+| Zigbee (`zigbee`) | no | Aether Raw TCP gateway framing only |
 | Aether-485 (`aether_485`) | yes | private RS-485 protocol |
 
-Two protocols are additionally OS-gated in the channel factory
-(`services/io/src/protocols/gateway/factory.rs`): CAN and GPIO are
-compiled only on Linux, so they never exist in a macOS build regardless of
-features. Hardware-independent protocol tests run against `tools/simulator`;
-the production IO binary contains no in-memory simulation protocol.
+CAN, J1939, and GPIO are Linux-gated in the IO protocol factory registry
+(`services/io/src/protocols/factory.rs`), so selecting their Cargo features
+does not advertise a runtime on macOS. Hardware-independent protocol tests run
+against `tools/simulator`; the production IO binary contains no in-memory
+simulation protocol.
 
 The rule of thumb: **if a channel fails to create, check the feature gate
-first.** The factory's error is literal about it — `Unsupported protocol:
-{name}. Check if the required feature is enabled.` — and the cause is almost
-always a protocol that was not compiled in, not a configuration typo.
+first.** Channel activation reports that the protocol is unavailable in the
+current IO runtime build when its adapter was not composed.
+
+One statically composed, process-wide immutable factory registry owns
+discovery, strict parameters, point mapping validation, aliases, polling
+defaults, and runtime construction. `ChannelManager` holds no SQLite pool and
+performs no protocol switch or mapping prepass; it adds only common runtime
+policy, logging, command guards, lifecycle/task ownership, and SHM wiring. The
+signed runtime manifest is checked for exact agreement with this registry. A
+feature that merely compiles but cannot construct a channel is therefore a
+test failure, not an advertised capability. The former `matter` feature was
+removed because its private UDP frame was not an interoperable Matter
+implementation; see
+[ADR-0027](../adr/0027-exact-io-protocol-capabilities.md).
+
+## Point mapping contracts
+
+Each activation consumes an owned, complete `RuntimeChannelConfig` snapshot.
+The selected factory compiles adapter-owned mapping schemas into
+adapter-owned typed addresses once; there is no shared closed protocol-address
+union. Protocol runtimes do not own a SQLite pool or reload topology later.
+
+| Protocol | Accepted point mappings |
+|----------|-------------------------|
+| MQTT / HTTP | T uses `{"json_path":"$.value","data_type":"float"}` (`float` or `int`); S uses `{"json_path":"$.online","data_type":"bool"}`. C/A and string mappings are rejected. |
+| BLE | `{"service_uuid":"180f","characteristic_uuid":"2a19","data_format":"uint16","notify":true}`. Notifications are T/S only; C/A use governed writes. |
+| Zigbee | T/S require `{"ieee_address":...,"endpoint":1,"cluster_id":1026,"attribute_id":0}`. C/A are rejected because the raw gateway transport has no correlated command acknowledgement yet. |
+| J1939 | T uses `{"spn":190}`. S additionally requires an explicit raw discrete value, for example `{"spn":110,"active_raw_value":130}`. |
+
+Scale, offset, and reverse come from the point row rather than being repeated
+inside these mapping objects. Unknown mapping fields fail closed. MQTT/HTTP
+accept only finite values that can enter live state, J1939 accepts only SPNs in
+the compiled decoder catalog, and Zigbee accepts only the implemented Aether
+Raw TCP framing—there is no `gateway_type` selector for unimplemented ZNP or
+EZSP transports. The SHM acquisition boundary accepts only finite numeric or
+boolean T/S samples and canonical point quality; text, missing, and non-finite
+values never enter live state.
 
 ## Mapping points to instances
 

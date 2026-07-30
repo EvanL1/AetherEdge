@@ -61,12 +61,6 @@ impl AtomicDiagnostics {
         self.write_count.fetch_add(n, Ordering::Relaxed);
     }
 
-    /// Increment error count by 1.
-    #[inline]
-    pub fn inc_error(&self) {
-        self.error_count.fetch_add(1, Ordering::Relaxed);
-    }
-
     /// Increment error count by n.
     #[inline]
     pub fn add_error(&self, n: u64) {

@@ -100,26 +100,9 @@ pub fn decode_registers(
             Ok(Value::Float(value))
         },
 
-        DataFormat::String => {
-            // Pre-allocate: each register can produce up to 2 characters
-            let mut s = String::with_capacity(registers.len() * 2);
-            for &reg in registers {
-                let hi = (reg >> 8) as u8;
-                let lo = (reg & 0xFF) as u8;
-                if hi != 0 {
-                    s.push(hi as char);
-                }
-                if lo != 0 {
-                    s.push(lo as char);
-                }
-            }
-            // Note: The loop already filters null bytes, so trim is defensive only
-            // Truncate in place to avoid extra allocation from trim_end_matches().to_string()
-            while s.ends_with('\0') {
-                s.pop();
-            }
-            Ok(Value::String(s))
-        },
+        DataFormat::String => Err(GatewayError::invalid_data(
+            "String registers cannot produce numeric acquired samples",
+        )),
     }
 }
 
@@ -236,20 +219,9 @@ pub fn encode_registers(
             Ok(regs.to_vec())
         },
 
-        DataFormat::String => {
-            let s = value
-                .as_string()
-                .ok_or_else(|| GatewayError::invalid_data("Cannot convert to string"))?;
-            let bytes = s.as_bytes();
-            // Pre-allocate: 2 bytes per register, round up
-            let mut regs = Vec::with_capacity(bytes.len().div_ceil(2));
-            for chunk in bytes.chunks(2) {
-                let hi = chunk[0] as u16;
-                let lo = chunk.get(1).copied().unwrap_or(0) as u16;
-                regs.push((hi << 8) | lo);
-            }
-            Ok(regs)
-        },
+        DataFormat::String => Err(GatewayError::invalid_data(
+            "String registers are outside the numeric runtime boundary",
+        )),
     }
 }
 

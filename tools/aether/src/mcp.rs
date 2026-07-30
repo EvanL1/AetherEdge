@@ -552,19 +552,6 @@ impl AetherMcp {
     }
 }
 
-#[cfg(test)]
-#[derive(Deserialize, schemars::JsonSchema)]
-struct ChannelsWriteParams {
-    /// Channel ID
-    channel_id: u32,
-    /// Simulation point type: T | S
-    point_type: String,
-    /// Point ID (numeric or semantic)
-    id: String,
-    /// Value to write
-    value: f64,
-}
-
 #[derive(Deserialize, schemars::JsonSchema)]
 struct ChannelsCreateParams {
     /// Channel name
@@ -1056,21 +1043,6 @@ impl AetherMcp {
 #[tool_router(router = legacy_write_test_router)]
 impl AetherMcp {
     #[tool(
-        description = "Inject a simulated T/S value into the acquisition SHM plane. This does not command a device, but downstream rules and alarms treat it as telemetry.",
-        annotations(read_only_hint = false)
-    )]
-    async fn channels_write(
-        &self,
-        Parameters(p): Parameters<ChannelsWriteParams>,
-    ) -> CallToolResult {
-        to_call_result(
-            self.channels
-                .write_point(p.channel_id, &p.point_type, &p.id, p.value)
-                .await,
-        )
-    }
-
-    #[tool(
         description = "Batch create/update/delete points on a channel. `body` is {\"create\":[...],\"update\":[...],\"delete\":[...]}.",
         annotations(read_only_hint = false)
     )]
@@ -1305,7 +1277,6 @@ mod tests {
     /// stays here until its application capability and exact MCP mapping are
     /// both reviewed; direct wrappers exist only for unit coverage.
     const UNEXPOSED_WRITE_TOOL_NAMES: &[&str] = &[
-        "channels_write",
         "channels_points_batch",
         "net_mqtt_config_set",
         "net_mqtt_reconnect",
@@ -2170,34 +2141,6 @@ mod tests {
         assert!(names.contains(&"channels_list".to_string()), "{names:?}");
         // Route-count safety net: 23 read-only + 22 governed writes.
         assert_eq!(names.len(), 45, "{names:?}");
-    }
-
-    #[tokio::test]
-    async fn channels_write_posts_the_flattened_body() {
-        let server = MockServer::start().await;
-        Mock::given(method("POST"))
-            .and(path("/api/channels/1001/write"))
-            .and(body_json(
-                serde_json::json!({ "type": "T", "id": "5", "value": 50.0 }),
-            ))
-            .respond_with(
-                ResponseTemplate::new(200).set_body_json(serde_json::json!({ "success": true })),
-            )
-            .expect(1)
-            .mount(&server)
-            .await;
-
-        let mcp = write_mcp(&server.uri());
-        let result = mcp
-            .channels_write(Parameters(ChannelsWriteParams {
-                channel_id: 1001,
-                point_type: "T".to_string(),
-                id: "5".to_string(),
-                value: 50.0,
-            }))
-            .await;
-
-        assert_ne!(result.is_error, Some(true), "{result:?}");
     }
 
     #[tokio::test]

@@ -49,12 +49,13 @@ serde = { workspace = true }
 serde_yml = { workspace = true }
 serde_json = { workspace = true }
 # JSONPath for MQTT/HTTP protocol JSON mapping
-serde_json_path = { workspace = true }
+serde_json_path = { workspace = true, optional = true }
 
 # MQTT client for event-driven data collection
 rumqttc = { version = "0.25.1", default-features = false, optional = true }
+url = { version = "2.5.8", optional = true }
 
-# HTTP client for polling/webhook data collection
+# HTTP client for polling data collection
 reqwest = { workspace = true, optional = true }
 
 # BLE GATT client for Bluetooth Low Energy devices
@@ -72,7 +73,6 @@ tower = { workspace = true }
 # Data structures
 dashmap = { workspace = true }
 arc-swap = "1.7"
-parking_lot = { workspace = true }  # Non-poisoning RwLock for SlotBitmap
 bytes = { workspace = true }
 
 # Utils
@@ -86,7 +86,7 @@ sqlx = { workspace = true }
 
 # Linux-only dependencies
 [target.'cfg(target_os = "linux")'.dependencies]
-socketcan = { version = "3.5", optional = true }
+socketcan = { version = "3.5", features = ["tokio"], optional = true }
 tokio-gpiod = { version = "0.3", optional = true }
 
 [dev-dependencies]
@@ -109,12 +109,10 @@ j1939 = ["can", "dep:voltage_j1939"]
 gpio = ["dep:tokio-gpiod"]
 dl645 = ["dep:tokio-serial"]  # DL/T 645-2007 智能电表协议（支持 TCP 和串口 RTU）
 aether_485 = ["dep:tokio-serial"]  # Aether-485 私有 RS-485 通信协议
-json-mapping = []  # JSONPath mapping runtime for MQTT/HTTP protocols
-mqtt = ["json-mapping", "dep:rumqttc"]  # MQTT protocol (event-driven, JSON payload)
-http = ["json-mapping", "dep:reqwest"]  # HTTP protocol (polling + webhook, JSON payload)
+mqtt = ["dep:rumqttc", "dep:serde_json_path", "dep:url"]  # MQTT protocol (event-driven, JSON payload)
+http = ["dep:reqwest", "dep:serde_json_path"]  # HTTP protocol (polling JSON payload)
 ble = ["dep:btleplug"]  # BLE GATT protocol (hybrid: notify + read/write)
-zigbee = []  # Zigbee protocol via TCP gateway (Raw ZCL, ZNP, EZSP)
-matter = []  # Matter smart home protocol (UDP transport, self-implemented framing)
+zigbee = []  # Zigbee protocol via the implemented raw TCP gateway framing
 iec61850 = []  # IEC 61850 MMS protocol (TCP/ISO transport, pure Rust implementation)
 tracing-support = []
 openapi = []

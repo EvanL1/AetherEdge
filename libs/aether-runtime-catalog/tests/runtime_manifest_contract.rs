@@ -81,6 +81,20 @@ fn retired_in_tree_sunspec_feature_is_rejected() {
 }
 
 #[test]
+fn incomplete_matter_transport_cannot_be_advertised_as_a_production_adapter() {
+    let error = KernelRuntimeManifest::from_io_features(
+        env!("CARGO_PKG_VERSION"),
+        "aarch64-unknown-linux-musl",
+        ["matter"],
+    )
+    .expect_err("an incomplete transport must not enter the signed runtime manifest");
+    assert!(matches!(
+        error,
+        RuntimeManifestError::UnknownIoFeature { ref id } if id == "matter"
+    ));
+}
+
+#[test]
 fn extracted_home_assistant_features_are_rejected() {
     for feature in [
         "home-assistant",

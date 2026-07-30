@@ -612,6 +612,7 @@ async fn mapping_update_executes_inside_the_same_revision_transaction() {
     );
 }
 
+#[cfg(any(feature = "mqtt", feature = "http"))]
 #[tokio::test]
 async fn mqtt_jsonpath_mapping_uses_the_point_owned_cas_transaction() {
     let pool = configured_pool().await;
@@ -644,9 +645,7 @@ async fn mqtt_jsonpath_mapping_uses_the_point_owned_cas_transaction() {
                     point_id: 1,
                     protocol_data: serde_json::json!({
                         "json_path": "$.measurements.temperature",
-                        "data_type": "float",
-                        "scale": 0.1,
-                        "offset": -5.0
+                        "data_type": "float"
                     }),
                 }],
             },

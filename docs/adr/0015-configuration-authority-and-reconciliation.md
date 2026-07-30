@@ -93,6 +93,17 @@ topology.
     the whole command if any member is routed. It then deletes the complete set
     in one transaction; routing-integrity triggers remain the fail-closed second
     line of defense against a missed precheck or concurrent legacy writer.
+11. The IO composition root resolves the site database once and shares one
+    SQLite pool. Its snapshot loader reads a channel row and all four point
+    collections in one read transaction, then returns one immutable runtime
+    channel snapshot. The channel manager owns protocol runtimes and SHM
+    projection resources only; it never opens SQLite or reloads point topology.
+    Process-level service/API settings are consumed directly from the loader;
+    there is no second configuration manager caching runtime snapshots. Initial
+    startup and later repair both enter the same reconciler. After a
+    desired-state commit, the mutator loads the committed revision and hands
+    that complete snapshot to the runtime lifecycle. Protocol metadata
+    discovery is not part of this configuration ownership chain.
 
 ## Compatibility and removal criteria
 
@@ -149,6 +160,12 @@ topology.
   `logical_routing`, `automation_rules`, and `instances` heads together with
   the imported rows. Tokens issued before an offline import therefore remain
   stale after services restart instead of matching an ABA-equivalent revision.
+- IO retains no compatibility path in which `ChannelManager` owns a pool,
+  resolves `AETHER_DB_PATH`, or accepts a partial channel definition and loads
+  its points later. Runtime activation always receives the complete,
+  revision-checked snapshot. The former configuration snapshot cache and
+  parallel startup function are removed rather than retained as fallback
+  owners.
 - A future protocol-mapping table must be added to the closed fingerprint list
   and its conformance suite before an adapter may consume it.
 
@@ -158,6 +175,8 @@ topology.
 
 - Restart is no longer the normal mechanism for applying point or protocol
   mapping changes.
+- A channel activation cannot combine a channel row from one database or
+  revision with point rows from another snapshot.
 - A physical topology, logical route set, and protocol mapping cannot silently
   masquerade as one another.
 - Failure receipts and runtime fencing expose desired/applied drift instead of

@@ -16,9 +16,10 @@
 //! - Read data (telemetry): Positive active energy, voltage, current, power, etc.
 //! - Control/Adjustment: Not supported (read-only protocol)
 
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 use std::time::Duration;
 
+use aether_config::io::MAX_CHANNEL_TIMING_MS;
 use aether_core::PointType;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -312,7 +313,6 @@ fn hex_char_to_nibble(c: u8) -> Result<u8> {
     }
 }
 
-// Note: Dl645Address is defined in crate::protocols::core::point
 // It only contains di_code (u32), as meter_address is a channel-level parameter.
 
 // ============================================================================
@@ -873,6 +873,7 @@ async fn receive_frame<T: AsyncReadExt + Unpin>(
 
 /// Configuration for channel parameters (from TOML config).
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Dl645ChannelParamsConfig {
     /// Meter address (12 BCD digits, required)
     pub meter_address: String,
@@ -946,6 +947,71 @@ fn default_frame_delay_ms() -> u64 {
 }
 
 impl Dl645ChannelParamsConfig {
+    pub(crate) fn validate(&self) -> Result<()> {
+        MeterAddress::parse(&self.meter_address)?;
+
+        let host = self
+            .host
+            .as_deref()
+            .map(str::trim)
+            .filter(|host| !host.is_empty());
+        let device = self
+            .device
+            .as_deref()
+            .map(str::trim)
+            .filter(|device| !device.is_empty());
+        match (host, device) {
+            (Some(_), None) if self.port > 0 => {},
+            (None, Some(_)) => {},
+            (Some(_), None) => {
+                return Err(GatewayError::Config(
+                    "DL/T 645 TCP port must be greater than zero".to_owned(),
+                ));
+            },
+            _ => {
+                return Err(GatewayError::Config(
+                    "DL/T 645 requires exactly one nonblank host or serial device".to_owned(),
+                ));
+            },
+        }
+
+        if device.is_some() {
+            if self.baud_rate == 0 {
+                return Err(GatewayError::Config(
+                    "DL/T 645 baud_rate must be greater than zero".to_owned(),
+                ));
+            }
+            if !(5..=8).contains(&self.data_bits) {
+                return Err(GatewayError::Config(
+                    "DL/T 645 data_bits must be in 5..=8".to_owned(),
+                ));
+            }
+            if !matches!(self.stop_bits, 1 | 2) {
+                return Err(GatewayError::Config(
+                    "DL/T 645 stop_bits must be 1 or 2".to_owned(),
+                ));
+            }
+            if !matches!(self.parity.as_str(), "none" | "even" | "odd") {
+                return Err(GatewayError::Config(
+                    "DL/T 645 parity must be none, even, or odd".to_owned(),
+                ));
+            }
+        }
+
+        for (name, value) in [
+            ("connect_timeout_ms", self.connect_timeout_ms),
+            ("timeout_ms", self.timeout_ms),
+            ("frame_delay_ms", self.frame_delay_ms),
+        ] {
+            if !(1..=MAX_CHANNEL_TIMING_MS).contains(&value) {
+                return Err(GatewayError::Config(format!(
+                    "DL/T 645 {name} must be between 1 and {MAX_CHANNEL_TIMING_MS}"
+                )));
+            }
+        }
+        Ok(())
+    }
+
     /// Check if this is a TCP configuration.
     #[must_use]
     pub fn is_tcp(&self) -> bool {
@@ -958,16 +1024,16 @@ impl Dl645ChannelParamsConfig {
     }
 
     /// Convert to internal channel config.
-    pub fn to_channel_config(&self) -> Dl645ChannelConfig {
+    pub fn into_channel_config(self) -> Dl645ChannelConfig {
         Dl645ChannelConfig {
-            meter_address: self.meter_address.clone(),
-            host: self.host.clone(),
+            meter_address: self.meter_address,
+            host: self.host,
             port: self.port,
-            device: self.device.clone(),
+            device: self.device,
             baud_rate: self.baud_rate,
             data_bits: self.data_bits,
             stop_bits: self.stop_bits,
-            parity: self.parity.clone(),
+            parity: self.parity,
             connect_timeout: Duration::from_millis(self.connect_timeout_ms),
             io_timeout: Duration::from_millis(self.timeout_ms),
             retry_count: self.retry_count,
@@ -1019,44 +1085,26 @@ pub struct Dl645Channel {
     config: Dl645ChannelConfig,
     /// Channel identifier
     channel_id: u32,
-    /// Channel name
-    name: String,
     /// Transport (TCP or Serial)
     transport: Option<Dl645Transport>,
     /// Connection state
-    state: Arc<RwLock<ConnectionState>>,
+    state: ConnectionState,
     /// Diagnostics
     diagnostics: Arc<AtomicDiagnostics>,
     /// Logging context
-    log_context: Arc<LogContext>,
+    log_context: LogContext,
 }
 
 impl Dl645Channel {
     /// Create a new DL/T 645 channel.
-    pub fn new(config: Dl645ChannelConfig, channel_id: u32, name: String) -> Self {
+    pub fn new(config: Dl645ChannelConfig, channel_id: u32) -> Self {
         Self {
             config,
             channel_id,
-            name,
             transport: None,
-            state: Arc::new(RwLock::new(ConnectionState::Disconnected)),
+            state: ConnectionState::Disconnected,
             diagnostics: Arc::new(AtomicDiagnostics::default()),
-            log_context: Arc::new(LogContext::new(channel_id)),
-        }
-    }
-
-    /// Get current connection state.
-    fn get_state(&self) -> ConnectionState {
-        self.state
-            .read()
-            .map(|state| *state)
-            .unwrap_or(ConnectionState::Error)
-    }
-
-    /// Set connection state.
-    fn set_state(&self, state: ConnectionState) {
-        if let Ok(mut current_state) = self.state.write() {
-            *current_state = state;
+            log_context: LogContext::new(channel_id),
         }
     }
 
@@ -1222,16 +1270,11 @@ impl ProtocolCapabilities for Dl645Channel {
 
 impl LoggableProtocol for Dl645Channel {
     fn set_log_handler(&mut self, handler: Arc<dyn ChannelLogHandler>) {
-        // LogContext is immutable after creation, use Arc::make_mut if needed
-        if let Some(ctx) = Arc::get_mut(&mut self.log_context) {
-            ctx.set_handler(handler);
-        }
+        self.log_context.set_handler(handler);
     }
 
     fn set_log_config(&mut self, config: ChannelLogConfig) {
-        if let Some(ctx) = Arc::get_mut(&mut self.log_context) {
-            ctx.set_config(config);
-        }
+        self.log_context.set_config(config);
     }
 
     fn log_config(&self) -> &ChannelLogConfig {
@@ -1241,14 +1284,14 @@ impl LoggableProtocol for Dl645Channel {
 
 impl Protocol for Dl645Channel {
     fn connection_state(&self) -> ConnectionState {
-        self.get_state()
+        self.state
     }
 
     async fn diagnostics(&self) -> Result<Diagnostics> {
         let snapshot = self.diagnostics.snapshot();
         Ok(Diagnostics {
             protocol: "dl645".to_string(),
-            connection_state: self.get_state(),
+            connection_state: self.state,
             read_count: snapshot.read_count,
             write_count: snapshot.write_count,
             error_count: snapshot.error_count,
@@ -1261,15 +1304,15 @@ impl Protocol for Dl645Channel {
 impl ProtocolClient for Dl645Channel {
     async fn connect(&mut self) -> Result<()> {
         let start_time = std::time::Instant::now();
-        let old_state = self.get_state();
-        self.set_state(ConnectionState::Connecting);
+        let old_state = self.state;
+        self.state = ConnectionState::Connecting;
         self.log_context
             .log_state_changed(old_state, ConnectionState::Connecting)
             .await;
 
         // Validate meter address first
         if let Err(e) = MeterAddress::parse(&self.config.meter_address) {
-            self.set_state(ConnectionState::Error);
+            self.state = ConnectionState::Error;
             let err_msg = format!("Invalid meter address: {}", e);
             self.log_context
                 .log_error(&err_msg, ErrorContext::Connection)
@@ -1282,7 +1325,7 @@ impl ProtocolClient for Dl645Channel {
         match self.create_transport().await {
             Ok(transport) => {
                 self.transport = Some(transport);
-                self.set_state(ConnectionState::Connected);
+                self.state = ConnectionState::Connected;
 
                 let endpoint = self.endpoint_description();
                 info!(
@@ -1296,7 +1339,7 @@ impl ProtocolClient for Dl645Channel {
                 Ok(())
             },
             Err(e) => {
-                self.set_state(ConnectionState::Error);
+                self.state = ConnectionState::Error;
                 self.log_context
                     .log_error(&e.to_string(), ErrorContext::Connection)
                     .await;
@@ -1309,13 +1352,13 @@ impl ProtocolClient for Dl645Channel {
     }
 
     async fn disconnect(&mut self) -> Result<()> {
-        let old_state = self.get_state();
+        let old_state = self.state;
 
         if let Some(mut transport) = self.transport.take() {
             let _ = transport.close().await;
         }
 
-        self.set_state(ConnectionState::Disconnected);
+        self.state = ConnectionState::Disconnected;
 
         self.log_context.log_disconnected(None).await;
         self.log_context
@@ -1403,22 +1446,6 @@ impl ProtocolClient for Dl645Channel {
 
 #[async_trait]
 impl ChannelRuntime for Dl645Channel {
-    fn id(&self) -> u32 {
-        self.channel_id
-    }
-
-    fn name(&self) -> &str {
-        &self.name
-    }
-
-    fn protocol(&self) -> &str {
-        "dl645"
-    }
-
-    fn is_event_driven(&self) -> bool {
-        false // DL/T 645 is polling-based
-    }
-
     async fn connect(&mut self) -> Result<()> {
         <Self as ProtocolClient>::connect(self).await
     }
@@ -1429,36 +1456,6 @@ impl ChannelRuntime for Dl645Channel {
 
     async fn poll_once(&mut self) -> PollResult {
         <Self as ProtocolClient>::poll_once(self).await
-    }
-
-    async fn write_control(&mut self, commands: &[(u32, f64)]) -> Result<usize> {
-        let cmds: Vec<_> = commands
-            .iter()
-            .map(|(id, value)| ControlCommand::latching(*id, *value != 0.0))
-            .collect();
-        let result = <Self as ProtocolClient>::write_control(self, &cmds).await?;
-        Ok(result.success_count)
-    }
-
-    async fn write_adjustment(&mut self, adjustments: &[(u32, f64)]) -> Result<usize> {
-        let adjs: Vec<_> = adjustments
-            .iter()
-            .map(|(id, value)| AdjustmentCommand::new(*id, *value))
-            .collect();
-        let result = <Self as ProtocolClient>::write_adjustment(self, &adjs).await?;
-        Ok(result.success_count)
-    }
-
-    fn subscribe(&self) -> Option<crate::protocols::core::DataEventReceiver> {
-        None // DL/T 645 is polling-only
-    }
-
-    async fn start_events(&mut self) -> Result<()> {
-        Ok(()) // No-op for polling channel
-    }
-
-    async fn stop_events(&mut self) -> Result<()> {
-        Ok(()) // No-op for polling channel
     }
 
     async fn diagnostics(&self) -> Result<Diagnostics> {
@@ -1486,8 +1483,6 @@ impl ChannelRuntime for Dl645Channel {
 #[allow(clippy::disallowed_methods)]
 mod tests {
     use super::*;
-    use crate::protocols::core::point::Dl645Address;
-
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn connection_state_query_is_safe_on_a_tokio_runtime_thread() {
         let params = Dl645ChannelParamsConfig {
@@ -1504,7 +1499,7 @@ mod tests {
             retry_count: 2,
             frame_delay_ms: 200,
         };
-        let channel = Dl645Channel::new(params.to_channel_config(), 645, "meter".to_string());
+        let channel = Dl645Channel::new(params.into_channel_config(), 645);
 
         assert_eq!(
             <Dl645Channel as Protocol>::connection_state(&channel),
@@ -1545,28 +1540,6 @@ mod tests {
         let wire = di.to_wire_bytes();
         // DI3-DI2-DI1-DI0 = 00-01-00-00, wire order is [DI0, DI1, DI2, DI3]
         assert_eq!(wire, [0x00, 0x00, 0x01, 0x00]);
-    }
-
-    #[test]
-    fn test_dl645_address_parse() {
-        // With 0x prefix
-        let addr = Dl645Address::parse("0x02010100").unwrap();
-        assert_eq!(addr.di_code, 0x02010100);
-        assert_eq!(addr.to_hex_string(), "02010100");
-
-        // Without prefix
-        let addr = Dl645Address::parse("00010000").unwrap();
-        assert_eq!(addr.di_code, 0x00010000);
-    }
-
-    #[test]
-    fn test_dl645_address_invalid() {
-        // Too short
-        assert!(Dl645Address::parse("0201").is_err());
-        // Too long
-        assert!(Dl645Address::parse("0201010000").is_err());
-        // Invalid hex
-        assert!(Dl645Address::parse("0201GHIJ").is_err());
     }
 
     #[test]
@@ -1721,7 +1694,7 @@ mod tests {
         assert!(params.is_tcp());
         assert_eq!(params.tcp_address(), Some("192.168.1.100:8899".to_string()));
 
-        let config = params.to_channel_config();
+        let config = params.into_channel_config();
         assert_eq!(config.meter_address, "123456789012");
         assert_eq!(config.connect_timeout, Duration::from_millis(5000));
         assert_eq!(config.io_timeout, Duration::from_millis(3000));
@@ -1747,7 +1720,7 @@ mod tests {
         assert!(!params.is_tcp());
         assert_eq!(params.tcp_address(), None);
 
-        let config = params.to_channel_config();
+        let config = params.into_channel_config();
         assert_eq!(config.meter_address, "123456789012");
         assert_eq!(config.device, Some("/dev/ttyUSB0".to_string()));
         assert_eq!(config.baud_rate, 2400);

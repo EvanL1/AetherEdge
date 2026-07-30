@@ -46,11 +46,11 @@ aether-automation, and aether-io.
 7. The command continues through the existing routing cache, channel-health
    gate, SHM command slot, and UDS notification. SHM remains the live-state and
    command-transport authority.
-8. aether-io's public `/write` endpoint rejects C/A writes. T/S simulation
-   writes are also disabled by default and require the explicit
-   `AETHER_ALLOW_SIMULATION_WRITES=true` development opt-in, because forged
-   measurements can trigger real rules. Direct C/A CLI and MCP tools are
-   removed; all external device control uses instance actions.
+8. aether-io exposes no public point-write endpoint. It is the sole
+   acquisition writer for T/S live state, while C/A commands enter only
+   through governed instance actions. Protocol simulation belongs to the
+   external simulator tooling and must exercise a real composed adapter;
+   neither CLI nor MCP may inject forged measurements directly into SHM.
 9. Each device action produced by deterministic rule execution enters the
    shared `ControlApplication` through an automation-owned, transport-neutral
    facade. The facade creates a unique UUID-backed `CommandId` and matching
@@ -66,13 +66,12 @@ aether-automation, and aether-io.
    command generation and rejects a mismatch before resolving a physical
    route. Manual HTTP, CLI, and MCP commands intentionally use the currently
    pinned topology without a derived-decision fence.
-10. The former CLI/MCP `models instances measurement` surface is removed rather
-    than preserved as a compatibility shim. Automation has no matching HTTP
-    route and must not gain a `LiveStateWriter` to recreate one. Synthetic T/S
-    acquisition remains available only through io's explicit development-only
-    simulation entry point, gated by `AETHER_ALLOW_SIMULATION_WRITES=true`; it
-    is not an instance-state correction mechanism and must never become an
-    automation write path.
+10. The former CLI/MCP `models instances measurement` and
+    `channels write` surfaces are removed rather than preserved as
+    compatibility shims. Automation has no matching HTTP route and must not
+    gain a `LiveStateWriter` to recreate one. Synthetic acquisition must use
+    tooling outside the production services and enter through a real protocol
+    adapter; it is not an instance-state correction mechanism.
 11. Manual rule execution is a separate high-risk
     `automation.rule.execute` application command. HTTP, CLI, and MCP must
     present the same signed Admin/Engineer identity and explicit confirmation;

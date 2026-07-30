@@ -92,23 +92,13 @@ required; it is not a safe retry signal. Preserve `request_id`, inspect
 `resulting_revision` and `reconciliation_required`, then inspect current state
 and audit records before an operator authorizes any follow-up.
 
-### Data-integrity mutations are excluded from MCP
+### Live-state injection is not an application capability
 
-| Compatibility surface | Status |
-|------|----------------------------------|
-| io channel simulation write | Available only through explicit development CLI/HTTP paths; not an MCP tool |
-
-This tool does not touch a device, which makes it look safe. It is not.
-It writes into acquisition live state, and downstream consumers treat the
-value as telemetry. Alarm rules can trigger (or fail to trigger), control rules
-can compute actions, and dashboards can display the injected value as truth.
-Never use it against a system connected to real equipment except in a
-deliberate, supervised test. Direct instance-measurement writes are not an
-available CLI, MCP, or automation HTTP capability; automation must not be given
-a live-state writer to recreate one. `channels_write` is disabled by default at
-the io service and
-returns 403 unless the operator explicitly starts io with
-`AETHER_ALLOW_SIMULATION_WRITES=true` in an isolated development environment.
+Direct instance-measurement and channel simulation writes are absent from
+CLI, MCP, and production service HTTP surfaces. Automation must not be given a
+live-state writer to recreate either path. Protocol simulations run as
+external tooling and enter through a real composed IO adapter so production
+acquisition semantics remain intact.
 
 ### Remaining configuration mutations stay excluded from MCP
 

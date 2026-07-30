@@ -5,7 +5,7 @@ use std::time::Duration;
 use aether_domain::ChannelId;
 use aether_io::automatic_reconciliation::{
     AutomaticIoReconciler, AutomaticRuntimeBoundary, ShmTopologyProjection,
-    run_automatic_io_reconciliation,
+    run_periodic_io_reconciliation,
 };
 use aether_ports::{
     ChannelDesiredStateObservation, ChannelReconciler, ChannelReconciliationItem,
@@ -349,9 +349,50 @@ async fn cancelled_loop_stops_without_starting_a_cycle() {
     let shutdown = CancellationToken::new();
     shutdown.cancel();
 
-    run_automatic_io_reconciliation(reconciler, Duration::from_millis(10), shutdown).await;
+    run_periodic_io_reconciliation(reconciler, Duration::from_millis(10), shutdown).await;
 
     assert_eq!(topology.calls(), 0);
+}
+
+#[tokio::test]
+async fn periodic_loop_waits_one_interval_before_its_first_cycle() {
+    let pool = test_pool().await;
+    tokio::time::pause();
+    let channels = Arc::new(FakeChannelReconciler::new());
+    let topology = Arc::new(FakeTopology::new(true));
+    let runtime = Arc::new(FakeRuntimeBoundary::with_runtime_ids([]));
+    let reconciler = Arc::new(AutomaticIoReconciler::new(
+        pool,
+        channels,
+        topology.clone(),
+        runtime,
+    ));
+    let shutdown = CancellationToken::new();
+    let task = tokio::spawn(run_periodic_io_reconciliation(
+        reconciler,
+        Duration::from_millis(100),
+        shutdown.clone(),
+    ));
+
+    tokio::task::yield_now().await;
+    assert_eq!(topology.calls(), 0);
+    tokio::time::advance(Duration::from_millis(99)).await;
+    tokio::task::yield_now().await;
+    assert_eq!(topology.calls(), 0);
+
+    tokio::time::advance(Duration::from_millis(1)).await;
+    tokio::time::resume();
+    tokio::time::timeout(Duration::from_secs(1), async {
+        while topology.calls() == 0 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("first periodic reconciliation");
+    assert_eq!(topology.calls(), 1);
+
+    shutdown.cancel();
+    task.await.expect("periodic reconciliation task");
 }
 
 #[tokio::test]

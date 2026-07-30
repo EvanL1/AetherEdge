@@ -11,9 +11,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::SystemTime;
 
 use aether_core::PointType;
+use aether_domain::PointQuality;
 
-use crate::protocols::core::data::Value;
-use crate::protocols::core::quality::Quality;
+use crate::protocols::core::data::{DataPoint, Value};
 use crate::protocols::core::{
     AdjustmentCommand, ConnectionState, ControlCommand, ReadRequest, ReadResponse, WriteResult,
 };
@@ -157,11 +157,11 @@ pub struct PointValueSummary {
     pub point_type: PointType,
     /// Pre-formatted value string (booleans as "1"/"0").
     pub value: String,
-    pub quality: Quality,
+    pub quality: PointQuality,
 }
 
 impl PointValueSummary {
-    pub fn new(id: u32, point_type: PointType, value: &Value, quality: Quality) -> Self {
+    pub fn new(id: u32, point_type: PointType, value: &Value, quality: PointQuality) -> Self {
         let value_str = match value {
             Value::Bool(b) => {
                 if *b {
@@ -179,9 +179,6 @@ impl PointValueSummary {
                 }
             },
             Value::Integer(i) => i.to_string(),
-            Value::String(s) => s.clone(),
-            Value::Bytes(b) => format!("[{}B]", b.len()),
-            Value::Null => "null".to_string(),
         };
 
         Self {
@@ -194,7 +191,7 @@ impl PointValueSummary {
 }
 
 /// All possible events that can be logged from a channel.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum ChannelLogEvent {
     Connected {
         timestamp: SystemTime,
@@ -512,7 +509,7 @@ impl ChannelLogConfig {
 /// Protocol-agnostic channel log handler trait.
 #[async_trait]
 pub trait ChannelLogHandler: Send + Sync {
-    async fn on_log(&self, channel_id: u32, event: ChannelLogEvent);
+    async fn on_log(&self, channel_id: u32, event: &ChannelLogEvent);
 
     /// Set the log level dynamically (for hot-reload support).
     fn set_log_level(&self, _level: &str) {}
@@ -564,15 +561,15 @@ impl LogContext {
         self.channel_id
     }
 
-    pub fn handler(&self) -> Option<Arc<dyn ChannelLogHandler>> {
-        self.handler.clone()
+    pub(crate) fn raw_packet_logging_enabled(&self) -> bool {
+        self.handler.is_some() && self.config.should_log_raw_packets()
     }
 
     pub async fn log(&self, event: ChannelLogEvent) {
         if let Some(handler) = &self.handler
             && self.config.should_log(&event)
         {
-            handler.on_log(self.channel_id, event).await;
+            handler.on_log(self.channel_id, &event).await;
         }
     }
 
@@ -629,7 +626,7 @@ impl LogContext {
     pub async fn log_control_write(
         &self,
         commands: &[ControlCommand],
-        result: Result<WriteResult, String>,
+        result: Result<&WriteResult, String>,
         duration_ms: u64,
     ) {
         if self.handler.is_none() || !self.config.is_enabled(LogEventType::ControlWrite) {
@@ -639,7 +636,7 @@ impl LogContext {
         self.log(ChannelLogEvent::ControlWrite {
             timestamp: SystemTime::now(),
             commands: commands.to_vec(),
-            result,
+            result: result.cloned(),
             duration_ms,
         })
         .await;
@@ -648,7 +645,7 @@ impl LogContext {
     pub async fn log_adjustment_write(
         &self,
         commands: &[AdjustmentCommand],
-        result: Result<WriteResult, String>,
+        result: Result<&WriteResult, String>,
         duration_ms: u64,
     ) {
         if self.handler.is_none() || !self.config.is_enabled(LogEventType::AdjustmentWrite) {
@@ -658,7 +655,7 @@ impl LogContext {
         self.log(ChannelLogEvent::AdjustmentWrite {
             timestamp: SystemTime::now(),
             commands: commands.to_vec(),
-            result,
+            result: result.cloned(),
             duration_ms,
         })
         .await;
@@ -711,11 +708,7 @@ impl LogContext {
     }
 
     /// Log point values with optional group ID for correlation with raw packets.
-    pub async fn log_point_values(
-        &self,
-        points: &[(u32, PointType, Value, Quality)],
-        group_id: Option<u32>,
-    ) {
+    pub async fn log_point_values(&self, points: &[(u32, DataPoint)], group_id: Option<u32>) {
         // Fast path: skip if PointValues logging is disabled
         if !self.config.is_enabled(LogEventType::PointValues) {
             return;
@@ -728,8 +721,8 @@ impl LogContext {
         // Convert to summaries
         let values: Vec<PointValueSummary> = points
             .iter()
-            .map(|(id, point_type, value, quality)| {
-                PointValueSummary::new(*id, *point_type, value, *quality)
+            .map(|(_, point)| {
+                PointValueSummary::new(point.id, point.point_type, &point.value, point.quality)
             })
             .collect();
 
@@ -805,13 +798,15 @@ mod tests {
     async fn test_log_context() {
         use std::sync::atomic::AtomicUsize;
 
+        assert!(!LogContext::new(1).raw_packet_logging_enabled());
+
         struct CountingHandler {
             count: AtomicUsize,
         }
 
         #[async_trait]
         impl ChannelLogHandler for CountingHandler {
-            async fn on_log(&self, _channel_id: u32, _event: ChannelLogEvent) {
+            async fn on_log(&self, _channel_id: u32, _event: &ChannelLogEvent) {
                 self.count.fetch_add(1, Ordering::SeqCst);
             }
         }
@@ -823,6 +818,7 @@ mod tests {
         let ctx = LogContext::new(1)
             .with_handler(handler.clone())
             .with_config(ChannelLogConfig::all());
+        assert!(ctx.raw_packet_logging_enabled());
 
         ctx.log_connected("localhost:502", 100).await;
         ctx.log_error("test error", ErrorContext::Connection).await;

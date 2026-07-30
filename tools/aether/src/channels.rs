@@ -139,22 +139,6 @@ pub enum ChannelCommands {
         channel_id: u32,
     },
 
-    /// Inject a simulated telemetry or signal value into SHM
-    #[command(about = "Inject a T/S simulation value into the acquisition plane")]
-    Write {
-        /// Channel ID
-        channel_id: u32,
-        /// Point type: T | S
-        #[arg(long = "type", value_parser = ["T", "S"])]
-        point_type: String,
-        /// Point ID (numeric or semantic)
-        #[arg(long)]
-        id: String,
-        /// Value to write
-        #[arg(long)]
-        value: f64,
-    },
-
     /// Manage points on a channel
     #[command(about = "Manage channel points (T/S/C/A)")]
     Points {
@@ -399,21 +383,6 @@ pub async fn handle_command(cmd: ChannelCommands, base_url: &str, json: bool) ->
         ChannelCommands::UnmappedPoints { channel_id } => {
             let data = client.unmapped_points(channel_id).await?;
             crate::output::print_value(&data, json);
-        },
-        ChannelCommands::Write {
-            channel_id,
-            point_type,
-            id,
-            value,
-        } => {
-            let data = client
-                .write_point(channel_id, &point_type, &id, value)
-                .await?;
-            crate::output::print_action(
-                &data,
-                &format!("Wrote {value} to channel {channel_id} point {point_type}/{id}"),
-                json,
-            );
         },
         ChannelCommands::Points { command } => {
             let pc = PointClient::new(base_url)?;
@@ -1074,38 +1043,6 @@ impl ChannelClient {
             Ok(resp.json().await?)
         } else {
             Err(crate::output::parse_error_body("Failed to get unmapped points", resp).await)
-        }
-    }
-
-    /// io's `WritePointRequest` flattens the point payload into the top level,
-    /// so a single-point write is `{"type":..,"id":..,"value":..}`, not a nested object.
-    pub(crate) async fn write_point(
-        &self,
-        channel_id: u32,
-        point_type: &str,
-        id: &str,
-        value: f64,
-    ) -> Result<Value> {
-        if !matches!(point_type.to_ascii_uppercase().as_str(), "T" | "S") {
-            anyhow::bail!(
-                "direct C/A device writes are disabled; use `aether models instances action`"
-            );
-        }
-        let body = serde_json::json!({ "type": point_type, "id": id, "value": value });
-        let request = self
-            .client
-            .post(format!(
-                "{}/api/channels/{}/write",
-                self.base_url, channel_id
-            ))
-            .json(&body)
-            .header("x-aether-confirmed", "true");
-        let resp = self.apply_auth(request)?.send().await?;
-
-        if resp.status().is_success() {
-            Ok(resp.json().await?)
-        } else {
-            Err(crate::output::parse_error_body("Failed to write point", resp).await)
         }
     }
 }
@@ -2074,60 +2011,6 @@ mod tests {
         let err = client.unmapped_points(9).await.unwrap_err().to_string();
 
         assert!(err.contains("channel 9 missing"), "{err}");
-    }
-
-    #[tokio::test]
-    async fn write_point_posts_flattened_single_point_body() {
-        let server = MockServer::start().await;
-        Mock::given(method("POST"))
-            .and(path("/api/channels/1001/write"))
-            .and(header("x-aether-confirmed", "true"))
-            .and(body_json(
-                serde_json::json!({ "type": "T", "id": "5", "value": 50.0 }),
-            ))
-            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
-            .expect(1)
-            .mount(&server)
-            .await;
-
-        let client = ChannelClient::new(&server.uri()).unwrap();
-        client.write_point(1001, "T", "5", 50.0).await.unwrap();
-    }
-
-    #[tokio::test]
-    async fn write_point_surfaces_typed_error_message() {
-        let server = MockServer::start().await;
-        Mock::given(method("POST"))
-            .and(path("/api/channels/1001/write"))
-            .respond_with(ResponseTemplate::new(503).set_body_json(serde_json::json!({
-                "success": false,
-                "error": { "code": "CHANNEL_OFFLINE", "message": "channel 1001 offline" }
-            })))
-            .mount(&server)
-            .await;
-
-        let client = ChannelClient::new(&server.uri()).unwrap();
-        let err = client
-            .write_point(1001, "T", "5", 1.0)
-            .await
-            .unwrap_err()
-            .to_string();
-
-        assert!(err.contains("channel 1001 offline"), "{err}");
-    }
-
-    #[tokio::test]
-    async fn write_point_rejects_direct_device_commands_before_http() {
-        let client = ChannelClient::new("http://127.0.0.1:1").unwrap();
-
-        for point_type in ["C", "A"] {
-            let error = client
-                .write_point(1001, point_type, "5", 1.0)
-                .await
-                .unwrap_err()
-                .to_string();
-            assert!(error.contains("direct C/A device writes are disabled"));
-        }
     }
 
     #[tokio::test]

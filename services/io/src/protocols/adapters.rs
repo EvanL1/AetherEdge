@@ -2,9 +2,8 @@
 //!
 //! This module contains adapters that integrate protocol crates with the protocol layer.
 
-// Cross-platform CAN types and decoder (no hardware dependency)
-pub mod can_decoder;
-pub mod can_types;
+#[cfg(any(feature = "mqtt", feature = "http"))]
+pub(crate) mod json_mapper;
 
 // Modbus TCP + RTU support
 #[cfg(feature = "modbus")]
@@ -22,9 +21,6 @@ pub mod modbus_logging;
 #[cfg(feature = "modbus")]
 pub mod modbus_poll;
 
-#[cfg(feature = "modbus")]
-pub mod command_batcher;
-
 // In-process Modbus simulator is test-only; production simulation lives in tools/simulator.
 #[cfg(all(test, feature = "modbus"))]
 pub mod modbus_mock;
@@ -35,7 +31,8 @@ pub mod iec104;
 #[cfg(feature = "opcua")]
 pub mod opcua;
 
-#[cfg(all(feature = "can", target_os = "linux"))]
+// CAN configuration and decoding are cross-platform; the socket client remains Linux-only.
+#[cfg(feature = "can")]
 pub mod can;
 
 #[cfg(all(feature = "gpio", target_os = "linux"))]
@@ -67,12 +64,6 @@ pub mod zigbee_config;
 
 #[cfg(feature = "zigbee")]
 pub mod zigbee_codec;
-
-#[cfg(feature = "matter")]
-pub mod matter;
-
-#[cfg(feature = "matter")]
-pub mod matter_config;
 
 #[cfg(feature = "iec61850")]
 pub mod iec61850;

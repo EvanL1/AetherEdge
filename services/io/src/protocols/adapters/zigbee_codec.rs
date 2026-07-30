@@ -3,7 +3,9 @@
 //! Provides frame encoding/decoding for different Zigbee gateway types.
 //! Currently implements Raw mode (direct ZCL frames); ZNP and EZSP are stubs.
 
-use bytes::{Buf, BufMut, BytesMut};
+#[cfg(test)]
+use bytes::BufMut;
+use bytes::{Buf, BytesMut};
 
 use crate::protocols::core::error::{GatewayError, Result};
 
@@ -68,24 +70,24 @@ pub enum ZclValue {
 
 impl ZclValue {
     /// Convert to f64 for DataPoint storage.
-    pub fn to_f64(&self) -> f64 {
+    pub fn to_f64(&self) -> Option<f64> {
         match self {
             Self::Bool(v) => {
                 if *v {
-                    1.0
+                    Some(1.0)
                 } else {
-                    0.0
+                    Some(0.0)
                 }
             },
-            Self::UInt8(v) => f64::from(*v),
-            Self::UInt16(v) => f64::from(*v),
-            Self::UInt32(v) => f64::from(*v),
-            Self::Int8(v) => f64::from(*v),
-            Self::Int16(v) => f64::from(*v),
-            Self::Int32(v) => f64::from(*v),
-            Self::Float(v) => f64::from(*v),
-            Self::Double(v) => *v,
-            Self::String(_) | Self::Bytes(_) => 0.0,
+            Self::UInt8(v) => Some(f64::from(*v)),
+            Self::UInt16(v) => Some(f64::from(*v)),
+            Self::UInt32(v) => Some(f64::from(*v)),
+            Self::Int8(v) => Some(f64::from(*v)),
+            Self::Int16(v) => Some(f64::from(*v)),
+            Self::Int32(v) => Some(f64::from(*v)),
+            Self::Float(v) => Some(f64::from(*v)),
+            Self::Double(v) => Some(*v),
+            Self::String(_) | Self::Bytes(_) => None,
         }
     }
 
@@ -113,16 +115,6 @@ pub trait FrameCodec: Send + Sync {
     /// Try to decode a frame from the buffer.
     /// Returns None if not enough data, Some(frame) if decoded, consuming bytes.
     fn decode(&self, buf: &mut BytesMut) -> Result<Option<ZigbeeFrame>>;
-
-    /// Encode a ZCL command for sending to a device.
-    fn encode_command(
-        &self,
-        ieee_addr: u64,
-        endpoint: u8,
-        cluster_id: u16,
-        command_id: u8,
-        payload: &[u8],
-    ) -> Vec<u8>;
 }
 
 /// Raw frame codec -- simplest protocol, direct ZCL-like frames.
@@ -399,46 +391,6 @@ impl FrameCodec for RawFrameCodec {
             },
         }
     }
-
-    fn encode_command(
-        &self,
-        ieee_addr: u64,
-        endpoint: u8,
-        cluster_id: u16,
-        command_id: u8,
-        payload: &[u8],
-    ) -> Vec<u8> {
-        // Build the inner payload: TYPE + ieee(8) + ep(1) + cluster(2) + cmd(1) + payload
-        let inner_len = 1 + 8 + 1 + 2 + 1 + payload.len();
-        let mut out = Vec::with_capacity(2 + inner_len + 1);
-
-        // Length (big-endian u16) — includes TYPE byte through end of payload
-        out.put_u16(inner_len as u16);
-
-        // Frame type: use 0x10 for command frames
-        out.push(0x10);
-
-        // IEEE address (little-endian)
-        out.extend_from_slice(&ieee_addr.to_le_bytes());
-
-        // Endpoint
-        out.push(endpoint);
-
-        // Cluster ID (little-endian)
-        out.extend_from_slice(&cluster_id.to_le_bytes());
-
-        // Command ID
-        out.push(command_id);
-
-        // Command payload
-        out.extend_from_slice(payload);
-
-        // Checksum: XOR of TYPE through end of payload
-        let checksum = Self::checksum(&out[2..]);
-        out.push(checksum);
-
-        out
-    }
 }
 
 #[cfg(test)]
@@ -463,18 +415,18 @@ mod tests {
 
     #[test]
     fn test_zcl_value_to_f64() {
-        assert_eq!(ZclValue::Bool(true).to_f64(), 1.0);
-        assert_eq!(ZclValue::Bool(false).to_f64(), 0.0);
-        assert_eq!(ZclValue::UInt8(42).to_f64(), 42.0);
-        assert_eq!(ZclValue::UInt16(1000).to_f64(), 1000.0);
-        assert_eq!(ZclValue::UInt32(100_000).to_f64(), 100_000.0);
-        assert_eq!(ZclValue::Int8(-10).to_f64(), -10.0);
-        assert_eq!(ZclValue::Int16(-500).to_f64(), -500.0);
-        assert_eq!(ZclValue::Int32(-100_000).to_f64(), -100_000.0);
-        assert!((ZclValue::Float(3.5).to_f64() - 3.5).abs() < 0.001);
-        assert_eq!(ZclValue::Double(2.5).to_f64(), 2.5);
-        assert_eq!(ZclValue::String("hello".to_string()).to_f64(), 0.0);
-        assert_eq!(ZclValue::Bytes(vec![1, 2, 3]).to_f64(), 0.0);
+        assert_eq!(ZclValue::Bool(true).to_f64(), Some(1.0));
+        assert_eq!(ZclValue::Bool(false).to_f64(), Some(0.0));
+        assert_eq!(ZclValue::UInt8(42).to_f64(), Some(42.0));
+        assert_eq!(ZclValue::UInt16(1000).to_f64(), Some(1000.0));
+        assert_eq!(ZclValue::UInt32(100_000).to_f64(), Some(100_000.0));
+        assert_eq!(ZclValue::Int8(-10).to_f64(), Some(-10.0));
+        assert_eq!(ZclValue::Int16(-500).to_f64(), Some(-500.0));
+        assert_eq!(ZclValue::Int32(-100_000).to_f64(), Some(-100_000.0));
+        assert!((ZclValue::Float(3.5).to_f64().expect("float is numeric") - 3.5).abs() < 0.001);
+        assert_eq!(ZclValue::Double(2.5).to_f64(), Some(2.5));
+        assert_eq!(ZclValue::String("hello".to_string()).to_f64(), None);
+        assert_eq!(ZclValue::Bytes(vec![1, 2, 3]).to_f64(), None);
     }
 
     #[test]
@@ -625,31 +577,6 @@ mod tests {
     }
 
     #[test]
-    fn test_encode_command() {
-        let codec = RawFrameCodec;
-
-        let encoded = codec.encode_command(
-            0x00124B0018ED1234,
-            1,
-            0x0006, // On/Off cluster
-            0x01,   // On command
-            &[],    // No payload
-        );
-
-        // Verify structure: LEN(2) + TYPE(1) + ieee(8) + ep(1) + cluster(2) + cmd(1) + checksum(1)
-        assert_eq!(encoded.len(), 2 + 1 + 8 + 1 + 2 + 1 + 1);
-
-        // Verify length field
-        let len = u16::from_be_bytes([encoded[0], encoded[1]]) as usize;
-        assert_eq!(len, 1 + 8 + 1 + 2 + 1); // TYPE + payload
-
-        // Verify checksum
-        let payload_region = &encoded[2..encoded.len() - 1];
-        let expected_checksum = RawFrameCodec::checksum(payload_region);
-        assert_eq!(encoded[encoded.len() - 1], expected_checksum);
-    }
-
-    #[test]
     fn test_encode_decode_roundtrip() {
         let codec = RawFrameCodec;
 
@@ -670,7 +597,9 @@ mod tests {
         match frame {
             ZigbeeFrame::AttributeReport(report) => {
                 assert_eq!(report.value, ZclValue::Float(25.5));
-                assert!((report.value.to_f64() - 25.5).abs() < f64::EPSILON);
+                assert!(
+                    (report.value.to_f64().expect("float is numeric") - 25.5).abs() < f64::EPSILON
+                );
             },
             _ => panic!("Expected AttributeReport"),
         }

@@ -76,34 +76,6 @@ pub enum MmsValue {
 }
 
 impl MmsValue {
-    /// Convert to `f64` for use in DataPoint.
-    pub fn to_f64(&self) -> Option<f64> {
-        match self {
-            Self::Float32(v) => Some(*v as f64),
-            Self::Float64(v) => Some(*v),
-            Self::Integer(v) => Some(*v as f64),
-            Self::Unsigned(v) => Some(*v as f64),
-            Self::Boolean(v) => Some(if *v { 1.0 } else { 0.0 }),
-            _ => None,
-        }
-    }
-
-    pub fn to_bool(&self) -> Option<bool> {
-        match self {
-            Self::Boolean(v) => Some(*v),
-            Self::Integer(v) => Some(*v != 0),
-            Self::Unsigned(v) => Some(*v != 0),
-            _ => None,
-        }
-    }
-
-    pub fn to_string_val(&self) -> Option<String> {
-        match self {
-            Self::VisibleString(s) => Some(s.clone()),
-            _ => None,
-        }
-    }
-
     pub fn is_ok(&self) -> bool {
         !matches!(self, Self::Failure(_))
     }

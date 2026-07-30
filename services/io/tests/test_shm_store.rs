@@ -36,7 +36,7 @@ async fn shm_store_writes_poll_data_to_the_authoritative_slot() {
 
     let mut batch = DataBatch::default();
     batch.add(DataPoint::telemetry(1, 42.5));
-    store.write_batch(7, batch).await.expect("write SHM batch");
+    store.write_batch(7, &batch).expect("write SHM batch");
 
     let layout = handle.generation().expect("active layout");
     let slot = layout
@@ -89,7 +89,7 @@ async fn unknown_c2c_target_rejects_source_before_any_production_write() {
     let mut batch = DataBatch::default();
     batch.add(DataPoint::telemetry(0, 55.0));
 
-    assert!(store.write_batch(7, batch).await.is_err());
+    assert!(store.write_batch(7, &batch).is_err());
 
     let layout = handle.generation().expect("active layout");
     let source_slot = layout
@@ -138,8 +138,7 @@ async fn c2c_expansion_deduplicates_targets_before_the_typed_port_call() {
     batch.add(DataPoint::telemetry(1, 22.0));
 
     store
-        .write_batch(7, batch)
-        .await
+        .write_batch(7, &batch)
         .expect("deduplicated C2C batch");
 
     let layout = handle.generation().expect("active layout");
@@ -193,8 +192,7 @@ async fn shm_store_composes_the_typed_acquisition_writer_atomically() {
     valid_batch.add(status);
 
     store
-        .write_batch(7, valid_batch)
-        .await
+        .write_batch(7, &valid_batch)
         .expect("write typed acquisition batch");
 
     let telemetry = writer.read_slot(1).expect("telemetry slot");
@@ -210,8 +208,7 @@ async fn shm_store_composes_the_typed_acquisition_writer_atomically() {
     invalid_batch.add(DataPoint::telemetry(0, 99.0));
     invalid_batch.add(DataPoint::telemetry(9, 123.0));
     let error = store
-        .write_batch(7, invalid_batch)
-        .await
+        .write_batch(7, &invalid_batch)
         .expect_err("unknown physical point must fail closed");
     assert!(matches!(error, GatewayError::PointNotFound(_)));
     assert_eq!(store.slot_miss_count(), 1);
@@ -250,8 +247,7 @@ async fn duplicate_batch_is_invalid_data_without_polluting_slot_miss_metric() {
     batch.add(DataPoint::telemetry(0, 22.0));
 
     let error = store
-        .write_batch(7, batch)
-        .await
+        .write_batch(7, &batch)
         .expect_err("duplicate address must reject the batch");
 
     assert!(matches!(error, GatewayError::InvalidData(_)));
@@ -283,8 +279,7 @@ async fn generation_conflict_is_retryable_without_polluting_slot_miss_metric() {
     batch.add(DataPoint::telemetry(0, 11.0));
 
     let error = store
-        .write_batch(7, batch)
-        .await
+        .write_batch(7, &batch)
         .expect_err("generation conflict must fail closed");
 
     assert!(matches!(error, GatewayError::Connection(_)));

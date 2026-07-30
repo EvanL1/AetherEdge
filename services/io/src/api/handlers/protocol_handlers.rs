@@ -131,11 +131,7 @@ impl From<&crate::protocols::ParameterMetadata> for ParameterInfo {
 )]
 pub async fn list_protocols() -> Result<Json<SuccessResponse<Vec<ProtocolInfo>>>, AppError> {
     let registry = get_protocol_registry();
-    let protocols: Vec<ProtocolInfo> = registry
-        .protocols()
-        .iter()
-        .map(ProtocolInfo::from)
-        .collect();
+    let protocols: Vec<ProtocolInfo> = registry.protocols().map(ProtocolInfo::from).collect();
     Ok(Json(SuccessResponse::new(protocols)))
 }
 
@@ -177,8 +173,13 @@ mod tests {
         assert_eq!(parameter.min_length, None);
     }
 
-    fn assert_exact_parameter_surface(driver: &DriverInfo, expected: &[&str]) {
-        let expected = expected.iter().copied().collect::<BTreeSet<_>>();
+    fn assert_exact_parameter_surface(
+        driver: &DriverInfo,
+        expected_parameters: &[&str],
+        expected_example: &[&str],
+    ) {
+        let expected_parameters = expected_parameters.iter().copied().collect::<BTreeSet<_>>();
+        let expected_example = expected_example.iter().copied().collect::<BTreeSet<_>>();
         let parameters = driver
             .parameters
             .iter()
@@ -191,8 +192,11 @@ mod tests {
             .keys()
             .map(String::as_str)
             .collect::<BTreeSet<_>>();
-        assert_eq!(parameters, expected, "advertised parameter surface");
-        assert_eq!(examples, expected, "example parameter surface");
+        assert_eq!(
+            parameters, expected_parameters,
+            "advertised parameter surface"
+        );
+        assert_eq!(examples, expected_example, "example parameter surface");
     }
 
     #[tokio::test]
@@ -210,6 +214,19 @@ mod tests {
             assert!(driver.example_config.get("baud_rate").is_none());
             assert_exact_parameter_surface(
                 driver,
+                &[
+                    "host",
+                    "port",
+                    "read_timeout_ms",
+                    "poll_interval_ms",
+                    "zero_data_threshold",
+                    "reconnect_max_attempts",
+                    "reconnect_initial_delay_ms",
+                    "reconnect_max_delay_ms",
+                    "reconnect_backoff_multiplier",
+                    "watchdog_recovery_cooldown_secs",
+                    "watchdog_max_recovery_rounds",
+                ],
                 &["host", "port", "read_timeout_ms", "poll_interval_ms"],
             );
         }
@@ -225,6 +242,19 @@ mod tests {
             assert!(driver.example_config.get("port").is_none());
             assert_exact_parameter_surface(
                 driver,
+                &[
+                    "device",
+                    "baud_rate",
+                    "read_timeout_ms",
+                    "poll_interval_ms",
+                    "zero_data_threshold",
+                    "reconnect_max_attempts",
+                    "reconnect_initial_delay_ms",
+                    "reconnect_max_delay_ms",
+                    "reconnect_backoff_multiplier",
+                    "watchdog_recovery_cooldown_secs",
+                    "watchdog_max_recovery_rounds",
+                ],
                 &["device", "baud_rate", "read_timeout_ms", "poll_interval_ms"],
             );
         }

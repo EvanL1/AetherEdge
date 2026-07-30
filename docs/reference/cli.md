@@ -440,27 +440,6 @@ Usage: aether channels unmapped-points [OPTIONS] <CHANNEL_ID>
 aether channels unmapped-points 1001
 ```
 
-### channels write
-
-Inject a simulated telemetry or signal value into the acquisition SHM plane.
-This command accepts only T/S points; real C/A device commands must use
-`aether models instances action` so routing, confirmation, and audit cannot be
-bypassed.
-
-```
-Usage: aether channels write [OPTIONS] --type <POINT_TYPE> --id <ID> --value <VALUE> <CHANNEL_ID>
-```
-
-| Flag | Description |
-|------|-------------|
-| `--type <POINT_TYPE>` | Simulation point type: `T` \| `S` |
-| `--id <ID>` | Point ID (numeric or semantic) |
-| `--value <VALUE>` | Value to write |
-
-```bash
-aether channels write 1001 --type T --id 3 --value 42.5
-```
-
 ### channels points list
 
 List points (grouped by T/S/C/A).

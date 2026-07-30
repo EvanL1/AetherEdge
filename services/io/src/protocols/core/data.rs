@@ -14,16 +14,14 @@
 //! were encoded into the `id` field via offset arithmetic.
 
 use aether_core::PointType;
+use aether_domain::PointQuality;
 use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
 
-use crate::protocols::core::quality::Quality;
-
-/// A protocol-agnostic value representation.
+/// A finite numeric or boolean value emitted by a protocol adapter.
 ///
-/// This enum provides a unified way to represent values from different protocols.
-#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
-#[serde(untagged)]
+/// Text and missing values are rejected by adapter validation/conversion before
+/// they reach a [`DataBatch`]; SHM is a numeric live-state plane.
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Value {
     /// Floating-point number (most common for analog values)
     Float(f64),
@@ -33,16 +31,6 @@ pub enum Value {
 
     /// Boolean value (common for digital I/O)
     Bool(bool),
-
-    /// String value
-    String(String),
-
-    /// Raw bytes
-    Bytes(Vec<u8>),
-
-    /// Null/missing value
-    #[default]
-    Null,
 }
 
 impl Value {
@@ -52,7 +40,6 @@ impl Value {
             Self::Float(v) => Some(*v),
             Self::Integer(v) => Some(*v as f64),
             Self::Bool(v) => Some(if *v { 1.0 } else { 0.0 }),
-            _ => None,
         }
     }
 
@@ -62,7 +49,6 @@ impl Value {
             Self::Integer(v) => Some(*v),
             Self::Float(v) => Some(*v as i64),
             Self::Bool(v) => Some(if *v { 1 } else { 0 }),
-            _ => None,
         }
     }
 
@@ -72,22 +58,7 @@ impl Value {
             Self::Bool(v) => Some(*v),
             Self::Integer(v) => Some(*v != 0),
             Self::Float(v) => Some(*v != 0.0),
-            _ => None,
         }
-    }
-
-    /// Try to get the value as string.
-    pub fn as_string(&self) -> Option<&str> {
-        match self {
-            Self::String(s) => Some(s),
-            _ => None,
-        }
-    }
-
-    /// Check if this is a null value.
-    #[inline]
-    pub fn is_null(&self) -> bool {
-        matches!(self, Self::Null)
     }
 }
 
@@ -140,24 +111,12 @@ impl From<bool> for Value {
     }
 }
 
-impl From<String> for Value {
-    fn from(v: String) -> Self {
-        Self::String(v)
-    }
-}
-
-impl From<&str> for Value {
-    fn from(v: &str) -> Self {
-        Self::String(v.to_string())
-    }
-}
-
 /// A single data point with timestamp and quality.
 ///
 /// Each point carries its SCADA category (Telemetry/Signal/Control/Adjustment)
 /// explicitly via the `point_type` field. This replaces the previous u32/4
 /// encoding scheme.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct DataPoint {
     /// Point identifier (original point_id, no encoding)
     pub id: u32,
@@ -169,14 +128,12 @@ pub struct DataPoint {
     pub value: Value,
 
     /// Data quality indicator (protocol-layer concept)
-    #[serde(default)]
-    pub quality: Quality,
+    pub quality: PointQuality,
 
     /// Server timestamp (when gateway received the data)
     pub timestamp: DateTime<Utc>,
 
     /// Source timestamp (when device generated the data, if available)
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub source_timestamp: Option<DateTime<Utc>>,
 }
 
@@ -192,7 +149,7 @@ impl DataPoint {
             id,
             point_type,
             value: value.into(),
-            quality: Quality::Good,
+            quality: PointQuality::Good,
             timestamp: Utc::now(),
             source_timestamp: None,
         }
@@ -209,23 +166,6 @@ impl DataPoint {
     pub fn signal(id: u32, value: impl Into<Value>) -> Self {
         Self::new(id, PointType::Signal, value)
     }
-
-    /// Create a Control point (convenience for digital commands).
-    pub fn control(id: u32, value: impl Into<Value>) -> Self {
-        Self::new(id, PointType::Control, value)
-    }
-
-    /// Create an Adjustment point (convenience for analog setpoints).
-    pub fn adjustment(id: u32, value: impl Into<Value>) -> Self {
-        Self::new(id, PointType::Adjustment, value)
-    }
-
-    /// Set the quality.
-    #[must_use]
-    pub fn with_quality(mut self, quality: Quality) -> Self {
-        self.quality = quality;
-        self
-    }
 }
 
 /// A batch of data points.
@@ -233,7 +173,7 @@ impl DataPoint {
 /// Simple collection without SCADA-level categorization.
 /// The application layer is responsible for routing/storing
 /// points based on their type (determined by id lookup).
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default)]
 pub struct DataBatch {
     /// All data points in this batch
     points: Vec<DataPoint>,
@@ -339,7 +279,7 @@ mod tests {
         assert_eq!(point.id, 1);
         assert_eq!(point.point_type, PointType::Telemetry);
         assert_eq!(point.value.as_f64(), Some(25.5));
-        assert_eq!(point.quality, Quality::Good);
+        assert_eq!(point.quality, PointQuality::Good);
     }
 
     #[test]
@@ -350,12 +290,6 @@ mod tests {
 
         let s = DataPoint::signal(2, true);
         assert_eq!(s.point_type, PointType::Signal);
-
-        let c = DataPoint::control(3, false);
-        assert_eq!(c.point_type, PointType::Control);
-
-        let a = DataPoint::adjustment(4, 50.0);
-        assert_eq!(a.point_type, PointType::Adjustment);
     }
 
     #[test]

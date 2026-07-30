@@ -15,7 +15,6 @@ use utoipa::OpenApi;
 use aether_application::{ChannelManagementApplication, ChannelReconciliationApplication};
 use aether_auth_jwt::AccessTokenAuthenticator;
 
-use crate::api::command_cache::CommandTxCache;
 use crate::core::channels::ChannelManager;
 
 // Import handler modules
@@ -53,11 +52,6 @@ pub struct AppState {
     /// Channel manager with O(1) lock-free access
     pub channel_manager: Arc<ChannelManager>,
     pub sqlite_pool: sqlx::SqlitePool,
-    /// Command TX cache for O(1) hot path access
-    /// Bypasses ChannelManager RwLock for Control/Adjustment writes
-    pub command_tx_cache: Arc<CommandTxCache>,
-    /// Explicit development-only gate for authoritative T/S simulation writes.
-    pub allow_simulation_writes: bool,
     /// Internal runtime convergence facade shared with the governed HTTP boundary.
     pub channel_reconciliation: Option<Arc<ChannelReconciliationApplication>>,
 }
@@ -67,8 +61,6 @@ impl Clone for AppState {
         Self {
             channel_manager: self.channel_manager.clone(),
             sqlite_pool: self.sqlite_pool.clone(),
-            command_tx_cache: self.command_tx_cache.clone(),
-            allow_simulation_writes: self.allow_simulation_writes,
             channel_reconciliation: self.channel_reconciliation.clone(),
         }
     }
@@ -79,15 +71,11 @@ impl AppState {
     pub fn new(
         channel_manager: Arc<ChannelManager>,
         sqlite_pool: sqlx::SqlitePool,
-        command_tx_cache: Arc<CommandTxCache>,
-        allow_simulation_writes: bool,
         channel_reconciliation: Option<Arc<ChannelReconciliationApplication>>,
     ) -> Self {
         Self {
             channel_manager,
             sqlite_pool,
-            command_tx_cache,
-            allow_simulation_writes,
             channel_reconciliation,
         }
     }
@@ -115,7 +103,6 @@ pub type ProductionAppState = AppState;
 
         // Control operations
         crate::api::handlers::control_handlers::control_channel,
-        crate::api::handlers::control_handlers::write_channel_point,  // Unified write endpoint (supports single & batch)
         crate::api::handlers::control_handlers::set_channel_log_level,
 
         // Point information
@@ -187,14 +174,6 @@ pub type ProductionAppState = AppState;
             crate::dto::ChannelControlOperationResult,
             crate::dto::ChannelControlResult,
             crate::dto::ChannelControlResponse,
-            crate::dto::ControlRequest,
-            crate::dto::AdjustmentRequest,
-            crate::dto::ControlValueRequest,
-            crate::dto::AdjustmentValueRequest,
-            crate::dto::BatchControlRequest,
-            crate::dto::BatchAdjustmentRequest,
-            crate::dto::BatchCommandResult,
-            crate::dto::BatchCommandError,
             crate::dto::ChannelCreateRequest,
             crate::dto::ChannelConfigUpdateRequest,
             crate::dto::ChannelEnabledRequest,
@@ -294,13 +273,10 @@ async fn openapi_document() -> axum::Json<utoipa::openapi::OpenApi> {
 pub fn create_api_routes(
     channel_manager: Arc<ChannelManager>,
     sqlite_pool: sqlx::SqlitePool,
-    command_tx_cache: Arc<CommandTxCache>,
 ) -> Router {
     create_api_routes_with_boundary(
         channel_manager,
         sqlite_pool,
-        command_tx_cache,
-        simulation_writes_enabled(),
         None,
         ChannelManagementHttpBoundary::unavailable(),
         PointTopologyHttpBoundary::unavailable(),
@@ -312,15 +288,12 @@ pub fn create_api_routes(
 pub fn create_api_routes_with_channel_management(
     channel_manager: Arc<ChannelManager>,
     sqlite_pool: sqlx::SqlitePool,
-    command_tx_cache: Arc<CommandTxCache>,
     channel_management: Arc<ChannelManagementApplication>,
     access_authenticator: Arc<AccessTokenAuthenticator>,
 ) -> Router {
     create_api_routes_with_boundary(
         channel_manager,
         sqlite_pool,
-        command_tx_cache,
-        simulation_writes_enabled(),
         None,
         ChannelManagementHttpBoundary::governed(channel_management, access_authenticator),
         PointTopologyHttpBoundary::unavailable(),
@@ -334,15 +307,12 @@ pub fn create_api_routes_with_channel_management(
 pub fn create_api_routes_with_point_topology(
     channel_manager: Arc<ChannelManager>,
     sqlite_pool: sqlx::SqlitePool,
-    command_tx_cache: Arc<CommandTxCache>,
     point_topology: Arc<crate::point_topology::PointTopologyApplication>,
     access_authenticator: Arc<AccessTokenAuthenticator>,
 ) -> Router {
     create_api_routes_with_boundary(
         channel_manager,
         sqlite_pool,
-        command_tx_cache,
-        simulation_writes_enabled(),
         None,
         ChannelManagementHttpBoundary::unavailable(),
         PointTopologyHttpBoundary::governed(point_topology, access_authenticator),
@@ -355,7 +325,6 @@ pub fn create_api_routes_with_point_topology(
 pub fn create_api_routes_with_channel_applications(
     channel_manager: Arc<ChannelManager>,
     sqlite_pool: sqlx::SqlitePool,
-    command_tx_cache: Arc<CommandTxCache>,
     channel_management: Arc<ChannelManagementApplication>,
     channel_reconciliation: Arc<ChannelReconciliationApplication>,
     point_topology: Arc<crate::point_topology::PointTopologyApplication>,
@@ -366,8 +335,6 @@ pub fn create_api_routes_with_channel_applications(
     create_api_routes_with_boundary(
         channel_manager,
         sqlite_pool,
-        command_tx_cache,
-        simulation_writes_enabled(),
         Some(state_reconciliation),
         ChannelManagementHttpBoundary::governed_with_reconciliation(
             channel_management,
@@ -378,51 +345,14 @@ pub fn create_api_routes_with_channel_applications(
     )
 }
 
-fn simulation_writes_enabled() -> bool {
-    std::env::var("AETHER_ALLOW_SIMULATION_WRITES")
-        .ok()
-        .is_some_and(|value| {
-            matches!(
-                value.trim().to_ascii_lowercase().as_str(),
-                "1" | "true" | "yes" | "on"
-            )
-        })
-}
-
-#[cfg(test)]
-fn create_api_routes_with_simulation_writes(
-    channel_manager: Arc<ChannelManager>,
-    sqlite_pool: sqlx::SqlitePool,
-    command_tx_cache: Arc<CommandTxCache>,
-    allow_simulation_writes: bool,
-) -> Router {
-    create_api_routes_with_boundary(
-        channel_manager,
-        sqlite_pool,
-        command_tx_cache,
-        allow_simulation_writes,
-        None,
-        ChannelManagementHttpBoundary::unavailable(),
-        PointTopologyHttpBoundary::unavailable(),
-    )
-}
-
 fn create_api_routes_with_boundary(
     channel_manager: Arc<ChannelManager>,
     sqlite_pool: sqlx::SqlitePool,
-    command_tx_cache: Arc<CommandTxCache>,
-    allow_simulation_writes: bool,
     channel_reconciliation: Option<Arc<ChannelReconciliationApplication>>,
     channel_management: ChannelManagementHttpBoundary,
     point_topology: PointTopologyHttpBoundary,
 ) -> Router {
-    let state = AppState::new(
-        channel_manager,
-        sqlite_pool,
-        command_tx_cache,
-        allow_simulation_writes,
-        channel_reconciliation,
-    );
+    let state = AppState::new(channel_manager, sqlite_pool, channel_reconciliation);
 
     let router = Router::new()
         // Health check (top-level for monitoring systems)
@@ -472,8 +402,6 @@ fn create_api_routes_with_boundary(
                 .delete(delete_adjustment_point_handler))
         // Batch point operations endpoint (create/update/delete in single request)
         .route("/api/channels/{channel_id}/points/batch", post(batch_point_operations_handler))
-        // Unified write endpoint for all point types (T/S/C/A)
-        .route("/api/channels/{channel_id}/write", post(write_channel_point))
         .route(
             "/api/channels/{channel_id}/{telemetry_type}/{point_id}",
             get(get_point_info_handler),

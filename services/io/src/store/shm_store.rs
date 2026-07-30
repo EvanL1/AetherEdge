@@ -13,10 +13,8 @@ use aether_core::PointType;
 
 use crate::protocols::core::data::DataBatch;
 use crate::protocols::core::error::{GatewayError, Result as ProtocolResult};
-use crate::protocols::core::quality::Quality;
 use aether_domain::{
-    AcquiredPointSample, ChannelId, ChannelPointAddress, PointId, PointKind, PointQuality,
-    TimestampMs,
+    AcquiredPointSample, ChannelId, ChannelPointAddress, PointId, PointKind, TimestampMs,
 };
 use aether_ports::{PortError, PortErrorKind};
 use aether_routing::{MAX_C2C_CASCADE_DEPTH, RoutingCache};
@@ -128,22 +126,6 @@ impl ShmDataStore {
                         ))
                     },
                 )?;
-                let quality = match point.quality {
-                    Quality::Good => PointQuality::Good,
-                    Quality::Uncertain
-                    | Quality::Substituted
-                    | Quality::Overflow
-                    | Quality::Underflow
-                    | Quality::LastKnown => PointQuality::Uncertain,
-                    Quality::NotConnected | Quality::CommFailure | Quality::OutOfService => {
-                        PointQuality::Unavailable
-                    },
-                    Quality::Bad
-                    | Quality::Invalid
-                    | Quality::DeviceFailure
-                    | Quality::SensorFailure
-                    | Quality::ConfigError => PointQuality::Bad,
-                };
                 let address = ChannelPointAddress::new(
                     ChannelId::new(channel_id),
                     kind,
@@ -155,7 +137,7 @@ impl ShmDataStore {
                     value,
                     value,
                     TimestampMs::new(timestamp_ms),
-                    quality,
+                    point.quality,
                 )
                 .map_err(|error| GatewayError::invalid_data(error.to_string()))
             })
@@ -166,8 +148,10 @@ impl ShmDataStore {
         &self,
         source_samples: Vec<AcquiredPointSample>,
     ) -> ProtocolResult<Vec<AcquiredPointSample>> {
-        let mut positions = HashMap::with_capacity(source_samples.len());
-        for (index, sample) in source_samples.iter().enumerate() {
+        let mut expanded = source_samples;
+        let source_len = expanded.len();
+        let mut positions = HashMap::with_capacity(source_len);
+        for (index, sample) in expanded.iter().enumerate() {
             if positions.insert(sample.address(), index).is_some() {
                 return Err(GatewayError::invalid_data(format!(
                     "duplicate acquired point address {:?}",
@@ -176,8 +160,8 @@ impl ShmDataStore {
             }
         }
 
-        let mut expanded = source_samples.clone();
-        for sample in source_samples {
+        for index in 0..source_len {
+            let sample = expanded[index];
             let mut path = HashSet::from([sample.address()]);
             self.expand_c2c_from(sample, 0, &mut path, &mut positions, &mut expanded)?;
         }
@@ -243,12 +227,12 @@ impl ShmDataStore {
     }
 
     /// Expands routing and commits one typed batch to authoritative SHM.
-    pub async fn write_batch(&self, channel_id: u32, batch: DataBatch) -> ProtocolResult<()> {
+    pub fn write_batch(&self, channel_id: u32, batch: &DataBatch) -> ProtocolResult<()> {
         if batch.is_empty() {
             return Ok(());
         }
 
-        let source_samples = self.batch_to_acquired_samples(channel_id, &batch)?;
+        let source_samples = self.batch_to_acquired_samples(channel_id, batch)?;
         let samples = self.expand_c2c(source_samples)?;
         let result = match &self.write_path {
             ShmWritePath::TypedFixedGeneration(writer) => writer.commit_batch(&samples),
@@ -269,7 +253,7 @@ impl ShmDataStore {
     }
 
     /// Publishes channel connectivity on the dedicated SHM health plane.
-    pub async fn publish_channel_online(&self, channel_id: u32, online: bool) {
+    pub fn publish_channel_online(&self, channel_id: u32, online: bool) {
         let timestamp_ms = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()

@@ -32,6 +32,7 @@ pub mod transport;
 use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
+use aether_config::io::MAX_CHANNEL_TIMING_MS;
 use aether_core::PointType;
 use async_trait::async_trait;
 use chrono::{DateTime, TimeZone, Utc};
@@ -42,12 +43,13 @@ use tracing::{debug, error, info, warn};
 
 use crate::protocols::core::data::{DataBatch, DataPoint, Value};
 use crate::protocols::core::error::{GatewayError, Result};
-use crate::protocols::core::point::{PointConfig, TransformConfig};
-use crate::protocols::core::quality::Quality;
-use crate::protocols::core::traits::{
-    ConnectionState, DataEventReceiver, Diagnostics, PointFailure, PollResult,
+use crate::protocols::core::metadata::{
+    DriverMetadata, HasMetadata, ParameterMetadata, ParameterType,
 };
-use crate::protocols::gateway::ChannelRuntime;
+use crate::protocols::core::point::{PointConfig, TransformConfig};
+use crate::protocols::core::traits::{ConnectionState, Diagnostics, PointFailure, PollResult};
+use crate::protocols::runtime::ChannelRuntime;
+use aether_domain::PointQuality;
 
 use self::mms::{
     MmsValue, build_read_request, build_sbo_select_request, build_sbow_select_bool_request,
@@ -93,6 +95,7 @@ fn default_request_timeout_ms() -> u64 {
 /// **excluded from polling** and supplied exclusively via the report.
 /// Leave empty to enable reports without excluding any poll points.
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct ReportConfig {
     /// Full RCB object reference, e.g. `"simpleIOGenericIO/LLN0$BR$EventsBRCB"`.
     pub rcb_ref: String,
@@ -104,6 +107,7 @@ pub struct ReportConfig {
 
 /// IEC 61850 channel parameters (parsed from the `parameters:` block).
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct Iec61850ParamsConfig {
     /// Server address, e.g. `"192.168.1.10:102"`. Default port is 102.
     pub address: String,
@@ -122,6 +126,108 @@ pub struct Iec61850ParamsConfig {
     /// Points covered by `dataset_members` are excluded from polling.
     #[serde(default)]
     pub reports: Vec<ReportConfig>,
+}
+
+impl Iec61850ParamsConfig {
+    pub(crate) fn validate(&self) -> Result<()> {
+        if self.address.trim().is_empty() {
+            return Err(GatewayError::Config(
+                "IEC 61850 address must be non-empty".to_owned(),
+            ));
+        }
+        for (name, value) in [
+            ("connect_timeout_ms", self.connect_timeout_ms),
+            ("request_timeout_ms", self.request_timeout_ms),
+        ] {
+            if !(1..=MAX_CHANNEL_TIMING_MS).contains(&value) {
+                return Err(GatewayError::Config(format!(
+                    "IEC 61850 {name} must be between 1 and {MAX_CHANNEL_TIMING_MS}"
+                )));
+            }
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Iec61850PointMapping<'a> {
+    #[serde(borrow)]
+    address: &'a str,
+    #[serde(default = "default_mapping_ctrl_model")]
+    ctrl_model: u8,
+}
+
+fn default_mapping_ctrl_model() -> u8 {
+    1
+}
+
+/// IEC 61850 MMS variable address owned by this adapter.
+///
+/// `domain` is the IED logical-device name and `item` is the MMS item ID
+/// with its functional constraint embedded.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct Iec61850Address {
+    pub domain: String,
+    pub item: String,
+    #[serde(default = "default_mapping_ctrl_model")]
+    pub ctrl_model: u8,
+}
+
+impl Iec61850Address {
+    pub fn new(domain: impl Into<String>, item: impl Into<String>) -> Self {
+        Self {
+            domain: domain.into(),
+            item: item.into(),
+            ctrl_model: default_mapping_ctrl_model(),
+        }
+    }
+
+    /// Parse `domain:item` MMS form or `domain/object.path` reference form.
+    pub fn parse(address: &str) -> Result<Self> {
+        if let Some((domain, item)) = address.split_once(':') {
+            return Ok(Self::new(domain.trim(), item.trim()));
+        }
+        if let Some((domain, item)) = address.split_once('/') {
+            return Ok(Self::new(domain.trim(), item.replace('.', "$")));
+        }
+        Err(GatewayError::Config(format!(
+            "Invalid IEC 61850 address: '{address}'. Expected 'domain/item' or 'domain:item$...'"
+        )))
+    }
+}
+
+/// Decode and validate one persisted IEC 61850 point mapping without cloning
+/// its JSON value.
+///
+/// IEC 61850 supports all four runtime point types; the point type determines
+/// whether the channel polls the address or exposes it through a write path.
+pub(crate) fn parse_point_mapping(
+    mapping: &serde_json::Value,
+    _point_type: PointType,
+) -> Result<Iec61850Address> {
+    let mapping = Iec61850PointMapping::deserialize(mapping).map_err(|error| {
+        GatewayError::Config(format!("invalid IEC 61850 point mapping: {error}"))
+    })?;
+    if mapping.address.trim().is_empty() {
+        return Err(GatewayError::Config(
+            "IEC 61850 mapping address must be nonblank".to_owned(),
+        ));
+    }
+    if !(1..=4).contains(&mapping.ctrl_model) {
+        return Err(GatewayError::Config(
+            "IEC 61850 ctrl_model must be in 1..=4".to_owned(),
+        ));
+    }
+
+    let mut address = Iec61850Address::parse(mapping.address)?;
+    if address.domain.is_empty() || address.item.is_empty() {
+        return Err(GatewayError::Config(
+            "IEC 61850 mapping address must contain nonblank domain and item components".to_owned(),
+        ));
+    }
+    address.ctrl_model = mapping.ctrl_model;
+    Ok(address)
 }
 
 // ── Channel ───────────────────────────────────────────────────────────────────
@@ -153,7 +259,6 @@ struct WriteEntry {
 
 /// IEC 61850 MMS polling channel.
 pub struct Iec61850Channel {
-    id: u32,
     name: String,
 
     address: String,
@@ -191,52 +296,51 @@ pub struct Iec61850Channel {
 
 impl Iec61850Channel {
     pub fn new(
-        id: u32,
         name: impl Into<String>,
         params: &Iec61850ParamsConfig,
-        points: Vec<PointConfig>,
+        points: Vec<PointConfig<Iec61850Address>>,
     ) -> Self {
         let mut poll_points: Vec<PointEntry> = Vec::new();
         let mut ctrl_points: HashMap<u32, WriteEntry> = HashMap::new();
         let mut adj_points: HashMap<u32, WriteEntry> = HashMap::new();
 
-        for p in points {
-            if !p.enabled {
-                continue;
-            }
-            #[cfg(feature = "iec61850")]
-            if let crate::protocols::core::point::ProtocolAddress::Iec61850(ref addr) = p.address {
-                match p.point_type {
-                    PointType::Control => {
-                        ctrl_points.insert(
-                            p.id,
-                            WriteEntry {
-                                domain: addr.domain.clone(),
-                                item: addr.item.clone(),
-                                ctrl_model: addr.ctrl_model,
-                            },
-                        );
-                    },
-                    PointType::Adjustment => {
-                        adj_points.insert(
-                            p.id,
-                            WriteEntry {
-                                domain: addr.domain.clone(),
-                                item: addr.item.clone(),
-                                ctrl_model: addr.ctrl_model,
-                            },
-                        );
-                    },
-                    _ => {
-                        poll_points.push(PointEntry {
-                            domain: addr.domain.clone(),
-                            item: addr.item.clone(),
-                            id: p.id,
-                            point_type: p.point_type,
-                            transform: p.transform.clone(),
-                        });
-                    },
-                }
+        for point in points {
+            let PointConfig {
+                id,
+                point_type,
+                address,
+                transform,
+            } = point;
+            match point_type {
+                PointType::Control => {
+                    ctrl_points.insert(
+                        id,
+                        WriteEntry {
+                            domain: address.domain,
+                            item: address.item,
+                            ctrl_model: address.ctrl_model,
+                        },
+                    );
+                },
+                PointType::Adjustment => {
+                    adj_points.insert(
+                        id,
+                        WriteEntry {
+                            domain: address.domain,
+                            item: address.item,
+                            ctrl_model: address.ctrl_model,
+                        },
+                    );
+                },
+                _ => {
+                    poll_points.push(PointEntry {
+                        domain: address.domain,
+                        item: address.item,
+                        id,
+                        point_type,
+                        transform,
+                    });
+                },
             }
         }
 
@@ -244,7 +348,7 @@ impl Iec61850Channel {
         let mut path_to_point: HashMap<String, (u32, PointType, TransformConfig)> = HashMap::new();
         for pe in &poll_points {
             let path = format!("{}/{}", pe.domain, pe.item);
-            path_to_point.insert(path, (pe.id, pe.point_type, pe.transform.clone()));
+            path_to_point.insert(path, (pe.id, pe.point_type, pe.transform));
         }
 
         // Build the skip-set: poll points whose path appears in any report dataset.
@@ -258,7 +362,6 @@ impl Iec61850Channel {
         }
 
         Self {
-            id,
             name: name.into(),
             address: params.address.clone(),
             connect_timeout: Duration::from_millis(params.connect_timeout_ms),
@@ -591,8 +694,9 @@ impl Iec61850Channel {
     /// Each PDU is parsed as an IEC 61850 InformationReport.  Dataset element
     /// values are matched to point IDs via `self.path_to_point` using the
     /// configured `dataset_members` ordering.
-    fn process_report_pdus(&self, pdus: Vec<Vec<u8>>) -> Vec<DataPoint> {
-        let mut out = Vec::new();
+    fn process_report_pdus(&self, pdus: Vec<Vec<u8>>) -> PollResult {
+        let mut batch = DataBatch::new();
+        let mut failures = Vec::new();
         for pdu in &pdus {
             let Some(report) = parse_report(pdu) else {
                 debug!(
@@ -624,23 +728,71 @@ impl Iec61850Channel {
                     let Some(mms_val) = report.values.get(i) else {
                         continue;
                     };
-                    if !mms_val.is_ok() {
-                        continue;
-                    }
-                    let raw = mms_to_value(mms_val);
-                    let value = apply_transform(&raw, transform);
-                    out.push(DataPoint {
-                        id: *pt_id,
-                        point_type: *pt_type,
-                        value,
-                        quality: Quality::Good,
-                        timestamp: Utc::now(),
-                        source_timestamp: source_ts,
-                    });
+                    collect_mms_point(
+                        &mut batch,
+                        &mut failures,
+                        *pt_id,
+                        *pt_type,
+                        mms_val,
+                        transform,
+                        source_ts,
+                    );
                 }
             }
         }
-        out
+        if failures.is_empty() {
+            PollResult::success(batch)
+        } else {
+            PollResult::partial(batch, failures)
+        }
+    }
+}
+
+// ── Metadata ──────────────────────────────────────────────────────────────────
+
+impl HasMetadata for Iec61850Channel {
+    fn metadata() -> DriverMetadata {
+        DriverMetadata {
+            name: "iec61850",
+            display_name: "IEC 61850 MMS",
+            description: "IEC 61850 MMS client over TCP/ISO transport",
+            is_recommended: true,
+            example_config: serde_json::json!({
+                "address": "192.168.1.10:102",
+                "connect_timeout_ms": 10_000,
+                "request_timeout_ms": 5_000,
+                "reports": []
+            }),
+            parameters: vec![
+                ParameterMetadata::required(
+                    "address",
+                    "Server Address",
+                    "IEC 61850 server host and TCP port",
+                    ParameterType::String,
+                ),
+                ParameterMetadata::optional(
+                    "connect_timeout_ms",
+                    "Connect Timeout (ms)",
+                    "TCP connection timeout",
+                    ParameterType::Integer,
+                    serde_json::json!(10_000),
+                ),
+                ParameterMetadata::optional(
+                    "request_timeout_ms",
+                    "Request Timeout (ms)",
+                    "Per-request timeout",
+                    ParameterType::Integer,
+                    serde_json::json!(5_000),
+                ),
+                ParameterMetadata::optional(
+                    "reports",
+                    "Report Subscriptions",
+                    "Report control block subscriptions",
+                    ParameterType::Array,
+                    serde_json::json!([]),
+                ),
+            ],
+        }
     }
 }
 
@@ -648,22 +800,6 @@ impl Iec61850Channel {
 
 #[async_trait]
 impl ChannelRuntime for Iec61850Channel {
-    fn id(&self) -> u32 {
-        self.id
-    }
-
-    fn name(&self) -> &str {
-        &self.name
-    }
-
-    fn protocol(&self) -> &str {
-        "iec61850"
-    }
-
-    fn is_event_driven(&self) -> bool {
-        false
-    }
-
     async fn connect(&mut self) -> Result<()> {
         self.try_connect().await.map_err(|e| {
             self.state = ConnectionState::Error;
@@ -712,7 +848,7 @@ impl ChannelRuntime for Iec61850Channel {
                     p.item.clone(),
                     p.id,
                     p.point_type,
-                    p.transform.clone(),
+                    p.transform,
                 )
             };
 
@@ -724,24 +860,15 @@ impl ChannelRuntime for Iec61850Channel {
             let invoke_id = self.next_invoke_id();
 
             match self.read_variable(invoke_id, &domain, &item).await {
-                Ok(mms_val) if mms_val.is_ok() => {
-                    let raw_value = mms_to_value(&mms_val);
-                    let value = apply_transform(&raw_value, &transform);
-                    batch.add(DataPoint {
-                        id: point_id,
-                        point_type,
-                        value,
-                        quality: Quality::Good,
-                        timestamp: Utc::now(),
-                        source_timestamp: None,
-                    });
-                },
-                Ok(MmsValue::Failure(code)) => {
-                    failures.push(PointFailure::with_error(
-                        point_id,
-                        format!("MMS data-access error {}", code),
-                    ));
-                },
+                Ok(mms_val) => collect_mms_point(
+                    &mut batch,
+                    &mut failures,
+                    point_id,
+                    point_type,
+                    &mms_val,
+                    &transform,
+                    None,
+                ),
                 Err(GatewayError::ReadTimeout) | Err(GatewayError::WriteTimeout) => {
                     warn!(
                         "IEC 61850 [{}] read {}/{} timeout (skipping)",
@@ -763,12 +890,6 @@ impl ChannelRuntime for Iec61850Channel {
                     failures.push(PointFailure::with_error(point_id, e.to_string()));
                     break;
                 },
-                Ok(other) => {
-                    failures.push(PointFailure::with_error(
-                        point_id,
-                        format!("unsupported MMS value: {:?}", other),
-                    ));
-                },
             }
         }
 
@@ -789,10 +910,9 @@ impl ChannelRuntime for Iec61850Channel {
         let all_report_pdus: Vec<Vec<u8>> = report_pdus.into_iter().chain(mid_pdus).collect();
 
         if !all_report_pdus.is_empty() {
-            let report_points = self.process_report_pdus(all_report_pdus);
-            for dp in report_points {
-                batch.add(dp);
-            }
+            let report_result = self.process_report_pdus(all_report_pdus);
+            batch.merge(report_result.data);
+            failures.extend(report_result.failures);
         }
 
         if failures.is_empty() {
@@ -958,18 +1078,6 @@ impl ChannelRuntime for Iec61850Channel {
         Ok(ok)
     }
 
-    fn subscribe(&self) -> Option<DataEventReceiver> {
-        None
-    }
-
-    async fn start_events(&mut self) -> Result<()> {
-        Ok(())
-    }
-
-    async fn stop_events(&mut self) -> Result<()> {
-        Ok(())
-    }
-
     async fn diagnostics(&self) -> Result<Diagnostics> {
         let mut d = Diagnostics::new("iec61850");
         d.connection_state = self.state;
@@ -983,23 +1091,170 @@ impl ChannelRuntime for Iec61850Channel {
 
 // ── Value helpers ─────────────────────────────────────────────────────────────
 
-fn mms_to_value(mms: &MmsValue) -> Value {
-    match mms {
-        MmsValue::Float32(f) => Value::Float(*f as f64),
-        MmsValue::Float64(f) => Value::Float(*f),
-        MmsValue::Integer(i) => Value::Integer(*i),
-        MmsValue::Unsigned(u) => Value::Integer(*u as i64),
-        MmsValue::Boolean(b) => Value::Bool(*b),
-        MmsValue::VisibleString(s) => Value::String(s.clone()),
-        _ => Value::Null,
+fn collect_mms_point(
+    batch: &mut DataBatch,
+    failures: &mut Vec<PointFailure>,
+    point_id: u32,
+    point_type: PointType,
+    mms: &MmsValue,
+    transform: &TransformConfig,
+    source_timestamp: Option<DateTime<Utc>>,
+) {
+    match convert_mms_point(point_id, point_type, mms, transform, source_timestamp) {
+        Ok(point) => batch.add(point),
+        Err(failure) => failures.push(failure),
     }
 }
 
-fn apply_transform(value: &Value, transform: &TransformConfig) -> Value {
+fn convert_mms_point(
+    point_id: u32,
+    point_type: PointType,
+    mms: &MmsValue,
+    transform: &TransformConfig,
+    source_timestamp: Option<DateTime<Utc>>,
+) -> std::result::Result<DataPoint, PointFailure> {
+    if let MmsValue::Failure(code) = mms {
+        return Err(PointFailure::with_error(
+            point_id,
+            format!("MMS data-access error {code}"),
+        ));
+    }
+
+    let raw_value = mms_to_value(mms).map_err(|error| PointFailure::new(point_id, error))?;
+    let value = apply_transform(raw_value, transform)
+        .map_err(|error| PointFailure::new(point_id, error))?;
+
+    Ok(DataPoint {
+        id: point_id,
+        point_type,
+        value,
+        quality: PointQuality::Good,
+        timestamp: Utc::now(),
+        source_timestamp,
+    })
+}
+
+fn mms_to_value(mms: &MmsValue) -> std::result::Result<Value, &'static str> {
+    match mms {
+        MmsValue::Float32(value) if value.is_finite() => Ok(Value::Float(*value as f64)),
+        MmsValue::Float64(value) if value.is_finite() => Ok(Value::Float(*value)),
+        MmsValue::Float32(_) | MmsValue::Float64(_) => {
+            Err("IEC 61850 floating-point value is not finite")
+        },
+        MmsValue::Integer(value) => Ok(Value::Integer(*value)),
+        MmsValue::Unsigned(value) => i64::try_from(*value)
+            .map(Value::Integer)
+            .map_err(|_| "IEC 61850 unsigned value exceeds the live-state integer range"),
+        MmsValue::Boolean(value) => Ok(Value::Bool(*value)),
+        MmsValue::VisibleString(_) => {
+            Err("IEC 61850 string value is not supported for live acquisition")
+        },
+        MmsValue::BitString { .. } | MmsValue::UtcTime(_) | MmsValue::OctetString(_) => {
+            Err("IEC 61850 value type is not supported for live acquisition")
+        },
+        MmsValue::Failure(_) => Err("IEC 61850 MMS data-access failure"),
+    }
+}
+
+fn apply_transform(
+    value: Value,
+    transform: &TransformConfig,
+) -> std::result::Result<Value, &'static str> {
     match value {
-        Value::Float(f) => Value::Float(transform.apply(*f)),
-        Value::Integer(i) => Value::Float(transform.apply(*i as f64)),
-        Value::Bool(b) => Value::Bool(transform.apply_bool(*b)),
-        other => other.clone(),
+        Value::Float(value) => finite_transformed_value(transform.apply(value)),
+        Value::Integer(value) => finite_transformed_value(transform.apply(value as f64)),
+        Value::Bool(value) => Ok(Value::Bool(transform.apply_bool(value))),
+    }
+}
+
+fn finite_transformed_value(value: f64) -> std::result::Result<Value, &'static str> {
+    if value.is_finite() {
+        Ok(Value::Float(value))
+    } else {
+        Err("IEC 61850 transformed value is not finite")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn point_mapping_codec_is_strict_and_accepts_all_runtime_point_types() {
+        let mapping = serde_json::json!({
+            "address": "simpleIOGenericIO/GGIO1$MX$AnIn1$mag$f",
+            "ctrl_model": 4
+        });
+
+        for point_type in [
+            PointType::Telemetry,
+            PointType::Signal,
+            PointType::Control,
+            PointType::Adjustment,
+        ] {
+            let address = parse_point_mapping(&mapping, point_type).unwrap();
+            assert_eq!(address.domain, "simpleIOGenericIO");
+            assert_eq!(address.item, "GGIO1$MX$AnIn1$mag$f");
+            assert_eq!(address.ctrl_model, 4);
+        }
+
+        assert!(
+            parse_point_mapping(
+                &serde_json::json!({
+                    "address": "simpleIOGenericIO/GGIO1$MX$AnIn1$mag$f",
+                    "ignored": true
+                }),
+                PointType::Telemetry,
+            )
+            .is_err()
+        );
+        assert!(
+            parse_point_mapping(
+                &serde_json::json!({
+                    "address": "simpleIOGenericIO/GGIO1$MX$AnIn1$mag$f",
+                    "ctrl_model": 5
+                }),
+                PointType::Control,
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn mixed_mms_values_keep_numeric_points_and_report_non_numeric_values() {
+        let mut batch = DataBatch::new();
+        let mut failures = Vec::new();
+        let transform = TransformConfig::default();
+
+        for (point_id, value) in [
+            (1, MmsValue::Float32(12.5)),
+            (2, MmsValue::Boolean(true)),
+            (3, MmsValue::VisibleString("not numeric".to_owned())),
+            (4, MmsValue::OctetString(vec![1, 2, 3])),
+            (5, MmsValue::Float64(f64::NAN)),
+        ] {
+            collect_mms_point(
+                &mut batch,
+                &mut failures,
+                point_id,
+                PointType::Telemetry,
+                &value,
+                &transform,
+                None,
+            );
+        }
+
+        assert_eq!(batch.len(), 2);
+        assert_eq!(
+            batch.iter().map(|point| point.id).collect::<Vec<_>>(),
+            vec![1, 2]
+        );
+        assert_eq!(
+            failures
+                .iter()
+                .map(|failure| failure.point_id)
+                .collect::<Vec<_>>(),
+            vec![3, 4, 5]
+        );
     }
 }

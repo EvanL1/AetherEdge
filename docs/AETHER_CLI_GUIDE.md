@@ -171,9 +171,6 @@ aether channels list
 # 查看通道状态
 aether channels status <channel_id>
 
-# 注入 T/S 仿真值（仅在 io 显式设置 AETHER_ALLOW_SIMULATION_WRITES=true 时可用）
-aether channels write <channel_id> --type T --id <point_id> --value <value>
-
 # 真实设备命令统一走实例 action（含签名身份、路由、确认与审计）
 AETHER_ACCESS_TOKEN='<signed access JWT>' \
   aether models instances action <instance_id> --point-id <point_id> --value <value> --confirmed
@@ -190,9 +187,6 @@ aether channels health
 ```bash
 # 查看通道 1 状态
 aether channels status 1
-
-# 注入通道 1 的遥测仿真值
-aether channels write 1 --type T --id 10 --value 50.5
 
 # 通过实例动作下发真实设备命令
 AETHER_ACCESS_TOKEN='<signed access JWT>' \

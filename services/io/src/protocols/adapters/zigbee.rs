@@ -4,12 +4,12 @@
 //!
 //! ## Design Overview
 //!
-//! Zigbee devices communicate through a coordinator (CC2652, EFR32, etc.) that
-//! is connected via TCP. The adapter:
+//! Zigbee devices communicate through a TCP gateway implementing Aether's Raw
+//! framing. The adapter:
 //! - Connects to the TCP gateway
-//! - Decodes ZCL frames using the appropriate codec (Raw, ZNP, EZSP)
+//! - Decodes the Raw gateway frames into ZCL values
 //! - Maps attribute reports to data points via (ieee_addr, endpoint, cluster, attr) lookup
-//! - Broadcasts data events to subscribers
+//! - Queues data events for the unified channel task
 //!
 //! ## Configuration Example
 //!
@@ -17,38 +17,36 @@
 //! {
 //!   "host": "192.168.1.100",
 //!   "port": 8888,
-//!   "gateway_type": "raw",
-//!   "permit_join_on_start": false
+//!   "connect_timeout_ms": 5000
 //! }
 //! ```
 
 use async_trait::async_trait;
 use bytes::BytesMut;
+use serde::Deserialize;
 use serde_json::json;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU8, Ordering};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::AsyncReadExt;
 use tokio::net::TcpStream;
-use tokio::sync::broadcast;
 use tracing::{debug, error, info, warn};
 
 use crate::protocols::ChannelRuntime;
 use crate::protocols::adapters::zigbee_codec::{
     AttributeReport, FrameCodec, RawFrameCodec, ZigbeeFrame,
 };
-use crate::protocols::adapters::zigbee_config::{GatewayType, ZigbeeConfig};
+use crate::protocols::adapters::zigbee_config::ZigbeeConfig;
 use crate::protocols::core::data::{DataBatch, DataPoint};
 use crate::protocols::core::diagnostics::AtomicDiagnostics;
 use crate::protocols::core::error::{GatewayError, Result};
-use crate::protocols::core::logging::{ChannelLogConfig, ChannelLogHandler};
 use crate::protocols::core::metadata::{
     DriverMetadata, HasMetadata, ParameterMetadata, ParameterType,
 };
-use crate::protocols::core::point::PointConfig;
-use crate::protocols::core::point::ZigbeeAddress;
+use crate::protocols::core::point::TransformConfig;
 use crate::protocols::core::traits::{
     ConnectionState, DataEvent, DataEventReceiver, DataEventSender, Diagnostics, PollResult,
+    data_event_channel,
 };
 
 /// TCP read buffer size
@@ -57,104 +55,216 @@ const TCP_READ_BUF_SIZE: usize = 4096;
 /// Lookup key for fast point resolution from attribute reports.
 type PointLookupKey = (u64, u8, u16, u16); // (ieee_addr, endpoint, cluster_id, attribute_id)
 
+const fn is_acquisition_point(point_type: aether_core::PointType) -> bool {
+    matches!(
+        point_type,
+        aether_core::PointType::Telemetry | aether_core::PointType::Signal
+    )
+}
+
+/// Zigbee-owned persisted point mapping schema.
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ZigbeePointMapping {
+    ieee_address: u64,
+    endpoint: u8,
+    cluster_id: u16,
+    attribute_id: Option<u16>,
+}
+
+impl ZigbeePointMapping {
+    fn acquisition_key(self) -> Option<PointLookupKey> {
+        self.attribute_id.map(|attribute_id| {
+            (
+                self.ieee_address,
+                self.endpoint,
+                self.cluster_id,
+                attribute_id,
+            )
+        })
+    }
+
+    fn identity_key(self) -> (u64, u8, u16, Option<u16>) {
+        (
+            self.ieee_address,
+            self.endpoint,
+            self.cluster_id,
+            self.attribute_id,
+        )
+    }
+
+    fn validate(&self, point_type: aether_core::PointType) -> Result<()> {
+        if self.ieee_address == 0 {
+            return Err(GatewayError::Config(
+                "Zigbee ieee_address must be non-zero".to_string(),
+            ));
+        }
+        if !(1..=240).contains(&self.endpoint) {
+            return Err(GatewayError::Config(
+                "Zigbee endpoint must be in 1..=240".to_string(),
+            ));
+        }
+        if !is_acquisition_point(point_type) {
+            return Err(GatewayError::Config(
+                "Zigbee supports telemetry and signal mappings only; acknowledged writes are not implemented"
+                    .to_string(),
+            ));
+        }
+        if self.attribute_id.is_none() {
+            return Err(GatewayError::Config(
+                "Zigbee telemetry and signal mappings require attribute_id".to_string(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// Fully validated Zigbee point consumed by the runtime.
+#[derive(Debug, Clone)]
+pub(crate) struct ZigbeePointConfig {
+    id: u32,
+    point_type: aether_core::PointType,
+    address: ZigbeePointMapping,
+    transform: TransformConfig,
+}
+
+impl ZigbeePointConfig {
+    pub(crate) fn from_mapping(
+        id: u32,
+        point_type: aether_core::PointType,
+        transform: TransformConfig,
+        mapping: &str,
+    ) -> Result<Self> {
+        let address = serde_json::from_str::<ZigbeePointMapping>(mapping).map_err(|error| {
+            GatewayError::Config(format!("invalid Zigbee point mapping: {error}"))
+        })?;
+        address.validate(point_type)?;
+        if point_type == aether_core::PointType::Telemetry
+            && (!transform.scale.is_finite() || !transform.offset.is_finite())
+        {
+            return Err(GatewayError::Config(
+                "Zigbee telemetry transforms require finite scale and offset".to_string(),
+            ));
+        }
+        Ok(Self {
+            id,
+            point_type,
+            address,
+            transform,
+        })
+    }
+}
+
+/// Validate a non-empty Zigbee mapping at the governed topology boundary.
+pub(crate) fn validate_point_mapping(
+    point_type: aether_core::PointType,
+    mapping: &serde_json::Value,
+) -> Result<()> {
+    let mapping = ZigbeePointMapping::deserialize(mapping)
+        .map_err(|error| GatewayError::Config(format!("invalid Zigbee point mapping: {error}")))?;
+    mapping.validate(point_type)
+}
+
+fn validate_point_set(points: &[ZigbeePointConfig]) -> Result<()> {
+    let mut identities = HashSet::with_capacity(points.len());
+    let mut addresses = HashSet::with_capacity(points.len());
+    for point in points {
+        if !identities.insert((point.point_type, point.id)) {
+            return Err(GatewayError::Config(format!(
+                "duplicate Zigbee {:?} point ID {}",
+                point.point_type, point.id
+            )));
+        }
+        if !addresses.insert((point.address.identity_key(), point.point_type)) {
+            return Err(GatewayError::Config(format!(
+                "ambiguous Zigbee {:?} mapping for IEEE 0x{:016X}, endpoint {}, cluster 0x{:04X}, attribute {:?}",
+                point.point_type,
+                point.address.ieee_address,
+                point.address.endpoint,
+                point.address.cluster_id,
+                point.address.attribute_id
+            )));
+        }
+    }
+    Ok(())
+}
+
 /// Zigbee Channel implementation.
 ///
 /// Event-driven channel that connects to a Zigbee TCP gateway and decodes
 /// ZCL attribute reports into data points.
-pub struct ZigbeeChannel {
+pub(crate) struct ZigbeeChannel {
     /// Channel configuration
     config: ZigbeeConfig,
     /// Channel ID
     channel_id: u32,
-    /// Channel name
-    name: String,
     /// Point configurations
-    points: Vec<PointConfig>,
+    points: Vec<ZigbeePointConfig>,
     /// Event loop task handle
     event_loop_handle: Option<tokio::task::JoinHandle<()>>,
-    /// TCP write half (for sending commands)
-    write_half: Option<tokio::io::WriteHalf<TcpStream>>,
     /// Connection state (atomic for lock-free access)
     state: Arc<AtomicU8>,
-    /// Event broadcast sender
+    /// Event sender for the unified channel task.
     event_tx: DataEventSender,
+    /// Sole event receiver, taken once by the unified channel task.
+    event_rx: Option<DataEventReceiver>,
     /// Diagnostics counters
     diagnostics: Arc<AtomicDiagnostics>,
-    /// Log handler
-    log_handler: Option<Arc<dyn ChannelLogHandler>>,
-    /// Log config
-    _log_config: ChannelLogConfig,
 }
 
 impl ZigbeeChannel {
     /// Create a new Zigbee channel.
-    pub fn new(
+    pub(crate) fn new(
         config: ZigbeeConfig,
         channel_id: u32,
-        name: String,
-        points: Vec<PointConfig>,
-    ) -> Self {
-        let (event_tx, _) = broadcast::channel(1024);
+        points: Vec<ZigbeePointConfig>,
+    ) -> Result<Self> {
+        validate_point_set(&points)?;
+        let (event_tx, event_rx) = data_event_channel();
 
-        Self {
+        Ok(Self {
             config,
             channel_id,
-            name,
             points,
             event_loop_handle: None,
-            write_half: None,
             state: Arc::new(AtomicU8::new(ConnectionState::Disconnected as u8)),
             event_tx,
+            event_rx: Some(event_rx),
             diagnostics: Arc::new(AtomicDiagnostics::new()),
-            log_handler: None,
-            _log_config: ChannelLogConfig::default(),
-        }
+        })
     }
 
     /// Build the point lookup map from configured points.
-    fn build_point_lookup(points: &[PointConfig]) -> HashMap<PointLookupKey, PointConfig> {
+    fn build_point_lookup(
+        points: &[ZigbeePointConfig],
+    ) -> HashMap<PointLookupKey, Vec<ZigbeePointConfig>> {
         let mut map = HashMap::with_capacity(points.len());
-        for point in points {
-            if let crate::protocols::core::point::ProtocolAddress::Zigbee(ref addr) = point.address
-            {
-                let key = (
-                    addr.ieee_address,
-                    addr.endpoint,
-                    addr.cluster_id,
-                    addr.attribute_id,
-                );
-                map.insert(key, point.clone());
+        for point in points
+            .iter()
+            .filter(|point| is_acquisition_point(point.point_type))
+        {
+            if let Some(key) = point.address.acquisition_key() {
+                map.entry(key).or_insert_with(Vec::new).push(point.clone());
             }
         }
         map
     }
 
-    /// Create the appropriate frame codec for the gateway type.
-    fn create_codec(gateway_type: GatewayType) -> Box<dyn FrameCodec> {
-        match gateway_type {
-            GatewayType::Raw => Box::new(RawFrameCodec),
-            GatewayType::Znp => {
-                warn!("ZNP codec not implemented, falling back to Raw");
-                Box::new(RawFrameCodec)
-            },
-            GatewayType::Ezsp => {
-                warn!("EZSP codec not implemented, falling back to Raw");
-                Box::new(RawFrameCodec)
-            },
-        }
+    fn create_codec() -> Box<dyn FrameCodec> {
+        Box::new(RawFrameCodec)
     }
 
-    /// Set connection state and broadcast event.
+    /// Set connection state and queue an event.
     fn set_state(state: &AtomicU8, event_tx: &DataEventSender, new_state: ConnectionState) {
         state.store(new_state as u8, Ordering::SeqCst);
-        let _ = event_tx.send(DataEvent::ConnectionChanged(new_state));
+        let _ = event_tx.try_send(DataEvent::ConnectionChanged(new_state));
     }
 
     /// Process an attribute report into a DataPoint.
     fn process_attribute_report(
         report: &AttributeReport,
-        lookup: &HashMap<PointLookupKey, PointConfig>,
-    ) -> Option<DataPoint> {
+        lookup: &HashMap<PointLookupKey, Vec<ZigbeePointConfig>>,
+    ) -> Vec<DataPoint> {
         let key = (
             report.ieee_addr,
             report.endpoint,
@@ -162,22 +272,64 @@ impl ZigbeeChannel {
             report.attribute_id,
         );
 
-        let point = lookup.get(&key)?;
-        let raw_value = report.value.to_f64();
-        let transformed = point.transform.apply(raw_value);
-
-        Some(DataPoint::new(point.id, point.point_type, transformed))
+        let Some(points) = lookup.get(&key) else {
+            return Vec::new();
+        };
+        let Some(raw_value) = report.value.to_f64() else {
+            warn!(
+                ieee_addr = report.ieee_addr,
+                endpoint = report.endpoint,
+                cluster_id = report.cluster_id,
+                attribute_id = report.attribute_id,
+                "ignoring non-numeric Zigbee attribute report"
+            );
+            return Vec::new();
+        };
+        if !raw_value.is_finite() {
+            warn!(
+                ieee_addr = report.ieee_addr,
+                endpoint = report.endpoint,
+                cluster_id = report.cluster_id,
+                attribute_id = report.attribute_id,
+                "ignoring non-finite Zigbee attribute report"
+            );
+            return Vec::new();
+        }
+        points
+            .iter()
+            .filter_map(|point| {
+                let transformed = if point.point_type == aether_core::PointType::Signal {
+                    let active = raw_value != 0.0;
+                    f64::from(u8::from(if point.transform.reverse {
+                        !active
+                    } else {
+                        active
+                    }))
+                } else {
+                    point.transform.apply(raw_value)
+                };
+                if transformed.is_finite() {
+                    Some(DataPoint::new(point.id, point.point_type, transformed))
+                } else {
+                    warn!(
+                        point_id = point.id,
+                        "ignoring Zigbee sample whose transform produced a non-finite value"
+                    );
+                    None
+                }
+            })
+            .collect()
     }
 
     /// Run the TCP event loop — reads frames from the gateway and dispatches events.
     async fn run_event_loop(
-        mut read_half: tokio::io::ReadHalf<TcpStream>,
+        mut stream: TcpStream,
         codec: Box<dyn FrameCodec>,
         channel_id: u32,
         state: Arc<AtomicU8>,
         event_tx: DataEventSender,
         diagnostics: Arc<AtomicDiagnostics>,
-        point_lookup: HashMap<PointLookupKey, PointConfig>,
+        point_lookup: HashMap<PointLookupKey, Vec<ZigbeePointConfig>>,
     ) {
         info!(channel_id, "Zigbee event loop started");
 
@@ -185,7 +337,7 @@ impl ZigbeeChannel {
 
         loop {
             // Read data from TCP stream
-            match read_half.read_buf(&mut buf).await {
+            match stream.read_buf(&mut buf).await {
                 Ok(0) => {
                     // Connection closed by peer
                     info!(channel_id, "Zigbee TCP connection closed by peer");
@@ -224,7 +376,7 @@ impl ZigbeeChannel {
                 Err(e) => {
                     error!(channel_id, error = %e, "Zigbee TCP read error");
                     Self::set_state(&state, &event_tx, ConnectionState::Reconnecting);
-                    let _ = event_tx.send(DataEvent::Error(e.to_string()));
+                    let _ = event_tx.try_send(DataEvent::Error(e.to_string()));
                     diagnostics.record_error(e.to_string());
                     break;
                 },
@@ -240,15 +392,18 @@ impl ZigbeeChannel {
         channel_id: u32,
         event_tx: &DataEventSender,
         diagnostics: &AtomicDiagnostics,
-        point_lookup: &HashMap<PointLookupKey, PointConfig>,
+        point_lookup: &HashMap<PointLookupKey, Vec<ZigbeePointConfig>>,
     ) {
         match frame {
             ZigbeeFrame::AttributeReport(report) => {
-                if let Some(data_point) = Self::process_attribute_report(report, point_lookup) {
-                    let mut batch = DataBatch::with_capacity(1);
-                    batch.add(data_point);
-                    diagnostics.inc_read();
-                    let _ = event_tx.send(DataEvent::DataUpdate(Arc::new(batch)));
+                let data_points = Self::process_attribute_report(report, point_lookup);
+                if !data_points.is_empty() {
+                    let mut batch = DataBatch::with_capacity(data_points.len());
+                    for data_point in data_points {
+                        batch.add(data_point);
+                    }
+                    diagnostics.add_read(batch.len() as u64);
+                    let _ = event_tx.try_send(DataEvent::DataUpdate(batch));
                     debug!(
                         channel_id,
                         ieee = format!("0x{:016X}", report.ieee_addr),
@@ -288,56 +443,60 @@ impl ZigbeeChannel {
 
 #[async_trait]
 impl ChannelRuntime for ZigbeeChannel {
-    fn id(&self) -> u32 {
-        self.channel_id
-    }
-
-    fn name(&self) -> &str {
-        &self.name
-    }
-
-    fn protocol(&self) -> &str {
-        "zigbee"
-    }
-
     fn is_event_driven(&self) -> bool {
         true
     }
 
     async fn connect(&mut self) -> Result<()> {
-        if self.event_loop_handle.is_some() {
+        if self
+            .event_loop_handle
+            .as_ref()
+            .is_some_and(|handle| !handle.is_finished())
+        {
             return Ok(());
         }
-
+        self.event_loop_handle.take();
         Self::set_state(&self.state, &self.event_tx, ConnectionState::Connecting);
 
-        let addr = format!("{}:{}", self.config.host, self.config.port);
-
-        // Connect to TCP gateway with timeout
-        let stream = tokio::time::timeout(self.config.connect_timeout, TcpStream::connect(&addr))
-            .await
-            .map_err(|_| {
-                GatewayError::ConnectionTimeout(self.config.connect_timeout.as_millis() as u64)
-            })?
-            .map_err(|e| GatewayError::Connection(format!("TCP connect to {addr} failed: {e}")))?;
+        let connect_result = tokio::time::timeout(
+            self.config.connect_timeout,
+            TcpStream::connect((self.config.host.as_str(), self.config.port)),
+        )
+        .await;
+        let stream = match connect_result {
+            Ok(Ok(stream)) => stream,
+            Ok(Err(error)) => {
+                Self::set_state(&self.state, &self.event_tx, ConnectionState::Error);
+                return Err(GatewayError::Connection(format!(
+                    "TCP connect to {}:{} failed: {error}",
+                    self.config.host, self.config.port
+                )));
+            },
+            Err(_) => {
+                Self::set_state(&self.state, &self.event_tx, ConnectionState::Error);
+                return Err(GatewayError::ConnectionTimeout(
+                    self.config.connect_timeout.as_millis() as u64,
+                ));
+            },
+        };
 
         // Disable Nagle's algorithm for lower latency
-        stream
-            .set_nodelay(true)
-            .map_err(|e| GatewayError::Connection(format!("Failed to set TCP_NODELAY: {e}")))?;
+        if let Err(error) = stream.set_nodelay(true) {
+            Self::set_state(&self.state, &self.event_tx, ConnectionState::Error);
+            return Err(GatewayError::Connection(format!(
+                "Failed to set TCP_NODELAY: {error}"
+            )));
+        }
 
         info!(
             channel_id = self.channel_id,
-            addr = %addr,
+            host = %self.config.host,
+            port = self.config.port,
             "Connected to Zigbee TCP gateway"
         );
 
-        // Split stream for concurrent read/write
-        let (read_half, write_half) = tokio::io::split(stream);
-        self.write_half = Some(write_half);
-
         // Create codec
-        let codec = Self::create_codec(self.config.gateway_type);
+        let codec = Self::create_codec();
 
         // Build point lookup table
         let point_lookup = Self::build_point_lookup(&self.points);
@@ -355,7 +514,7 @@ impl ChannelRuntime for ZigbeeChannel {
 
         let handle = tokio::spawn(async move {
             Self::run_event_loop(
-                read_half,
+                stream,
                 codec,
                 channel_id,
                 state,
@@ -379,9 +538,6 @@ impl ChannelRuntime for ZigbeeChannel {
             handle.abort();
         }
 
-        // Drop write half (closes the TCP connection)
-        self.write_half = None;
-
         Self::set_state(&self.state, &self.event_tx, ConnectionState::Disconnected);
 
         info!(channel_id = self.channel_id, "Zigbee channel disconnected");
@@ -390,81 +546,12 @@ impl ChannelRuntime for ZigbeeChannel {
 
     async fn poll_once(&mut self) -> PollResult {
         // Event-driven protocol — return empty batch.
-        // Data is delivered via subscribe().
+        // Data is delivered through the runtime's event receiver.
         PollResult::success(DataBatch::new())
     }
 
-    async fn write_control(&mut self, commands: &[(u32, f64)]) -> Result<usize> {
-        let write_half = self.write_half.as_mut().ok_or(GatewayError::NotConnected)?;
-
-        let codec = Self::create_codec(self.config.gateway_type);
-        let point_lookup = Self::build_point_lookup(&self.points);
-
-        // Build reverse lookup: point_id -> ZigbeeAddress
-        let addr_lookup: HashMap<u32, &ZigbeeAddress> = self
-            .points
-            .iter()
-            .filter_map(|p| {
-                if let crate::protocols::core::point::ProtocolAddress::Zigbee(ref addr) = p.address
-                {
-                    Some((p.id, addr))
-                } else {
-                    None
-                }
-            })
-            .collect();
-
-        let _ = point_lookup; // suppress unused warning — we only need addr_lookup here
-
-        let mut written = 0;
-        for (point_id, value) in commands {
-            let addr = match addr_lookup.get(point_id) {
-                Some(a) => *a,
-                None => {
-                    warn!(
-                        channel_id = self.channel_id,
-                        point_id, "No Zigbee address for control point"
-                    );
-                    continue;
-                },
-            };
-
-            // Encode as a simple command with the value as a single byte payload.
-            // For boolean controls (On/Off cluster 0x0006): value > 0.5 = On (cmd 0x01), else Off (cmd 0x00).
-            let command_id = if *value > 0.5 { 0x01 } else { 0x00 };
-            let frame = codec.encode_command(
-                addr.ieee_address,
-                addr.endpoint,
-                addr.cluster_id,
-                command_id,
-                &[],
-            );
-
-            write_half
-                .write_all(&frame)
-                .await
-                .map_err(|e| GatewayError::Protocol(format!("TCP write failed: {e}")))?;
-
-            self.diagnostics.inc_write();
-            written += 1;
-
-            debug!(
-                channel_id = self.channel_id,
-                point_id, command_id, "Sent Zigbee control command"
-            );
-        }
-
-        Ok(written)
-    }
-
-    async fn write_adjustment(&mut self, _adjustments: &[(u32, f64)]) -> Result<usize> {
-        Err(GatewayError::Unsupported(
-            "Zigbee channel does not yet support adjustment writes".to_string(),
-        ))
-    }
-
-    fn subscribe(&self) -> Option<DataEventReceiver> {
-        Some(self.event_tx.subscribe())
+    fn take_event_receiver(&mut self) -> Option<DataEventReceiver> {
+        self.event_rx.take()
     }
 
     async fn start_events(&mut self) -> Result<()> {
@@ -494,34 +581,19 @@ impl ChannelRuntime for ZigbeeChannel {
     fn connection_state(&self) -> ConnectionState {
         ConnectionState::from(self.state.load(Ordering::SeqCst))
     }
-
-    fn set_log_handler(&mut self, handler: Arc<dyn ChannelLogHandler>) {
-        self.log_handler = Some(handler);
-    }
-
-    fn set_log_config(&mut self, config: ChannelLogConfig) {
-        self._log_config = config;
-    }
-
-    fn log_handler(&self) -> Option<Arc<dyn ChannelLogHandler>> {
-        self.log_handler.clone()
-    }
 }
 
 impl HasMetadata for ZigbeeChannel {
     fn metadata() -> DriverMetadata {
         DriverMetadata {
             name: "zigbee",
-            display_name: "Zigbee (TCP Gateway)",
-            description: "Zigbee protocol via TCP-connected coordinator gateway",
+            display_name: "Zigbee (Aether Raw TCP Gateway)",
+            description: "Read-only Zigbee ZCL telemetry through the Aether Raw TCP gateway framing",
             is_recommended: true,
             example_config: json!({
                 "host": "192.168.1.100",
                 "port": 8888,
-                "gateway_type": "raw",
-                "permit_join_on_start": false,
-                "connect_timeout_ms": 5000,
-                "reconnect_interval_ms": 5000
+                "connect_timeout_ms": 5000
             }),
             parameters: vec![
                 ParameterMetadata::required(
@@ -538,18 +610,11 @@ impl HasMetadata for ZigbeeChannel {
                     json!(8888),
                 ),
                 ParameterMetadata::optional(
-                    "gateway_type",
-                    "Gateway Type",
-                    "Frame encoding type: raw, znp, or ezsp",
-                    ParameterType::String,
-                    json!("raw"),
-                ),
-                ParameterMetadata::optional(
-                    "permit_join_on_start",
-                    "Permit Join",
-                    "Open network for joining on startup",
-                    ParameterType::Boolean,
-                    json!(false),
+                    "connect_timeout_ms",
+                    "Connect Timeout (ms)",
+                    "TCP connection timeout",
+                    ParameterType::Integer,
+                    json!(5000),
                 ),
             ],
         }
@@ -560,10 +625,8 @@ impl std::fmt::Debug for ZigbeeChannel {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ZigbeeChannel")
             .field("channel_id", &self.channel_id)
-            .field("name", &self.name)
             .field("host", &self.config.host)
             .field("port", &self.config.port)
-            .field("gateway_type", &self.config.gateway_type)
             .field("state", &self.connection_state())
             .field("points", &self.points.len())
             .finish()
@@ -575,23 +638,25 @@ impl std::fmt::Debug for ZigbeeChannel {
 mod tests {
     use super::*;
     use crate::protocols::adapters::zigbee_config::ZigbeeParamsConfig;
-    use crate::protocols::core::point::{ProtocolAddress, TransformConfig};
     use aether_core::PointType;
 
-    fn make_test_point(id: u32, ieee: u64, ep: u8, cluster: u16, attr: u16) -> PointConfig {
-        PointConfig {
+    fn make_test_point(
+        id: u32,
+        ieee_address: u64,
+        endpoint: u8,
+        cluster_id: u16,
+        attribute_id: u16,
+    ) -> ZigbeePointConfig {
+        ZigbeePointConfig {
             id,
             point_type: PointType::Telemetry,
-            name: Some(format!("test_point_{id}")),
-            address: ProtocolAddress::Zigbee(ZigbeeAddress {
-                ieee_address: ieee,
-                endpoint: ep,
-                cluster_id: cluster,
-                attribute_id: attr,
-            }),
+            address: ZigbeePointMapping {
+                ieee_address,
+                endpoint,
+                cluster_id,
+                attribute_id: Some(attribute_id),
+            },
             transform: TransformConfig::linear(1.0, 0.0),
-            poll_group: None,
-            enabled: true,
         }
     }
 
@@ -608,7 +673,7 @@ mod tests {
 
         let key = (0x00124B0018ED1234, 1, 0x0402, 0x0000);
         assert!(lookup.contains_key(&key));
-        assert_eq!(lookup[&key].id, 1);
+        assert_eq!(lookup[&key][0].id, 1);
     }
 
     #[test]
@@ -627,9 +692,9 @@ mod tests {
             value: ZclValue::UInt16(2500),
         };
 
-        let dp = ZigbeeChannel::process_attribute_report(&report, &lookup);
-        assert!(dp.is_some());
-        let dp = dp.unwrap();
+        let samples = ZigbeeChannel::process_attribute_report(&report, &lookup);
+        assert_eq!(samples.len(), 1);
+        let dp = &samples[0];
         assert_eq!(dp.id, 1);
         assert_eq!(dp.point_type, PointType::Telemetry);
         assert_eq!(dp.value.as_f64(), Some(2500.0));
@@ -652,7 +717,8 @@ mod tests {
             value: ZclValue::UInt16(2500),
         };
 
-        let dp = ZigbeeChannel::process_attribute_report(&report, &lookup).unwrap();
+        let samples = ZigbeeChannel::process_attribute_report(&report, &lookup);
+        let dp = &samples[0];
         assert!((dp.value.as_f64().unwrap() - 25.0).abs() < f64::EPSILON);
     }
 
@@ -670,7 +736,33 @@ mod tests {
             value: ZclValue::UInt16(2500),
         };
 
-        assert!(ZigbeeChannel::process_attribute_report(&report, &lookup).is_none());
+        assert!(ZigbeeChannel::process_attribute_report(&report, &lookup).is_empty());
+    }
+
+    #[test]
+    fn test_process_attribute_report_rejects_non_numeric_values() {
+        use crate::protocols::adapters::zigbee_codec::{AttributeReport, ZclValue};
+
+        let point = make_test_point(1, 0x00124B0018ED1234, 1, 0x0402, 0x0000);
+        let lookup = ZigbeeChannel::build_point_lookup(&[point]);
+
+        for value in [
+            ZclValue::String("not-a-number".to_string()),
+            ZclValue::Bytes(vec![1, 2, 3]),
+        ] {
+            let report = AttributeReport {
+                ieee_addr: 0x00124B0018ED1234,
+                endpoint: 1,
+                cluster_id: 0x0402,
+                attribute_id: 0x0000,
+                value,
+            };
+
+            assert!(
+                ZigbeeChannel::process_attribute_report(&report, &lookup).is_empty(),
+                "non-numeric Zigbee values must not become acquisition samples"
+            );
+        }
     }
 
     #[test]
@@ -683,40 +775,35 @@ mod tests {
 
     #[test]
     fn test_channel_creation() {
-        let config = ZigbeeParamsConfig::default().to_config();
-        let channel = ZigbeeChannel::new(config, 1, "test_zigbee".to_string(), vec![]);
-        assert_eq!(channel.id(), 1);
-        assert_eq!(channel.name(), "test_zigbee");
-        assert_eq!(channel.protocol(), "zigbee");
+        let config = ZigbeeParamsConfig::default().into_config().unwrap();
+        let channel = ZigbeeChannel::new(config, 1, vec![]).unwrap();
         assert!(channel.is_event_driven());
         assert_eq!(channel.connection_state(), ConnectionState::Disconnected);
     }
 
     #[test]
-    fn test_subscribe_returns_some() {
-        let config = ZigbeeParamsConfig::default().to_config();
-        let channel = ZigbeeChannel::new(config, 1, "test".to_string(), vec![]);
-        assert!(channel.subscribe().is_some());
+    fn test_event_receiver_is_taken_once() {
+        let config = ZigbeeParamsConfig::default().into_config().unwrap();
+        let mut channel = ZigbeeChannel::new(config, 1, vec![]).unwrap();
+        assert!(channel.take_event_receiver().is_some());
+        assert!(channel.take_event_receiver().is_none());
     }
 
     #[test]
     fn test_build_point_lookup_empty() {
-        let points: Vec<PointConfig> = vec![];
+        let points: Vec<ZigbeePointConfig> = vec![];
         let lookup = ZigbeeChannel::build_point_lookup(&points);
         assert!(lookup.is_empty());
     }
 
     #[test]
     fn test_build_point_lookup_duplicate_key() {
-        // Two points with the same (ieee, ep, cluster, attr) — later one overwrites.
         let points = vec![
             make_test_point(1, 0x00124B0018ED1234, 1, 0x0402, 0x0000),
             make_test_point(2, 0x00124B0018ED1234, 1, 0x0402, 0x0000),
         ];
-        let lookup = ZigbeeChannel::build_point_lookup(&points);
-        assert_eq!(lookup.len(), 1);
-        let key = (0x00124B0018ED1234, 1, 0x0402, 0x0000);
-        assert_eq!(lookup[&key].id, 2); // second insert wins
+        let config = ZigbeeParamsConfig::default().into_config().unwrap();
+        assert!(ZigbeeChannel::new(config, 1, points).is_err());
     }
 
     #[test]
@@ -750,12 +837,12 @@ mod tests {
                 value: zcl_val,
             };
 
-            let dp = ZigbeeChannel::process_attribute_report(&report, &lookup);
+            let samples = ZigbeeChannel::process_attribute_report(&report, &lookup);
             assert!(
-                dp.is_some(),
+                !samples.is_empty(),
                 "ZclValue variant #{i} should produce a DataPoint"
             );
-            let dp = dp.unwrap();
+            let dp = &samples[0];
             assert_eq!(dp.id, point_id);
             assert!(
                 (dp.value.as_f64().unwrap() - expected).abs() < 0.01,
@@ -767,8 +854,8 @@ mod tests {
 
     #[test]
     fn test_channel_initial_diagnostics() {
-        let config = ZigbeeParamsConfig::default().to_config();
-        let channel = ZigbeeChannel::new(config, 1, "test".to_string(), vec![]);
+        let config = ZigbeeParamsConfig::default().into_config().unwrap();
+        let channel = ZigbeeChannel::new(config, 1, vec![]).unwrap();
         let diag = channel.diagnostics.snapshot();
         assert_eq!(diag.read_count, 0);
         assert_eq!(diag.write_count, 0);
@@ -777,8 +864,126 @@ mod tests {
 
     #[test]
     fn test_channel_is_event_driven() {
-        let config = ZigbeeParamsConfig::default().to_config();
-        let channel = ZigbeeChannel::new(config, 1, "test".to_string(), vec![]);
+        let config = ZigbeeParamsConfig::default().into_config().unwrap();
+        let channel = ZigbeeChannel::new(config, 1, vec![]).unwrap();
         assert!(channel.is_event_driven());
+    }
+
+    #[test]
+    fn point_mapping_is_adapter_owned_and_strict() {
+        let mapping = r#"{
+            "ieee_address":5149012980814388,
+            "endpoint":1,
+            "cluster_id":1026,
+            "attribute_id":0
+        }"#;
+        let point = ZigbeePointConfig::from_mapping(
+            7,
+            PointType::Telemetry,
+            TransformConfig::linear(0.01, 0.0),
+            mapping,
+        )
+        .unwrap();
+        assert_eq!(
+            point.address.acquisition_key(),
+            Some((5149012980814388, 1, 1026, 0))
+        );
+
+        for invalid in [
+            r#"{"ieee_address":0,"endpoint":1,"cluster_id":6,"attribute_id":0}"#,
+            r#"{"ieee_address":1,"endpoint":0,"cluster_id":6,"attribute_id":0}"#,
+            r#"{"ieee_address":1,"endpoint":241,"cluster_id":6,"attribute_id":0}"#,
+            r#"{"ieee_address":1,"endpoint":1,"cluster_id":6}"#,
+            r#"{"ieee_address":1,"endpoint":1,"cluster_id":6,"attribute_id":0,"extra":1}"#,
+        ] {
+            assert!(
+                ZigbeePointConfig::from_mapping(
+                    7,
+                    PointType::Telemetry,
+                    TransformConfig::default(),
+                    invalid,
+                )
+                .is_err(),
+                "{invalid}"
+            );
+        }
+    }
+
+    #[test]
+    fn command_mappings_fail_closed() {
+        let adjustment = ZigbeePointConfig::from_mapping(
+            1,
+            PointType::Adjustment,
+            TransformConfig::default(),
+            r#"{"ieee_address":1,"endpoint":1,"cluster_id":6,"attribute_id":0}"#,
+        );
+        assert!(adjustment.is_err());
+
+        let control = ZigbeePointConfig::from_mapping(
+            1,
+            PointType::Control,
+            TransformConfig::default(),
+            r#"{"ieee_address":1,"endpoint":1,"cluster_id":8}"#,
+        );
+        assert!(control.is_err());
+    }
+
+    #[test]
+    fn reversed_signal_is_applied() {
+        use crate::protocols::adapters::zigbee_codec::{AttributeReport, ZclValue};
+
+        let mut point = make_test_point(1, 1, 1, 6, 0);
+        point.point_type = PointType::Signal;
+        point.transform.reverse = true;
+        let lookup = ZigbeeChannel::build_point_lookup(&[point]);
+        let report = AttributeReport {
+            ieee_addr: 1,
+            endpoint: 1,
+            cluster_id: 6,
+            attribute_id: 0,
+            value: ZclValue::Bool(false),
+        };
+        let samples = ZigbeeChannel::process_attribute_report(&report, &lookup);
+        let sample = &samples[0];
+        assert_eq!(sample.value.as_f64(), Some(1.0));
+    }
+
+    #[test]
+    fn acquisition_fans_out_and_rejects_non_finite_values() {
+        use crate::protocols::adapters::zigbee_codec::{AttributeReport, ZclValue};
+
+        let telemetry = make_test_point(1, 1, 1, 6, 0);
+        let mut signal = make_test_point(2, 1, 1, 6, 0);
+        signal.point_type = PointType::Signal;
+        let lookup = ZigbeeChannel::build_point_lookup(&[telemetry, signal]);
+
+        let report = |value| AttributeReport {
+            ieee_addr: 1,
+            endpoint: 1,
+            cluster_id: 6,
+            attribute_id: 0,
+            value,
+        };
+        let samples =
+            ZigbeeChannel::process_attribute_report(&report(ZclValue::Bool(true)), &lookup);
+        assert_eq!(samples.len(), 2);
+        assert!(
+            ZigbeeChannel::process_attribute_report(&report(ZclValue::Double(f64::NAN)), &lookup)
+                .is_empty()
+        );
+
+        let mut overflowing = make_test_point(3, 2, 1, 6, 0);
+        overflowing.transform.scale = f64::MAX;
+        let overflow_lookup = ZigbeeChannel::build_point_lookup(&[overflowing]);
+        let overflow_report = AttributeReport {
+            ieee_addr: 2,
+            endpoint: 1,
+            cluster_id: 6,
+            attribute_id: 0,
+            value: ZclValue::Double(2.0),
+        };
+        assert!(
+            ZigbeeChannel::process_attribute_report(&overflow_report, &overflow_lookup).is_empty()
+        );
     }
 }

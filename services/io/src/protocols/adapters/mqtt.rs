@@ -23,7 +23,7 @@
 //!   "subscriptions": [{"topic": "device/+/telemetry", "qos": 1}],
 //!   "json_mapping": {
 //!     "timestamp_path": "$.ts",
-//!     "timestamp_format": "unix_ms"
+//!     "timestamp_format": "unix_millis"
 //!   }
 //! }
 //! ```
@@ -31,33 +31,32 @@
 use async_trait::async_trait;
 use rumqttc::{AsyncClient, Event, EventLoop, MqttOptions, Packet, QoS};
 use serde::{Deserialize, Serialize};
-use sqlx::SqlitePool;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::time::Duration;
-use tokio::sync::broadcast;
+use tokio::sync::Mutex;
 use tracing::{debug, error, info};
 
-/// Delay between reconnection attempts in the MQTT event loop
-const RECONNECT_BACKOFF_DELAY: Duration = Duration::from_secs(1);
-
+use crate::core::channels::RuntimeChannelConfig;
 use crate::protocols::ChannelRuntime;
+use crate::protocols::adapters::json_mapper::{JsonMapper, JsonMappingConfig};
 use crate::protocols::core::data::DataBatch;
 use crate::protocols::core::diagnostics::AtomicDiagnostics;
 use crate::protocols::core::error::{GatewayError, Result};
-use crate::protocols::core::json_mapper::{JsonMapper, JsonMappingConfig};
 use crate::protocols::core::traits::{
     ConnectionState, DataEvent, DataEventReceiver, DataEventSender, Diagnostics, PollResult,
+    data_event_channel,
 };
 
 /// MQTT subscription configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MqttSubscription {
+#[serde(deny_unknown_fields)]
+struct MqttSubscription {
     /// Topic pattern (supports wildcards: +, #)
-    pub topic: String,
+    topic: String,
     /// Quality of Service (0, 1, or 2)
     #[serde(default = "default_qos")]
-    pub qos: u8,
+    qos: u8,
 }
 
 fn default_qos() -> u8 {
@@ -66,45 +65,34 @@ fn default_qos() -> u8 {
 
 /// MQTT channel parameters (from database config JSON)
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MqttParamsConfig {
+#[serde(deny_unknown_fields)]
+pub(crate) struct MqttParamsConfig {
     /// Broker URL (e.g., "tcp://localhost:1883" or "ssl://broker.example.com:8883")
-    pub broker: String,
+    broker: String,
 
     /// Client ID (should be unique per channel)
     #[serde(default = "default_client_id")]
-    pub client_id: String,
+    client_id: String,
 
     /// Username for authentication (optional)
     #[serde(default)]
-    pub username: Option<String>,
+    username: Option<String>,
 
     /// Password for authentication (optional)
     #[serde(default)]
-    pub password: Option<String>,
+    password: Option<String>,
 
     /// Topics to subscribe
     #[serde(default)]
-    pub subscriptions: Vec<MqttSubscription>,
+    subscriptions: Vec<MqttSubscription>,
 
     /// JSON mapping configuration
     #[serde(default)]
-    pub json_mapping: JsonMappingConfig,
+    json_mapping: JsonMappingConfig,
 
     /// Keep-alive interval in seconds
     #[serde(default = "default_keep_alive")]
-    pub keep_alive_secs: u64,
-
-    /// Connection timeout in milliseconds
-    #[serde(default = "default_connect_timeout_ms")]
-    pub connect_timeout_ms: u64,
-
-    /// Maximum reconnect attempts (0 = infinite)
-    #[serde(default)]
-    pub max_reconnect_attempts: u32,
-
-    /// Reconnect delay in milliseconds
-    #[serde(default = "default_reconnect_delay_ms")]
-    pub reconnect_delay_ms: u64,
+    keep_alive_secs: u64,
 }
 
 fn default_client_id() -> String {
@@ -113,14 +101,6 @@ fn default_client_id() -> String {
 
 fn default_keep_alive() -> u64 {
     30
-}
-
-fn default_connect_timeout_ms() -> u64 {
-    5000
-}
-
-fn default_reconnect_delay_ms() -> u64 {
-    5000
 }
 
 impl Default for MqttParamsConfig {
@@ -133,171 +113,157 @@ impl Default for MqttParamsConfig {
             subscriptions: Vec::new(),
             json_mapping: JsonMappingConfig::default(),
             keep_alive_secs: default_keep_alive(),
-            connect_timeout_ms: default_connect_timeout_ms(),
-            max_reconnect_attempts: 0,
-            reconnect_delay_ms: default_reconnect_delay_ms(),
         }
     }
 }
 
 impl MqttParamsConfig {
-    /// Convert to runtime configuration
-    pub fn to_config(&self) -> MqttConfig {
-        MqttConfig {
-            broker: self.broker.clone(),
-            client_id: self.client_id.clone(),
-            username: self.username.clone(),
-            password: self.password.clone(),
-            subscriptions: self.subscriptions.clone(),
-            json_mapping: self.json_mapping.clone(),
-            keep_alive: Duration::from_secs(self.keep_alive_secs),
-            connect_timeout: Duration::from_millis(self.connect_timeout_ms),
-            max_reconnect_attempts: self.max_reconnect_attempts,
-            reconnect_delay: Duration::from_millis(self.reconnect_delay_ms),
+    pub(crate) fn validate(&self) -> Result<()> {
+        self.broker_endpoint()?;
+        if self.client_id.trim().is_empty() {
+            return Err(GatewayError::Config(
+                "MQTT client_id must be a non-empty string".to_string(),
+            ));
         }
+        if self.keep_alive_secs == 0 || self.keep_alive_secs > u16::MAX.into() {
+            return Err(GatewayError::Config(
+                "MQTT keep_alive_secs must be within 1..=65535".to_string(),
+            ));
+        }
+        if self.username.is_some() != self.password.is_some() {
+            return Err(GatewayError::Config(
+                "MQTT username and password must be configured together".to_string(),
+            ));
+        }
+        for subscription in &self.subscriptions {
+            if subscription.topic.trim().is_empty() {
+                return Err(GatewayError::Config(
+                    "MQTT subscription topic must be a non-empty string".to_string(),
+                ));
+            }
+            if subscription.qos > 2 {
+                return Err(GatewayError::Config(format!(
+                    "MQTT subscription QoS {} is outside 0..=2",
+                    subscription.qos
+                )));
+            }
+        }
+        Ok(())
     }
-}
 
-/// MQTT runtime configuration
-#[derive(Debug, Clone)]
-pub struct MqttConfig {
-    pub broker: String,
-    pub client_id: String,
-    pub username: Option<String>,
-    pub password: Option<String>,
-    pub subscriptions: Vec<MqttSubscription>,
-    pub json_mapping: JsonMappingConfig,
-    pub keep_alive: Duration,
-    pub connect_timeout: Duration,
-    pub max_reconnect_attempts: u32,
-    pub reconnect_delay: Duration,
+    fn broker_endpoint(&self) -> Result<(String, u16)> {
+        let parsed = url::Url::parse(self.broker.trim())
+            .map_err(|error| GatewayError::Config(format!("Invalid MQTT broker URL: {error}")))?;
+        if !matches!(parsed.scheme(), "tcp" | "mqtt") {
+            return Err(GatewayError::Config(
+                "MQTT broker must use the tcp:// or mqtt:// scheme; TLS is not configured for IO channels"
+                    .to_string(),
+            ));
+        }
+        if !parsed.username().is_empty() || parsed.password().is_some() {
+            return Err(GatewayError::Config(
+                "MQTT broker credentials must use the username/password fields".to_string(),
+            ));
+        }
+        if !matches!(parsed.path(), "" | "/")
+            || parsed.query().is_some()
+            || parsed.fragment().is_some()
+        {
+            return Err(GatewayError::Config(
+                "MQTT broker URL must contain only a host and optional port".to_string(),
+            ));
+        }
+        let host = parsed
+            .host_str()
+            .filter(|host| !host.trim().is_empty())
+            .ok_or_else(|| GatewayError::Config("MQTT broker URL has no host".to_string()))?;
+        let port = parsed.port().unwrap_or(1883);
+        if port == 0 {
+            return Err(GatewayError::Config(
+                "MQTT broker port must be greater than zero".to_string(),
+            ));
+        }
+        Ok((host.to_string(), port))
+    }
 }
 
 /// MQTT Channel implementation
 ///
 /// Event-driven channel that subscribes to MQTT topics and extracts
 /// data points from JSON payloads using JSONPath mappings.
-pub struct MqttChannel {
+pub(crate) struct MqttChannel {
     /// Channel configuration
-    config: MqttConfig,
+    config: MqttParamsConfig,
     /// Channel ID
     channel_id: u32,
-    /// Channel name
-    name: String,
-    /// JSON mapper (loaded from database)
-    mapper: Option<Arc<JsonMapper>>,
+    /// JSON mapper compiled from the immutable runtime snapshot
+    mapper: Arc<JsonMapper>,
     /// MQTT client handle
     client: Option<AsyncClient>,
+    /// Event loop established by connect() and started by start_events().
+    event_loop: Mutex<Option<EventLoop>>,
     /// Event loop task handle
     event_loop_handle: Option<tokio::task::JoinHandle<()>>,
     /// Connection state
-    state: AtomicU8,
-    /// Event broadcast sender
+    state: Arc<AtomicU8>,
+    /// Event sender for the unified channel task.
     event_tx: DataEventSender,
+    /// Sole event receiver, taken once by the unified channel task.
+    event_rx: Option<DataEventReceiver>,
     /// Diagnostics
     diagnostics: Arc<AtomicDiagnostics>,
-    /// Database pool for loading mappings
-    db_pool: Option<SqlitePool>,
 }
 
 impl MqttChannel {
-    /// Create a new MQTT channel
-    pub fn new(config: MqttConfig, channel_id: u32, name: String) -> Self {
-        let (event_tx, _) = broadcast::channel(1024);
-
-        Self {
-            config,
-            channel_id,
-            name,
-            mapper: None,
-            client: None,
-            event_loop_handle: None,
-            state: AtomicU8::new(ConnectionState::Disconnected as u8),
-            event_tx,
-            diagnostics: Arc::new(AtomicDiagnostics::new()),
-            db_pool: None,
+    /// Create a new MQTT channel from one complete runtime snapshot.
+    pub(crate) fn new(config: MqttParamsConfig, runtime: &RuntimeChannelConfig) -> Result<Self> {
+        config.validate()?;
+        let (event_tx, event_rx) = data_event_channel();
+        let mapper =
+            Arc::new(JsonMapper::from_runtime_config(runtime)?.with_config(&config.json_mapping)?);
+        if !mapper.is_empty() && config.subscriptions.is_empty() {
+            return Err(GatewayError::Config(
+                "MQTT channels with point mappings require at least one subscription".to_string(),
+            ));
         }
-    }
-
-    /// Load JSON mappings from database
-    async fn load_mapper(&mut self) -> Result<()> {
-        if self.mapper.is_some() {
-            return Ok(());
-        }
-
-        let pool = self.db_pool.as_ref().ok_or_else(|| {
-            GatewayError::Config("Database pool not set for MQTT channel".to_string())
-        })?;
-
-        let mapper = JsonMapper::from_database(pool, self.channel_id)
-            .await?
-            .with_config(&self.config.json_mapping)?;
 
         info!(
-            channel_id = self.channel_id,
+            channel_id = runtime.id(),
             mapping_count = mapper.len(),
-            "Loaded MQTT JSON mappings"
+            "Compiled MQTT JSON mappings"
         );
 
-        self.mapper = Some(Arc::new(mapper));
-        Ok(())
+        Ok(Self {
+            config,
+            channel_id: runtime.id(),
+            mapper,
+            client: None,
+            event_loop: Mutex::new(None),
+            event_loop_handle: None,
+            state: Arc::new(AtomicU8::new(ConnectionState::Disconnected as u8)),
+            event_tx,
+            event_rx: Some(event_rx),
+            diagnostics: Arc::new(AtomicDiagnostics::new()),
+        })
     }
 
-    /// Set connection state and broadcast event
+    /// Set connection state and queue an event.
     fn set_state(&self, state: ConnectionState) {
         self.state.store(state as u8, Ordering::SeqCst);
-        let _ = self.event_tx.send(DataEvent::ConnectionChanged(state));
-    }
-
-    /// Parse broker URL into host and port
-    fn parse_broker(&self) -> Result<(&str, u16)> {
-        let broker = &self.config.broker;
-
-        // Remove scheme prefix
-        let without_scheme = broker
-            .strip_prefix("tcp://")
-            .or_else(|| broker.strip_prefix("mqtt://"))
-            .or_else(|| broker.strip_prefix("ssl://"))
-            .or_else(|| broker.strip_prefix("mqtts://"))
-            .unwrap_or(broker);
-
-        // Split host:port
-        let parts: Vec<&str> = without_scheme.split(':').collect();
-        let host = parts
-            .first()
-            .ok_or_else(|| GatewayError::Config(format!("Invalid broker URL: {}", broker)))?;
-        let port = parts
-            .get(1)
-            .map(|p| p.parse::<u16>())
-            .transpose()
-            .map_err(|_| GatewayError::Config(format!("Invalid port in broker URL: {}", broker)))?
-            .unwrap_or(1883);
-
-        Ok((host, port))
+        let _ = self.event_tx.try_send(DataEvent::ConnectionChanged(state));
     }
 
     /// Create MQTT options
     fn create_options(&self) -> Result<MqttOptions> {
-        let (host, port) = self.parse_broker()?;
+        let (host, port) = self.config.broker_endpoint()?;
 
         let mut opts = MqttOptions::new(&self.config.client_id, host, port);
-        opts.set_keep_alive(self.config.keep_alive);
+        opts.set_keep_alive(Duration::from_secs(self.config.keep_alive_secs));
         // Note: rumqttc doesn't have set_connection_timeout, using keep_alive for liveness
 
         // Set credentials if provided
         if let (Some(user), Some(pass)) = (&self.config.username, &self.config.password) {
             opts.set_credentials(user, pass);
-        }
-
-        // Never turn an explicitly secure URL into a plaintext connection.
-        // TLS requires certificate configuration that this channel adapter does
-        // not expose yet; the uplink service provides the audited TLS path.
-        if self.config.broker.starts_with("ssl://") || self.config.broker.starts_with("mqtts://") {
-            return Err(GatewayError::Unsupported(
-                "MQTT TLS is not configured for I/O channels; use tcp:// on a trusted field \
-                 network or the certificate-backed uplink adapter"
-                    .to_string(),
-            ));
         }
 
         Ok(opts)
@@ -309,7 +275,12 @@ impl MqttChannel {
             let qos = match sub.qos {
                 0 => QoS::AtMostOnce,
                 1 => QoS::AtLeastOnce,
-                _ => QoS::ExactlyOnce,
+                2 => QoS::ExactlyOnce,
+                value => {
+                    return Err(GatewayError::Config(format!(
+                        "MQTT subscription QoS {value} is outside 0..=2"
+                    )));
+                },
             };
 
             client
@@ -351,7 +322,7 @@ impl MqttChannel {
                             if !batch.is_empty() {
                                 let count = batch.len();
                                 diagnostics.add_read(count as u64);
-                                let _ = event_tx.send(DataEvent::DataUpdate(Arc::new(batch)));
+                                let _ = event_tx.try_send(DataEvent::DataUpdate(batch));
                                 debug!(
                                     channel_id,
                                     topic = %topic,
@@ -373,31 +344,30 @@ impl MqttChannel {
                 },
                 Ok(Event::Incoming(Packet::ConnAck(_))) => {
                     state.store(ConnectionState::Connected as u8, Ordering::SeqCst);
-                    let _ = event_tx.send(DataEvent::ConnectionChanged(ConnectionState::Connected));
+                    let _ =
+                        event_tx.try_send(DataEvent::ConnectionChanged(ConnectionState::Connected));
                     info!(channel_id, "MQTT connected");
                 },
                 Ok(Event::Incoming(Packet::Disconnect)) => {
                     state.store(ConnectionState::Disconnected as u8, Ordering::SeqCst);
-                    let _ =
-                        event_tx.send(DataEvent::ConnectionChanged(ConnectionState::Disconnected));
+                    let _ = event_tx
+                        .try_send(DataEvent::ConnectionChanged(ConnectionState::Disconnected));
                     info!(channel_id, "MQTT disconnected");
+                    break;
                 },
                 Ok(Event::Incoming(Packet::PingResp)) => {
-                    let _ = event_tx.send(DataEvent::Heartbeat);
+                    let _ = event_tx.try_send(DataEvent::Heartbeat);
                 },
                 Ok(_) => {
                     // Ignore other events
                 },
                 Err(e) => {
                     error!(channel_id, error = %e, "MQTT connection error");
-                    state.store(ConnectionState::Reconnecting as u8, Ordering::SeqCst);
-                    let _ =
-                        event_tx.send(DataEvent::ConnectionChanged(ConnectionState::Reconnecting));
-                    let _ = event_tx.send(DataEvent::Error(e.to_string()));
+                    state.store(ConnectionState::Error as u8, Ordering::SeqCst);
+                    let _ = event_tx.try_send(DataEvent::ConnectionChanged(ConnectionState::Error));
+                    let _ = event_tx.try_send(DataEvent::Error(e.to_string()));
                     diagnostics.record_error(e.to_string());
-
-                    // rumqttc will automatically attempt reconnection
-                    tokio::time::sleep(RECONNECT_BACKOFF_DELAY).await;
+                    break;
                 },
             }
         }
@@ -406,31 +376,33 @@ impl MqttChannel {
 
 #[async_trait]
 impl ChannelRuntime for MqttChannel {
-    fn id(&self) -> u32 {
-        self.channel_id
-    }
-
-    fn name(&self) -> &str {
-        &self.name
-    }
-
-    fn protocol(&self) -> &str {
-        "mqtt"
-    }
-
     fn is_event_driven(&self) -> bool {
         true
     }
 
     async fn connect(&mut self) -> Result<()> {
-        if self.client.is_some() {
+        let event_loop_running = self
+            .event_loop_handle
+            .as_ref()
+            .is_some_and(|handle| !handle.is_finished());
+        if self.client.is_some()
+            && (self.event_loop.get_mut().is_some() || event_loop_running)
+            && matches!(
+                self.connection_state(),
+                ConnectionState::Connecting | ConnectionState::Connected
+            )
+        {
             return Ok(());
         }
+        if let Some(handle) = self.event_loop_handle.take() {
+            handle.abort();
+        }
+        if let Some(client) = self.client.take() {
+            let _ = client.disconnect().await;
+        }
+        *self.event_loop.get_mut() = None;
 
         self.set_state(ConnectionState::Connecting);
-
-        // Load JSON mappings if not already loaded
-        self.load_mapper().await?;
 
         // Create MQTT client
         let opts = self.create_options()?;
@@ -439,33 +411,10 @@ impl ChannelRuntime for MqttChannel {
         // Subscribe to topics
         self.subscribe_topics(&client).await?;
 
-        // Store client
+        // Store the transport generation. The unified channel lifecycle starts
+        // its event stream only after connect() succeeds.
         self.client = Some(client);
-
-        // Spawn event loop task
-        let mapper = self
-            .mapper
-            .clone()
-            .ok_or_else(|| GatewayError::Config("MQTT mapper not loaded".into()))?;
-        let channel_id = self.channel_id;
-        let state = Arc::new(AtomicU8::new(ConnectionState::Connecting as u8));
-        let state_clone = state.clone();
-        let event_tx = self.event_tx.clone();
-        let diagnostics = self.diagnostics.clone();
-
-        let handle = tokio::spawn(async move {
-            Self::run_event_loop(
-                event_loop,
-                channel_id,
-                state_clone,
-                event_tx,
-                mapper,
-                diagnostics,
-            )
-            .await;
-        });
-
-        self.event_loop_handle = Some(handle);
+        *self.event_loop.get_mut() = Some(event_loop);
 
         info!(
             channel_id = self.channel_id,
@@ -481,6 +430,7 @@ impl ChannelRuntime for MqttChannel {
         if let Some(handle) = self.event_loop_handle.take() {
             handle.abort();
         }
+        *self.event_loop.get_mut() = None;
 
         // Disconnect client
         if let Some(client) = self.client.take() {
@@ -499,34 +449,44 @@ impl ChannelRuntime for MqttChannel {
         PollResult::success(DataBatch::new())
     }
 
-    async fn write_control(&mut self, _commands: &[(u32, f64)]) -> Result<usize> {
-        // MQTT is typically read-only for data collection
-        // Control would require publishing to device-specific topics
-        Err(GatewayError::Protocol(
-            "MQTT channel does not support control commands".to_string(),
-        ))
-    }
-
-    async fn write_adjustment(&mut self, _adjustments: &[(u32, f64)]) -> Result<usize> {
-        Err(GatewayError::Protocol(
-            "MQTT channel does not support adjustment commands".to_string(),
-        ))
-    }
-
-    fn subscribe(&self) -> Option<DataEventReceiver> {
-        Some(self.event_tx.subscribe())
+    fn take_event_receiver(&mut self) -> Option<DataEventReceiver> {
+        self.event_rx.take()
     }
 
     async fn start_events(&mut self) -> Result<()> {
-        // Connect if not already connected
-        if self.client.is_none() {
-            self.connect().await?;
+        if self
+            .event_loop_handle
+            .as_ref()
+            .is_some_and(|handle| !handle.is_finished())
+        {
+            return Ok(());
         }
+        if let Some(handle) = self.event_loop_handle.take() {
+            handle.abort();
+        }
+        let event_loop = self
+            .event_loop
+            .get_mut()
+            .take()
+            .ok_or(GatewayError::NotConnected)?;
+        let mapper = Arc::clone(&self.mapper);
+        let channel_id = self.channel_id;
+        let state = Arc::clone(&self.state);
+        let event_tx = self.event_tx.clone();
+        let diagnostics = Arc::clone(&self.diagnostics);
+
+        self.event_loop_handle = Some(tokio::spawn(async move {
+            Self::run_event_loop(event_loop, channel_id, state, event_tx, mapper, diagnostics)
+                .await;
+        }));
         Ok(())
     }
 
     async fn stop_events(&mut self) -> Result<()> {
-        self.disconnect().await
+        if let Some(handle) = self.event_loop_handle.take() {
+            handle.abort();
+        }
+        Ok(())
     }
 
     async fn diagnostics(&self) -> Result<Diagnostics> {
@@ -551,10 +511,83 @@ impl std::fmt::Debug for MqttChannel {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("MqttChannel")
             .field("channel_id", &self.channel_id)
-            .field("name", &self.name)
             .field("broker", &self.config.broker)
             .field("state", &self.connection_state())
             .finish()
+    }
+}
+
+use crate::protocols::core::metadata::{
+    DriverMetadata, HasMetadata, ParameterMetadata, ParameterType,
+};
+
+impl HasMetadata for MqttChannel {
+    #[allow(clippy::disallowed_methods)]
+    fn metadata() -> DriverMetadata {
+        DriverMetadata {
+            name: "mqtt",
+            display_name: "MQTT JSON",
+            description: "Event-driven MQTT subscriber with point-owned JSONPath mappings.",
+            is_recommended: true,
+            example_config: serde_json::json!({
+                "broker": "tcp://192.168.1.50:1883",
+                "client_id": "aether-io",
+                "subscriptions": [{"topic": "device/+/telemetry", "qos": 1}],
+                "keep_alive_secs": 30
+            }),
+            parameters: vec![
+                ParameterMetadata::required(
+                    "broker",
+                    "Broker",
+                    "MQTT broker URL using the tcp:// or mqtt:// scheme",
+                    ParameterType::String,
+                )
+                .with_min_length(1),
+                ParameterMetadata::optional(
+                    "client_id",
+                    "Client ID",
+                    "MQTT client identifier; generated when omitted",
+                    ParameterType::String,
+                    serde_json::Value::Null,
+                ),
+                ParameterMetadata::optional(
+                    "username",
+                    "Username",
+                    "Broker username; password must be configured with it",
+                    ParameterType::String,
+                    serde_json::Value::Null,
+                ),
+                ParameterMetadata::optional(
+                    "password",
+                    "Password",
+                    "Broker password; username must be configured with it",
+                    ParameterType::String,
+                    serde_json::Value::Null,
+                ),
+                ParameterMetadata::optional(
+                    "subscriptions",
+                    "Subscriptions",
+                    "MQTT topic and QoS subscriptions",
+                    ParameterType::Array,
+                    serde_json::json!([]),
+                ),
+                ParameterMetadata::optional(
+                    "json_mapping",
+                    "JSON Mapping",
+                    "Optional source timestamp JSONPath settings",
+                    ParameterType::Object,
+                    serde_json::json!({}),
+                ),
+                ParameterMetadata::optional(
+                    "keep_alive_secs",
+                    "Keep Alive (s)",
+                    "MQTT keep-alive interval in seconds",
+                    ParameterType::Integer,
+                    serde_json::json!(30),
+                )
+                .with_integer_range(1, u64::from(u16::MAX)),
+            ],
+        }
     }
 }
 
@@ -562,6 +595,30 @@ impl std::fmt::Debug for MqttChannel {
 #[allow(clippy::disallowed_methods)]
 mod tests {
     use super::*;
+    use crate::core::config::{
+        ChannelConfig, ChannelCore, ChannelLoggingConfig, Point, TelemetryPoint,
+    };
+    use std::collections::HashMap;
+
+    fn runtime_snapshot_with_parameters(
+        parameters: HashMap<String, serde_json::Value>,
+    ) -> RuntimeChannelConfig {
+        RuntimeChannelConfig::from_base(ChannelConfig {
+            core: ChannelCore {
+                id: 1,
+                name: "test".to_string(),
+                description: None,
+                protocol: "mqtt".to_string(),
+                enabled: true,
+            },
+            parameters,
+            logging: ChannelLoggingConfig::default(),
+        })
+    }
+
+    fn runtime_snapshot() -> RuntimeChannelConfig {
+        runtime_snapshot_with_parameters(HashMap::new())
+    }
 
     #[test]
     fn test_mqtt_params_default() {
@@ -593,41 +650,122 @@ mod tests {
 
     #[test]
     fn test_parse_broker_url() {
-        let config = MqttConfig {
+        let config = MqttParamsConfig {
             broker: "tcp://192.168.1.50:1883".to_string(),
             client_id: "test".to_string(),
             username: None,
             password: None,
             subscriptions: Vec::new(),
             json_mapping: JsonMappingConfig::default(),
-            keep_alive: Duration::from_secs(30),
-            connect_timeout: Duration::from_secs(5),
-            max_reconnect_attempts: 0,
-            reconnect_delay: Duration::from_secs(5),
+            keep_alive_secs: 30,
         };
 
-        let channel = MqttChannel::new(config, 1, "test".to_string());
-        let (host, port) = channel.parse_broker().unwrap();
+        let (host, port) = config.broker_endpoint().unwrap();
         assert_eq!(host, "192.168.1.50");
         assert_eq!(port, 1883);
     }
 
     #[test]
     fn tls_scheme_never_silently_downgrades_to_plaintext() {
-        let config = MqttConfig {
+        let config = MqttParamsConfig {
             broker: "mqtts://broker.example.com:8883".to_string(),
             client_id: "test".to_string(),
             username: None,
             password: None,
             subscriptions: Vec::new(),
             json_mapping: JsonMappingConfig::default(),
-            keep_alive: Duration::from_secs(30),
-            connect_timeout: Duration::from_secs(5),
-            max_reconnect_attempts: 0,
-            reconnect_delay: Duration::from_secs(5),
+            keep_alive_secs: 30,
         };
 
-        let channel = MqttChannel::new(config, 1, "test".to_string());
-        assert!(channel.create_options().is_err());
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn broker_endpoint_is_strict_and_supports_ipv6() {
+        let ipv6 = MqttParamsConfig {
+            broker: "mqtt://[2001:db8::10]:1884".to_string(),
+            ..MqttParamsConfig::default()
+        };
+        assert_eq!(
+            ipv6.broker_endpoint().unwrap(),
+            ("[2001:db8::10]".to_string(), 1884)
+        );
+
+        for broker in [
+            "broker.example.com:1883",
+            "http://broker.example.com:1883",
+            "mqtts://broker.example.com:8883",
+            "mqtt://:1883",
+            "mqtt://user:secret@broker.example.com:1883",
+            "mqtt://broker.example.com:1883/path",
+            "mqtt://broker.example.com:0",
+        ] {
+            let config = MqttParamsConfig {
+                broker: broker.to_string(),
+                ..MqttParamsConfig::default()
+            };
+            assert!(config.validate().is_err(), "unexpectedly accepted {broker}");
+        }
+    }
+
+    #[test]
+    fn retired_adapter_reconnect_fields_are_rejected() {
+        for retired in [
+            "connect_timeout_ms",
+            "max_reconnect_attempts",
+            "reconnect_delay_ms",
+        ] {
+            let mut parameters = serde_json::json!({
+                "broker": "tcp://192.168.1.50:1883"
+            });
+            parameters
+                .as_object_mut()
+                .unwrap()
+                .insert(retired.to_string(), serde_json::json!(5_000));
+            assert!(serde_json::from_value::<MqttParamsConfig>(parameters).is_err());
+        }
+    }
+
+    #[test]
+    fn channel_creation_rejects_invalid_subscription_qos() {
+        let config = MqttParamsConfig {
+            broker: "tcp://192.168.1.50:1883".to_string(),
+            client_id: "test".to_string(),
+            username: None,
+            password: None,
+            subscriptions: vec![MqttSubscription {
+                topic: "device/data".to_string(),
+                qos: 3,
+            }],
+            json_mapping: JsonMappingConfig::default(),
+            keep_alive_secs: 30,
+        };
+
+        let error = MqttChannel::new(config, &runtime_snapshot())
+            .expect_err("invalid MQTT QoS must fail before connect");
+        assert!(error.to_string().contains("outside 0..=2"));
+    }
+
+    #[test]
+    fn mapped_channel_requires_a_subscription() {
+        let mut runtime = runtime_snapshot();
+        runtime.telemetry_points.push(TelemetryPoint {
+            base: Point {
+                point_id: 1,
+                signal_name: "temperature".to_string(),
+                description: None,
+                unit: Some("C".to_string()),
+                protocol_mappings: Some(r#"{"json_path":"$.temperature"}"#.to_string()),
+            },
+            scale: 1.0,
+            offset: 0.0,
+            data_type: "float64".to_string(),
+            reverse: false,
+        });
+
+        let error = MqttChannel::new(MqttParamsConfig::default(), &runtime)
+            .expect_err("mapped MQTT channels need an input topic");
+
+        assert!(error.to_string().contains("at least one subscription"));
     }
 }
