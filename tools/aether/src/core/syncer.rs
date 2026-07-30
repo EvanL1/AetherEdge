@@ -4,7 +4,7 @@
 //! to the SQLite database.
 
 use aether_config::automation::AutomationConfig;
-use aether_config::io::IoConfig;
+use aether_config::io::{IoConfig, StoredChannelConfig};
 use anyhow::{Context, Result};
 use common::validation::CsvFields;
 use serde::de::DeserializeOwned;
@@ -759,23 +759,14 @@ impl ConfigSyncer {
                 .and_then(|v| v.as_bool())
                 .unwrap_or(true);
 
-            // Only serialize parameters, logging, and description (not core fields)
-            // Core fields (id, name, protocol, enabled) are stored in dedicated columns
-            let mut config_obj = serde_json::Map::new();
-
-            if let Some(params) = channel.get("parameters") {
-                config_obj.insert("parameters".to_string(), params.clone());
-            }
-
-            if let Some(logging) = channel.get("logging") {
-                config_obj.insert("logging".to_string(), logging.clone());
-            }
-
-            if let Some(desc) = channel.get("description") {
-                config_obj.insert("description".to_string(), desc.clone());
-            }
-
-            let config = serde_json::to_string(&config_obj)?;
+            let config = StoredChannelConfig::from_value(channel.clone())
+                .with_context(|| {
+                    format!("Channel {channel_id} has an invalid stored configuration payload")
+                })?
+                .encode()
+                .with_context(|| {
+                    format!("Channel {channel_id} configuration payload cannot be encoded")
+                })?;
 
             sqlx::query(
                 "INSERT INTO channels (channel_id, name, protocol, enabled, config)

@@ -1,4 +1,4 @@
-//! Channel runtime trait for unified protocol management.
+//! Protocol channel runtime trait for unified protocol management.
 //!
 //! This module defines the `ChannelRuntime` trait, an object-safe wrapper
 //! that allows heterogeneous protocol channels to be managed uniformly.
@@ -7,7 +7,7 @@ use async_trait::async_trait;
 
 use std::sync::Arc;
 
-use crate::protocols::core::error::Result;
+use crate::protocols::core::error::{GatewayError, Result};
 use crate::protocols::core::logging::{ChannelLogConfig, ChannelLogHandler};
 use crate::protocols::core::traits::{ConnectionState, DataEventReceiver, Diagnostics, PollResult};
 
@@ -23,19 +23,10 @@ use crate::protocols::core::traits::{ConnectionState, DataEventReceiver, Diagnos
 /// `async_trait` to enable dynamic dispatch via `Box<dyn ChannelRuntime>`.
 #[async_trait]
 pub trait ChannelRuntime: Send + Sync {
-    // === Identity ===
-
-    /// Channel unique identifier.
-    fn id(&self) -> u32;
-
-    /// Channel display name.
-    fn name(&self) -> &str;
-
-    /// Protocol name (e.g., "modbus", "iec104", "opcua").
-    fn protocol(&self) -> &str;
-
     /// Whether this channel is event-driven (vs polling).
-    fn is_event_driven(&self) -> bool;
+    fn is_event_driven(&self) -> bool {
+        false
+    }
 
     // === Lifecycle ===
 
@@ -53,23 +44,37 @@ pub trait ChannelRuntime: Send + Sync {
     async fn poll_once(&mut self) -> PollResult;
 
     /// Write control commands.
-    async fn write_control(&mut self, commands: &[(u32, f64)]) -> Result<usize>;
+    async fn write_control(&mut self, _commands: &[(u32, f64)]) -> Result<usize> {
+        Err(GatewayError::Unsupported(
+            "channel does not support control commands".to_string(),
+        ))
+    }
 
     /// Write adjustment commands.
-    async fn write_adjustment(&mut self, adjustments: &[(u32, f64)]) -> Result<usize>;
+    async fn write_adjustment(&mut self, _adjustments: &[(u32, f64)]) -> Result<usize> {
+        Err(GatewayError::Unsupported(
+            "channel does not support adjustment commands".to_string(),
+        ))
+    }
 
     // === Event-Driven Support ===
 
-    /// Subscribe to data events (event-driven channels only).
+    /// Take the sole data-event receiver (event-driven channels only).
     ///
-    /// Returns `None` for polling-only channels.
-    fn subscribe(&self) -> Option<DataEventReceiver>;
+    /// Returns `None` for polling-only channels or after it has already been taken.
+    fn take_event_receiver(&mut self) -> Option<DataEventReceiver> {
+        None
+    }
 
     /// Start event streaming (event-driven channels only).
-    async fn start_events(&mut self) -> Result<()>;
+    async fn start_events(&mut self) -> Result<()> {
+        Ok(())
+    }
 
     /// Stop event streaming (event-driven channels only).
-    async fn stop_events(&mut self) -> Result<()>;
+    async fn stop_events(&mut self) -> Result<()> {
+        Ok(())
+    }
 
     // === Diagnostics ===
 
@@ -90,24 +95,4 @@ pub trait ChannelRuntime: Send + Sync {
     ///
     /// Default implementation does nothing.
     fn set_log_config(&mut self, _config: ChannelLogConfig) {}
-
-    /// Get the log handler for this channel.
-    ///
-    /// Returns `None` by default. Protocols that support hot-reload of log levels
-    /// should override this to return their handler reference.
-    fn log_handler(&self) -> Option<Arc<dyn ChannelLogHandler>> {
-        None
-    }
-}
-
-/// Channel communication mode.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-pub enum ChannelMode {
-    /// Polling mode: data is fetched periodically via `poll_once()`.
-    #[default]
-    Polling,
-    /// Event-driven mode: data is pushed via `subscribe()`.
-    EventDriven,
-    /// Hybrid mode: both polling and event-driven.
-    Hybrid,
 }

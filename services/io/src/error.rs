@@ -233,49 +233,6 @@ impl From<crate::protocols::GatewayError> for IoError {
 }
 
 // ============================================================================
-// Extension trait for adding context to errors
-// ============================================================================
-
-/// Extension trait for adding context to errors
-pub trait ErrorExt<T> {
-    fn config_error(self, msg: &str) -> Result<T>;
-    fn io_error(self, msg: &str) -> Result<T>;
-    fn protocol_error(self, msg: &str) -> Result<T>;
-    fn connection_error(self, msg: &str) -> Result<T>;
-    fn data_error(self, msg: &str) -> Result<T>;
-    fn context(self, msg: &str) -> Result<T>;
-}
-
-impl<T, E> ErrorExt<T> for std::result::Result<T, E>
-where
-    E: std::fmt::Display,
-{
-    fn config_error(self, msg: &str) -> Result<T> {
-        self.map_err(|e| IoError::ConfigError(format!("{msg}: {e}")))
-    }
-
-    fn io_error(self, msg: &str) -> Result<T> {
-        self.map_err(|e| IoError::IoError(format!("{msg}: {e}")))
-    }
-
-    fn protocol_error(self, msg: &str) -> Result<T> {
-        self.map_err(|e| IoError::ProtocolError(format!("{msg}: {e}")))
-    }
-
-    fn connection_error(self, msg: &str) -> Result<T> {
-        self.map_err(|e| IoError::ConnectionError(format!("{msg}: {e}")))
-    }
-
-    fn data_error(self, msg: &str) -> Result<T> {
-        self.map_err(|e| IoError::DataError(format!("{msg}: {e}")))
-    }
-
-    fn context(self, msg: &str) -> Result<T> {
-        self.map_err(|e| IoError::InternalError(format!("{msg}: {e}")))
-    }
-}
-
-// ============================================================================
 // Conversion from IoError to AetherError for API boundaries
 // ============================================================================
 
@@ -735,31 +692,6 @@ mod tests {
             AetherError::from(IoError::InternalError("t".into())),
             AetherError::Internal(_)
         ));
-    }
-
-    #[test]
-    fn test_error_ext_trait() {
-        // Test each conversion method
-        let err: Result<()> = Err::<(), &str>("test").config_error("cfg");
-        assert!(matches!(err.unwrap_err(), IoError::ConfigError(_)));
-
-        let err: Result<()> = Err::<(), &str>("test").io_error("io");
-        assert!(matches!(err.unwrap_err(), IoError::IoError(_)));
-
-        let err: Result<()> = Err::<(), &str>("test").protocol_error("proto");
-        assert!(matches!(err.unwrap_err(), IoError::ProtocolError(_)));
-
-        let err: Result<()> = Err::<(), &str>("test").connection_error("conn");
-        assert!(matches!(err.unwrap_err(), IoError::ConnectionError(_)));
-
-        let err: Result<()> = Err::<(), &str>("test").data_error("data");
-        assert!(matches!(err.unwrap_err(), IoError::DataError(_)));
-
-        let err: Result<()> = Err::<(), &str>("test").context("ctx");
-        assert!(matches!(err.unwrap_err(), IoError::InternalError(_)));
-
-        // Ok values pass through
-        assert_eq!(Ok::<i32, &str>(42).config_error("nope").unwrap(), 42);
     }
 
     #[test]

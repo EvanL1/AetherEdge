@@ -92,7 +92,6 @@ Docker Compose runtime and fails if that composition is not present.
 | `aether channels update <id> ... --expected-revision <rev> --confirmed` | Update desired channel configuration with mandatory compare-and-set |
 | `aether channels enable\|disable <id> --expected-revision <rev> --confirmed` | Change desired runtime lifecycle with mandatory compare-and-set |
 | `aether channels delete <id> --expected-revision <rev> --confirmed` | Delete a channel with mandatory compare-and-set; `--force` only skips the prompt and action-route references fail with a conflict |
-| `aether channels write <id> --type T\|S ...` | Inject supervised simulation telemetry |
 | `aether channels reload --confirmed` | Reconcile all channel runtimes through `io.channel.reconcile`; requires `AETHER_ACCESS_TOKEN` and must not be retried automatically |
 | `aether channels health` | Service health check |
 | `aether models instances action ... --confirmed` | Submit the only supported external device command to the local command plane; requires explicit confirmation and `AETHER_ACCESS_TOKEN` from an Admin/Engineer session |

@@ -14,7 +14,8 @@ use common::DEFAULT_API_HOST;
 use common::service_bootstrap::ServiceInfo;
 use errors::{AetherError, AetherResult};
 
-use crate::core::config::ConfigManager;
+use crate::core::channels::RuntimeChannelConfig;
+use crate::core::config::ServiceConfig;
 
 // Re-export common bootstrap functionality
 pub use common::bootstrap_args::ServiceArgs;
@@ -105,22 +106,20 @@ pub fn initialize_logging(
 }
 
 /// Validate configuration from SQLite database
-pub async fn validate_configuration() -> AetherResult<()> {
+pub fn validate_configuration(
+    service_config: &ServiceConfig,
+    channels: &[RuntimeChannelConfig],
+) -> AetherResult<()> {
     debug!("Validating configuration from SQLite database");
-
-    // Load and validate configuration
-    let config_manager = ConfigManager::load().await?;
     debug!("Configuration loaded successfully");
 
     // Validate service configuration
-    let service_config = config_manager.service_config();
     info!("Service: {}", service_config.name);
     if let Some(desc) = &service_config.description {
         info!("Description: {}", desc);
     }
 
     // Validate channels
-    let channels = config_manager.channels();
     info!("Found {} channel(s)", channels.len());
 
     for channel in channels {
@@ -131,8 +130,7 @@ pub async fn validate_configuration() -> AetherResult<()> {
             channel.protocol()
         );
 
-        // Note: Point counts will be loaded at runtime from SQLite
-        info!("    Points will be loaded from SQLite at runtime");
+        info!("    Points in runtime snapshot: {}", channel.point_count());
     }
 
     info!("Configuration validation completed successfully");

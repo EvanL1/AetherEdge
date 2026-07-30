@@ -3,24 +3,21 @@
 #![allow(clippy::disallowed_methods)] // Test code - unwrap is acceptable
 
 use super::*;
-use crate::dto::{AdjustmentRequest, ControlRequest};
 use axum::{
     body::Body,
     http::{Request, Response, StatusCode},
 };
 use serde_json::json;
 use sqlx::SqlitePool;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use aether_core::PointType;
 use aether_ports::{
     AuditOutcome, AuditRecord, AuditSink, ChannelDesiredStateObservation, ChannelMutation,
     ChannelMutationKind, ChannelMutationReceipt, ChannelMutator, ChannelReconciler,
     ChannelReconciliationItem, ChannelReconciliationReceipt, ChannelReconciliationScope,
     ChannelRevision, ChannelRuntimeProjection, PortError, PortErrorKind, PortResult,
 };
-use aether_shm_bridge::ShmWriterHandle;
 use tower::util::ServiceExt; // for `oneshot` and `ready`
 
 const TEST_JWT_SECRET: &str = "0123456789abcdef0123456789abcdef";
@@ -76,7 +73,6 @@ async fn create_test_api_with_pool(
     common::test_utils::schema::init_automation_schema(&sqlite_pool)
         .await
         .unwrap();
-    let command_tx_cache = Arc::new(crate::api::command_cache::CommandTxCache::new());
     let adapter = Arc::new(crate::SqliteChannelMutator::new(
         sqlite_pool.clone(),
         Arc::clone(&channel_manager),
@@ -105,8 +101,6 @@ async fn create_test_api_with_pool(
     create_api_routes_with_boundary(
         channel_manager,
         sqlite_pool,
-        command_tx_cache,
-        false,
         Some(Arc::clone(&reconciliation)),
         ChannelManagementHttpBoundary::governed_with_reconciliation(
             application,
@@ -323,8 +317,6 @@ async fn recording_channel_router_with_audit(
     create_api_routes_with_boundary(
         channel_manager,
         pool,
-        Arc::new(crate::api::command_cache::CommandTxCache::new()),
-        false,
         None,
         ChannelManagementHttpBoundary::governed(application, authenticator),
         PointTopologyHttpBoundary::unavailable(),
@@ -374,8 +366,6 @@ async fn recording_channel_applications_router(
     create_api_routes_with_boundary(
         channel_manager,
         pool,
-        Arc::new(crate::api::command_cache::CommandTxCache::new()),
-        false,
         Some(Arc::clone(&channel_reconciliation)),
         ChannelManagementHttpBoundary::governed_with_reconciliation(
             channel_management,
@@ -597,11 +587,6 @@ async fn terminal_audit_failure_stays_accepted_and_is_never_retryable() {
     assert_eq!(payload["data"]["retryable"], false);
     assert_eq!(mutator.mutation_count(), 1);
 }
-
-// The write-environment helper is inlined into
-// `setup_write_test_env` so the latter can register a stub command
-// sender on `command_tx_cache` before constructing the router. There
-// are no other callers, so the helper was removed.
 
 // ========================================================================
 // Closed-loop Testing Utilities
@@ -924,7 +909,7 @@ async fn test_update_channel_returns_description() {
     assert_eq!(v["data"]["description"], "new-desc");
 
     // Update without description: should keep last description
-    let body2 = serde_json::json!({ "parameters": {"x": 1} });
+    let body2 = serde_json::json!({ "parameters": {"poll_interval_ms": 1_000} });
     let req2 = channel_mutation_request("PUT", "/api/channels/42", Some(body2));
     let resp2 = app.oneshot(req2).await.unwrap();
     assert_eq!(resp2.status(), StatusCode::OK);
@@ -1160,6 +1145,62 @@ async fn test_channel_detail_returns_description() {
     let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(v["data"]["description"], "detail-desc");
     assert_eq!(v["data"]["revision"], 1);
+}
+
+#[tokio::test]
+async fn channel_queries_share_the_strict_stored_config_codec() {
+    let channel_manager = Arc::new(
+        ChannelManager::new(
+            crate::test_utils::create_test_shm_handle(),
+            crate::test_utils::create_test_routing_cache(),
+        )
+        .unwrap(),
+    );
+    let pool = create_test_sqlite_pool().await;
+    let config = serde_json::json!({
+        "description": null,
+        "parameters": {},
+        "logging": {"enabled": false, "level": null, "file": null},
+        "host": "legacy-top-level-field"
+    })
+    .to_string();
+    sqlx::query(
+        "INSERT INTO channels (channel_id, name, protocol, enabled, config) \
+         VALUES (501, 'Ch501', 'modbus_tcp', 1, ?)",
+    )
+    .bind(config)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let app = create_test_api_with_pool(channel_manager, pool.clone()).await;
+    for path in ["/api/channels", "/api/channels/501", "/api/channels/search"] {
+        let response = app
+            .clone()
+            .oneshot(Request::builder().uri(path).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK, "{path}");
+    }
+
+    sqlx::query("UPDATE channels SET config = ? WHERE channel_id = 501")
+        .bind(r#"{"logging":"debug"}"#)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    for path in ["/api/channels", "/api/channels/501", "/api/channels/search"] {
+        let response = app
+            .clone()
+            .oneshot(Request::builder().uri(path).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(
+            response.status(),
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "{path}"
+        );
+    }
 }
 
 #[tokio::test]
@@ -1760,11 +1801,7 @@ async fn legacy_router_fails_closed_for_channel_control() {
         )
         .unwrap(),
     );
-    let app = create_api_routes(
-        channel_manager,
-        create_test_sqlite_pool().await,
-        Arc::new(crate::api::command_cache::CommandTxCache::new()),
-    );
+    let app = create_api_routes(channel_manager, create_test_sqlite_pool().await);
 
     for operation in ["start", "restart"] {
         let response = app
@@ -1783,32 +1820,6 @@ async fn legacy_router_fails_closed_for_channel_control() {
             "{operation}"
         );
     }
-}
-
-// ========================================================================
-// Phase 4: Command Send Endpoint Tests
-// ========================================================================
-
-#[test]
-fn test_control_command_structure() {
-    let cmd = ControlRequest {
-        point_id: 1,
-        value: 1, // u8: 0 or 1
-    };
-
-    assert_eq!(cmd.point_id, 1);
-    assert_eq!(cmd.value, 1);
-}
-
-#[test]
-fn test_adjustment_command_structure() {
-    let cmd = AdjustmentRequest {
-        point_id: 2,
-        value: 50.0, // f64
-    };
-
-    assert_eq!(cmd.point_id, 2);
-    assert_eq!(cmd.value, 50.0);
 }
 
 // ========================================================================
@@ -1832,11 +1843,9 @@ async fn test_api_routes_with_shm() {
 #[test]
 fn test_api_routes_compile() {
     // Verify the public route factory exposes only SHM-backed runtime state
-    // plus SQLite configuration and the command dispatch cache.
+    // plus SQLite configuration.
     use super::*;
-    use crate::api::command_cache::CommandTxCache;
-    let _ = create_api_routes
-        as fn(Arc<ChannelManager>, sqlx::SqlitePool, Arc<CommandTxCache>) -> Router;
+    let _ = create_api_routes as fn(Arc<ChannelManager>, sqlx::SqlitePool) -> Router;
 }
 
 // ========================================================================
@@ -1849,9 +1858,7 @@ async fn create_channel_without_enabled_stays_disabled_and_has_no_runtime() {
     let channel_manager = Arc::new(
         ChannelManager::with_shared_memory(
             crate::test_utils::create_test_routing_cache(),
-            pool.clone(),
             crate::test_utils::create_test_shm_handle(),
-            None,
             None,
         )
         .unwrap(),
@@ -1891,9 +1898,7 @@ async fn create_enabled_physical_channel_reports_degraded_when_device_is_unavail
     let channel_manager = Arc::new(
         ChannelManager::with_shared_memory(
             crate::test_utils::create_test_routing_cache(),
-            pool.clone(),
             crate::test_utils::create_test_shm_handle(),
-            None,
             None,
         )
         .unwrap(),
@@ -1949,7 +1954,7 @@ async fn test_create_channel_handler_returns_response() {
         name: "Test Channel".to_string(),
         description: Some("Test Description".to_string()),
         protocol: "modbus_tcp".to_string(),
-        enabled: Some(true),
+        enabled: true,
         parameters: params,
         logging: None,
     };
@@ -2007,7 +2012,6 @@ async fn test_update_channel_handler() {
     params.insert("timeout".to_string(), serde_json::json!(5000));
 
     let request_body = crate::dto::ChannelConfigUpdateRequest {
-        channel_id: None, // No ID migration
         name: Some("Updated Channel".to_string()),
         description: Some("Updated Description".to_string()),
         protocol: None,
@@ -2204,11 +2208,7 @@ async fn legacy_router_fails_closed_for_channel_reconciliation() {
         )
         .unwrap(),
     );
-    let app = create_api_routes(
-        channel_manager,
-        create_test_sqlite_pool().await,
-        Arc::new(crate::api::command_cache::CommandTxCache::new()),
-    );
+    let app = create_api_routes(channel_manager, create_test_sqlite_pool().await);
 
     for path in ["/api/channels/reconcile", "/api/channels/reload"] {
         let response = app
@@ -3181,404 +3181,6 @@ async fn test_protocol_data_type_normalization_closed_loop() {
     // String fields should remain strings
     assert!(telemetry["data_type"].is_string());
     assert!(telemetry["byte_order"].is_string());
-}
-
-// ========================================================================
-// Write API Tests (Unified Endpoint) - P0/P1/P2 Priority
-// ========================================================================
-
-/// Helper: Setup test environment with authoritative SHM and a stub
-/// command sender registered for channel 1005.
-///
-/// The fail-closed C/A write path in `write_channel_point` requires a
-/// registered mpsc sender via `CommandTxCache::register` before any
-/// Control/Adjustment write is accepted (otherwise it returns 503
-/// "Channel offline; command not dispatched"). Every test that writes
-/// to channel 1005 needs this stub.
-///
-/// The returned tuple's third element is a background drainer task that
-/// silently consumes commands sent to channel 1005. Tests should bind
-/// it as `_drainer` so it stays alive for the test's duration; dropping
-/// the JoinHandle does not abort the task, but holding it keeps the
-/// intent visible.
-async fn setup_write_test_env() -> (Router, Arc<ShmWriterHandle>, tokio::task::JoinHandle<()>) {
-    use crate::core::channels::types::ChannelCommand;
-
-    let shm_handle = crate::test_utils::create_test_shm_handle_with_points(BTreeMap::from([(
-        1005,
-        [103, 103, 13, 203],
-    )]));
-    let channel_manager = Arc::new(
-        ChannelManager::new(
-            Arc::clone(&shm_handle),
-            crate::test_utils::create_test_routing_cache(),
-        )
-        .unwrap(),
-    );
-    let pool = create_test_sqlite_pool().await;
-    sqlx::query(
-        "INSERT INTO channels (channel_id, name, protocol, enabled)
-         VALUES (1005, 'write-test', 'modbus_tcp', 1)",
-    )
-    .execute(&pool)
-    .await
-    .unwrap();
-    for point_id in [10_i64, 11, 12] {
-        sqlx::query(
-            "INSERT INTO control_points (channel_id, point_id, signal_name)
-             VALUES (1005, ?, ?)",
-        )
-        .bind(point_id)
-        .bind(format!("control-{point_id}"))
-        .execute(&pool)
-        .await
-        .unwrap();
-    }
-    for point_id in [10_i64, 200, 201, 202] {
-        sqlx::query(
-            "INSERT INTO adjustment_points
-             (channel_id, point_id, signal_name, min_value, max_value, step)
-             VALUES (1005, ?, ?, 0.0, 5000.0, 1.0)",
-        )
-        .bind(point_id)
-        .bind(format!("adjustment-{point_id}"))
-        .execute(&pool)
-        .await
-        .unwrap();
-    }
-
-    // Build the command tx cache up front so we can register a stub
-    // sender BEFORE the router is constructed (and therefore before any
-    // test fires a write request).
-    let command_tx_cache = Arc::new(crate::api::command_cache::CommandTxCache::new());
-    let (tx, mut rx) = tokio::sync::mpsc::channel::<ChannelCommand>(64);
-    command_tx_cache.register(1005, tx);
-    let drainer = tokio::spawn(async move {
-        while rx.recv().await.is_some() {
-            // discard
-        }
-    });
-
-    let router =
-        create_api_routes_with_simulation_writes(channel_manager, pool, command_tx_cache, true);
-    (router, shm_handle, drainer)
-}
-
-/// Helper: Extract JSON from response body
-async fn extract_write_response_json(resp: Response<Body>) -> serde_json::Value {
-    use http_body_util::BodyExt;
-    let bytes = resp.into_body().collect().await.unwrap().to_bytes();
-    serde_json::from_slice(&bytes).unwrap()
-}
-
-/// Helper: Send write request to unified endpoint
-async fn send_write_request(
-    app: Router,
-    channel_id: u32,
-    body: serde_json::Value,
-) -> Response<Body> {
-    let req = Request::builder()
-        .uri(format!("/api/channels/{}/write", channel_id))
-        .method("POST")
-        .header("content-type", "application/json")
-        .body(Body::from(body.to_string()))
-        .unwrap();
-
-    app.oneshot(req).await.unwrap()
-}
-
-// Device commands must enter through automation's application boundary.
-
-#[tokio::test]
-async fn test_simulation_writes_are_disabled_by_default() {
-    let shm_handle = crate::test_utils::create_test_shm_handle_with_points(BTreeMap::from([(
-        1005,
-        [103, 103, 13, 203],
-    )]));
-    let channel_manager = Arc::new(
-        ChannelManager::new(
-            Arc::clone(&shm_handle),
-            crate::test_utils::create_test_routing_cache(),
-        )
-        .unwrap(),
-    );
-    let app = create_api_routes(
-        channel_manager,
-        create_test_sqlite_pool().await,
-        Arc::new(crate::api::command_cache::CommandTxCache::new()),
-    );
-
-    let response = send_write_request(
-        app,
-        1005,
-        serde_json::json!({"type": "T", "id": "1", "value": 42.0}),
-    )
-    .await;
-
-    assert_eq!(response.status(), StatusCode::FORBIDDEN);
-}
-
-#[tokio::test]
-async fn test_write_rejects_direct_control_and_adjustment_points() {
-    let (app, _shm, _drainer) = setup_write_test_env().await;
-
-    for body in [
-        serde_json::json!({"type": "C", "id": "10", "value": 1.0}),
-        serde_json::json!({"type": "A", "id": "200", "value": 4500.0}),
-    ] {
-        let response = send_write_request(app.clone(), 1005, body).await;
-        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-    }
-
-    for body in [
-        serde_json::json!({"type": "C", "points": [{"id": "10", "value": 1.0}]}),
-        serde_json::json!({"type": "A", "points": [{"id": "200", "value": 4500.0}]}),
-    ] {
-        let response = send_write_request(app.clone(), 1005, body).await;
-        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-    }
-}
-
-// ===== P1: New Feature Tests (5 tests) =====
-
-#[tokio::test]
-async fn test_write_single_telemetry_point() {
-    let (app, shm, _drainer) = setup_write_test_env().await;
-
-    let request_body = serde_json::json!({
-        "type": "T",
-        "id": "1",
-        "value": 123.45
-    });
-
-    let resp = send_write_request(app, 1005, request_body).await;
-    assert_eq!(resp.status(), StatusCode::OK);
-
-    let json = extract_write_response_json(resp).await;
-    assert_eq!(json["data"]["point_type"], "T");
-    assert_eq!(json["data"]["value"], 123.45);
-
-    crate::test_utils::assert_channel_value(&shm, 1005, PointType::Telemetry, 1, 123.45);
-}
-
-#[tokio::test]
-async fn test_write_single_signal_point() {
-    let (app, shm, _drainer) = setup_write_test_env().await;
-
-    let request_body = serde_json::json!({
-        "type": "S",
-        "id": "100",
-        "value": 1.0
-    });
-
-    let resp = send_write_request(app, 1005, request_body).await;
-    assert_eq!(resp.status(), StatusCode::OK);
-
-    let json = extract_write_response_json(resp).await;
-    assert_eq!(json["data"]["point_type"], "S");
-
-    crate::test_utils::assert_channel_value(&shm, 1005, PointType::Signal, 100, 1.0);
-}
-
-#[tokio::test]
-async fn test_write_batch_telemetry_points() {
-    let (app, shm, _drainer) = setup_write_test_env().await;
-
-    let request_body = serde_json::json!({
-        "type": "T",
-        "points": [
-            {"id": "1", "value": 100.0},
-            {"id": "2", "value": 200.0}
-        ]
-    });
-
-    let resp = send_write_request(app, 1005, request_body).await;
-    assert_eq!(resp.status(), StatusCode::OK);
-
-    let json = extract_write_response_json(resp).await;
-    assert_eq!(json["data"]["total"], 2);
-    assert_eq!(json["data"]["succeeded"], 2);
-
-    crate::test_utils::assert_channel_value(&shm, 1005, PointType::Telemetry, 1, 100.0);
-    crate::test_utils::assert_channel_value(&shm, 1005, PointType::Telemetry, 2, 200.0);
-}
-
-#[tokio::test]
-async fn test_point_type_normalization_short_names() {
-    let (app, _shm, _drainer) = setup_write_test_env().await;
-
-    for point_type in &["T", "S"] {
-        let request_body = serde_json::json!({
-            "type": point_type,
-            "id": "10",
-            "value": 1.0
-        });
-
-        let resp = send_write_request(app.clone(), 1005, request_body).await;
-        assert_eq!(
-            resp.status(),
-            StatusCode::OK,
-            "Type {} should be accepted",
-            point_type
-        );
-
-        let json = extract_write_response_json(resp).await;
-        assert!(json["success"].as_bool().unwrap());
-    }
-
-    for point_type in &["C", "A"] {
-        let response = send_write_request(
-            app.clone(),
-            1005,
-            serde_json::json!({"type": point_type, "id": "10", "value": 1.0}),
-        )
-        .await;
-        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-    }
-}
-
-#[tokio::test]
-async fn test_point_type_normalization_full_names() {
-    let (app, _shm, _drainer) = setup_write_test_env().await;
-
-    // Test full names and case variations
-    let test_types = vec![
-        ("Telemetry", "T"),
-        ("telemetry", "T"),
-        ("TELEMETRY", "T"),
-        ("Signal", "S"),
-        ("signal", "S"),
-        ("SIGNAL", "S"),
-    ];
-
-    for (input_type, expected_short) in test_types {
-        let request_body = serde_json::json!({
-            "type": input_type,
-            "id": "10",
-            "value": 1.0
-        });
-
-        let resp = send_write_request(app.clone(), 1005, request_body).await;
-        assert_eq!(
-            resp.status(),
-            StatusCode::OK,
-            "Type {} should be accepted",
-            input_type
-        );
-
-        let json = extract_write_response_json(resp).await;
-        assert_eq!(
-            json["data"]["point_type"], expected_short,
-            "Type {} should normalize to {}",
-            input_type, expected_short
-        );
-    }
-
-    for input_type in [
-        "Control",
-        "control",
-        "CONTROL",
-        "Adjustment",
-        "adjustment",
-        "ADJUSTMENT",
-    ] {
-        let response = send_write_request(
-            app.clone(),
-            1005,
-            serde_json::json!({"type": input_type, "id": "10", "value": 1.0}),
-        )
-        .await;
-        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-    }
-}
-
-// ===== P2: Error Handling & Boundary Conditions (4 tests) =====
-
-#[tokio::test]
-async fn test_write_invalid_point_type() {
-    let (app, _shm, _drainer) = setup_write_test_env().await;
-
-    let request_body = serde_json::json!({
-        "type": "X",
-        "id": "10",
-        "value": 1.0
-    });
-
-    let resp = send_write_request(app, 1005, request_body).await;
-
-    // Should return error (400 or 500)
-    assert!(
-        resp.status().is_client_error() || resp.status().is_server_error(),
-        "Invalid type should return error status"
-    );
-
-    let json = extract_write_response_json(resp).await;
-    assert!(!json["success"].as_bool().unwrap_or(false));
-}
-
-#[tokio::test]
-async fn test_write_empty_batch_commands() {
-    let (app, _shm, _drainer) = setup_write_test_env().await;
-
-    let request_body = serde_json::json!({
-        "type": "T",
-        "points": []
-    });
-
-    let resp = send_write_request(app, 1005, request_body).await;
-
-    // Should handle gracefully (200 with 0 succeeded or 400 error)
-    assert!(
-        resp.status().is_success() || resp.status().is_client_error(),
-        "Empty batch should be handled gracefully"
-    );
-}
-
-#[tokio::test]
-async fn test_write_response_format_single() {
-    let (app, _shm, _drainer) = setup_write_test_env().await;
-
-    let request_body = serde_json::json!({
-        "type": "T",
-        "id": "10",
-        "value": 1.0
-    });
-
-    let resp = send_write_request(app, 1005, request_body).await;
-    let json = extract_write_response_json(resp).await;
-
-    // Verify single response format
-    assert!(json["success"].is_boolean());
-    assert!(json["data"].is_object());
-    assert!(json["data"]["channel_id"].is_number());
-    assert!(json["data"]["point_type"].is_string());
-    assert!(json["data"]["point_id"].is_number());
-    assert!(json["data"]["value"].is_number());
-    assert!(json["data"]["timestamp_ms"].is_number());
-}
-
-#[tokio::test]
-async fn test_write_response_format_batch() {
-    let (app, _shm, _drainer) = setup_write_test_env().await;
-
-    let request_body = serde_json::json!({
-        "type": "T",
-        "points": [
-            {"id": "10", "value": 1.0},
-            {"id": "11", "value": 0.0}
-        ]
-    });
-
-    let resp = send_write_request(app, 1005, request_body).await;
-    let json = extract_write_response_json(resp).await;
-
-    // Verify batch response format
-    assert!(json["success"].is_boolean());
-    assert!(json["data"].is_object());
-    assert!(json["data"]["total"].is_number());
-    assert!(json["data"]["succeeded"].is_number());
-    assert!(json["data"]["failed"].is_number());
-    assert!(json["data"]["errors"].is_array());
 }
 
 // ========================================================================
@@ -4773,11 +4375,7 @@ async fn legacy_route_constructor_fails_closed_for_channel_mutations() {
         )
         .unwrap(),
     );
-    let app = create_api_routes(
-        manager,
-        pool.clone(),
-        Arc::new(crate::api::command_cache::CommandTxCache::new()),
-    );
+    let app = create_api_routes(manager, pool.clone());
     let response = app
         .oneshot(governed_channel_request(
             "POST",
@@ -4997,26 +4595,6 @@ mod openapi_tests {
     }
 
     #[test]
-    fn test_openapi_simulation_write_matches_the_fail_closed_runtime_gate() {
-        let spec = spec();
-        let operation = spec
-            .pointer("/paths/~1api~1channels~1{channel_id}~1write/post")
-            .expect("simulation write operation");
-
-        for status in ["200", "400", "403", "500"] {
-            assert!(
-                operation.pointer(&format!("/responses/{status}")).is_some(),
-                "simulation write is missing response {status}"
-            );
-        }
-        let description = operation["description"]
-            .as_str()
-            .expect("simulation write description");
-        assert!(description.contains("AETHER_ALLOW_SIMULATION_WRITES=true"));
-        assert!(description.contains("C/A device commands are always rejected"));
-    }
-
-    #[test]
     fn channel_management_openapi_is_the_governed_application_contract() {
         let spec = spec();
 
@@ -5180,10 +4758,11 @@ mod openapi_tests {
         assert!(create_channel_id_description.contains("revision tombstones"));
         assert!(!create_channel_id_description.contains("max+1"));
 
-        let update_channel_id = spec
-            .pointer("/components/schemas/ChannelConfigUpdateRequest/properties/channel_id/maximum")
-            .expect("update compatibility channel ID maximum");
-        assert_eq!(update_channel_id, 9999);
+        assert!(
+            spec.pointer("/components/schemas/ChannelConfigUpdateRequest/properties/channel_id")
+                .is_none(),
+            "update identity must come only from the request path"
+        );
 
         let update = spec
             .pointer("/paths/~1api~1channels~1{id}/put")
@@ -5517,7 +5096,7 @@ mod openapi_tests {
             .sum::<usize>();
 
         assert_eq!(
-            operation_count, 54,
+            operation_count, 53,
             "HTTP operation count changed; re-audit Router/OpenAPI parity before updating this guard"
         );
     }

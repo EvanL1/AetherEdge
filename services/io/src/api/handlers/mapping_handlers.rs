@@ -17,34 +17,23 @@ use axum::{
 };
 use serde_json::json;
 
-// ============================================================================
-// Helpers
-// ============================================================================
-
-/// Map four_remote type code to database table name
-fn four_remote_to_table(four_remote: &str) -> Result<&'static str, AppError> {
-    match four_remote {
-        "T" => Ok("telemetry_points"),
-        "S" => Ok("signal_points"),
-        "C" => Ok("control_points"),
-        "A" => Ok("adjustment_points"),
-        other => Err(AppError::bad_request(format!(
-            "Invalid four_remote type: '{}'. Must be T, S, C, or A",
-            other
-        ))),
-    }
-}
-
-/// Parse protocol_mappings JSON, defaulting to empty object on null/error
-fn parse_protocol_json(json_str: Option<&str>, table: &str, point_id: i64) -> serde_json::Value {
-    let value = match json_str {
-        Some(s) => serde_json::from_str(s).unwrap_or_else(|e| {
-            tracing::error!("Parse mapping {}:{}: {}", table, point_id, e);
-            json!({})
-        }),
-        None => json!({}),
-    };
-    if value.is_null() { json!({}) } else { value }
+/// Decode persisted mappings without masking corrupt storage as an empty mapping.
+fn parse_protocol_json(
+    json_str: Option<&str>,
+    table: &str,
+    point_id: i64,
+) -> Result<serde_json::Value, AppError> {
+    let value = json_str.map_or_else(
+        || Ok(json!({})),
+        |value| {
+            serde_json::from_str(value).map_err(|error| {
+                AppError::internal_error(format!(
+                    "stored protocol mapping {table}:{point_id} is invalid: {error}"
+                ))
+            })
+        },
+    )?;
+    Ok(if value.is_null() { json!({}) } else { value })
 }
 
 /// Get all mapping configurations for a channel
@@ -90,7 +79,7 @@ pub async fn get_channel_mappings_handler(
             })?;
 
         for (point_id, signal_name, json_str) in rows {
-            let protocol_data = parse_protocol_json(json_str.as_deref(), table, point_id);
+            let protocol_data = parse_protocol_json(json_str.as_deref(), table, point_id)?;
             let point_id_u32 = u32::try_from(point_id).map_err(|_| {
                 AppError::internal_error(format!("point_id {} out of range", point_id))
             })?;
@@ -438,7 +427,7 @@ pub async fn update_channel_mappings_handler(
     // 1.5. Normalize protocol_data types BEFORE validation
     // This ensures validation works with properly typed numeric fields
     for item in req.mappings.iter_mut() {
-        item.protocol_data = normalize_protocol_data(&protocol, &item.protocol_data);
+        normalize_protocol_data(&protocol, &mut item.protocol_data);
     }
 
     // 2. Validate input when in Replace mode. In Merge mode, we will validate after merging with existing.
@@ -453,12 +442,13 @@ pub async fn update_channel_mappings_handler(
     }
 
     if req.validate_only {
+        let mapping_count = req.mappings.len();
         let mut validation_errors = Vec::new();
         let mut merged_state: std::collections::HashMap<(&'static str, u32), serde_json::Value> =
             std::collections::HashMap::new();
-        for (index, item) in req.mappings.iter().enumerate() {
-            let table = match four_remote_to_table(&item.four_remote) {
-                Ok(table) => table,
+        for (index, item) in req.mappings.into_iter().enumerate() {
+            let kind = match crate::point_topology::PointKind::parse(&item.four_remote) {
+                Ok(kind) => kind,
                 Err(_) => {
                     validation_errors.push(format!(
                         "Item {index}: invalid four_remote {}",
@@ -467,6 +457,7 @@ pub async fn update_channel_mappings_handler(
                     continue;
                 },
             };
+            let table = kind.table();
             let existing: Option<Option<String>> = sqlx::query_scalar(&format!(
                 "SELECT protocol_mappings FROM {table} WHERE channel_id = ? AND point_id = ?"
             ))
@@ -484,8 +475,8 @@ pub async fn update_channel_mappings_handler(
             };
             if matches!(req.mode, MappingUpdateMode::Merge) {
                 let key = (table, item.point_id);
-                let mut merged = if let Some(current) = merged_state.get(&key) {
-                    current.clone()
+                let mut merged = if let Some(current) = merged_state.remove(&key) {
+                    current
                 } else if let Some(existing) = existing {
                     match serde_json::from_str::<serde_json::Value>(&existing) {
                         Ok(value) => value,
@@ -500,10 +491,10 @@ pub async fn update_channel_mappings_handler(
                 } else {
                     json!({})
                 };
-                match (&mut merged, &item.protocol_data) {
+                match (&mut merged, item.protocol_data) {
                     (_, serde_json::Value::Null) => merged = serde_json::Value::Null,
                     (serde_json::Value::Object(base), serde_json::Value::Object(update)) => {
-                        base.extend(update.clone())
+                        base.extend(update)
                     },
                     _ => {
                         validation_errors.push(format!(
@@ -512,11 +503,10 @@ pub async fn update_channel_mappings_handler(
                         continue;
                     },
                 }
-                merged = normalize_protocol_data(&protocol, &merged);
+                normalize_protocol_data(&protocol, &mut merged);
                 if let Err(error) = crate::point_topology::validate_protocol_mapping(
                     &protocol,
-                    crate::point_topology::PointKind::parse(&item.four_remote)
-                        .map_err(AppError::bad_request)?,
+                    kind,
                     item.point_id,
                     &merged,
                 ) {
@@ -528,14 +518,11 @@ pub async fn update_channel_mappings_handler(
         if !validation_errors.is_empty() {
             return Err(AppError::bad_request(validation_errors.join("; ")));
         }
-    }
-
-    if req.validate_only {
         return Ok(Json(SuccessResponse::new(MappingBatchUpdateResult {
-            updated_count: req.mappings.len(),
+            updated_count: mapping_count,
             channel_reloaded: false,
             validation_errors: vec![],
-            message: format!("Validation OK for {} mappings", req.mappings.len()),
+            message: format!("Validation OK for {mapping_count} mappings"),
             request_id: None,
             resulting_revision: None,
             completion_audit: None,
@@ -543,7 +530,7 @@ pub async fn update_channel_mappings_handler(
         })));
     }
 
-    let mode = req.mode.clone();
+    let merge = matches!(req.mode, MappingUpdateMode::Merge);
     let mappings = req
         .mappings
         .into_iter()
@@ -561,7 +548,7 @@ pub async fn update_channel_mappings_handler(
             &headers,
             crate::point_topology::PointTopologyMutation::Mappings {
                 channel_id,
-                merge: matches!(&mode, MappingUpdateMode::Merge),
+                merge,
                 mappings,
             },
         )
@@ -589,10 +576,7 @@ pub async fn update_channel_mappings_handler(
     )
     .await;
 
-    let mode_str = match mode {
-        MappingUpdateMode::Replace => "replace",
-        MappingUpdateMode::Merge => "merge",
-    };
+    let mode_str = if merge { "merge" } else { "replace" };
     let reload_suffix = if channel_reloaded {
         "and reconciled the channel runtime"
     } else if reload_query.auto_reload {
@@ -666,28 +650,24 @@ fn validate_mappings(protocol: &str, mappings: &[crate::dto::PointMappingItem]) 
 /// - `data_type`: string (unchanged)
 /// - `signed`: boolean (unchanged)
 ///
-fn normalize_protocol_data(protocol: &str, value: &serde_json::Value) -> serde_json::Value {
+fn normalize_protocol_data(protocol: &str, value: &mut serde_json::Value) {
     use serde_json::{Number, Value};
 
-    let Some(obj) = value.as_object() else {
-        // Not an object, return as-is
-        return value.clone();
+    let Some(factory) = crate::protocols::get_protocol_registry().factory(protocol) else {
+        return;
     };
+    let numeric_fields = factory.numeric_mapping_fields();
+    if numeric_fields.is_empty() {
+        return;
+    }
 
-    // Helper: check if string value needs conversion to number
-    let needs_conversion = |v: &Value| -> bool {
-        matches!(v, Value::String(s) if s.parse::<i64>().is_ok() || s.parse::<f64>().is_ok())
-    };
-
-    // Helper: convert string to number if possible
-    let to_number = |v: &Value| -> Option<Value> {
+    let to_number = |v: &Value| -> Option<Number> {
         match v {
-            Value::Number(n) => Some(Value::Number(n.clone())),
             Value::String(s) => {
                 if let Ok(n) = s.parse::<i64>() {
-                    Some(Value::Number(Number::from(n)))
+                    Some(Number::from(n))
                 } else if let Ok(f) = s.parse::<f64>() {
-                    Number::from_f64(f).map(Value::Number)
+                    Number::from_f64(f)
                 } else {
                     None
                 }
@@ -696,52 +676,12 @@ fn normalize_protocol_data(protocol: &str, value: &serde_json::Value) -> serde_j
         }
     };
 
-    // Determine which fields need normalization based on protocol
-    let numeric_fields: &[&str] = if crate::utils::is_modbus_family(protocol) {
-        &[
-            "slave_id",
-            "function_code",
-            "register_address",
-            "bit_position",
-        ]
-    } else {
-        match protocol {
-            "di_do" | "gpio" | "dido" => &["gpio_number"],
-            "can" => &[
-                "can_id",
-                "start_bit",
-                "byte_offset",
-                "bit_position",
-                "bit_length",
-                "scale",
-                "offset",
-            ],
-            _ => {
-                // Unknown protocols have no normalization contract.
-                return value.clone();
-            },
-        }
+    let Some(obj) = value.as_object_mut() else {
+        return;
     };
-
-    // Check if any field actually needs conversion (lazy clone optimization)
-    let needs_normalization = numeric_fields
-        .iter()
-        .any(|field| obj.get(*field).is_some_and(needs_conversion));
-
-    if !needs_normalization {
-        // No changes needed, return original to avoid clone
-        return value.clone();
-    }
-
-    // Only clone when we actually need to modify
-    let mut normalized = obj.clone();
     for field in numeric_fields {
-        if let Some(v) = obj.get(*field)
-            && let Some(normalized_v) = to_number(v)
-        {
-            normalized.insert((*field).to_string(), normalized_v);
+        if let Some(normalized) = obj.get(*field).and_then(&to_number) {
+            obj.insert((*field).to_owned(), Value::Number(normalized));
         }
     }
-
-    Value::Object(normalized)
 }

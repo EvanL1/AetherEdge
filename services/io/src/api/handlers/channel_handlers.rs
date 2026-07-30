@@ -4,6 +4,7 @@
 
 #![allow(clippy::disallowed_methods)] // json! macro used in multiple functions
 
+use aether_config::io::StoredChannelConfig;
 use axum::{
     extract::{Path, Query, RawQuery, State},
     response::Json,
@@ -16,32 +17,16 @@ use crate::dto::{
     ChannelStatusDto, ChannelStatusResponse, PaginatedResponse, PointCounts, SuccessResponse,
 };
 
-/// Extract description field from config JSON string
-fn extract_description_from_config(
+fn decode_stored_channel_config(
     config_str: Option<&str>,
     channel_id: u32,
-) -> Result<Option<String>, AppError> {
-    let Some(s) = config_str else {
-        return Ok(None);
-    };
-    let v: serde_json::Value = serde_json::from_str(s).map_err(|e| {
-        tracing::error!("Ch{} invalid config JSON: {}", channel_id, e);
+) -> Result<StoredChannelConfig, AppError> {
+    StoredChannelConfig::decode(config_str).map_err(|error| {
+        tracing::error!("Ch{} invalid stored config: {}", channel_id, error);
         AppError::internal_error(format!(
-            "Invalid channel config JSON for {}: {}",
-            channel_id, e
+            "Invalid stored channel configuration for {channel_id}"
         ))
-    })?;
-    let obj = v.as_object().ok_or_else(|| {
-        tracing::error!("Ch{} config must be a JSON object", channel_id);
-        AppError::internal_error(format!(
-            "Invalid channel config for {}: expected JSON object",
-            channel_id
-        ))
-    })?;
-    Ok(obj
-        .get("description")
-        .and_then(|d| d.as_str())
-        .map(String::from))
+    })
 }
 
 /// List all channels with pagination (configuration and runtime status summary).
@@ -151,29 +136,19 @@ pub async fn get_all_channels(
             )));
         }
 
-        let description = extract_description_from_config(config_str.as_deref(), channel_id)?;
+        let description =
+            decode_stored_channel_config(config_str.as_deref(), channel_id)?.description;
 
         // Get runtime status if channel is running
         let (connected, last_update) = match manager.get_channel(channel_id) {
-            Some(entry) => {
-                let status = entry.get_status().await;
-                (
-                    status.is_connected,
-                    DateTime::<Utc>::from_timestamp(status.last_update, 0).unwrap_or_else(Utc::now),
-                )
-            },
+            Some(entry) => (
+                entry.is_connected(),
+                entry
+                    .last_successful_read_ms()
+                    .and_then(DateTime::<Utc>::from_timestamp_millis)
+                    .unwrap_or_else(Utc::now),
+            ),
             _ => (false, Utc::now()),
-        };
-
-        let channel_response = ChannelStatusResponse {
-            id: channel_id,
-            revision,
-            name,
-            description,
-            protocol: protocol.clone(),
-            enabled,
-            connected,
-            last_update,
         };
 
         // Apply filters
@@ -182,7 +157,16 @@ pub async fn get_all_channels(
             && query.connected.is_none_or(|c| connected == c);
 
         if matches {
-            all_channels.push(channel_response);
+            all_channels.push(ChannelStatusResponse {
+                id: channel_id,
+                revision,
+                name,
+                description,
+                protocol,
+                enabled,
+                connected,
+                last_update,
+            });
         }
     }
 
@@ -215,7 +199,6 @@ pub async fn get_all_channels(
                     "name": "PLC#1",
                     "protocol": "modbus_tcp",
                     "connected": true,
-                    "running": true,
                     "last_update": "2025-10-15T10:30:15Z",
                     "statistics": {
                         "total_reads": 15234,
@@ -245,26 +228,26 @@ pub async fn get_channel_status(
 
     match manager.get_channel(id_u16) {
         Some(entry) => {
-            let (name, protocol) = manager
-                .get_channel_metadata(id_u16)
-                .unwrap_or_else(|| (format!("Channel {id_u16}"), "Unknown".to_string()));
+            let name = entry.metadata.name.clone();
+            let protocol = entry.metadata.protocol_type.to_owned();
 
-            let channel_status = entry.get_status().await;
-            let is_running = entry.is_connected();
-            let diagnostics = entry.get_diagnostics(id_u16);
+            let connected = entry.is_connected();
+            let diagnostics = entry.get_diagnostics();
 
+            let statistics = match diagnostics {
+                serde_json::Value::Object(values) => values.into_iter().collect(),
+                _ => std::collections::HashMap::new(),
+            };
             let status = ChannelStatusDto {
                 id: id_u16,
                 name,
                 protocol,
-                connected: channel_status.is_connected,
-                running: is_running,
-                last_update: DateTime::<Utc>::from_timestamp(channel_status.last_update, 0)
+                connected,
+                last_update: entry
+                    .last_successful_read_ms()
+                    .and_then(DateTime::<Utc>::from_timestamp_millis)
                     .unwrap_or_else(Utc::now),
-                statistics: diagnostics
-                    .as_object()
-                    .map(|obj| obj.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
-                    .unwrap_or_default(),
+                statistics,
             };
             Ok(Json(SuccessResponse::new(status)))
         },
@@ -305,7 +288,6 @@ pub async fn get_channel_status(
                     },
                     "runtime_status": {
                         "connected": true,
-                        "running": true,
                         "last_update": "2025-10-15T10:30:15Z",
                         "statistics": {
                             "total_reads": 15234,
@@ -359,86 +341,24 @@ pub async fn get_channel_detail_handler(
         )));
     }
 
-    let mut obj = match config_str {
-        None => serde_json::Map::new(),
-        Some(s) => {
-            let v: serde_json::Value = serde_json::from_str(&s).map_err(|e| {
-                tracing::error!("Ch{} invalid config JSON: {}", id_u16, e);
-                AppError::internal_error(format!(
-                    "Invalid channel config JSON for {}: {}",
-                    id_u16, e
-                ))
-            })?;
-            // Use match to move the Map out of Value (avoid clone)
-            match v {
-                serde_json::Value::Object(map) => map,
-                _ => {
-                    tracing::error!("Ch{} config must be a JSON object", id_u16);
-                    return Err(AppError::internal_error(format!(
-                        "Invalid channel config for {}: expected JSON object",
-                        id_u16
-                    )));
-                },
-            }
-        },
-    };
-
-    // Extract description
-    let description = match obj.remove("description") {
-        None => None,
-        Some(d) => Some(
-            d.as_str()
-                .ok_or_else(|| {
-                    tracing::error!("Ch{} config field 'description' must be a string", id_u16);
-                    AppError::internal_error(format!(
-                        "Invalid channel config for {}: 'description' must be a string",
-                        id_u16
-                    ))
-                })?
-                .to_string(),
-        ),
-    };
-
-    // Extract logging config
-    let logging_config = match obj.remove("logging") {
-        None => crate::core::config::ChannelLoggingConfig::default(),
-        Some(l) => {
-            serde_json::from_value::<crate::core::config::ChannelLoggingConfig>(l).map_err(|e| {
-                tracing::error!("Ch{} invalid logging config: {}", id_u16, e);
-                AppError::internal_error(format!(
-                    "Invalid channel logging config for {}: {}",
-                    id_u16, e
-                ))
-            })?
-        },
-    };
-
-    // Extract parameters (the actual protocol parameters)
-    // Use match to move the Map out of Value (avoid clone)
-    let parameters = match obj.remove("parameters") {
-        None => std::collections::HashMap::new(),
-        Some(serde_json::Value::Object(map)) => map.into_iter().collect(),
-        Some(_) => {
-            tracing::error!("Ch{} config field 'parameters' must be an object", id_u16);
-            return Err(AppError::internal_error(format!(
-                "Invalid channel config for {}: 'parameters' must be an object",
-                id_u16
-            )));
-        },
-    };
+    let stored_config = decode_stored_channel_config(config_str.as_deref(), id_u16)?;
 
     // Direct access without RwLock (lock-free)
     let manager = &state.channel_manager;
     let (connected, last_update, statistics) = match manager.get_channel(id_u16) {
         Some(entry) => {
-            let status = entry.get_status().await;
-            let diag = entry.get_diagnostics(id_u16);
+            let diag = entry.get_diagnostics();
+            let statistics = match diag {
+                serde_json::Value::Object(values) => values.into_iter().collect(),
+                _ => std::collections::HashMap::new(),
+            };
             (
-                status.is_connected,
-                DateTime::<Utc>::from_timestamp(status.last_update, 0).unwrap_or_else(Utc::now),
-                diag.as_object()
-                    .map(|obj| obj.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
-                    .unwrap_or_default(),
+                entry.is_connected(),
+                entry
+                    .last_successful_read_ms()
+                    .and_then(DateTime::<Utc>::from_timestamp_millis)
+                    .unwrap_or_else(Utc::now),
+                statistics,
             )
         },
         _ => (false, Utc::now(), std::collections::HashMap::new()),
@@ -448,12 +368,12 @@ pub async fn get_channel_detail_handler(
         core: crate::core::config::ChannelCore {
             id: id_u16,
             name,
-            description,
+            description: stored_config.description,
             protocol,
             enabled,
         },
-        parameters,
-        logging: logging_config,
+        parameters: stored_config.parameters,
+        logging: stored_config.logging,
     };
 
     // Query actual point counts by type for this channel
@@ -478,7 +398,6 @@ pub async fn get_channel_detail_handler(
         revision,
         runtime_status: ChannelRuntimeStatus {
             connected,
-            running: connected,
             last_update,
             statistics,
         },
@@ -672,7 +591,8 @@ pub async fn search_channels(
         let channel_id = u32::try_from(id)
             .map_err(|_| AppError::internal_error(format!("Channel ID {} out of range", id)))?;
 
-        let description = extract_description_from_config(config_str.as_deref(), channel_id)?;
+        let description =
+            decode_stored_channel_config(config_str.as_deref(), channel_id)?.description;
 
         // Get runtime connected status
         let connected = manager

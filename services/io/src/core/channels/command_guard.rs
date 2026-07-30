@@ -9,7 +9,7 @@ use aether_domain::{
     PointKind, TimestampMs,
 };
 
-use crate::core::config::RuntimeChannelConfig;
+use crate::core::channels::RuntimeChannelConfig;
 
 /// A command rejected before any protocol adapter can touch hardware.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

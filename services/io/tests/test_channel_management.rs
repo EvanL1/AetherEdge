@@ -65,9 +65,6 @@ async fn create_test_app() -> Result<axum::Router> {
         routing_cache,
     )?);
 
-    // Create command TX cache
-    let command_tx_cache = Arc::new(aether_io::api::command_cache::CommandTxCache::new());
-
     let adapter = Arc::new(aether_io::SqliteChannelMutator::new(
         pool.clone(),
         Arc::clone(&channel_manager),
@@ -97,7 +94,6 @@ async fn create_test_app() -> Result<axum::Router> {
     let router = aether_io::api::routes::create_api_routes_with_channel_applications(
         channel_manager,
         pool,
-        command_tx_cache,
         channel_management,
         channel_reconciliation,
         point_topology,

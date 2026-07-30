@@ -5,20 +5,39 @@
 //! This module handles the "translation" between io's configuration format
 //! and the protocol layer's point configuration format.
 
-#[cfg(any(feature = "modbus", all(feature = "can", target_os = "linux")))]
-use tracing::warn;
-
-use crate::core::config::{
-    AdjustmentPoint, ControlPoint, Point, RuntimeChannelConfig, SignalPoint, TelemetryPoint,
-};
-use crate::protocols::core::point::{PointConfig, ProtocolAddress, TransformConfig};
+use crate::core::channels::RuntimeChannelConfig;
+use crate::core::config::{AdjustmentPoint, ControlPoint, Point, SignalPoint, TelemetryPoint};
+#[cfg(any(
+    feature = "modbus",
+    feature = "iec104",
+    feature = "opcua",
+    feature = "ble",
+    feature = "zigbee",
+    all(feature = "can", target_os = "linux"),
+    all(feature = "j1939", target_os = "linux")
+))]
+use crate::protocols::core::error::{GatewayError, Result as GatewayResult};
+#[cfg(any(feature = "modbus", feature = "iec104", feature = "opcua"))]
+use crate::protocols::core::point::PointConfig;
+#[cfg(any(
+    feature = "modbus",
+    feature = "iec104",
+    feature = "opcua",
+    feature = "ble",
+    feature = "zigbee"
+))]
+use crate::protocols::core::point::TransformConfig;
 use aether_core::PointType;
 
+#[cfg(feature = "iec104")]
+use crate::protocols::adapters::iec104::Iec104Address;
 #[cfg(feature = "modbus")]
-use crate::protocols::core::point::{ByteOrder, DataFormat, ModbusAddress};
+use crate::protocols::adapters::modbus::ModbusAddress;
+#[cfg(feature = "opcua")]
+use crate::protocols::adapters::opcua::OpcUaAddress;
 
 #[cfg(all(feature = "can", target_os = "linux"))]
-use crate::protocols::adapters::can::{CanDataType, CanPoint};
+use crate::protocols::adapters::can::CanPoint;
 
 // ============================================================================
 // Point conversion trait + helpers
@@ -32,6 +51,13 @@ use crate::protocols::adapters::can::{CanDataType, CanPoint};
 trait PointConvertible {
     fn base(&self) -> &Point;
     fn point_type() -> PointType;
+    #[cfg(any(
+        feature = "modbus",
+        feature = "iec104",
+        feature = "opcua",
+        feature = "ble",
+        feature = "zigbee"
+    ))]
     fn transform(&self) -> TransformConfig;
 }
 
@@ -42,6 +68,13 @@ impl PointConvertible for TelemetryPoint {
     fn point_type() -> PointType {
         PointType::Telemetry
     }
+    #[cfg(any(
+        feature = "modbus",
+        feature = "iec104",
+        feature = "opcua",
+        feature = "ble",
+        feature = "zigbee"
+    ))]
     fn transform(&self) -> TransformConfig {
         TransformConfig {
             scale: self.scale,
@@ -59,6 +92,13 @@ impl PointConvertible for SignalPoint {
     fn point_type() -> PointType {
         PointType::Signal
     }
+    #[cfg(any(
+        feature = "modbus",
+        feature = "iec104",
+        feature = "opcua",
+        feature = "ble",
+        feature = "zigbee"
+    ))]
     fn transform(&self) -> TransformConfig {
         TransformConfig {
             reverse: self.reverse,
@@ -74,6 +114,13 @@ impl PointConvertible for ControlPoint {
     fn point_type() -> PointType {
         PointType::Control
     }
+    #[cfg(any(
+        feature = "modbus",
+        feature = "iec104",
+        feature = "opcua",
+        feature = "ble",
+        feature = "zigbee"
+    ))]
     fn transform(&self) -> TransformConfig {
         TransformConfig {
             reverse: self.reverse,
@@ -89,6 +136,13 @@ impl PointConvertible for AdjustmentPoint {
     fn point_type() -> PointType {
         PointType::Adjustment
     }
+    #[cfg(any(
+        feature = "modbus",
+        feature = "iec104",
+        feature = "opcua",
+        feature = "ble",
+        feature = "zigbee"
+    ))]
     fn transform(&self) -> TransformConfig {
         TransformConfig {
             scale: self.scale,
@@ -98,34 +152,207 @@ impl PointConvertible for AdjustmentPoint {
     }
 }
 
-/// Convert a slice of typed points to PointConfig using the given address builder.
-fn convert_points<P: PointConvertible>(
+#[cfg(any(
+    feature = "modbus",
+    feature = "iec104",
+    feature = "opcua",
+    feature = "ble",
+    feature = "zigbee",
+    all(feature = "can", target_os = "linux"),
+    all(feature = "j1939", target_os = "linux")
+))]
+pub(super) fn mapped_protocol_json<'a>(
+    base: &'a Point,
+    _protocol: &str,
+) -> GatewayResult<Option<&'a str>> {
+    let Some(mapping) = base.protocol_mappings.as_deref() else {
+        return Ok(None);
+    };
+    if mapping
+        .bytes()
+        .filter(|byte| !byte.is_ascii_whitespace())
+        .eq(b"null".iter().copied())
+        || mapping
+            .bytes()
+            .filter(|byte| !byte.is_ascii_whitespace())
+            .eq(b"{}".iter().copied())
+    {
+        return Ok(None);
+    }
+    Ok(Some(mapping))
+}
+
+#[cfg(any(
+    feature = "modbus",
+    feature = "iec104",
+    feature = "opcua",
+    feature = "ble",
+    feature = "zigbee"
+))]
+fn convert_mapped_points<P: PointConvertible, T>(
     points: &[P],
-    addr_fn: &impl Fn(&Point) -> Option<ProtocolAddress>,
-) -> Vec<PointConfig> {
+    protocol: &str,
+    build: &impl Fn(u32, PointType, TransformConfig, &str) -> GatewayResult<T>,
+) -> GatewayResult<Vec<T>> {
     points
         .iter()
-        .filter_map(|pt| {
-            let addr = addr_fn(pt.base())?;
-            Some(
-                PointConfig::new(pt.base().point_id, P::point_type(), addr)
-                    .with_name(&pt.base().signal_name)
-                    .with_transform(pt.transform()),
-            )
+        .filter_map(|point| {
+            let base = point.base();
+            match mapped_protocol_json(base, protocol) {
+                Ok(Some(mapping)) => Some(
+                    build(base.point_id, P::point_type(), point.transform(), mapping).map_err(
+                        |error| {
+                            GatewayError::Config(format!(
+                                "invalid {protocol} mapping for point {}: {error}",
+                                base.point_id
+                            ))
+                        },
+                    ),
+                ),
+                Ok(None) => None,
+                Err(error) => Some(Err(error)),
+            }
         })
         .collect()
 }
 
-/// Collect PointConfigs from all four point types on a RuntimeChannelConfig.
-fn convert_all_points(
-    rc: &RuntimeChannelConfig,
-    addr_fn: &impl Fn(&Point) -> Option<ProtocolAddress>,
-) -> Vec<PointConfig> {
-    let mut configs = convert_points(&rc.telemetry_points, addr_fn);
-    configs.extend(convert_points(&rc.signal_points, addr_fn));
-    configs.extend(convert_points(&rc.control_points, addr_fn));
-    configs.extend(convert_points(&rc.adjustment_points, addr_fn));
-    configs
+#[cfg(feature = "ble")]
+fn convert_mapped_control_points<T>(
+    points: &[ControlPoint],
+    protocol: &str,
+    build: &impl Fn(u32, TransformConfig, u16, u16, &str) -> GatewayResult<T>,
+) -> GatewayResult<Vec<T>> {
+    points
+        .iter()
+        .filter_map(|point| {
+            let base = &point.base;
+            match mapped_protocol_json(base, protocol) {
+                Ok(Some(mapping)) => Some(
+                    build(
+                        base.point_id,
+                        point.transform(),
+                        point.on_value,
+                        point.off_value,
+                        mapping,
+                    )
+                    .map_err(|error| {
+                        GatewayError::Config(format!(
+                            "invalid {protocol} mapping for point {}: {error}",
+                            base.point_id
+                        ))
+                    }),
+                ),
+                Ok(None) => None,
+                Err(error) => Some(Err(error)),
+            }
+        })
+        .collect()
+}
+
+#[cfg(any(
+    feature = "modbus",
+    feature = "iec104",
+    feature = "opcua",
+    feature = "ble",
+    feature = "zigbee"
+))]
+fn convert_all_mapped_points<T>(
+    runtime_config: &RuntimeChannelConfig,
+    protocol: &str,
+    build: &impl Fn(u32, PointType, TransformConfig, &str) -> GatewayResult<T>,
+) -> GatewayResult<Vec<T>> {
+    let capacity = runtime_config.telemetry_points.len()
+        + runtime_config.signal_points.len()
+        + runtime_config.control_points.len()
+        + runtime_config.adjustment_points.len();
+    let mut configs = Vec::with_capacity(capacity);
+    configs.extend(convert_mapped_points(
+        &runtime_config.telemetry_points,
+        protocol,
+        build,
+    )?);
+    configs.extend(convert_mapped_points(
+        &runtime_config.signal_points,
+        protocol,
+        build,
+    )?);
+    configs.extend(convert_mapped_points(
+        &runtime_config.control_points,
+        protocol,
+        build,
+    )?);
+    configs.extend(convert_mapped_points(
+        &runtime_config.adjustment_points,
+        protocol,
+        build,
+    )?);
+    Ok(configs)
+}
+
+#[cfg(feature = "iec104")]
+pub fn convert_to_iec104_point_configs(
+    runtime_config: &RuntimeChannelConfig,
+) -> GatewayResult<Vec<PointConfig<Iec104Address>>> {
+    convert_all_mapped_points(
+        runtime_config,
+        "IEC 104",
+        &|id, point_type, transform, mapping| {
+            crate::protocols::adapters::iec104::parse_point_mapping(mapping)
+                .map(|address| PointConfig::new(id, point_type, address).with_transform(transform))
+        },
+    )
+}
+
+#[cfg(feature = "opcua")]
+pub fn convert_to_opcua_point_configs(
+    runtime_config: &RuntimeChannelConfig,
+) -> GatewayResult<Vec<PointConfig<OpcUaAddress>>> {
+    convert_all_mapped_points(
+        runtime_config,
+        "OPC UA",
+        &|id, point_type, transform, mapping| {
+            crate::protocols::adapters::opcua::parse_point_mapping(mapping)
+                .map(|address| PointConfig::new(id, point_type, address).with_transform(transform))
+        },
+    )
+}
+
+#[cfg(feature = "ble")]
+pub(crate) fn convert_to_ble_point_configs(
+    runtime_config: &RuntimeChannelConfig,
+) -> GatewayResult<Vec<crate::protocols::adapters::ble::BlePointConfig>> {
+    use crate::protocols::adapters::ble::BlePointConfig;
+
+    let mut configs = convert_mapped_points(
+        &runtime_config.telemetry_points,
+        "BLE",
+        &BlePointConfig::from_mapping,
+    )?;
+    configs.extend(convert_mapped_points(
+        &runtime_config.signal_points,
+        "BLE",
+        &BlePointConfig::from_mapping,
+    )?);
+    configs.extend(convert_mapped_control_points(
+        &runtime_config.control_points,
+        "BLE",
+        &BlePointConfig::from_control_mapping,
+    )?);
+    configs.extend(convert_mapped_points(
+        &runtime_config.adjustment_points,
+        "BLE",
+        &BlePointConfig::from_mapping,
+    )?);
+    Ok(configs)
+}
+
+#[cfg(feature = "zigbee")]
+pub(crate) fn convert_to_zigbee_point_configs(
+    runtime_config: &RuntimeChannelConfig,
+) -> GatewayResult<Vec<crate::protocols::adapters::zigbee::ZigbeePointConfig>> {
+    use crate::protocols::adapters::zigbee::ZigbeePointConfig;
+
+    convert_all_mapped_points(runtime_config, "Zigbee", &ZigbeePointConfig::from_mapping)
 }
 
 // ============================================================================
@@ -139,190 +366,61 @@ fn convert_all_points(
 ///
 /// Each PointConfig carries an explicit `point_type` field for routing.
 #[cfg(feature = "modbus")]
-pub fn convert_to_modbus_point_configs(runtime_config: &RuntimeChannelConfig) -> Vec<PointConfig> {
-    // Helper to parse modbus config from protocol_mappings JSON
-    // Returns: (slave_id, function_code, register, data_type, byte_order, bit_position)
-    fn parse_modbus_mapping(
-        json_str: &str,
-        point_id: u32,
-    ) -> Option<(u8, u8, u16, String, String, Option<u8>)> {
-        let v: serde_json::Value = match serde_json::from_str(json_str) {
-            Ok(v) => v,
-            Err(e) => {
-                warn!(
-                    "Point {} has invalid protocol_mappings JSON: {}",
-                    point_id, e
-                );
-                return None;
-            },
-        };
+pub fn convert_to_modbus_point_configs(
+    runtime_config: &RuntimeChannelConfig,
+) -> GatewayResult<Vec<PointConfig<ModbusAddress>>> {
+    convert_all_mapped_points(
+        runtime_config,
+        "Modbus",
+        &|id, point_type, transform, mapping| {
+            parse_modbus_mapping(id, point_type, mapping)
+                .map(|address| PointConfig::new(id, point_type, address).with_transform(transform))
+        },
+    )
+}
 
-        if !v.is_object() {
-            warn!(
-                "Point {} has invalid protocol_mappings (expected JSON object): {}",
-                point_id, v
-            );
-            return None;
-        }
-
-        fn parse_u64_field(v: &serde_json::Value, key: &str) -> Option<u64> {
-            let raw = v.get(key)?;
-            raw.as_u64()
-                .or_else(|| raw.as_i64().and_then(|n| u64::try_from(n).ok()))
-                .or_else(|| raw.as_str().and_then(|s| s.parse::<u64>().ok()))
-        }
-
-        let slave_id: u8 = match parse_u64_field(&v, "slave_id").and_then(|n| u8::try_from(n).ok())
-        {
-            Some(n) => n,
-            None => {
-                warn!(
-                    "Point {} protocol_mappings missing/invalid 'slave_id': {}",
-                    point_id, v
-                );
-                return None;
-            },
-        };
-
-        let function_code: u8 =
-            match parse_u64_field(&v, "function_code").and_then(|n| u8::try_from(n).ok()) {
-                Some(n) => n,
-                None => {
-                    warn!(
-                        "Point {} protocol_mappings missing/invalid 'function_code': {}",
-                        point_id, v
-                    );
-                    return None;
-                },
-            };
-
-        let register: u16 =
-            match parse_u64_field(&v, "register_address").and_then(|n| u16::try_from(n).ok()) {
-                Some(n) => n,
-                None => {
-                    warn!(
-                        "Point {} protocol_mappings missing/invalid 'register_address': {}",
-                        point_id, v
-                    );
-                    return None;
-                },
-            };
-
-        Some((
-            slave_id,
-            function_code,
-            register,
-            v.get("data_type")
-                .and_then(|x| x.as_str())
-                .unwrap_or("uint16")
-                .to_string(),
-            v.get("byte_order")
-                .and_then(|x| x.as_str())
-                .unwrap_or("ABCD")
-                .to_string(),
-            // bit_position: None means not set, Some(0) means bit 0
-            parse_u64_field(&v, "bit_position").and_then(|n| u8::try_from(n).ok()),
+#[cfg(feature = "modbus")]
+fn parse_modbus_mapping(
+    point_id: u32,
+    point_type: PointType,
+    mapping: &str,
+) -> GatewayResult<ModbusAddress> {
+    let value: serde_json::Value = serde_json::from_str(mapping).map_err(|error| {
+        GatewayError::Config(format!(
+            "invalid Modbus mapping JSON for point {point_id}: {error}"
         ))
-    }
-
-    convert_all_points(runtime_config, &|base: &Point| {
-        let json = base.protocol_mappings.as_ref()?;
-        let (slave_id, fc, reg, dt, bo, bp) = parse_modbus_mapping(json, base.point_id)?;
-        Some(ProtocolAddress::Modbus(ModbusAddress {
-            slave_id,
-            function_code: fc,
-            register: reg,
-            format: parse_data_format(&dt),
-            byte_order: parse_byte_order(&bo),
-            bit_position: bp,
-        }))
-    })
-}
-
-/// Parse data format string to DataFormat enum.
-#[cfg(feature = "modbus")]
-pub fn parse_data_format(s: &str) -> DataFormat {
-    match s.to_lowercase().as_str() {
-        "bool" | "boolean" => DataFormat::Bool,
-        "uint16" | "u16" => DataFormat::UInt16,
-        "int16" | "i16" => DataFormat::Int16,
-        "uint32" | "u32" => DataFormat::UInt32,
-        "int32" | "i32" => DataFormat::Int32,
-        "float32" | "f32" | "float" => DataFormat::Float32,
-        "float64" | "f64" | "double" => DataFormat::Float64,
-        "uint64" | "u64" => DataFormat::UInt64,
-        "int64" | "i64" => DataFormat::Int64,
-        _ => DataFormat::UInt16, // Default
-    }
-}
-
-/// Parse byte order string to ByteOrder enum.
-#[cfg(feature = "modbus")]
-pub fn parse_byte_order(s: &str) -> ByteOrder {
-    match s.to_uppercase().as_str() {
-        "ABCD" | "BIG_ENDIAN" | "BE" => ByteOrder::Abcd,
-        "DCBA" | "LITTLE_ENDIAN" | "LE" => ByteOrder::Dcba,
-        "BADC" | "WORD_SWAP" => ByteOrder::Badc,
-        "CDAB" | "BYTE_SWAP" => ByteOrder::Cdab,
-        _ => ByteOrder::Abcd, // Default to big-endian
-    }
+    })?;
+    crate::protocols::adapters::modbus::parse_point_mapping(point_type, point_id, &value)
 }
 
 // ============================================================================
 // CAN Point Conversion
 // ============================================================================
 
-/// CAN protocol mapping from protocol_mappings JSON field
-#[cfg(all(feature = "can", target_os = "linux"))]
-#[derive(Debug, Clone, serde::Deserialize)]
-struct CanProtocolMapping {
-    can_id: u32,
-    start_bit: u32,
-    bit_length: u32,
-    #[serde(default)]
-    data_type: CanDataType,
-    #[serde(default = "default_scale")]
-    scale: f64,
-    #[serde(default)]
-    offset: f64,
-}
-
-#[cfg(all(feature = "can", target_os = "linux"))]
-fn default_scale() -> f64 {
-    1.0
-}
-
 /// Collect CanPoints from a slice of typed points.
 #[cfg(all(feature = "can", target_os = "linux"))]
-fn collect_can_points<P: PointConvertible>(points: &[P]) -> Vec<CanPoint> {
+fn collect_can_points<P: PointConvertible>(points: &[P]) -> GatewayResult<Vec<CanPoint>> {
     points
         .iter()
         .filter_map(|pt| {
-            let json_str = pt.base().protocol_mappings.as_ref()?;
-            let mapping: CanProtocolMapping = serde_json::from_str(json_str)
-                .map_err(|e| {
-                    tracing::warn!(
-                        point_id = pt.base().point_id,
-                        point_type = ?P::point_type(),
-                        error = %e,
-                        "Failed to parse CAN protocol_mappings JSON"
-                    );
-                    e
-                })
-                .ok()?;
-            Some(CanPoint {
-                point_id: pt.base().point_id,
-                point_type: P::point_type(),
-                can_id: mapping.can_id,
-                byte_offset: (mapping.start_bit / 8) as u8,
-                bit_position: (mapping.start_bit % 8) as u8,
-                bit_length: mapping.bit_length as u8,
-                data_type: mapping.data_type,
-                scale: mapping.scale,
-                offset: mapping.offset,
-            })
+            let base = pt.base();
+            match mapped_protocol_json(base, "CAN") {
+                Ok(Some(mapping)) => {
+                    Some(parse_can_mapping(base.point_id, P::point_type(), mapping))
+                },
+                Ok(None) => None,
+                Err(error) => Some(Err(error)),
+            }
         })
         .collect()
+}
+
+#[cfg(all(feature = "can", target_os = "linux"))]
+fn parse_can_mapping(point_id: u32, point_type: PointType, raw: &str) -> GatewayResult<CanPoint> {
+    let mapping = serde_json::from_str(raw).map_err(|error| {
+        GatewayError::Config(format!("invalid CAN mapping for point {point_id}: {error}"))
+    })?;
+    crate::protocols::adapters::can::config::parse_point_mapping(&mapping, point_type, point_id)
 }
 
 /// Convert RuntimeChannelConfig to CanPoint list for CAN protocol.
@@ -330,29 +428,14 @@ fn collect_can_points<P: PointConvertible>(points: &[P]) -> Vec<CanPoint> {
 /// Parses CAN configuration from each point's protocol_mappings JSON field.
 /// Scale and offset are applied during decoding in the protocol layer.
 #[cfg(all(feature = "can", target_os = "linux"))]
-pub fn convert_to_can_point_configs(runtime_config: &RuntimeChannelConfig) -> Vec<CanPoint> {
-    let mut configs = collect_can_points(&runtime_config.telemetry_points);
-    configs.extend(collect_can_points(&runtime_config.signal_points));
-    configs.extend(collect_can_points(&runtime_config.control_points));
-    configs.extend(collect_can_points(&runtime_config.adjustment_points));
-    configs
-}
-
-/// Convert runtime CAN mappings to point configuration metadata.
-///
-/// This conversion is used to register points with the data store for proper
-/// data transformation and storage.
-/// Parses CAN configuration from each point's protocol_mappings JSON field.
-#[cfg(all(feature = "can", target_os = "linux"))]
-pub fn convert_can_to_point_configs(runtime_config: &RuntimeChannelConfig) -> Vec<PointConfig> {
-    convert_all_points(runtime_config, &|base: &Point| {
-        let json_str = base.protocol_mappings.as_ref()?;
-        let mapping: CanProtocolMapping = serde_json::from_str(json_str).ok()?;
-        Some(ProtocolAddress::Generic(format!(
-            "can_id:0x{:X},start_bit:{},len:{}",
-            mapping.can_id, mapping.start_bit, mapping.bit_length
-        )))
-    })
+pub fn convert_to_can_point_configs(
+    runtime_config: &RuntimeChannelConfig,
+) -> GatewayResult<Vec<CanPoint>> {
+    let mut configs = collect_can_points(&runtime_config.telemetry_points)?;
+    configs.extend(collect_can_points(&runtime_config.signal_points)?);
+    configs.extend(collect_can_points(&runtime_config.control_points)?);
+    configs.extend(collect_can_points(&runtime_config.adjustment_points)?);
+    Ok(configs)
 }
 
 // ============================================================================
@@ -362,8 +445,30 @@ pub fn convert_can_to_point_configs(runtime_config: &RuntimeChannelConfig) -> Ve
 #[cfg(test)]
 #[allow(clippy::disallowed_methods)] // Test code - unwrap is acceptable
 mod tests {
+    #[cfg(any(
+        feature = "modbus",
+        feature = "ble",
+        feature = "zigbee",
+        all(feature = "can", target_os = "linux")
+    ))]
     use super::*;
+    #[cfg(feature = "ble")]
+    use crate::core::config::ControlPoint;
+    #[cfg(any(
+        feature = "modbus",
+        feature = "ble",
+        feature = "zigbee",
+        all(feature = "can", target_os = "linux")
+    ))]
     use crate::core::config::{ChannelConfig, ChannelCore, Point, SignalPoint, TelemetryPoint};
+    #[cfg(feature = "modbus")]
+    use crate::protocols::core::point::{ByteOrder, DataFormat};
+    #[cfg(any(
+        feature = "modbus",
+        feature = "ble",
+        feature = "zigbee",
+        all(feature = "can", target_os = "linux")
+    ))]
     use std::collections::HashMap;
 
     #[test]
@@ -390,7 +495,7 @@ mod tests {
                 signal_name: "voltage".to_string(),
                 description: None,
                 unit: Some("V".to_string()),
-                protocol_mappings: Some(r#"{"slave_id":1,"function_code":3,"register_address":0,"data_type":"float32","byte_order":"ABCD"}"#.to_string()),
+                protocol_mappings: Some(r#"{"slave_id":"1","function_code":"3","register_address":"0","data_type":"F32","byte_order":"big_endian"}"#.to_string()),
             },
             scale: 1.0,
             offset: 0.0,
@@ -412,7 +517,7 @@ mod tests {
 
         use aether_core::PointType;
 
-        let configs = convert_to_modbus_point_configs(&runtime_config);
+        let configs = convert_to_modbus_point_configs(&runtime_config).unwrap();
 
         assert_eq!(configs.len(), 2);
 
@@ -421,48 +526,222 @@ mod tests {
             .iter()
             .find(|c| c.id == 100 && c.point_type == PointType::Telemetry)
             .unwrap();
-        if let ProtocolAddress::Modbus(addr) = &pt1.address {
-            assert_eq!(addr.slave_id, 1);
-            assert_eq!(addr.function_code, 3);
-            assert_eq!(addr.register, 0);
-            assert_eq!(addr.format, DataFormat::Float32);
-            assert_eq!(addr.byte_order, ByteOrder::Abcd);
-        } else {
-            panic!("Expected ModbusAddress");
-        }
+        let addr = &pt1.address;
+        assert_eq!(addr.slave_id, 1);
+        assert_eq!(addr.function_code, 3);
+        assert_eq!(addr.register, 0);
+        assert_eq!(addr.format, DataFormat::Float32);
+        assert_eq!(addr.byte_order, ByteOrder::Abcd);
 
         // Check second point (signal, bool with bit_position) - uses original point_id and explicit point_type
         let pt2 = configs
             .iter()
             .find(|c| c.id == 101 && c.point_type == PointType::Signal)
             .unwrap();
-        if let ProtocolAddress::Modbus(addr) = &pt2.address {
-            assert_eq!(addr.slave_id, 1);
-            assert_eq!(addr.function_code, 1);
-            assert_eq!(addr.register, 10);
-            assert_eq!(addr.format, DataFormat::Bool);
-            assert_eq!(addr.bit_position, Some(5));
-        } else {
-            panic!("Expected ModbusAddress");
+        let addr = &pt2.address;
+        assert_eq!(addr.slave_id, 1);
+        assert_eq!(addr.function_code, 1);
+        assert_eq!(addr.register, 10);
+        assert_eq!(addr.format, DataFormat::Bool);
+        assert_eq!(addr.bit_position, Some(5));
+    }
+
+    #[test]
+    #[cfg(feature = "modbus")]
+    fn modbus_conversion_skips_only_canonical_unmapped_rows_and_fails_closed() {
+        let base_config = ChannelConfig {
+            core: ChannelCore {
+                id: 1,
+                name: "strict_modbus".to_string(),
+                description: None,
+                protocol: "modbus_tcp".to_string(),
+                enabled: true,
+            },
+            parameters: HashMap::new(),
+            logging: Default::default(),
+        };
+        let mut runtime_config = RuntimeChannelConfig::from_base(base_config);
+        for (point_id, mapping) in [
+            (1, None),
+            (2, Some("null")),
+            (3, Some("{}")),
+            (4, Some(r#"{"slave_id":1"#)),
+        ] {
+            runtime_config.telemetry_points.push(TelemetryPoint {
+                base: Point {
+                    point_id,
+                    signal_name: format!("point-{point_id}"),
+                    description: None,
+                    unit: None,
+                    protocol_mappings: mapping.map(str::to_string),
+                },
+                scale: 1.0,
+                offset: 0.0,
+                data_type: "float64".to_string(),
+                reverse: false,
+            });
         }
+
+        assert!(convert_to_modbus_point_configs(&runtime_config).is_err());
+        runtime_config.telemetry_points.pop();
+        assert!(
+            convert_to_modbus_point_configs(&runtime_config)
+                .unwrap()
+                .is_empty()
+        );
     }
 
+    #[cfg(all(feature = "can", target_os = "linux"))]
     #[test]
-    #[cfg(feature = "modbus")]
-    fn test_parse_data_format() {
-        assert_eq!(parse_data_format("bool"), DataFormat::Bool);
-        assert_eq!(parse_data_format("FLOAT32"), DataFormat::Float32);
-        assert_eq!(parse_data_format("uint16"), DataFormat::UInt16);
-        assert_eq!(parse_data_format("Int32"), DataFormat::Int32);
+    fn can_conversion_uses_the_adapter_owned_strict_codec() {
+        let base_config = ChannelConfig {
+            core: ChannelCore {
+                id: 1,
+                name: "strict_can".to_string(),
+                description: None,
+                protocol: "can".to_string(),
+                enabled: true,
+            },
+            parameters: HashMap::new(),
+            logging: Default::default(),
+        };
+        let mut runtime_config = RuntimeChannelConfig::from_base(base_config);
+        runtime_config.telemetry_points.push(TelemetryPoint {
+            base: Point {
+                point_id: 20,
+                signal_name: "voltage".to_string(),
+                description: None,
+                unit: Some("V".to_string()),
+                protocol_mappings: Some(
+                    r#"{"can_id":"0x351","start_bit":0,"bit_length":16}"#.to_string(),
+                ),
+            },
+            scale: 1.0,
+            offset: 0.0,
+            data_type: "uint16".to_string(),
+            reverse: false,
+        });
+
+        let points = convert_to_can_point_configs(&runtime_config).unwrap();
+        assert_eq!(points.len(), 1);
+        assert_eq!(points[0].point_id, 20);
+        assert_eq!(points[0].can_id, 0x351);
+
+        runtime_config.telemetry_points[0].base.protocol_mappings =
+            Some(r#"{"can_id":"0x351","start_bit":0,"bit_length":16,"unknown":true}"#.to_string());
+        assert!(convert_to_can_point_configs(&runtime_config).is_err());
     }
 
+    #[cfg(feature = "ble")]
+    fn control_runtime(protocol: &str, mapping: &str) -> RuntimeChannelConfig {
+        let base_config = ChannelConfig {
+            core: ChannelCore {
+                id: 1,
+                name: format!("test_{protocol}"),
+                description: None,
+                protocol: protocol.to_string(),
+                enabled: true,
+            },
+            parameters: HashMap::new(),
+            logging: Default::default(),
+        };
+        let mut runtime_config = RuntimeChannelConfig::from_base(base_config);
+        runtime_config.control_points.push(ControlPoint {
+            base: Point {
+                point_id: 7,
+                signal_name: "switch".to_string(),
+                description: None,
+                unit: None,
+                protocol_mappings: Some(mapping.to_string()),
+            },
+            reverse: true,
+            control_type: "latching".to_string(),
+            on_value: 17,
+            off_value: 4,
+            pulse_duration_ms: None,
+        });
+        runtime_config
+    }
+
+    #[cfg(feature = "ble")]
     #[test]
-    #[cfg(feature = "modbus")]
-    fn test_parse_byte_order() {
-        assert_eq!(parse_byte_order("ABCD"), ByteOrder::Abcd);
-        assert_eq!(parse_byte_order("big_endian"), ByteOrder::Abcd);
-        assert_eq!(parse_byte_order("CDAB"), ByteOrder::Cdab);
-        assert_eq!(parse_byte_order("DCBA"), ByteOrder::Dcba);
+    fn ble_conversion_carries_control_values() {
+        let mut runtime_config = control_runtime(
+            "ble",
+            r#"{"service_uuid":"180f","characteristic_uuid":"2a19"}"#,
+        );
+        assert_eq!(
+            convert_to_ble_point_configs(&runtime_config).unwrap().len(),
+            1
+        );
+        runtime_config.control_points[0].off_value = 17;
+        assert!(convert_to_ble_point_configs(&runtime_config).is_err());
+    }
+
+    #[cfg(feature = "zigbee")]
+    #[test]
+    fn zigbee_conversion_skips_unmapped_points_and_rejects_commands() {
+        let base_config = ChannelConfig {
+            core: ChannelCore {
+                id: 1,
+                name: "test_zigbee".to_string(),
+                description: None,
+                protocol: "zigbee".to_string(),
+                enabled: true,
+            },
+            parameters: HashMap::new(),
+            logging: Default::default(),
+        };
+        let mut runtime_config = RuntimeChannelConfig::from_base(base_config);
+        runtime_config.telemetry_points.push(TelemetryPoint {
+            base: Point {
+                point_id: 1,
+                signal_name: "unmapped".to_string(),
+                description: None,
+                unit: None,
+                protocol_mappings: None,
+            },
+            scale: 1.0,
+            offset: 0.0,
+            data_type: "float64".to_string(),
+            reverse: false,
+        });
+        runtime_config.signal_points.push(SignalPoint {
+            base: Point {
+                point_id: 2,
+                signal_name: "empty".to_string(),
+                description: None,
+                unit: None,
+                protocol_mappings: Some("{}".to_string()),
+            },
+            reverse: false,
+        });
+        assert!(
+            convert_to_zigbee_point_configs(&runtime_config)
+                .unwrap()
+                .is_empty()
+        );
+
+        runtime_config
+            .control_points
+            .push(crate::core::config::ControlPoint {
+                base: Point {
+                    point_id: 3,
+                    signal_name: "command".to_string(),
+                    description: None,
+                    unit: None,
+                    protocol_mappings: Some(
+                        r#"{"ieee_address":1,"endpoint":1,"cluster_id":6,"attribute_id":0}"#
+                            .to_string(),
+                    ),
+                },
+                reverse: false,
+                control_type: "latching".to_string(),
+                on_value: 1,
+                off_value: 0,
+                pulse_duration_ms: None,
+            });
+        assert!(convert_to_zigbee_point_configs(&runtime_config).is_err());
     }
 
     /// Test the specific internal_id encoding for all four point types.

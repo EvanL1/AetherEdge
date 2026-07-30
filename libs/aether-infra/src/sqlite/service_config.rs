@@ -7,6 +7,7 @@ use tracing::{debug, info};
 
 /// Service configuration loader for SQLite-based config management
 /// Each service has its own SQLite database with configuration
+#[derive(Clone)]
 pub struct ServiceConfigLoader {
     pool: SqlitePool,
     service_name: String,
@@ -53,11 +54,17 @@ impl ServiceConfigLoader {
             service_name, db_path
         );
 
-        Ok(Self {
+        Ok(Self::from_pool(pool, service_name, default_port))
+    }
+
+    /// Create a service config loader from an existing SQLite pool.
+    #[must_use]
+    pub fn from_pool(pool: SqlitePool, service_name: impl Into<String>, default_port: u16) -> Self {
+        Self {
             pool,
-            service_name,
+            service_name: service_name.into(),
             default_port,
-        })
+        }
     }
 
     /// Initialize database schema for service configuration

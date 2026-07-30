@@ -8,8 +8,8 @@ use serde::Deserialize;
 use syn::punctuated::Punctuated;
 use syn::visit::{self, Visit};
 use syn::{
-    Attribute, Expr, ExprPath, Ident, ImplItemFn, Item, ItemEnum, ItemImpl, ItemUse, Lit, Meta,
-    Token, UseTree,
+    Attribute, Expr, ExprPath, Ident, ImplItemFn, Item, ItemEnum, ItemImpl, ItemStruct, ItemTrait,
+    ItemUse, Lit, Meta, Token, UseTree,
 };
 
 const AUTOMATION_CONFIGURATION_TABLES: &[&str] = &[
@@ -61,14 +61,57 @@ const LEGACY_PRODUCT_SYMBOLS: &[&str] = &[
     "builtin_only",
 ];
 const RETIRED_IO_SYMBOLS: &[&str] = &[
+    "AppConfig",
+    "BatchCommand",
+    "CanAddress",
+    "ChannelBuildResult",
+    "ChannelMode",
+    "ChannelModeConfig",
+    "ChannelStatus",
+    "CommandBatcher",
+    "ConfigManager",
+    "DataEventHandler",
+    "DataSlot",
+    "Dl645Address",
+    "ErrorExt",
+    "ExtendedPointData",
+    "GatewayConfig",
+    "GatewayGlobalConfig",
+    "GpioAddress",
+    "MatterAddress",
+    "MatterChannel",
+    "MatterConfig",
+    "MatterParamsConfig",
+    "ModbusChannelParamsConfig",
     "NetworkConfigUpdateRequest",
     "NetworkInterfaceConfig",
+    "PointData",
+    "PointDataMap",
+    "PointDef",
+    "PollingConfig",
+    "ProtocolAddress",
+    "ProtocolValue",
+    "ProtocolServer",
+    "RuntimeIoConfig",
     "ScriptRunner",
+    "SharedJsonMapper",
+    "ShardedSlotStore",
+    "SlotStore",
+    "TelemetryBatch",
+    "TestChannelParams",
     "VirtualAddress",
     "VirtualChannel",
     "VirtualMapping",
+    "WebhookHandler",
+    "WritePointRequest",
+    "data_store",
+    "device_id_path",
     "network_handlers",
+    "run_automatic_io_reconciliation",
+    "simulation_writes_enabled",
+    "start_communication_service",
     "transform_script",
+    "write_channel_point",
 ];
 
 #[derive(Debug, Deserialize)]
@@ -201,6 +244,18 @@ impl BoundaryVisitor<'_> {
             .is_some_and(|module| module == "api")
     }
 
+    fn in_io_protocol_adapter(&self) -> bool {
+        self.package_name == "aether-io"
+            && self
+                .module_path
+                .get(0)
+                .is_some_and(|module| module == "protocols")
+            && self
+                .module_path
+                .get(1)
+                .is_some_and(|module| module == "adapters")
+    }
+
     fn record(&mut self, detail: impl AsRef<str>) {
         let source = self
             .source
@@ -308,6 +363,41 @@ impl BoundaryVisitor<'_> {
                 "production IO restored retired symbol {identifier}"
             ));
         }
+        if self.package_name == "aether" && identifier == "channels_write" {
+            self.record("CLI/MCP restored direct acquisition live-state injection");
+        }
+        if self.in_io_protocol_adapter() && identifier == "sqlx" {
+            self.record(
+                "protocol adapter restored SQLite ownership; consume the immutable runtime snapshot",
+            );
+        }
+        if self.package_name == "aether-config"
+            && matches!(
+                identifier,
+                "RuntimeChannelConfig"
+                    | "ModbusMapping"
+                    | "GpioMapping"
+                    | "IecMapping"
+                    | "GrpcMapping"
+                    | "CanMapping"
+            )
+        {
+            self.record(format!(
+                "shared configuration restored IO-owned runtime or protocol DTO {identifier}"
+            ));
+        }
+        if self.package_name == "aether-config"
+            && matches!(
+                identifier,
+                "supported_protocols"
+                    | "validate_required_string_parameter"
+                    | "validate_required_integer_parameter"
+            )
+        {
+            self.record(format!(
+                "shared configuration restored protocol-specific IO policy {identifier}"
+            ));
+        }
     }
 
     fn inspect_call_name(&mut self, name: &str) {
@@ -350,6 +440,12 @@ impl<'ast> Visit<'ast> for BoundaryVisitor<'_> {
             self.record(format!(
                 "production IO restored retired host surface {value:?}"
             ));
+        }
+        if matches!(self.package_name, "aether-io" | "aether")
+            && (value == "AETHER_ALLOW_SIMULATION_WRITES"
+                || (value.contains("/api/channels/") && value.contains("/write")))
+        {
+            self.record("production surface restored direct acquisition live-state injection");
         }
         visit::visit_lit_str(self, literal);
     }
@@ -430,16 +526,101 @@ impl<'ast> Visit<'ast> for BoundaryVisitor<'_> {
         visit::visit_item_enum(self, node);
     }
 
+    fn visit_item_struct(&mut self, node: &'ast ItemStruct) {
+        if self.package_name == "aether-io" {
+            if node.ident == "ChannelManager"
+                && node
+                    .fields
+                    .iter()
+                    .filter_map(|field| field.ident.as_ref())
+                    .any(|field| field == "sqlite_pool")
+            {
+                self.record(
+                    "ChannelManager restored SQLite ownership; load complete snapshots before activation",
+                );
+            }
+            if node.ident == "PointConfig" {
+                for field in node.fields.iter().filter_map(|field| field.ident.as_ref()) {
+                    if matches!(
+                        field.to_string().as_str(),
+                        "name" | "poll_group" | "enabled"
+                    ) {
+                        self.record(format!(
+                            "PointConfig restored unused field {field}; protocol adapters own mapping metadata"
+                        ));
+                    }
+                }
+            }
+            if node.ident == "StoredChannelConfig" {
+                self.record(
+                    "IO restored a duplicate channels.config payload model; use aether-config's persisted codec",
+                );
+            }
+            let retired_fields: &[&str] = match node.ident.to_string().as_str() {
+                "BleParamsConfig" => &["mtu", "reconnect_interval_ms"],
+                "HttpParamsConfig" => &[
+                    "mode",
+                    "listen_path",
+                    "auth_token",
+                    "retry_delay_ms",
+                    "interval_ms",
+                    "max_retries",
+                ],
+                "J1939Config" => &["our_address", "pgn_list", "request_interval_ms"],
+                "MqttParamsConfig" => &[
+                    "connect_timeout_ms",
+                    "max_reconnect_attempts",
+                    "reconnect_delay_ms",
+                ],
+                "ZigbeeParamsConfig" => &[
+                    "gateway_type",
+                    "pan_id",
+                    "channel",
+                    "permit_join_on_start",
+                    "reconnect_interval_ms",
+                ],
+                _ => &[],
+            };
+            for field in node.fields.iter().filter_map(|field| field.ident.as_ref()) {
+                if retired_fields.contains(&field.to_string().as_str()) {
+                    self.record(format!(
+                        "{} restored retired no-effect field {field}",
+                        node.ident
+                    ));
+                }
+            }
+        }
+        visit::visit_item_struct(self, node);
+    }
+
+    fn visit_item_trait(&mut self, node: &'ast ItemTrait) {
+        if self.package_name == "aether-io" {
+            for item in &node.items {
+                let syn::TraitItem::Fn(method) = item else {
+                    continue;
+                };
+                let method = method.sig.ident.to_string();
+                let retired = (node.ident == "ChannelRuntime"
+                    && matches!(method.as_str(), "id" | "name" | "protocol" | "log_handler"))
+                    || (node.ident == "EventDrivenProtocol" && method == "set_event_handler");
+                if retired {
+                    self.record(format!("{} restored retired method {method}", node.ident));
+                }
+            }
+        }
+        visit::visit_item_trait(self, node);
+    }
+
     fn visit_item_impl(&mut self, node: &'ast ItemImpl) {
-        let is_instance_manager = match &*node.self_ty {
+        let owner = match &*node.self_ty {
             syn::Type::Path(path) => path
                 .path
                 .segments
                 .last()
-                .is_some_and(|segment| segment.ident == "InstanceManager"),
-            _ => false,
+                .map(|segment| segment.ident.to_string()),
+            _ => None,
         };
-        if self.package_name == "aether-automation" && is_instance_manager {
+        if self.package_name == "aether-automation" && owner.as_deref() == Some("InstanceManager") {
             for item in &node.items {
                 if let syn::ImplItem::Fn(method) = item
                     && !has_cfg_test(&method.attrs)
@@ -450,6 +631,66 @@ impl<'ast> Visit<'ast> for BoundaryVisitor<'_> {
                         "InstanceManager restored direct mutation method {}",
                         method.sig.ident
                     ));
+                }
+            }
+        }
+        if self.package_name == "aether-io"
+            && let Some(owner) = owner.as_deref()
+        {
+            for item in &node.items {
+                let syn::ImplItem::Fn(method) = item else {
+                    continue;
+                };
+                if has_cfg_test(&method.attrs) {
+                    continue;
+                }
+                let method = method.sig.ident.to_string();
+                let retired = match owner {
+                    "ChannelEntry" => matches!(method.as_str(), "abort_task" | "is_task_finished"),
+                    "MmsValue" => {
+                        matches!(method.as_str(), "to_f64" | "to_bool" | "to_string_val")
+                    },
+                    "AtomicDiagnostics" => method == "inc_error",
+                    "ChannelFileLogHandler" => method == "add_channel",
+                    "DataPoint" => {
+                        matches!(method.as_str(), "with_quality" | "control" | "adjustment")
+                    },
+                    "ChannelManager" => {
+                        matches!(
+                            method.as_str(),
+                            "cleanup"
+                                | "connect_all_channels"
+                                | "create_data_store"
+                                | "get_channel_metadata"
+                                | "load_channel_configuration"
+                        )
+                    },
+                    "IoSqliteLoader" => matches!(method.as_str(), "new" | "with_pool"),
+                    "RuntimeChannelConfig" => matches!(
+                        method.as_str(),
+                        "get_telemetry_point"
+                            | "get_signal_point"
+                            | "get_control_point"
+                            | "get_adjustment_point"
+                    ),
+                    "PointConfig" => method == "with_name",
+                    "JsonMapper" => method == "from_database",
+                    "MqttChannel" | "HttpChannel" => {
+                        matches!(method.as_str(), "load_mapper" | "run_poll_loop")
+                    },
+                    _ => false,
+                };
+                if retired {
+                    self.record(format!("{owner} restored retired method {method}"));
+                }
+            }
+        }
+        if self.package_name == "aether-config" && owner.as_deref() == Some("ChannelConfig") {
+            for item in &node.items {
+                if let syn::ImplItem::Fn(method) = item
+                    && method.sig.ident == "is_enabled"
+                {
+                    self.record("ChannelConfig restored unused is_enabled accessor");
                 }
             }
         }
@@ -573,7 +814,12 @@ fn production_io_rejects_simulation_host_network_and_subprocess_surfaces() {
         r#"
         use tokio::process::Command;
 
+        struct ConfigManager;
+        struct RuntimeIoConfig;
         struct VirtualChannel;
+
+        async fn run_automatic_io_reconciliation() {}
+        async fn start_communication_service() {}
 
         async fn mutate_host() {
             let _ = Command::new("networkctl").output().await;
@@ -584,7 +830,15 @@ fn production_io_rejects_simulation_host_network_and_subprocess_surfaces() {
         "#,
     );
 
-    for expected in ["subprocess launcher", "VirtualChannel", "networkctl"] {
+    for expected in [
+        "subprocess launcher",
+        "ConfigManager",
+        "RuntimeIoConfig",
+        "VirtualChannel",
+        "networkctl",
+        "run_automatic_io_reconciliation",
+        "start_communication_service",
+    ] {
         assert!(
             violations
                 .iter()
@@ -597,6 +851,375 @@ fn production_io_rejects_simulation_host_network_and_subprocess_surfaces() {
             .iter()
             .all(|violation| !violation.contains("ScriptRunner")),
         "test-only fixtures must stay outside production checks: {violations:#?}"
+    );
+}
+
+#[test]
+fn io_cleanup_boundaries_are_owner_aware() {
+    let violations = inspect_snippet(
+        "aether-io",
+        &[],
+        r#"
+        struct ChannelModeConfig;
+        struct ChannelStatus;
+        struct DataEventHandler;
+        struct Dl645Address;
+        struct MatterChannel;
+        struct ChannelManager { sqlite_pool: () }
+        struct IoSqliteLoader;
+        struct PointConfig {
+            name: Option<String>,
+            poll_group: Option<String>,
+            enabled: bool,
+        }
+        enum ProtocolAddress {}
+        struct StoredChannelConfig;
+        struct ZclValue;
+
+        impl ChannelManager {
+            fn connect_all_channels(&self) {}
+            fn load_channel_configuration(&self) {}
+        }
+
+        impl IoSqliteLoader {
+            fn new() -> Self { Self }
+        }
+
+        impl PointConfig {
+            fn with_name(self) -> Self { self }
+        }
+
+        impl ZclValue {
+            fn to_f64(&self) -> f64 { 0.0 }
+        }
+
+        trait ChannelRuntime {
+            fn id(&self) -> u32;
+            fn name(&self) -> &str;
+            fn protocol(&self) -> &str;
+        }
+
+        trait EventDrivenProtocol {
+            fn set_event_handler(&mut self, handler: DataEventHandler);
+        }
+        "#,
+    );
+
+    for expected in [
+        "ChannelManager restored SQLite ownership",
+        "PointConfig restored unused field name",
+        "PointConfig restored unused field poll_group",
+        "PointConfig restored unused field enabled",
+        "duplicate channels.config payload model",
+        "ChannelManager restored retired method connect_all_channels",
+        "ChannelManager restored retired method load_channel_configuration",
+        "IoSqliteLoader restored retired method new",
+        "PointConfig restored retired method with_name",
+        "ProtocolAddress",
+        "ChannelModeConfig",
+        "ChannelStatus",
+        "DataEventHandler",
+        "Dl645Address",
+        "MatterChannel",
+        "ChannelRuntime restored retired method id",
+        "ChannelRuntime restored retired method name",
+        "ChannelRuntime restored retired method protocol",
+        "EventDrivenProtocol restored retired method set_event_handler",
+    ] {
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains(expected)),
+            "missing {expected:?} violation: {violations:#?}"
+        );
+    }
+    assert!(
+        violations
+            .iter()
+            .all(|violation| !violation.contains("ZclValue")),
+        "active similarly named surfaces must remain allowed: {violations:#?}"
+    );
+
+    let shared_config = inspect_snippet(
+        "aether-config",
+        &[],
+        r#"
+        struct RuntimeChannelConfig;
+        fn validate() {
+            let supported_protocols = ["modbus_tcp"];
+        }
+        "#,
+    );
+    for expected in [
+        "runtime or protocol DTO RuntimeChannelConfig",
+        "supported_protocols",
+    ] {
+        assert!(
+            shared_config
+                .iter()
+                .any(|violation| violation.contains(expected)),
+            "missing {expected:?} violation: {shared_config:#?}"
+        );
+    }
+}
+
+#[test]
+fn io_protocol_adapters_cannot_reclaim_sqlite_or_retired_runtime_fields() {
+    let violations = inspect_snippet(
+        "aether-io",
+        &["protocols", "adapters"],
+        r#"
+        use sqlx::SqlitePool;
+
+        struct J1939Config {
+            pgn_list: Vec<u32>,
+        }
+
+        struct HttpParamsConfig {
+            mode: String,
+        }
+
+        async fn reload(pool: &SqlitePool) {
+            let _ = sqlx::query("SELECT 1").fetch_one(pool).await;
+        }
+        "#,
+    );
+
+    for expected in [
+        "protocol adapter restored SQLite ownership",
+        "J1939Config restored retired no-effect field pgn_list",
+        "HttpParamsConfig restored retired no-effect field mode",
+    ] {
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains(expected)),
+            "missing {expected:?} violation: {violations:#?}"
+        );
+    }
+}
+
+#[test]
+fn polling_adapters_keep_owner_local_state_unshared() {
+    let root = workspace_metadata().workspace_root;
+    for relative in [
+        "services/io/src/protocols/adapters/modbus.rs",
+        "services/io/src/protocols/adapters/gpio.rs",
+        "services/io/src/protocols/adapters/dl645.rs",
+        "services/io/src/protocols/adapters/aether_485.rs",
+    ] {
+        let source = fs::read_to_string(root.join(relative))
+            .unwrap_or_else(|error| panic!("failed to read {relative}: {error}"));
+        assert!(
+            !source.contains("RwLock<ConnectionState>"),
+            "{relative} restored shared connection state despite single-task ownership"
+        );
+    }
+
+    for relative in [
+        "services/io/src/protocols/adapters/dl645.rs",
+        "services/io/src/protocols/adapters/aether_485.rs",
+    ] {
+        let source = fs::read_to_string(root.join(relative))
+            .unwrap_or_else(|error| panic!("failed to read {relative}: {error}"));
+        assert!(
+            !source.contains("Arc<LogContext>"),
+            "{relative} restored an unshared logging allocation"
+        );
+    }
+}
+
+#[test]
+fn persisted_channel_payload_has_one_codec() {
+    let root = workspace_metadata().workspace_root;
+    for relative in [
+        "services/io/src/core/config/sqlite_loader.rs",
+        "services/io/src/channel_mutator.rs",
+        "services/io/src/api/handlers/channel_handlers.rs",
+        "tools/aether/src/core/exporter.rs",
+        "tools/aether/src/core/syncer.rs",
+    ] {
+        let source = fs::read_to_string(root.join(relative))
+            .unwrap_or_else(|error| panic!("failed to read {relative}: {error}"));
+        assert!(
+            source.contains("StoredChannelConfig"),
+            "{relative} bypasses the canonical channels.config payload codec"
+        );
+        if !relative.starts_with("services/io/") {
+            continue;
+        }
+        for retired in [
+            "serde_json::from_str::<StoredChannelConfig",
+            "serde_json::from_value::<StoredChannelConfig",
+            ".remove(\"description\")",
+            ".remove(\"parameters\")",
+            ".remove(\"logging\")",
+            "fn decode_config(",
+            "fn extract_description_from_config(",
+        ] {
+            assert!(
+                !source.contains(retired),
+                "{relative} restored direct channels.config parsing through {retired}"
+            );
+        }
+    }
+
+    let exporter_source =
+        fs::read_to_string(root.join("tools/aether/src/core/exporter.rs")).expect("CLI exporter");
+    let exporter = inspect_named_method(&exporter_source, "export_channels");
+    assert!(
+        exporter.decode && !exporter.direct_json_parse && !exporter.direct_payload_field_access,
+        "CLI export_channels must decode channels.config only through StoredChannelConfig"
+    );
+
+    let syncer_source =
+        fs::read_to_string(root.join("tools/aether/src/core/syncer.rs")).expect("CLI syncer");
+    let syncer = inspect_named_method(&syncer_source, "insert_channels");
+    assert!(
+        syncer.from_value
+            && syncer.encode
+            && !syncer.direct_json_parse
+            && !syncer.direct_payload_field_access,
+        "CLI insert_channels must encode channels.config only through StoredChannelConfig"
+    );
+}
+
+#[test]
+fn io_protocol_factory_registry_is_the_only_runtime_dispatch_table() {
+    let root = workspace_metadata().workspace_root;
+    let factory = fs::read_to_string(root.join("services/io/src/protocols/factory.rs"))
+        .expect("IO protocol factory registry");
+    assert!(
+        factory.contains("struct ProtocolFactory"),
+        "the IO registry must carry runtime factory entries, not metadata alone"
+    );
+    assert!(
+        factory.contains("static PROTOCOL_REGISTRY: LazyLock<ProtocolRegistry>"),
+        "the IO protocol composition must remain one immutable process-wide registry"
+    );
+    assert!(
+        !factory.contains("validate_snapshot_mappings"),
+        "runtime mappings must be compiled once by the selected adapter builder"
+    );
+
+    let creation =
+        fs::read_to_string(root.join("services/io/src/core/channels/channel_creation.rs"))
+            .expect("channel creation source");
+    for retired in [
+        "create_channel_by_protocol",
+        "create_modbus_channel_impl",
+        "create_mqtt_channel_impl",
+        "match protocol_name",
+    ] {
+        assert!(
+            !creation.contains(retired),
+            "ChannelManager restored protocol dispatch through {retired}"
+        );
+    }
+    let manager = fs::read_to_string(root.join("services/io/src/core/channels/channel_manager.rs"))
+        .expect("channel manager source");
+    assert!(
+        manager.contains("lifecycle_in_progress") && manager.contains("reserve_channel_lifecycle"),
+        "channel create/remove must share an atomic per-channel lifecycle reservation"
+    );
+
+    let topology = fs::read_to_string(root.join("services/io/src/point_topology.rs"))
+        .expect("point topology source");
+    assert!(
+        !topology.contains("normalize_protocol_name(protocol)"),
+        "point topology restored a second protocol mapping dispatch table"
+    );
+}
+
+#[test]
+fn io_runtime_snapshot_and_channel_state_keep_single_ownership() {
+    let root = workspace_metadata().workspace_root;
+    let manager = fs::read_to_string(root.join("services/io/src/core/channels/channel_manager.rs"))
+        .expect("channel manager source");
+    for retired in [
+        "sqlite_pool",
+        "load_channel_configuration",
+        "create_data_store",
+        "pub fn data_store",
+        "CommandTxCache",
+    ] {
+        assert!(
+            !manager.contains(retired),
+            "ChannelManager restored duplicate IO ownership through {retired}"
+        );
+    }
+
+    let creation =
+        fs::read_to_string(root.join("services/io/src/core/channels/channel_creation.rs"))
+            .expect("channel creation source");
+    assert!(
+        !creation.contains("Arc<RuntimeChannelConfig>"),
+        "runtime snapshots must move by value into channel creation"
+    );
+    assert!(
+        creation.contains("compare_and_swap"),
+        "channel runtime publication must remain atomic under concurrent creation"
+    );
+
+    let loader = fs::read_to_string(root.join("services/io/src/core/config/sqlite_loader.rs"))
+        .expect("SQLite loader source");
+    assert!(
+        loader.contains("load_runtime_channels")
+            && loader.contains("Result<Vec<RuntimeChannelConfig>>"),
+        "the SQLite boundary must compile complete runtime snapshots"
+    );
+
+    let entry = fs::read_to_string(root.join("services/io/src/core/channels/channel_entry.rs"))
+        .expect("channel entry source");
+    assert!(
+        !entry.contains("channel_config: ChannelConfig")
+            && !entry.contains("Arc<RuntimeChannelConfig>")
+            && entry.contains("shared: Arc<ChannelSharedState>"),
+        "ChannelEntry must retain only runtime identity and one shared atomic state allocation"
+    );
+
+    let task = fs::read_to_string(root.join("services/io/src/core/channels/channel_task.rs"))
+        .expect("channel task source");
+    assert!(
+        !task.contains("batch.as_ref().clone()"),
+        "the event path must move DataBatch instead of cloning the complete batch"
+    );
+    let command_types = fs::read_to_string(root.join("services/io/src/core/channels/types.rs"))
+        .expect("channel command types");
+    for retired in ["GetDiagnostics {", "GetConnectionState {"] {
+        assert!(
+            !command_types.contains(retired),
+            "unused task command surface {retired} must not be restored"
+        );
+    }
+
+    assert!(
+        !root
+            .join("services/io/src/api/command_cache.rs")
+            .try_exists()
+            .expect("command cache path"),
+        "the unused command sender cache must not be restored"
+    );
+
+    for retired in [
+        "services/io/src/protocols/core/quality.rs",
+        "services/io/src/protocols/core/slot.rs",
+    ] {
+        assert!(
+            !root
+                .join(retired)
+                .try_exists()
+                .expect("retired IO model path"),
+            "{retired} restored a duplicate runtime data model"
+        );
+    }
+    let data = fs::read_to_string(root.join("services/io/src/protocols/core/data.rs"))
+        .expect("runtime acquisition data model");
+    assert!(
+        data.contains("PointQuality")
+            && !data.contains("String(String)")
+            && !data.contains("Null,"),
+        "runtime acquisition batches must remain canonical-quality and numeric-only"
     );
 }
 
@@ -809,4 +1432,80 @@ fn inspect_macro_strings(tokens: TokenStream, mut inspect: impl FnMut(String)) {
     if strings.len() > 1 {
         inspect(strings.concat());
     }
+}
+
+#[derive(Default)]
+struct StoredCodecMethodUsage {
+    decode: bool,
+    from_value: bool,
+    encode: bool,
+    direct_json_parse: bool,
+    direct_payload_field_access: bool,
+}
+
+impl<'ast> Visit<'ast> for StoredCodecMethodUsage {
+    fn visit_expr_call(&mut self, node: &'ast syn::ExprCall) {
+        if let Expr::Path(path) = &*node.func {
+            let segments = path
+                .path
+                .segments
+                .iter()
+                .map(|segment| segment.ident.to_string())
+                .collect::<Vec<_>>();
+            match segments.as_slice() {
+                [.., owner, method] if owner == "StoredChannelConfig" && method == "decode" => {
+                    self.decode = true;
+                },
+                [.., owner, method] if owner == "StoredChannelConfig" && method == "from_value" => {
+                    self.from_value = true;
+                },
+                [.., owner, method]
+                    if owner == "serde_json"
+                        && matches!(method.as_str(), "from_str" | "from_value") =>
+                {
+                    self.direct_json_parse = true;
+                },
+                _ => {},
+            }
+        }
+        visit::visit_expr_call(self, node);
+    }
+
+    fn visit_expr_method_call(&mut self, node: &'ast syn::ExprMethodCall) {
+        if node.method == "encode" {
+            self.encode = true;
+        }
+        if matches!(node.method.to_string().as_str(), "get" | "remove")
+            && let Some(Expr::Lit(argument)) = node.args.first()
+            && let Lit::Str(field) = &argument.lit
+            && matches!(
+                field.value().as_str(),
+                "description" | "parameters" | "logging"
+            )
+        {
+            self.direct_payload_field_access = true;
+        }
+        visit::visit_expr_method_call(self, node);
+    }
+}
+
+fn inspect_named_method(source: &str, method_name: &str) -> StoredCodecMethodUsage {
+    let syntax = syn::parse_file(source)
+        .unwrap_or_else(|error| panic!("failed to parse method source: {error}"));
+    for item in syntax.items {
+        let Item::Impl(item_impl) = item else {
+            continue;
+        };
+        for item in item_impl.items {
+            let syn::ImplItem::Fn(method) = item else {
+                continue;
+            };
+            if method.sig.ident == method_name {
+                let mut usage = StoredCodecMethodUsage::default();
+                usage.visit_block(&method.block);
+                return usage;
+            }
+        }
+    }
+    panic!("method {method_name} was not found");
 }

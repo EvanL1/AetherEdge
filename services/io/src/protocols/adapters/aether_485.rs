@@ -23,9 +23,9 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use aether_config::io::MAX_CHANNEL_TIMING_MS;
 use aether_core::PointType;
 use async_trait::async_trait;
-use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::time::timeout;
@@ -217,19 +217,36 @@ async fn read_one_frame(serial: &mut SerialStream, timeout_dur: Duration) -> Res
 /// Per-point protocol mapping stored in the `protocol_mappings` column.
 ///
 /// Example JSON: `{"device_id": 1}` or `{"device_id": 1, "cmd": 1}`
-#[derive(Debug, Clone, Deserialize)]
-pub struct Aether485PointMapping {
-    pub device_id: u8,
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Aether485PointMapping {
+    pub(crate) device_id: u8,
     #[serde(default = "default_cmd")]
-    pub cmd: u8,
+    pub(crate) cmd: u8,
 }
 
 fn default_cmd() -> u8 {
     CMD_QUERY_DEVICE
 }
 
+/// Decode and validate one persisted Aether-485 point mapping without cloning
+/// its JSON value.
+pub(crate) fn parse_point_mapping(
+    mapping: &serde_json::Value,
+    point_type: PointType,
+) -> Result<Aether485PointMapping> {
+    if !matches!(point_type, PointType::Telemetry | PointType::Signal) {
+        return Err(GatewayError::Config(
+            "Aether-485 only supports telemetry and signal points".to_owned(),
+        ));
+    }
+
+    Aether485PointMapping::deserialize(mapping)
+        .map_err(|error| GatewayError::Config(format!("invalid Aether-485 point mapping: {error}")))
+}
+
 /// Resolved poll target derived from a configured point.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct PollTarget {
     pub point_id: u32,
     pub point_type: PointType,
@@ -255,6 +272,7 @@ pub struct PollTarget {
 /// }
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Aether485ParamsConfig {
     #[serde(default = "default_device")]
     pub device: String,
@@ -289,9 +307,33 @@ fn default_frame_delay_ms() -> u64 {
 }
 
 impl Aether485ParamsConfig {
-    pub fn to_channel_config(&self) -> Aether485ChannelConfig {
+    pub(crate) fn validate(&self) -> Result<()> {
+        if self.device.trim().is_empty() {
+            return Err(GatewayError::Config(
+                "Aether-485 device must be non-empty".to_owned(),
+            ));
+        }
+        if self.baud_rate == 0 {
+            return Err(GatewayError::Config(
+                "Aether-485 baud_rate must be greater than zero".to_owned(),
+            ));
+        }
+        for (name, value) in [
+            ("timeout_ms", self.timeout_ms),
+            ("frame_delay_ms", self.frame_delay_ms),
+        ] {
+            if !(1..=MAX_CHANNEL_TIMING_MS).contains(&value) {
+                return Err(GatewayError::Config(format!(
+                    "Aether-485 {name} must be between 1 and {MAX_CHANNEL_TIMING_MS}"
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    pub fn into_channel_config(self) -> Aether485ChannelConfig {
         Aether485ChannelConfig {
-            device: self.device.clone(),
+            device: self.device,
             baud_rate: self.baud_rate,
             io_timeout: Duration::from_millis(self.timeout_ms),
             retry_count: self.retry_count,
@@ -322,11 +364,10 @@ pub struct Aether485ChannelConfig {
 pub struct Aether485Channel {
     config: Aether485ChannelConfig,
     channel_id: u32,
-    name: String,
     serial: Option<SerialStream>,
-    state: Arc<RwLock<ConnectionState>>,
+    state: ConnectionState,
     diagnostics: Arc<AtomicDiagnostics>,
-    log_context: Arc<LogContext>,
+    log_context: LogContext,
     poll_targets: Vec<PollTarget>,
 }
 
@@ -334,27 +375,17 @@ impl Aether485Channel {
     pub fn new(
         config: Aether485ChannelConfig,
         channel_id: u32,
-        name: String,
         poll_targets: Vec<PollTarget>,
     ) -> Self {
         Self {
             config,
             channel_id,
-            name,
             serial: None,
-            state: Arc::new(RwLock::new(ConnectionState::Disconnected)),
+            state: ConnectionState::Disconnected,
             diagnostics: Arc::new(AtomicDiagnostics::default()),
-            log_context: Arc::new(LogContext::new(channel_id)),
+            log_context: LogContext::new(channel_id),
             poll_targets,
         }
-    }
-
-    fn get_state(&self) -> ConnectionState {
-        *self.state.read()
-    }
-
-    fn set_state(&self, state: ConnectionState) {
-        *self.state.write() = state;
     }
 
     fn open_serial(&self) -> Result<SerialStream> {
@@ -446,8 +477,11 @@ impl Aether485Channel {
         let mut ok_count = 0u64;
         let mut err_count = 0u64;
 
-        let targets = self.poll_targets.clone();
-        for (i, target) in targets.iter().enumerate() {
+        for i in 0..self.poll_targets.len() {
+            // Copy the four scalar fields before borrowing `self` mutably for
+            // transport I/O. This avoids cloning the full target vector on
+            // every poll cycle.
+            let target = self.poll_targets[i];
             if i > 0 {
                 tokio::time::sleep(self.config.frame_delay).await;
             }
@@ -521,15 +555,11 @@ impl ProtocolCapabilities for Aether485Channel {
 
 impl LoggableProtocol for Aether485Channel {
     fn set_log_handler(&mut self, handler: Arc<dyn ChannelLogHandler>) {
-        if let Some(ctx) = Arc::get_mut(&mut self.log_context) {
-            ctx.set_handler(handler);
-        }
+        self.log_context.set_handler(handler);
     }
 
     fn set_log_config(&mut self, config: ChannelLogConfig) {
-        if let Some(ctx) = Arc::get_mut(&mut self.log_context) {
-            ctx.set_config(config);
-        }
+        self.log_context.set_config(config);
     }
 
     fn log_config(&self) -> &ChannelLogConfig {
@@ -539,14 +569,14 @@ impl LoggableProtocol for Aether485Channel {
 
 impl Protocol for Aether485Channel {
     fn connection_state(&self) -> ConnectionState {
-        self.get_state()
+        self.state
     }
 
     async fn diagnostics(&self) -> Result<Diagnostics> {
         let snap = self.diagnostics.snapshot();
         Ok(Diagnostics {
             protocol: "aether_485".to_string(),
-            connection_state: self.get_state(),
+            connection_state: self.state,
             read_count: snap.read_count,
             write_count: snap.write_count,
             error_count: snap.error_count,
@@ -559,8 +589,8 @@ impl Protocol for Aether485Channel {
 impl ProtocolClient for Aether485Channel {
     async fn connect(&mut self) -> Result<()> {
         let start = std::time::Instant::now();
-        let old = self.get_state();
-        self.set_state(ConnectionState::Connecting);
+        let old = self.state;
+        self.state = ConnectionState::Connecting;
         self.log_context
             .log_state_changed(old, ConnectionState::Connecting)
             .await;
@@ -568,7 +598,7 @@ impl ProtocolClient for Aether485Channel {
         match self.open_serial() {
             Ok(port) => {
                 self.serial = Some(port);
-                self.set_state(ConnectionState::Connected);
+                self.state = ConnectionState::Connected;
 
                 let endpoint = format!("{} @ {} baud", self.config.device, self.config.baud_rate);
                 let dur = start.elapsed().as_millis() as u64;
@@ -585,7 +615,7 @@ impl ProtocolClient for Aether485Channel {
                 Ok(())
             },
             Err(e) => {
-                self.set_state(ConnectionState::Error);
+                self.state = ConnectionState::Error;
                 self.log_context
                     .log_error(&e.to_string(), ErrorContext::Connection)
                     .await;
@@ -598,9 +628,9 @@ impl ProtocolClient for Aether485Channel {
     }
 
     async fn disconnect(&mut self) -> Result<()> {
-        let old = self.get_state();
+        let old = self.state;
         self.serial.take(); // SerialStream dropped on take
-        self.set_state(ConnectionState::Disconnected);
+        self.state = ConnectionState::Disconnected;
         self.log_context.log_disconnected(None).await;
         self.log_context
             .log_state_changed(old, ConnectionState::Disconnected)
@@ -670,22 +700,6 @@ impl ProtocolClient for Aether485Channel {
 
 #[async_trait]
 impl ChannelRuntime for Aether485Channel {
-    fn id(&self) -> u32 {
-        self.channel_id
-    }
-
-    fn name(&self) -> &str {
-        &self.name
-    }
-
-    fn protocol(&self) -> &str {
-        "aether_485"
-    }
-
-    fn is_event_driven(&self) -> bool {
-        false
-    }
-
     async fn connect(&mut self) -> Result<()> {
         <Self as ProtocolClient>::connect(self).await
     }
@@ -696,36 +710,6 @@ impl ChannelRuntime for Aether485Channel {
 
     async fn poll_once(&mut self) -> PollResult {
         <Self as ProtocolClient>::poll_once(self).await
-    }
-
-    async fn write_control(&mut self, commands: &[(u32, f64)]) -> Result<usize> {
-        let cmds: Vec<_> = commands
-            .iter()
-            .map(|(id, val)| ControlCommand::latching(*id, *val != 0.0))
-            .collect();
-        let result = <Self as ProtocolClient>::write_control(self, &cmds).await?;
-        Ok(result.success_count)
-    }
-
-    async fn write_adjustment(&mut self, adjustments: &[(u32, f64)]) -> Result<usize> {
-        let adjs: Vec<_> = adjustments
-            .iter()
-            .map(|(id, val)| AdjustmentCommand::new(*id, *val))
-            .collect();
-        let result = <Self as ProtocolClient>::write_adjustment(self, &adjs).await?;
-        Ok(result.success_count)
-    }
-
-    fn subscribe(&self) -> Option<crate::protocols::core::DataEventReceiver> {
-        None
-    }
-
-    async fn start_events(&mut self) -> Result<()> {
-        Ok(())
-    }
-
-    async fn stop_events(&mut self) -> Result<()> {
-        Ok(())
     }
 
     async fn diagnostics(&self) -> Result<Diagnostics> {
@@ -849,20 +833,29 @@ mod tests {
         assert_eq!(params.timeout_ms, 1000);
         assert_eq!(params.retry_count, 2);
 
-        let cfg = params.to_channel_config();
+        let cfg = params.into_channel_config();
         assert_eq!(cfg.baud_rate, 115_200);
     }
 
     #[test]
-    fn test_point_mapping_parse() {
-        let json = r#"{"device_id": 1}"#;
-        let mapping: Aether485PointMapping = serde_json::from_str(json).unwrap();
+    fn point_mapping_codec_is_strict_and_point_type_aware() {
+        let value = serde_json::json!({"device_id": 1});
+        let mapping = parse_point_mapping(&value, PointType::Telemetry).unwrap();
         assert_eq!(mapping.device_id, 1);
         assert_eq!(mapping.cmd, CMD_QUERY_DEVICE);
 
-        let json2 = r#"{"device_id": 3, "cmd": 1}"#;
-        let mapping2: Aether485PointMapping = serde_json::from_str(json2).unwrap();
+        let value = serde_json::json!({"device_id": 3, "cmd": 1});
+        let mapping2 = parse_point_mapping(&value, PointType::Signal).unwrap();
         assert_eq!(mapping2.device_id, 3);
         assert_eq!(mapping2.cmd, 1);
+
+        assert!(parse_point_mapping(&value, PointType::Control).is_err());
+        assert!(
+            parse_point_mapping(
+                &serde_json::json!({"device_id": 1, "ignored": true}),
+                PointType::Telemetry,
+            )
+            .is_err()
+        );
     }
 }

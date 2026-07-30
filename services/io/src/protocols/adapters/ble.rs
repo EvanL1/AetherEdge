@@ -16,9 +16,7 @@
 //!   "device_address": "AA:BB:CC:DD:EE:FF",
 //!   "adapter_name": null,
 //!   "scan_timeout_ms": 10000,
-//!   "connect_timeout_ms": 5000,
-//!   "reconnect_interval_ms": 5000,
-//!   "mtu": null
+//!   "connect_timeout_ms": 5000
 //! }
 //! ```
 
@@ -28,10 +26,11 @@ use btleplug::api::{
 };
 use btleplug::platform::{Adapter, Manager, Peripheral};
 use futures::StreamExt;
+use serde::Deserialize;
 use serde_json::json;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU8, Ordering};
-use tokio::sync::broadcast;
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
@@ -43,16 +42,17 @@ use crate::protocols::core::error::{GatewayError, Result};
 use crate::protocols::core::metadata::{
     DriverMetadata, HasMetadata, ParameterMetadata, ParameterType,
 };
-use crate::protocols::core::point::{DataFormat, PointConfig, ProtocolAddress};
+use crate::protocols::core::point::{DataFormat, TransformConfig};
 use crate::protocols::core::traits::{
     ConnectionState, DataEvent, DataEventReceiver, DataEventSender, Diagnostics, PollResult,
+    data_event_channel,
 };
 
 /// Expand a short BLE UUID (e.g., "180f") to full 128-bit format.
 ///
 /// Short UUIDs are expanded using the Bluetooth Base UUID:
 /// `0000XXXX-0000-1000-8000-00805f9b34fb`
-pub fn expand_uuid(s: &str) -> Result<Uuid> {
+fn expand_uuid(s: &str) -> Result<Uuid> {
     let trimmed = s.trim();
 
     // Try parsing as full UUID first
@@ -87,13 +87,255 @@ pub fn expand_uuid(s: &str) -> Result<Uuid> {
     }
 }
 
-/// Resolved BLE point: a point config with parsed UUIDs.
-struct ResolvedBlePoint {
-    point: PointConfig,
+/// BLE-owned persisted point mapping schema.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct BlePointMapping {
+    service_uuid: String,
+    characteristic_uuid: String,
+    #[serde(default)]
+    data_format: DataFormat,
+    #[serde(default)]
+    notify: bool,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ControlValues {
+    on: f64,
+    off: f64,
+}
+
+impl ControlValues {
+    fn new(on: u16, off: u16) -> Result<Self> {
+        if on == off {
+            return Err(GatewayError::Config(
+                "BLE control on_value and off_value must differ".to_string(),
+            ));
+        }
+        Ok(Self {
+            on: f64::from(on),
+            off: f64::from(off),
+        })
+    }
+
+    fn map_write(self, value: f64, reverse: bool) -> Result<f64> {
+        let logical_on = if value == self.on {
+            true
+        } else if value == self.off {
+            false
+        } else {
+            return Err(GatewayError::DataConversion(format!(
+                "BLE control value {value} must equal configured on_value {} or off_value {}",
+                self.on, self.off
+            )));
+        };
+        Ok(match (logical_on, reverse) {
+            (true, false) | (false, true) => self.on,
+            (false, false) | (true, true) => self.off,
+        })
+    }
+}
+
+/// Fully validated BLE point consumed by the runtime.
+#[derive(Debug, Clone)]
+pub(crate) struct BlePointConfig {
+    id: u32,
+    point_type: aether_core::PointType,
     service_uuid: Uuid,
     char_uuid: Uuid,
     data_format: DataFormat,
     notify: bool,
+    transform: TransformConfig,
+    control_values: Option<ControlValues>,
+}
+
+const fn is_acquisition_point(point_type: aether_core::PointType) -> bool {
+    matches!(
+        point_type,
+        aether_core::PointType::Telemetry | aether_core::PointType::Signal
+    )
+}
+
+impl BlePointConfig {
+    pub(crate) fn from_mapping(
+        id: u32,
+        point_type: aether_core::PointType,
+        transform: TransformConfig,
+        mapping: &str,
+    ) -> Result<Self> {
+        if point_type == aether_core::PointType::Control {
+            return Err(GatewayError::Config(
+                "BLE control points require configured on_value/off_value".to_string(),
+            ));
+        }
+        let mapping = serde_json::from_str::<BlePointMapping>(mapping)
+            .map_err(|error| GatewayError::Config(format!("invalid BLE point mapping: {error}")))?;
+        Self::from_parsed_mapping(id, point_type, transform, mapping, None)
+    }
+
+    pub(crate) fn from_control_mapping(
+        id: u32,
+        transform: TransformConfig,
+        on_value: u16,
+        off_value: u16,
+        mapping: &str,
+    ) -> Result<Self> {
+        let mapping = serde_json::from_str::<BlePointMapping>(mapping)
+            .map_err(|error| GatewayError::Config(format!("invalid BLE point mapping: {error}")))?;
+        Self::from_parsed_mapping(
+            id,
+            aether_core::PointType::Control,
+            transform,
+            mapping,
+            Some(ControlValues::new(on_value, off_value)?),
+        )
+    }
+
+    fn from_parsed_mapping(
+        id: u32,
+        point_type: aether_core::PointType,
+        transform: TransformConfig,
+        mapping: BlePointMapping,
+        control_values: Option<ControlValues>,
+    ) -> Result<Self> {
+        if is_acquisition_point(point_type) && mapping.data_format == DataFormat::String {
+            return Err(GatewayError::Config(
+                "BLE string point mappings cannot produce numeric acquired samples".to_string(),
+            ));
+        }
+        if matches!(
+            point_type,
+            aether_core::PointType::Control | aether_core::PointType::Adjustment
+        ) && mapping.notify
+        {
+            return Err(GatewayError::Config(
+                "BLE control and adjustment mappings cannot subscribe to acquisition notifications"
+                    .to_string(),
+            ));
+        }
+        if matches!(
+            point_type,
+            aether_core::PointType::Telemetry | aether_core::PointType::Adjustment
+        ) && (!transform.scale.is_finite() || !transform.offset.is_finite())
+        {
+            return Err(GatewayError::Config(
+                "BLE linear transforms require finite scale and offset".to_string(),
+            ));
+        }
+        if point_type == aether_core::PointType::Adjustment && transform.scale == 0.0 {
+            return Err(GatewayError::Config(
+                "BLE adjustment transform scale must be non-zero".to_string(),
+            ));
+        }
+
+        Ok(Self {
+            id,
+            point_type,
+            service_uuid: expand_uuid(&mapping.service_uuid)?,
+            char_uuid: expand_uuid(&mapping.characteristic_uuid)?,
+            data_format: mapping.data_format,
+            notify: mapping.notify,
+            transform,
+            control_values,
+        })
+    }
+}
+
+/// Validate a non-empty BLE mapping at the governed topology boundary.
+pub(crate) fn validate_point_mapping(
+    point_type: aether_core::PointType,
+    mapping: &serde_json::Value,
+) -> Result<()> {
+    let mapping = BlePointMapping::deserialize(mapping)
+        .map_err(|error| GatewayError::Config(format!("invalid BLE point mapping: {error}")))?;
+    BlePointConfig::from_parsed_mapping(
+        0,
+        point_type,
+        TransformConfig::default(),
+        mapping,
+        (point_type == aether_core::PointType::Control)
+            .then_some(ControlValues { on: 1.0, off: 0.0 }),
+    )
+    .map(|_| ())
+}
+
+fn validate_point_set(points: &[BlePointConfig]) -> Result<()> {
+    let mut identities = HashSet::with_capacity(points.len());
+    let mut notification_services = HashMap::with_capacity(points.len());
+    for point in points {
+        if !identities.insert((point.point_type, point.id)) {
+            return Err(GatewayError::Config(format!(
+                "duplicate BLE {:?} point ID {}",
+                point.point_type, point.id
+            )));
+        }
+        if point.notify
+            && let Some(existing_service) =
+                notification_services.insert(point.char_uuid, point.service_uuid)
+            && existing_service != point.service_uuid
+        {
+            return Err(GatewayError::Config(format!(
+                "BLE notification UUID {} is ambiguous across services {} and {}",
+                point.char_uuid, existing_service, point.service_uuid
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn apply_sample_transform(point: &BlePointConfig, raw: f64) -> Result<f64> {
+    if !raw.is_finite() {
+        return Err(GatewayError::DataConversion(format!(
+            "BLE point {} produced a non-finite raw value",
+            point.id
+        )));
+    }
+    let transformed = if point.point_type == aether_core::PointType::Signal {
+        let active = raw != 0.0;
+        f64::from(u8::from(if point.transform.reverse {
+            !active
+        } else {
+            active
+        }))
+    } else {
+        point.transform.apply(raw)
+    };
+    if !transformed.is_finite() {
+        return Err(GatewayError::DataConversion(format!(
+            "BLE point {} transform produced a non-finite value",
+            point.id
+        )));
+    }
+    Ok(transformed)
+}
+
+fn reverse_write_transform(point: &BlePointConfig, value: f64) -> Result<f64> {
+    if point.point_type == aether_core::PointType::Control {
+        point
+            .control_values
+            .ok_or_else(|| {
+                GatewayError::Config(format!(
+                    "BLE control point {} has no on/off values",
+                    point.id
+                ))
+            })?
+            .map_write(value, point.transform.reverse)
+    } else {
+        if !value.is_finite() {
+            return Err(GatewayError::DataConversion(format!(
+                "BLE point {} write value must be finite",
+                point.id
+            )));
+        }
+        let transformed = point.transform.reverse_apply(value)?;
+        if !transformed.is_finite() {
+            return Err(GatewayError::DataConversion(format!(
+                "BLE point {} reverse transform produced a non-finite value",
+                point.id
+            )));
+        }
+        Ok(transformed)
+    }
 }
 
 /// BLE Channel implementation.
@@ -102,72 +344,45 @@ struct ResolvedBlePoint {
 /// - Subscribes to Notify characteristics for push-based data
 /// - Polls Read characteristics on demand
 /// - Writes to writable characteristics for Control/Adjustment
-pub struct BleChannel {
+pub(crate) struct BleChannel {
     config: BleConfig,
     channel_id: u32,
-    name: String,
-    points: Vec<PointConfig>,
+    points: Vec<BlePointConfig>,
     peripheral: Option<Peripheral>,
     notify_handle: Option<tokio::task::JoinHandle<()>>,
-    state: AtomicU8,
+    state: Arc<AtomicU8>,
     event_tx: DataEventSender,
+    event_rx: Option<DataEventReceiver>,
     diagnostics: Arc<AtomicDiagnostics>,
 }
 
 impl BleChannel {
-    /// Create a new BLE channel.
-    pub fn new(config: BleConfig, channel_id: u32, name: String, points: Vec<PointConfig>) -> Self {
-        let (event_tx, _) = broadcast::channel(1024);
+    /// Create a BLE channel from already validated adapter-owned point mappings.
+    pub(crate) fn new(
+        config: BleConfig,
+        channel_id: u32,
+        points: Vec<BlePointConfig>,
+    ) -> Result<Self> {
+        validate_point_set(&points)?;
+        let (event_tx, event_rx) = data_event_channel();
 
-        Self {
+        Ok(Self {
             config,
             channel_id,
-            name,
             points,
             peripheral: None,
             notify_handle: None,
-            state: AtomicU8::new(ConnectionState::Disconnected as u8),
+            state: Arc::new(AtomicU8::new(ConnectionState::Disconnected as u8)),
             event_tx,
+            event_rx: Some(event_rx),
             diagnostics: Arc::new(AtomicDiagnostics::new()),
-        }
+        })
     }
 
-    /// Set connection state and broadcast event.
+    /// Set connection state and queue an event.
     fn set_state(&self, state: ConnectionState) {
         self.state.store(state as u8, Ordering::SeqCst);
-        let _ = self.event_tx.send(DataEvent::ConnectionChanged(state));
-    }
-
-    /// Resolve point configs into BLE-specific resolved points.
-    fn resolve_points(&self) -> Result<Vec<ResolvedBlePoint>> {
-        let mut resolved = Vec::with_capacity(self.points.len());
-
-        for point in &self.points {
-            let ble_addr = match &point.address {
-                ProtocolAddress::Ble(addr) => addr,
-                _ => {
-                    warn!(
-                        channel_id = self.channel_id,
-                        point_id = point.id,
-                        "Skipping non-BLE point address"
-                    );
-                    continue;
-                },
-            };
-
-            let service_uuid = expand_uuid(&ble_addr.service_uuid)?;
-            let char_uuid = expand_uuid(&ble_addr.characteristic_uuid)?;
-
-            resolved.push(ResolvedBlePoint {
-                point: point.clone(),
-                service_uuid,
-                char_uuid,
-                data_format: ble_addr.data_format,
-                notify: ble_addr.notify,
-            });
-        }
-
-        Ok(resolved)
+        let _ = self.event_tx.try_send(DataEvent::ConnectionChanged(state));
     }
 
     /// Find the Bluetooth adapter.
@@ -201,10 +416,10 @@ impl BleChannel {
                     name
                 )))
             },
-            None => {
-                // Use first available adapter
-                Ok(adapters.into_iter().next().unwrap())
-            },
+            None => adapters
+                .into_iter()
+                .next()
+                .ok_or_else(|| GatewayError::Connection("No Bluetooth adapters found".to_string())),
         }
     }
 
@@ -216,8 +431,6 @@ impl BleChannel {
             .await
             .map_err(|e| GatewayError::Connection(format!("Failed to start BLE scan: {e}")))?;
 
-        let target_addr = self.config.device_address.to_uppercase();
-
         // Poll discovered peripherals until timeout
         let deadline = tokio::time::Instant::now() + self.config.scan_timeout;
 
@@ -227,13 +440,12 @@ impl BleChannel {
             })?;
 
             for peripheral in &peripherals {
-                if let Ok(Some(props)) = peripheral.properties().await {
-                    let addr = props.address.to_string().to_uppercase();
-                    if addr == target_addr {
-                        // Found the target device
-                        let _ = adapter.stop_scan().await;
-                        return Ok(peripheral.clone());
-                    }
+                if let Ok(Some(props)) = peripheral.properties().await
+                    && props.address == self.config.device_address
+                {
+                    // Found the target device
+                    let _ = adapter.stop_scan().await;
+                    return Ok(peripheral.clone());
                 }
             }
 
@@ -352,22 +564,37 @@ impl BleChannel {
     /// Run the BLE notification event loop.
     async fn run_notify_loop(
         peripheral: Peripheral,
-        resolved: Vec<ResolvedBlePoint>,
+        points: Vec<BlePointConfig>,
         channel_id: u32,
+        state: Arc<AtomicU8>,
         event_tx: DataEventSender,
         diagnostics: Arc<AtomicDiagnostics>,
     ) {
-        let Ok(mut notification_stream) = peripheral.notifications().await else {
-            error!(channel_id, "Failed to get BLE notification stream");
-            return;
+        let mut notification_stream = match peripheral.notifications().await {
+            Ok(stream) => stream,
+            Err(error) => {
+                state.store(ConnectionState::Error as u8, Ordering::SeqCst);
+                let _ = event_tx.try_send(DataEvent::ConnectionChanged(ConnectionState::Error));
+                let message = format!("Failed to get BLE notification stream: {error}");
+                error!(channel_id, error = %error, "Failed to get BLE notification stream");
+                diagnostics.record_error(message.clone());
+                let _ = event_tx.try_send(DataEvent::Error(message));
+                return;
+            },
         };
 
-        // Build a lookup from characteristic UUID to point info
-        let notify_points: std::collections::HashMap<Uuid, &ResolvedBlePoint> = resolved
+        // A readable/writable characteristic can legitimately back more than
+        // one typed point, so notifications fan out deterministically.
+        let mut notify_points: HashMap<Uuid, Vec<&BlePointConfig>> = HashMap::new();
+        for point in points
             .iter()
-            .filter(|rp| rp.notify)
-            .map(|rp| (rp.char_uuid, rp))
-            .collect();
+            .filter(|point| point.notify && is_acquisition_point(point.point_type))
+        {
+            notify_points
+                .entry(point.char_uuid)
+                .or_default()
+                .push(point);
+        }
 
         info!(
             channel_id,
@@ -376,67 +603,69 @@ impl BleChannel {
         );
 
         while let Some(notification) = notification_stream.next().await {
-            if let Some(rp) = notify_points.get(&notification.uuid) {
-                if let Some(value) = Self::parse_value(&notification.value, rp.data_format) {
-                    let transformed = rp.point.transform.apply(value);
-                    let dp = DataPoint::new(rp.point.id, rp.point.point_type, transformed);
-                    let mut batch = DataBatch::with_capacity(1);
-                    batch.add(dp);
-                    diagnostics.inc_read();
-                    let _ = event_tx.send(DataEvent::DataUpdate(Arc::new(batch)));
+            if let Some(mapped_points) = notify_points.get(&notification.uuid) {
+                let mut batch = DataBatch::with_capacity(mapped_points.len());
+                for point in mapped_points {
+                    if let Some(value) = Self::parse_value(&notification.value, point.data_format) {
+                        match apply_sample_transform(point, value) {
+                            Ok(transformed) => {
+                                batch.add(DataPoint::new(point.id, point.point_type, transformed));
 
-                    debug!(
-                        channel_id,
-                        point_id = rp.point.id,
-                        value = transformed,
-                        "BLE notification received"
-                    );
-                } else {
-                    diagnostics.record_error(format!(
-                        "Failed to parse BLE notify data for point {}",
-                        rp.point.id
-                    ));
+                                debug!(
+                                    channel_id,
+                                    point_id = point.id,
+                                    value = transformed,
+                                    "BLE notification received"
+                                );
+                            },
+                            Err(error) => diagnostics.record_error(error.to_string()),
+                        }
+                    } else {
+                        diagnostics.record_error(format!(
+                            "Failed to parse BLE notify data for point {}",
+                            point.id
+                        ));
+                    }
+                }
+                if !batch.is_empty() {
+                    diagnostics.add_read(batch.len() as u64);
+                    let _ = event_tx.try_send(DataEvent::DataUpdate(batch));
                 }
             }
         }
 
         warn!(channel_id, "BLE notification stream ended");
+        state.store(ConnectionState::Disconnected as u8, Ordering::SeqCst);
+        let _ = event_tx.try_send(DataEvent::ConnectionChanged(ConnectionState::Disconnected));
     }
 
     /// Write a value to a BLE characteristic for the given point ID.
-    async fn write_point(&self, point_id: u32, value: f64) -> Result<()> {
+    async fn write_point(
+        &self,
+        point_type: aether_core::PointType,
+        point_id: u32,
+        value: f64,
+    ) -> Result<()> {
         let peripheral = self.peripheral.as_ref().ok_or(GatewayError::NotConnected)?;
 
-        // Find the point config
         let point = self
             .points
             .iter()
-            .find(|p| p.id == point_id)
-            .ok_or_else(|| GatewayError::PointNotFound(format!("Point {} not found", point_id)))?;
+            .find(|point| point.point_type == point_type && point.id == point_id)
+            .ok_or_else(|| {
+                GatewayError::PointNotFound(format!("{point_type:?} point {point_id} not found"))
+            })?;
 
-        let ble_addr = match &point.address {
-            ProtocolAddress::Ble(addr) => addr,
-            _ => {
-                return Err(GatewayError::Config(format!(
-                    "Point {} has non-BLE address",
-                    point_id
-                )));
-            },
-        };
-
-        let service_uuid = expand_uuid(&ble_addr.service_uuid)?;
-        let char_uuid = expand_uuid(&ble_addr.characteristic_uuid)?;
-
-        let char =
-            Self::find_characteristic(peripheral, service_uuid, char_uuid).ok_or_else(|| {
+        let char = Self::find_characteristic(peripheral, point.service_uuid, point.char_uuid)
+            .ok_or_else(|| {
                 GatewayError::Protocol(format!(
                     "Characteristic {}/{} not found on device",
-                    ble_addr.service_uuid, ble_addr.characteristic_uuid
+                    point.service_uuid, point.char_uuid
                 ))
             })?;
 
-        let reversed = point.transform.reverse_apply(value)?;
-        let bytes = Self::encode_value(reversed, ble_addr.data_format);
+        let reversed = reverse_write_transform(point, value)?;
+        let bytes = Self::encode_value(reversed, point.data_format);
 
         peripheral
             .write(&char, &bytes, WriteType::WithResponse)
@@ -458,25 +687,24 @@ impl BleChannel {
 
 #[async_trait]
 impl ChannelRuntime for BleChannel {
-    fn id(&self) -> u32 {
-        self.channel_id
-    }
-
-    fn name(&self) -> &str {
-        &self.name
-    }
-
-    fn protocol(&self) -> &str {
-        "ble"
-    }
-
     fn is_event_driven(&self) -> bool {
         true // Hybrid: Notify push + on-demand Read
     }
 
     async fn connect(&mut self) -> Result<()> {
-        if self.peripheral.is_some() {
+        if self.peripheral.is_some()
+            && matches!(
+                self.connection_state(),
+                ConnectionState::Connected | ConnectionState::Connecting
+            )
+        {
             return Ok(());
+        }
+        if let Some(handle) = self.notify_handle.take() {
+            handle.abort();
+        }
+        if let Some(peripheral) = self.peripheral.take() {
+            let _ = peripheral.disconnect().await;
         }
 
         self.set_state(ConnectionState::Connecting);
@@ -487,8 +715,13 @@ impl ChannelRuntime for BleChannel {
             "Connecting to BLE device"
         );
 
-        // Find adapter
-        let adapter = self.find_adapter().await?;
+        let adapter = match self.find_adapter().await {
+            Ok(adapter) => adapter,
+            Err(error) => {
+                self.set_state(ConnectionState::Error);
+                return Err(error);
+            },
+        };
 
         // Scan and find peripheral
         let peripheral =
@@ -524,10 +757,13 @@ impl ChannelRuntime for BleChannel {
         }
 
         // Discover services and characteristics
-        peripheral
-            .discover_services()
-            .await
-            .map_err(|e| GatewayError::Connection(format!("BLE service discovery failed: {e}")))?;
+        if let Err(error) = peripheral.discover_services().await {
+            let _ = peripheral.disconnect().await;
+            self.set_state(ConnectionState::Error);
+            return Err(GatewayError::Connection(format!(
+                "BLE service discovery failed: {error}"
+            )));
+        }
 
         info!(
             channel_id = self.channel_id,
@@ -535,51 +771,54 @@ impl ChannelRuntime for BleChannel {
             "BLE service discovery complete"
         );
 
-        // Resolve points and subscribe to Notify characteristics
-        self.peripheral = Some(peripheral.clone());
-        let resolved = self.resolve_points()?;
-
-        for rp in &resolved {
-            if rp.notify
-                && let Some(char) =
-                    Self::find_characteristic(&peripheral, rp.service_uuid, rp.char_uuid)
+        // A configured topology is atomic: a missing characteristic or failed
+        // subscription rejects the connection instead of silently dropping points.
+        let mut subscribed = HashSet::new();
+        for point in &self.points {
+            let Some(characteristic) =
+                Self::find_characteristic(&peripheral, point.service_uuid, point.char_uuid)
+            else {
+                let _ = peripheral.disconnect().await;
+                self.set_state(ConnectionState::Error);
+                return Err(GatewayError::Protocol(format!(
+                    "BLE characteristic {}/{} for {:?} point {} was not found",
+                    point.service_uuid, point.char_uuid, point.point_type, point.id
+                )));
+            };
+            if point.notify
+                && subscribed.insert((point.service_uuid, point.char_uuid))
+                && let Err(error) = peripheral.subscribe(&characteristic).await
             {
-                if let Err(e) = peripheral.subscribe(&char).await {
-                    warn!(
-                        channel_id = self.channel_id,
-                        point_id = rp.point.id,
-                        error = %e,
-                        "Failed to subscribe to BLE characteristic notify"
-                    );
-                } else {
-                    debug!(
-                        channel_id = self.channel_id,
-                        point_id = rp.point.id,
-                        char_uuid = %rp.char_uuid,
-                        "Subscribed to BLE notify"
-                    );
-                }
+                let _ = peripheral.disconnect().await;
+                self.set_state(ConnectionState::Error);
+                return Err(GatewayError::Protocol(format!(
+                    "failed to subscribe BLE characteristic {}/{}: {error}",
+                    point.service_uuid, point.char_uuid
+                )));
             }
         }
 
-        // Spawn notification event loop
-        let event_tx = self.event_tx.clone();
-        let diagnostics = self.diagnostics.clone();
-        let channel_id = self.channel_id;
-        let peripheral_clone = peripheral;
+        if self.points.iter().any(|point| point.notify) {
+            let event_tx = self.event_tx.clone();
+            let diagnostics = self.diagnostics.clone();
+            let channel_id = self.channel_id;
+            let state = self.state.clone();
+            let peripheral_clone = peripheral.clone();
+            let points = self.points.clone();
 
-        let handle = tokio::spawn(async move {
-            Self::run_notify_loop(
-                peripheral_clone,
-                resolved,
-                channel_id,
-                event_tx,
-                diagnostics,
-            )
-            .await;
-        });
-
-        self.notify_handle = Some(handle);
+            self.notify_handle = Some(tokio::spawn(async move {
+                Self::run_notify_loop(
+                    peripheral_clone,
+                    points,
+                    channel_id,
+                    state,
+                    event_tx,
+                    diagnostics,
+                )
+                .await;
+            }));
+        }
+        self.peripheral = Some(peripheral);
         self.set_state(ConnectionState::Connected);
 
         info!(
@@ -614,16 +853,11 @@ impl ChannelRuntime for BleChannel {
             None => return PollResult::success(DataBatch::new()),
         };
 
-        // Read non-Notify characteristics
-        let resolved = match self.resolve_points() {
-            Ok(r) => r,
-            Err(e) => {
-                self.diagnostics.record_error(e.to_string());
-                return PollResult::success(DataBatch::new());
-            },
-        };
-
-        let read_points: Vec<&ResolvedBlePoint> = resolved.iter().filter(|rp| !rp.notify).collect();
+        let read_points: Vec<&BlePointConfig> = self
+            .points
+            .iter()
+            .filter(|point| !point.notify && is_acquisition_point(point.point_type))
+            .collect();
 
         if read_points.is_empty() {
             return PollResult::success(DataBatch::new());
@@ -632,44 +866,52 @@ impl ChannelRuntime for BleChannel {
         let mut batch = DataBatch::with_capacity(read_points.len());
         let mut failures = Vec::new();
 
-        for rp in &read_points {
-            let char = match Self::find_characteristic(peripheral, rp.service_uuid, rp.char_uuid) {
-                Some(c) => c,
-                None => {
-                    failures.push(crate::protocols::core::traits::PointFailure::with_error(
-                        rp.point.id,
-                        format!(
-                            "Characteristic {}/{} not found",
-                            rp.service_uuid, rp.char_uuid
-                        ),
-                    ));
-                    continue;
-                },
-            };
+        for point in &read_points {
+            let char =
+                match Self::find_characteristic(peripheral, point.service_uuid, point.char_uuid) {
+                    Some(c) => c,
+                    None => {
+                        failures.push(crate::protocols::core::traits::PointFailure::with_error(
+                            point.id,
+                            format!(
+                                "Characteristic {}/{} not found",
+                                point.service_uuid, point.char_uuid
+                            ),
+                        ));
+                        continue;
+                    },
+                };
 
             match peripheral.read(&char).await {
                 Ok(data) => {
-                    if let Some(value) = Self::parse_value(&data, rp.data_format) {
-                        let transformed = rp.point.transform.apply(value);
-                        batch.add(DataPoint::new(
-                            rp.point.id,
-                            rp.point.point_type,
-                            transformed,
-                        ));
+                    if let Some(value) = Self::parse_value(&data, point.data_format) {
+                        match apply_sample_transform(point, value) {
+                            Ok(transformed) => {
+                                batch.add(DataPoint::new(point.id, point.point_type, transformed));
+                            },
+                            Err(error) => {
+                                failures.push(
+                                    crate::protocols::core::traits::PointFailure::with_error(
+                                        point.id,
+                                        error.to_string(),
+                                    ),
+                                );
+                            },
+                        }
                     } else {
                         failures.push(crate::protocols::core::traits::PointFailure::with_error(
-                            rp.point.id,
+                            point.id,
                             format!(
                                 "Failed to parse {} bytes as {:?}",
                                 data.len(),
-                                rp.data_format
+                                point.data_format
                             ),
                         ));
                     }
                 },
                 Err(e) => {
                     failures.push(crate::protocols::core::traits::PointFailure::with_error(
-                        rp.point.id,
+                        point.id,
                         format!("BLE read failed: {e}"),
                     ));
                 },
@@ -694,7 +936,10 @@ impl ChannelRuntime for BleChannel {
     async fn write_control(&mut self, commands: &[(u32, f64)]) -> Result<usize> {
         let mut success_count = 0;
         for &(point_id, value) in commands {
-            match self.write_point(point_id, value).await {
+            match self
+                .write_point(aether_core::PointType::Control, point_id, value)
+                .await
+            {
                 Ok(()) => success_count += 1,
                 Err(e) => {
                     self.diagnostics.record_error(e.to_string());
@@ -713,7 +958,10 @@ impl ChannelRuntime for BleChannel {
     async fn write_adjustment(&mut self, adjustments: &[(u32, f64)]) -> Result<usize> {
         let mut success_count = 0;
         for &(point_id, value) in adjustments {
-            match self.write_point(point_id, value).await {
+            match self
+                .write_point(aether_core::PointType::Adjustment, point_id, value)
+                .await
+            {
                 Ok(()) => success_count += 1,
                 Err(e) => {
                     self.diagnostics.record_error(e.to_string());
@@ -729,8 +977,8 @@ impl ChannelRuntime for BleChannel {
         Ok(success_count)
     }
 
-    fn subscribe(&self) -> Option<DataEventReceiver> {
-        Some(self.event_tx.subscribe())
+    fn take_event_receiver(&mut self) -> Option<DataEventReceiver> {
+        self.event_rx.take()
     }
 
     async fn start_events(&mut self) -> Result<()> {
@@ -754,7 +1002,7 @@ impl ChannelRuntime for BleChannel {
             error_count: snapshot.error_count,
             last_error: snapshot.last_error,
             extra: json!({
-                "device_address": self.config.device_address,
+                "device_address": self.config.device_address.to_string(),
                 "point_count": self.points.len(),
             }),
         })
@@ -776,7 +1024,6 @@ impl HasMetadata for BleChannel {
                 "device_address": "AA:BB:CC:DD:EE:FF",
                 "scan_timeout_ms": 10000,
                 "connect_timeout_ms": 5000,
-                "reconnect_interval_ms": 5000,
             }),
             parameters: vec![
                 ParameterMetadata::required(
@@ -806,20 +1053,6 @@ impl HasMetadata for BleChannel {
                     ParameterType::Integer,
                     json!(5000),
                 ),
-                ParameterMetadata::optional(
-                    "reconnect_interval_ms",
-                    "Reconnect Interval (ms)",
-                    "Delay between reconnection attempts",
-                    ParameterType::Integer,
-                    json!(5000),
-                ),
-                ParameterMetadata::optional(
-                    "mtu",
-                    "MTU",
-                    "Maximum Transmission Unit for BLE communication",
-                    ParameterType::Integer,
-                    serde_json::Value::Null,
-                ),
             ],
         }
     }
@@ -829,7 +1062,6 @@ impl std::fmt::Debug for BleChannel {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("BleChannel")
             .field("channel_id", &self.channel_id)
-            .field("name", &self.name)
             .field("device_address", &self.config.device_address)
             .field("state", &self.connection_state())
             .field("points", &self.points.len())
@@ -934,21 +1166,16 @@ mod tests {
     /// Helper to build a minimal BleConfig for unit tests.
     fn test_config() -> BleConfig {
         BleConfig {
-            device_address: "AA:BB:CC:DD:EE:FF".to_string(),
+            device_address: "AA:BB:CC:DD:EE:FF".parse().unwrap(),
             adapter_name: None,
             scan_timeout: std::time::Duration::from_secs(10),
             connect_timeout: std::time::Duration::from_secs(5),
-            reconnect_interval: std::time::Duration::from_secs(5),
-            mtu: None,
         }
     }
 
     #[test]
     fn test_ble_channel_creation() {
-        let ch = BleChannel::new(test_config(), 42, "ble-sensor".to_string(), Vec::new());
-        assert_eq!(ch.id(), 42);
-        assert_eq!(ch.name(), "ble-sensor");
-        assert_eq!(ch.protocol(), "ble");
+        let ch = BleChannel::new(test_config(), 42, Vec::new()).unwrap();
         assert!(ch.is_event_driven());
         assert_eq!(ch.connection_state(), ConnectionState::Disconnected);
     }
@@ -964,9 +1191,163 @@ mod tests {
     }
 
     #[test]
-    fn test_ble_subscribe_returns_some() {
-        let ch = BleChannel::new(test_config(), 1, "test".to_string(), Vec::new());
-        assert!(ch.subscribe().is_some());
+    fn test_ble_event_receiver_is_taken_once() {
+        let mut ch = BleChannel::new(test_config(), 1, Vec::new()).unwrap();
+        assert!(ch.take_event_receiver().is_some());
+        assert!(ch.take_event_receiver().is_none());
+    }
+
+    #[test]
+    fn point_mapping_is_adapter_owned_and_strict() {
+        let point = BlePointConfig::from_mapping(
+            7,
+            aether_core::PointType::Telemetry,
+            TransformConfig::linear(0.5, 1.0),
+            r#"{
+                "service_uuid":"180f",
+                "characteristic_uuid":"2a19",
+                "data_format":"uint16",
+                "notify":true
+            }"#,
+        )
+        .unwrap();
+        assert_eq!(point.id, 7);
+        assert_eq!(point.service_uuid, expand_uuid("180f").unwrap());
+        assert_eq!(point.char_uuid, expand_uuid("2a19").unwrap());
+        assert!(point.notify);
+        assert_eq!(point.transform.apply(4.0), 3.0);
+
+        for mapping in [
+            r#"{"service_uuid":"bad","characteristic_uuid":"2a19"}"#,
+            r#"{"service_uuid":"180f","characteristic_uuid":"2a19","data_format":"string"}"#,
+            r#"{"service_uuid":"180f","characteristic_uuid":"2a19","unknown":true}"#,
+        ] {
+            assert!(
+                BlePointConfig::from_mapping(
+                    7,
+                    aether_core::PointType::Telemetry,
+                    TransformConfig::default(),
+                    mapping,
+                )
+                .is_err(),
+                "{mapping}"
+            );
+        }
+    }
+
+    #[test]
+    fn duplicate_points_and_ambiguous_notifications_fail_closed() {
+        let point = |id, point_type, service, notify| {
+            BlePointConfig::from_mapping(
+                id,
+                point_type,
+                TransformConfig::default(),
+                &format!(
+                    r#"{{"service_uuid":"{service}","characteristic_uuid":"2a19","notify":{notify}}}"#
+                ),
+            )
+            .unwrap()
+        };
+
+        let duplicate = vec![
+            point(1, aether_core::PointType::Telemetry, "180f", false),
+            point(1, aether_core::PointType::Telemetry, "180f", false),
+        ];
+        assert!(BleChannel::new(test_config(), 1, duplicate).is_err());
+
+        let readable = vec![
+            point(1, aether_core::PointType::Telemetry, "180f", false),
+            point(2, aether_core::PointType::Signal, "1810", false),
+        ];
+        assert!(BleChannel::new(test_config(), 1, readable).is_ok());
+
+        let ambiguous_notifications = vec![
+            point(1, aether_core::PointType::Telemetry, "180f", true),
+            point(2, aether_core::PointType::Signal, "1810", true),
+        ];
+        assert!(BleChannel::new(test_config(), 1, ambiguous_notifications).is_err());
+    }
+
+    #[test]
+    fn signal_and_control_transform_in_their_own_direction() {
+        let mut signal = BlePointConfig::from_mapping(
+            1,
+            aether_core::PointType::Signal,
+            TransformConfig::default(),
+            r#"{"service_uuid":"180f","characteristic_uuid":"2a19"}"#,
+        )
+        .unwrap();
+        signal.transform.reverse = true;
+        assert_eq!(apply_sample_transform(&signal, 0.0).unwrap(), 1.0);
+        assert_eq!(apply_sample_transform(&signal, 1.0).unwrap(), 0.0);
+
+        let mut control = BlePointConfig::from_control_mapping(
+            1,
+            TransformConfig::default(),
+            17,
+            4,
+            r#"{"service_uuid":"180f","characteristic_uuid":"2a19"}"#,
+        )
+        .unwrap();
+        control.transform.reverse = true;
+        assert_eq!(reverse_write_transform(&control, 17.0).unwrap(), 4.0);
+        assert_eq!(reverse_write_transform(&control, 4.0).unwrap(), 17.0);
+        assert!(reverse_write_transform(&control, 1.0).is_err());
+    }
+
+    #[test]
+    fn command_points_cannot_enter_the_acquisition_subscription() {
+        assert!(
+            BlePointConfig::from_control_mapping(
+                1,
+                TransformConfig::default(),
+                1,
+                0,
+                r#"{
+                        "service_uuid":"180f",
+                        "characteristic_uuid":"2a19",
+                        "notify":true
+                    }"#,
+            )
+            .is_err()
+        );
+        assert!(
+            BlePointConfig::from_mapping(
+                1,
+                aether_core::PointType::Adjustment,
+                TransformConfig::default(),
+                r#"{
+                    "service_uuid":"180f",
+                    "characteristic_uuid":"2a19",
+                    "notify":true
+                }"#,
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn acquisition_and_control_values_fail_closed() {
+        let telemetry = BlePointConfig::from_mapping(
+            1,
+            aether_core::PointType::Telemetry,
+            TransformConfig::linear(f64::MAX, 0.0),
+            r#"{"service_uuid":"180f","characteristic_uuid":"2a19"}"#,
+        )
+        .unwrap();
+        assert!(apply_sample_transform(&telemetry, f64::NAN).is_err());
+        assert!(apply_sample_transform(&telemetry, 2.0).is_err());
+
+        assert!(
+            BlePointConfig::from_control_mapping(
+                1,
+                TransformConfig::default(),
+                7,
+                7,
+                r#"{"service_uuid":"180f","characteristic_uuid":"2a19"}"#,
+            )
+            .is_err()
+        );
     }
 
     // === Additional data format parse tests ===

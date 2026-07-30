@@ -16,6 +16,7 @@ rules are defined in:
 - [ADR-0024: Typed architecture contracts](docs/adr/0024-typed-architecture-contracts.md)
 - [ADR-0025: Physical IO and optional protocol extensions](docs/adr/0025-physical-io-and-optional-protocol-extensions.md)
 - [ADR-0026: Minimal kernel and out-of-tree integrations](docs/adr/0026-minimal-kernel-and-out-of-tree-integrations.md)
+- [ADR-0027: Exact IO protocol capabilities](docs/adr/0027-exact-io-protocol-capabilities.md)
 - [Target repository layout](docs/architecture/target-layout.md)
 - [AI invariants](ai/invariants.md)
 - [Capability safety policy](ai/safety-policy.yaml)
@@ -43,10 +44,23 @@ plane, and typed SHM port adapters. In particular:
   epoch/position, canonical business digests, replay and loss evidence, and
   removes a record only after a matching cloud application ACK.
 - Local SQLite is authoritative for commissioned channel desired state. The
-  active protocol runtime is a rebuildable projection, and channel
+  IO full-reconciliation loader projects all channel rows and the four typed
+  point tables in one transaction with a fixed five scans. It transfers each
+  complete `RuntimeChannelConfig` snapshot by value into runtime projection,
+  then uses a second transaction with a fixed two scans of channel authority
+  and tombstones to detect concurrent drift. The active protocol runtime is
+  rebuildable from that snapshot, and channel
   create/update/delete/enable/disable cross the same confirmed, audited
   `io.channel.manage` application boundary from HTTP, CLI, and MCP. SHM remains
   authoritative for live point values.
+- A statically composed, process-wide immutable registry owns protocol
+  discovery, strict validation, and runtime construction. Each adapter owns
+  its mapping schema and typed addresses and compiles them once during
+  activation. `ChannelManager` holds no SQLite pool and performs no protocol
+  switch or mapping prepass; it owns only common policy, logging, command
+  guards, lifecycle/task publication, and SHM wiring. The SHM acquisition path
+  accepts only finite numeric or boolean T/S samples with canonical point
+  quality, so text and non-finite values cannot enter live state.
 - Redis is absent from the kernel composition. PostgreSQL is not a default
   dependency; the History service retains an explicitly selected migration
   backend while its extraction decision remains separate.

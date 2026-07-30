@@ -264,14 +264,17 @@ impl AutomaticIoReconciler {
     }
 }
 
-/// Runs startup reconciliation immediately, then repeats until cancellation.
-pub async fn run_automatic_io_reconciliation(
+/// Repeats reconciliation after each interval until cancellation.
+///
+/// The composition root performs the synchronous startup cycle before it
+/// starts this task.
+pub async fn run_periodic_io_reconciliation(
     reconciler: Arc<AutomaticIoReconciler>,
     interval: Duration,
     shutdown: CancellationToken,
 ) {
     let interval = interval.max(MIN_RECONCILIATION_INTERVAL);
-    let mut ticker = tokio::time::interval(interval);
+    let mut ticker = tokio::time::interval_at(tokio::time::Instant::now() + interval, interval);
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     loop {
         tokio::select! {

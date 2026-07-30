@@ -46,7 +46,7 @@
 
 use std::borrow::Cow;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use async_trait::async_trait;
 
@@ -63,13 +63,11 @@ use crate::protocols::core::logging::{
 use crate::protocols::core::metadata::{
     DriverMetadata, HasMetadata, ParameterMetadata, ParameterType,
 };
-use crate::protocols::core::slot::AtomicBoolStore;
 use crate::protocols::core::traits::{
-    AdjustmentCommand, CommunicationMode, ConnectionState, ControlCommand, DataEventReceiver,
-    Diagnostics, PointFailure, PollResult, Protocol, ProtocolCapabilities, ProtocolClient,
-    WriteResult,
+    AdjustmentCommand, CommunicationMode, ConnectionState, ControlCommand, Diagnostics,
+    PointFailure, PollResult, Protocol, ProtocolCapabilities, ProtocolClient, WriteResult,
 };
-use crate::protocols::gateway::ChannelRuntime;
+use crate::protocols::runtime::ChannelRuntime;
 use aether_core::PointType;
 
 // ============================================================================
@@ -114,51 +112,87 @@ impl Default for GpioDriverType {
 /// }
 /// ```
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct GpioChannelParamsConfig {
     /// Driver type: "gpiod" or "sysfs".
     #[serde(default = "default_driver")]
     pub driver: String,
 
-    /// Sysfs base path (only for sysfs driver).
-    #[serde(default = "default_sysfs_path")]
-    pub sysfs_base_path: String,
+    /// Default character-device chip for gpiod mappings.
+    #[serde(default = "default_gpio_chip")]
+    pub gpio_chip: String,
 
-    /// Poll interval in milliseconds.
-    #[serde(default = "default_poll_interval")]
-    pub poll_interval_ms: u64,
+    /// Sysfs base path (only for sysfs driver).
+    #[serde(default = "default_sysfs_path", alias = "gpio_base_path")]
+    pub sysfs_base_path: String,
 }
 
 fn default_driver() -> String {
     "gpiod".to_string()
 }
 
+fn default_gpio_chip() -> String {
+    "gpiochip0".to_string()
+}
+
 fn default_sysfs_path() -> String {
     "/sys/class/gpio".to_string()
 }
 
-fn default_poll_interval() -> u64 {
-    200
+impl GpioChannelParamsConfig {
+    pub(crate) fn validate(&self) -> Result<()> {
+        if self.driver.eq_ignore_ascii_case("gpiod") {
+            if self.gpio_chip.trim().is_empty() {
+                return Err(GatewayError::Config(
+                    "GPIO gpio_chip must be non-empty for gpiod".to_owned(),
+                ));
+            }
+        } else if self.driver.eq_ignore_ascii_case("sysfs") {
+            if self.sysfs_base_path.trim().is_empty() {
+                return Err(GatewayError::Config(
+                    "GPIO sysfs_base_path must be non-empty for sysfs".to_owned(),
+                ));
+            }
+        } else {
+            return Err(GatewayError::Config(format!(
+                "invalid GPIO driver '{}'; expected gpiod or sysfs",
+                self.driver
+            )));
+        }
+        Ok(())
+    }
 }
 
-impl GpioChannelParamsConfig {
-    /// Get the GPIO driver type from configuration.
-    pub fn driver_type(&self) -> GpioDriverType {
-        match self.driver.to_lowercase().as_str() {
-            "sysfs" => GpioDriverType::Sysfs {
-                base_path: self.sysfs_base_path.clone(),
-            },
-            _ => GpioDriverType::Gpiod,
-        }
+/// Strict persisted GPIO point mapping.
+///
+/// The channel-level driver decides whether this number is interpreted as a
+/// gpiod line or a sysfs global GPIO number.
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct GpioPointMapping {
+    pub(crate) gpio_number: u32,
+}
+
+/// Decode and validate one persisted GPIO point mapping without cloning its
+/// JSON value.
+pub(crate) fn parse_point_mapping(
+    mapping: &serde_json::Value,
+    point_type: PointType,
+) -> Result<GpioPointMapping> {
+    if !matches!(point_type, PointType::Signal | PointType::Control) {
+        return Err(GatewayError::Config(
+            "GPIO only supports signal and control points".to_owned(),
+        ));
     }
 
-    /// Convert to GpioChannelConfig.
-    pub fn to_config(&self) -> GpioChannelConfig {
-        GpioChannelConfig {
-            driver: self.driver_type(),
-            pins: Vec::new(), // Pins are added via point configs
-            poll_interval: std::time::Duration::from_millis(self.poll_interval_ms),
-        }
+    let mapping = GpioPointMapping::deserialize(mapping)
+        .map_err(|error| GatewayError::Config(format!("invalid GPIO point mapping: {error}")))?;
+    if mapping.gpio_number > 1023 {
+        return Err(GatewayError::Config(
+            "GPIO gpio_number exceeds 1023".to_owned(),
+        ));
     }
+    Ok(mapping)
 }
 
 /// GPIO driver trait - extensible interface for GPIO backends.
@@ -363,11 +397,7 @@ impl HasMetadata for GpiodDriver {
             example_config: serde_json::json!({
                 "driver": "gpiod",
                 "gpio_chip": "gpiochip6",
-                "poll_interval_ms": 200,
-                "pins": [
-                    { "chip": "gpiochip6", "pin": 0, "direction": "input", "point_id": 1 },
-                    { "chip": "gpiochip6", "pin": 1, "direction": "output", "point_id": 101 }
-                ]
+                "poll_interval_ms": 200
             }),
             parameters: vec![
                 ParameterMetadata::optional(
@@ -383,19 +413,6 @@ impl HasMetadata for GpiodDriver {
                     "Default GPIO chip device name (e.g., gpiochip0, gpiochip6)",
                     ParameterType::String,
                     serde_json::json!("gpiochip0"),
-                ),
-                ParameterMetadata::optional(
-                    "poll_interval_ms",
-                    "Poll Interval (ms)",
-                    "Polling interval for input pins in milliseconds",
-                    ParameterType::Integer,
-                    serde_json::json!(200),
-                ),
-                ParameterMetadata::required(
-                    "pins",
-                    "Pin Configuration",
-                    "Array of GPIO pin configurations with chip, pin, direction, and point_id",
-                    ParameterType::Array,
                 ),
             ],
         }
@@ -560,12 +577,8 @@ impl HasMetadata for SysfsDriver {
             is_recommended: false,
             example_config: serde_json::json!({
                 "driver": "sysfs",
-                "gpio_base_path": "/sys/class/gpio",
-                "poll_interval_ms": 200,
-                "pins": [
-                    { "gpio_number": 490, "direction": "input", "point_id": 1 },
-                    { "gpio_number": 491, "direction": "output", "point_id": 101 }
-                ]
+                "sysfs_base_path": "/sys/class/gpio",
+                "poll_interval_ms": 200
             }),
             parameters: vec![
                 ParameterMetadata::optional(
@@ -581,19 +594,6 @@ impl HasMetadata for SysfsDriver {
                     "Base path for sysfs GPIO interface",
                     ParameterType::String,
                     serde_json::json!("/sys/class/gpio"),
-                ),
-                ParameterMetadata::optional(
-                    "poll_interval_ms",
-                    "Poll Interval (ms)",
-                    "Polling interval for input pins in milliseconds",
-                    ParameterType::Integer,
-                    serde_json::json!(200),
-                ),
-                ParameterMetadata::required(
-                    "pins",
-                    "Pin Configuration",
-                    "Array of GPIO pin configurations with gpio_number, direction, and point_id",
-                    ParameterType::Array,
                 ),
             ],
         }
@@ -792,9 +792,6 @@ pub struct GpioChannelConfig {
 
     /// Pin configurations.
     pub pins: Vec<GpioPinConfig>,
-
-    /// Polling interval for inputs.
-    pub poll_interval: Duration,
 }
 
 impl Default for GpioChannelConfig {
@@ -802,7 +799,6 @@ impl Default for GpioChannelConfig {
         Self {
             driver: GpioDriverType::default(),
             pins: Vec::new(),
-            poll_interval: Duration::from_millis(100),
         }
     }
 }
@@ -811,17 +807,6 @@ impl GpioChannelConfig {
     /// Create a new configuration with default gpiod driver.
     pub fn new() -> Self {
         Self::default()
-    }
-
-    /// Create a new configuration with sysfs driver.
-    pub fn new_sysfs(base_path: impl Into<String>) -> Self {
-        Self {
-            driver: GpioDriverType::Sysfs {
-                base_path: base_path.into(),
-            },
-            pins: Vec::new(),
-            poll_interval: Duration::from_millis(100),
-        }
     }
 
     /// Set the driver type.
@@ -833,12 +818,6 @@ impl GpioChannelConfig {
     /// Add a pin configuration.
     pub fn add_pin(mut self, pin: GpioPinConfig) -> Self {
         self.pins.push(pin);
-        self
-    }
-
-    /// Set poll interval.
-    pub fn with_poll_interval(mut self, interval: Duration) -> Self {
-        self.poll_interval = interval;
         self
     }
 
@@ -864,18 +843,12 @@ impl GpioChannelConfig {
 ///
 /// The service layer (io) is responsible for persistence.
 pub struct GpioChannel {
-    /// Channel unique identifier.
-    channel_id: u32,
-    /// Channel instance name.
-    name: String,
     config: GpioChannelConfig,
     /// Pluggable GPIO driver (trait object for extensibility)
     driver: Box<dyn GpioDriver>,
-    state: Arc<std::sync::RwLock<ConnectionState>>,
+    state: ConnectionState,
     diagnostics: Arc<AtomicDiagnostics>,
     poll_task: Option<tokio::task::JoinHandle<()>>,
-    /// Output states cache (for read-back) - lock-free atomic storage
-    output_states: AtomicBoolStore,
     /// Logging context
     log_ctx: LogContext,
 }
@@ -885,12 +858,12 @@ impl GpioChannel {
     ///
     /// GPIO channels are always "connected" since they operate on local hardware
     /// without requiring external network connections (unlike Modbus TCP).
-    pub fn new(config: GpioChannelConfig, channel_id: u32, name: String) -> Self {
+    pub fn new(config: GpioChannelConfig, channel_id: u32) -> Self {
         let driver: Box<dyn GpioDriver> = match &config.driver {
             GpioDriverType::Gpiod => Box::new(GpiodDriver::new()),
             GpioDriverType::Sysfs { base_path } => Box::new(SysfsDriver::new(base_path.clone())),
         };
-        Self::with_driver(config, driver, channel_id, name)
+        Self::with_driver(config, driver, channel_id)
     }
 
     /// Create a GPIO channel with a custom driver.
@@ -901,34 +874,15 @@ impl GpioChannel {
         config: GpioChannelConfig,
         driver: Box<dyn GpioDriver>,
         channel_id: u32,
-        name: String,
     ) -> Self {
-        let output_pin_ids: Vec<u32> = config.output_pins().map(|p| p.point_id).collect();
-
         Self {
-            channel_id,
-            name,
             config,
             driver,
-            state: Arc::new(std::sync::RwLock::new(ConnectionState::Connected)),
+            state: ConnectionState::Connected,
             diagnostics: Arc::new(AtomicDiagnostics::new()),
             poll_task: None,
-            output_states: AtomicBoolStore::from_pins(&output_pin_ids),
             log_ctx: LogContext::new(channel_id),
         }
-    }
-
-    fn set_state(&self, state: ConnectionState) {
-        if let Ok(mut s) = self.state.write() {
-            *s = state;
-        }
-    }
-
-    fn get_state(&self) -> ConnectionState {
-        self.state
-            .read()
-            .map(|s| *s)
-            .unwrap_or(ConnectionState::Error)
     }
 
     /// Read a single GPIO pin using the configured driver.
@@ -949,18 +903,7 @@ impl GpioChannel {
     /// Write to a single GPIO pin using the configured driver.
     async fn write_pin(&self, pin_config: &GpioPinConfig, value: bool) -> Result<()> {
         let adjusted = if pin_config.active_low { !value } else { value };
-        self.driver.write_pin(pin_config, adjusted).await?;
-
-        // Update internal state cache for feedback (lock-free atomic operation)
-        self.output_states.set(pin_config.point_id, adjusted);
-
-        Ok(())
-    }
-
-    /// Read output state (for feedback).
-    fn read_output_state(&self, point_id: u32) -> Option<bool> {
-        // Lock-free atomic read
-        self.output_states.get(point_id)
+        self.driver.write_pin(pin_config, adjusted).await
     }
 }
 
@@ -990,9 +933,11 @@ impl LoggableProtocol for GpioChannel {
 
 // Helper methods for GpioChannel
 impl GpioChannel {
-    /// Read all GPIO pins and return batch with failures.
+    /// Read acquisition-owned GPIO inputs and return a batch with failures.
     ///
-    /// This method reads all input pins and output states, collecting any failures.
+    /// Output pins are command-owned. Their cached state must not enter the
+    /// acquisition batch, whose SHM writer accepts only telemetry and signal
+    /// points.
     async fn read_all(&self) -> (DataBatch, Vec<PointFailure>) {
         let mut batch = DataBatch::new();
         let mut failures = Vec::new();
@@ -1008,13 +953,6 @@ impl GpioChannel {
             }
         }
 
-        // Also include output states as feedback (lock-free read)
-        for pin in self.config.output_pins() {
-            if let Some(state) = self.read_output_state(pin.point_id) {
-                batch.add(DataPoint::new(pin.point_id, pin.point_type, state));
-            }
-        }
-
         // Update read count (lock-free)
         self.diagnostics.inc_read();
 
@@ -1024,7 +962,7 @@ impl GpioChannel {
 
 impl Protocol for GpioChannel {
     fn connection_state(&self) -> ConnectionState {
-        self.get_state()
+        self.state
     }
 
     #[allow(clippy::disallowed_methods)] // json! macro
@@ -1034,7 +972,7 @@ impl Protocol for GpioChannel {
 
         Ok(Diagnostics {
             protocol: ProtocolCapabilities::name(self).to_string(),
-            connection_state: self.get_state(),
+            connection_state: self.state,
             read_count: self.diagnostics.read_count(),
             write_count: self.diagnostics.write_count(),
             error_count: self.diagnostics.error_count(),
@@ -1065,7 +1003,7 @@ impl ProtocolClient for GpioChannel {
             }
         }
 
-        self.set_state(ConnectionState::Connected);
+        self.state = ConnectionState::Connected;
         self.log_ctx
             .log_connected("gpio", start.elapsed().as_millis() as u64)
             .await;
@@ -1085,7 +1023,7 @@ impl ProtocolClient for GpioChannel {
         if let Some(task) = self.poll_task.take() {
             task.abort();
         }
-        self.set_state(ConnectionState::Disconnected);
+        self.state = ConnectionState::Disconnected;
         self.log_ctx.log_disconnected(None).await;
         Ok(())
     }
@@ -1127,7 +1065,7 @@ impl ProtocolClient for GpioChannel {
     async fn write_control(&mut self, commands: &[ControlCommand]) -> Result<WriteResult> {
         let start = Instant::now();
 
-        if !self.get_state().is_connected() {
+        if !self.state.is_connected() {
             return Err(GatewayError::NotConnected);
         }
 
@@ -1163,11 +1101,7 @@ impl ProtocolClient for GpioChannel {
 
         // Log control write
         self.log_ctx
-            .log_control_write(
-                commands,
-                Ok(result.clone()),
-                start.elapsed().as_millis() as u64,
-            )
+            .log_control_write(commands, Ok(&result), start.elapsed().as_millis() as u64)
             .await;
 
         Ok(result)
@@ -1190,22 +1124,6 @@ impl ProtocolClient for GpioChannel {
 
 #[async_trait]
 impl ChannelRuntime for GpioChannel {
-    fn id(&self) -> u32 {
-        self.channel_id
-    }
-
-    fn name(&self) -> &str {
-        &self.name
-    }
-
-    fn protocol(&self) -> &str {
-        "gpio"
-    }
-
-    fn is_event_driven(&self) -> bool {
-        false // GPIO is polling-only
-    }
-
     async fn connect(&mut self) -> Result<()> {
         <Self as ProtocolClient>::connect(self).await
     }
@@ -1225,27 +1143,6 @@ impl ChannelRuntime for GpioChannel {
             .collect();
         let result = <Self as ProtocolClient>::write_control(self, &cmds).await?;
         Ok(result.success_count)
-    }
-
-    async fn write_adjustment(&mut self, adjustments: &[(u32, f64)]) -> Result<usize> {
-        let adjs: Vec<_> = adjustments
-            .iter()
-            .map(|(id, value)| AdjustmentCommand::new(*id, *value))
-            .collect();
-        let result = <Self as ProtocolClient>::write_adjustment(self, &adjs).await?;
-        Ok(result.success_count)
-    }
-
-    fn subscribe(&self) -> Option<DataEventReceiver> {
-        None // GPIO is polling-only
-    }
-
-    async fn start_events(&mut self) -> Result<()> {
-        Ok(()) // No-op for polling channel
-    }
-
-    async fn stop_events(&mut self) -> Result<()> {
-        Ok(()) // No-op for polling channel
     }
 
     async fn diagnostics(&self) -> Result<Diagnostics> {
@@ -1270,6 +1167,27 @@ mod tests {
     use super::*;
     use std::collections::HashMap;
     use std::sync::{Arc, Mutex};
+
+    #[test]
+    fn point_mapping_codec_is_strict_and_point_type_aware() {
+        let mapping = serde_json::json!({"gpio_number": 496});
+        let parsed = parse_point_mapping(&mapping, PointType::Signal).unwrap();
+        assert_eq!(parsed.gpio_number, 496);
+        assert!(parse_point_mapping(&mapping, PointType::Control).is_ok());
+
+        assert!(parse_point_mapping(&mapping, PointType::Telemetry).is_err());
+        assert!(
+            parse_point_mapping(
+                &serde_json::json!({"gpio_number": 496, "ignored": true}),
+                PointType::Signal,
+            )
+            .is_err()
+        );
+        assert!(
+            parse_point_mapping(&serde_json::json!({"gpio_number": 1024}), PointType::Signal,)
+                .is_err()
+        );
+    }
 
     /// Mock driver for testing (allows pre-setting values and verifying writes).
     struct SharedMockDriver {
@@ -1329,24 +1247,19 @@ mod tests {
     }
 
     /// Create a GpioChannel with mock driver for testing.
-    fn create_mock_gpio(config: GpioChannelConfig, channel_id: u32, name: &str) -> GpioChannel {
+    fn create_mock_gpio(config: GpioChannelConfig, channel_id: u32, _name: &str) -> GpioChannel {
         let shared = SharedMockDriver::new();
-        create_mock_gpio_with_shared_driver(config, channel_id, name, &shared)
+        create_mock_gpio_with_shared_driver(config, channel_id, _name, &shared)
     }
 
     /// Create a GpioChannel with shared mock driver for advanced testing.
     fn create_mock_gpio_with_shared_driver(
         config: GpioChannelConfig,
         channel_id: u32,
-        name: &str,
+        _name: &str,
         shared: &SharedMockDriver,
     ) -> GpioChannel {
-        GpioChannel::with_driver(
-            config,
-            Box::new(shared.create_driver()),
-            channel_id,
-            name.to_string(),
-        )
+        GpioChannel::with_driver(config, Box::new(shared.create_driver()), channel_id)
     }
 
     #[tokio::test]
@@ -1383,7 +1296,8 @@ mod tests {
         let config =
             GpioChannelConfig::new().add_pin(GpioPinConfig::digital_output("gpiochip0", 18, 101));
 
-        let mut gpio = create_mock_gpio(config, 1, "test_gpio");
+        let shared = SharedMockDriver::new();
+        let mut gpio = create_mock_gpio_with_shared_driver(config, 1, "test_gpio", &shared);
         ProtocolClient::connect(&mut gpio).await.unwrap();
 
         let result =
@@ -1393,10 +1307,7 @@ mod tests {
 
         assert_eq!(result.success_count, 1);
         assert!(result.failures.is_empty());
-
-        // Check output state (lock-free read)
-        let state = gpio.read_output_state(101);
-        assert_eq!(state, Some(true));
+        assert_eq!(shared.get_raw_value(101), Some(true));
     }
 
     #[tokio::test]
@@ -1564,11 +1475,6 @@ mod tests {
             Some(true),
             "DO 103 should be true"
         );
-
-        // Verify output state cache
-        assert_eq!(gpio.read_output_state(101), Some(true));
-        assert_eq!(gpio.read_output_state(102), Some(false));
-        assert_eq!(gpio.read_output_state(103), Some(true));
     }
 
     /// Test DO active_low inverted logic
@@ -1659,12 +1565,14 @@ mod tests {
         .await
         .unwrap();
 
-        // poll_once should return DI + DO feedback
+        // Polling is acquisition-only: command-owned DO state stays out of
+        // the batch after a successful write.
         let result = ProtocolClient::poll_once(&mut gpio).await;
         let batch = result.data;
 
-        // Should have 4 points (2 DI + 2 DO)
-        assert_eq!(batch.len(), 4, "should have 4 data points (2 DI + 2 DO)");
+        assert_eq!(batch.len(), 2, "only the two DI points are acquired");
+        assert!(batch.iter().all(|point| point.point_type.is_measurement()));
+        assert!(batch.iter().all(|point| point.id < 100));
 
         // Verify DI values
         let di1 = batch.iter().find(|p| p.id == 1).expect("DI 1");
@@ -1673,37 +1581,25 @@ mod tests {
         let di2 = batch.iter().find(|p| p.id == 2).expect("DI 2");
         assert_eq!(di2.value.as_bool(), Some(false), "DI 2 should be false");
 
-        // Verify DO feedback
-        let do101 = batch.iter().find(|p| p.id == 101).expect("DO 101");
-        assert_eq!(
-            do101.value.as_bool(),
-            Some(true),
-            "DO 101 feedback should be true"
-        );
-
-        let do102 = batch.iter().find(|p| p.id == 102).expect("DO 102");
-        assert_eq!(
-            do102.value.as_bool(),
-            Some(false),
-            "DO 102 feedback should be false"
-        );
+        assert_eq!(shared.get_raw_value(101), Some(true));
+        assert_eq!(shared.get_raw_value(102), Some(false));
     }
 
-    /// Test DO output state feedback
+    /// Command-owned output state must never be published as acquisition data.
     #[tokio::test]
-    async fn test_output_state_feedback() {
+    async fn test_output_state_is_not_published_as_acquisition() {
+        let shared = SharedMockDriver::new();
         let config = GpioChannelConfig::new()
             .add_pin(GpioPinConfig::digital_output("gpiochip0", 18, 101))
             .add_pin(GpioPinConfig::digital_output("gpiochip0", 19, 102));
 
-        let mut gpio = create_mock_gpio(config, 1, "test_feedback");
+        let mut gpio = create_mock_gpio_with_shared_driver(config, 1, "test_feedback", &shared);
         ProtocolClient::connect(&mut gpio).await.unwrap();
 
-        // Initial state: poll_once should return default values (false)
+        // An output-only channel has no acquisition data.
         let result = ProtocolClient::poll_once(&mut gpio).await;
-        assert_eq!(result.data.len(), 2, "should have 2 DO feedback points");
+        assert!(result.data.is_empty());
 
-        // Poll after writing
         ProtocolClient::write_control(
             &mut gpio,
             &[
@@ -1715,28 +1611,17 @@ mod tests {
         .unwrap();
 
         let result = ProtocolClient::poll_once(&mut gpio).await;
-        for point in result.data.iter() {
-            assert_eq!(
-                point.value.as_bool(),
-                Some(true),
-                "DO {} feedback should be true after write",
-                point.id
-            );
-        }
+        assert!(result.data.is_empty());
+        assert_eq!(shared.get_raw_value(101), Some(true));
+        assert_eq!(shared.get_raw_value(102), Some(true));
 
-        // Write a different value again
         ProtocolClient::write_control(&mut gpio, &[ControlCommand::latching(101, false)])
             .await
             .unwrap();
 
         let result = ProtocolClient::poll_once(&mut gpio).await;
-        let do101 = result.data.iter().find(|p| p.id == 101).unwrap();
-        let do102 = result.data.iter().find(|p| p.id == 102).unwrap();
-        assert_eq!(do101.value.as_bool(), Some(false), "DO 101 should be false");
-        assert_eq!(
-            do102.value.as_bool(),
-            Some(true),
-            "DO 102 should still be true"
-        );
+        assert!(result.data.is_empty());
+        assert_eq!(shared.get_raw_value(101), Some(false));
+        assert_eq!(shared.get_raw_value(102), Some(true));
     }
 }

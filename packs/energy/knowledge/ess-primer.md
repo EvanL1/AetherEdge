@@ -83,7 +83,7 @@ A product is a type; an instance is a device. Creating an instance from the `Bat
 
 ## Standard information models
 
-**Field protocols.** Standard IO supports Modbus TCP/RTU, IEC 60870-5-104, IEC 61850 (MMS), OPC UA, MQTT, HTTP, DL/T 645, CAN/J1939, GPIO, BLE, Zigbee, Matter, and Aether-485. Which adapters are compiled into a given binary is controlled by explicit Cargo features on IO; simulation remains an external tool.
+**Field protocols.** Standard IO supports Modbus TCP/RTU, IEC 60870-5-104, IEC 61850 (MMS), OPC UA, MQTT, HTTP, DL/T 645, CAN/J1939, GPIO, BLE, Zigbee, and Aether-485. Which adapters are compiled into a given binary is controlled by explicit Cargo features on IO; simulation remains an external tool.
 
 **SunSpec.** SunSpec discovery and model expansion are not shipped by the AetherEdge kernel. A deployment that needs them must use a downstream, statically composed Rust IO plugin. The plugin owns its model assets and returns canonical topology and samples through an accepted generic contract; it cannot write SHM or bypass governed commands directly.
 

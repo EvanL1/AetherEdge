@@ -13,7 +13,7 @@ use tracing::{debug, info};
 
 // Cross-platform config schema (shared with io/automation via aether-config).
 use aether_config::automation::{AutomationConfig, RuleConfig, RuleCore, RulesConfig};
-use aether_config::io::{ChannelConfig, ChannelCore, IoConfig};
+use aether_config::io::{ChannelConfig, ChannelCore, IoConfig, StoredChannelConfig};
 
 /// CSV column headers for point exports
 const POINT_CSV_HEADERS: [&str; 8] = [
@@ -357,42 +357,20 @@ impl ConfigExporter {
                 .with_context(|| format!("channel {channel_id} is missing its protocol"))?;
             let enabled: bool = row.try_get("enabled")?;
             let config_str: Option<String> = row.try_get("config")?;
+            let stored_config = StoredChannelConfig::decode(config_str.as_deref())
+                .with_context(|| format!("channel {channel_id} has an invalid stored config"))?;
 
-            let mut channel = ChannelConfig {
+            let channel = ChannelConfig {
                 core: ChannelCore {
                     id: channel_id,
                     name,
-                    description: None,
+                    description: stored_config.description,
                     protocol,
                     enabled,
                 },
-                parameters: HashMap::new(),
-                logging: Default::default(),
+                parameters: stored_config.parameters,
+                logging: stored_config.logging,
             };
-
-            // Parse config JSON (consistent with sqlite_loader)
-            if let Some(config_json) = config_str
-                && let Ok(config_value) = serde_json::from_str::<serde_json::Value>(&config_json)
-            {
-                // Extract description
-                channel.core.description = config_value
-                    .get("description")
-                    .and_then(|d| d.as_str())
-                    .map(|s| s.to_string());
-
-                // Extract parameters from nested "parameters" field
-                if let Some(serde_json::Value::Object(params)) = config_value.get("parameters") {
-                    channel.parameters =
-                        params.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
-                }
-
-                // Extract logging config if present
-                if let Some(logging_val) = config_value.get("logging")
-                    && let Ok(logging) = serde_json::from_value(logging_val.clone())
-                {
-                    channel.logging = logging;
-                }
-            }
 
             channels.push(channel);
         }

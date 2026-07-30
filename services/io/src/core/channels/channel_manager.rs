@@ -7,7 +7,8 @@
 use arc_swap::ArcSwapOption;
 use dashmap::DashSet;
 use std::sync::Arc;
-use tracing::{error, info, warn};
+use std::sync::atomic::{AtomicBool, Ordering};
+use tracing::{info, warn};
 
 use crate::core::channels::channel_entry::{ChannelEntry, ChannelStats, MAX_CHANNELS};
 use crate::core::channels::shm_listener::ShmCommandListener;
@@ -36,21 +37,28 @@ pub struct ChannelManager {
     /// Active channel ID index for O(1) iteration (avoids O(10000) full scan)
     /// Synchronized with channels: insert on create_channel, remove on remove_channel
     pub(super) active_channel_ids: DashSet<u32>,
+    /// Per-slot lifecycle reservation shared by create/remove. This prevents
+    /// duplicate protocol construction before the ArcSwap publication point.
+    lifecycle_in_progress: Vec<AtomicBool>,
     /// Shared authoritative SHM store used by all channels.
     pub(super) store: Arc<ShmDataStore>,
     /// Routing cache for C2M/M2C routing (public for reload operations)
     pub routing_cache: Arc<aether_routing::RoutingCache>,
-    /// SQLite connection pool for configuration loading
-    pub(super) sqlite_pool: Option<sqlx::SqlitePool>,
     /// Runtime-swappable shared memory handle (writer + index, rebuilt on routing reload)
     pub(super) shm_handle: Arc<ShmWriterHandle>,
-    /// Command TX cache for O(1) hot path access
-    /// Shared with AppState for direct API access bypassing RwLock
-    pub(super) command_tx_cache: Option<Arc<crate::api::command_cache::CommandTxCache>>,
-
     // ========== SHM Command Listener (Event-driven M2C via UDS) ==========
     /// SHM command listener for event-driven M2C command dispatch (UDS path, self-healing)
     pub(super) shm_listener: Option<Arc<ShmCommandListener>>,
+}
+
+pub(super) struct ChannelLifecycleReservation<'a> {
+    flag: &'a AtomicBool,
+}
+
+impl Drop for ChannelLifecycleReservation<'_> {
+    fn drop(&mut self) {
+        self.flag.store(false, Ordering::Release);
+    }
 }
 
 impl std::fmt::Debug for ChannelManager {
@@ -68,6 +76,23 @@ impl ChannelManager {
         (0..MAX_CHANNELS).map(|_| ArcSwapOption::empty()).collect()
     }
 
+    fn create_lifecycle_slots() -> Vec<AtomicBool> {
+        (0..MAX_CHANNELS).map(|_| AtomicBool::new(false)).collect()
+    }
+
+    pub(super) fn reserve_channel_lifecycle(
+        &self,
+        channel_id: u32,
+    ) -> Result<ChannelLifecycleReservation<'_>> {
+        let flag = self
+            .lifecycle_in_progress
+            .get(channel_id as usize)
+            .ok_or_else(|| IoError::invalid_channel_id(channel_id))?;
+        flag.compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+            .map_err(|_| IoError::resource(format!("channel {channel_id} lifecycle is busy")))?;
+        Ok(ChannelLifecycleReservation { flag })
+    }
+
     /// Create new channel manager
     pub fn new(
         shm_handle: Arc<ShmWriterHandle>,
@@ -80,11 +105,10 @@ impl ChannelManager {
         Ok(Self {
             channels: Self::create_channel_slots(),
             active_channel_ids: DashSet::new(),
+            lifecycle_in_progress: Self::create_lifecycle_slots(),
             store,
             routing_cache,
-            sqlite_pool: None,
             shm_handle,
-            command_tx_cache: None,
             shm_listener: None,
         })
     }
@@ -92,10 +116,8 @@ impl ChannelManager {
     /// Create channel manager with shared memory support
     pub fn with_shared_memory(
         routing_cache: Arc<aether_routing::RoutingCache>,
-        sqlite_pool: sqlx::SqlitePool,
         shm_handle: Arc<ShmWriterHandle>,
         channel_health_writer: Option<Arc<ShmChannelHealthWriterHandle>>,
-        command_tx_cache: Option<Arc<crate::api::command_cache::CommandTxCache>>,
     ) -> Result<Self> {
         let mut store = ShmDataStore::new(Arc::clone(&shm_handle), Arc::clone(&routing_cache))?;
         if let Some(writer) = channel_health_writer.as_ref() {
@@ -104,11 +126,10 @@ impl ChannelManager {
         Ok(Self {
             channels: Self::create_channel_slots(),
             active_channel_ids: DashSet::new(),
+            lifecycle_in_progress: Self::create_lifecycle_slots(),
             store: Arc::new(store),
             routing_cache,
-            sqlite_pool: Some(sqlite_pool),
             shm_handle,
-            command_tx_cache,
             shm_listener: None,
         })
     }
@@ -137,22 +158,13 @@ impl ChannelManager {
         &self.shm_handle
     }
 
-    /// Shared SHM writer used by every acquisition channel and by explicit
-    /// telemetry/signal simulation writes.
-    pub fn data_store(&self) -> &Arc<ShmDataStore> {
-        &self.store
-    }
-
     // ========================================================================
     // Channel Lifecycle
     // ========================================================================
 
     /// Remove channel with graceful shutdown.
     pub async fn remove_channel(&self, channel_id: u32) -> Result<()> {
-        // Unregister from cache before removing channel
-        if let Some(ref cache) = self.command_tx_cache {
-            cache.unregister(channel_id);
-        }
+        let _reservation = self.reserve_channel_lifecycle(channel_id)?;
 
         // Unregister from SHM listener (event-driven M2C via UDS)
         if let Some(ref listener) = self.shm_listener {
@@ -180,8 +192,13 @@ impl ChannelManager {
 
     /// Shutdown a channel entry gracefully with timeout.
     async fn shutdown_channel_entry(&self, entry: &ChannelEntry, channel_id: u32) -> Result<()> {
-        // 1. Send shutdown signal to unified task (non-blocking)
-        entry.shutdown();
+        // 1. Reserve a bounded window for a graceful shutdown request. A full
+        // command queue must not silently turn graceful shutdown into an abort.
+        match tokio::time::timeout(std::time::Duration::from_millis(100), entry.shutdown()).await {
+            Ok(true) => {},
+            Ok(false) => warn!("Ch{} task command receiver already closed", channel_id),
+            Err(_) => warn!("Ch{} shutdown command queue remained full", channel_id),
+        }
 
         // 2. Await task exit with timeout, then force-abort via the AbortHandle
         //    captured before moving the JoinHandle into timeout. Dropping a
@@ -222,7 +239,7 @@ impl ChannelManager {
     }
 
     /// Get running channel count (O(n) where n = active channels)
-    pub async fn running_channel_count(&self) -> usize {
+    pub fn running_channel_count(&self) -> usize {
         let mut count = 0;
         for channel_id in self.active_channel_ids.iter() {
             if let Some(entry) = self
@@ -237,92 +254,16 @@ impl ChannelManager {
         count
     }
 
-    /// Get channel metadata
-    pub fn get_channel_metadata(&self, channel_id: u32) -> Option<(String, String)> {
-        self.channels
-            .get(channel_id as usize)?
-            .load_full()
-            .map(|entry| {
-                (
-                    entry.metadata.name.to_string(),
-                    format!("{:?}", entry.metadata.protocol_type),
-                )
-            })
-    }
-
     /// Get all channel stats (O(n) where n = active channels)
-    pub async fn get_all_channel_stats(&self) -> Vec<ChannelStats> {
+    pub fn get_all_channel_stats(&self) -> Vec<ChannelStats> {
         let mut stats = Vec::with_capacity(self.active_channel_ids.len());
         for channel_id in self.active_channel_ids.iter() {
             let id = *channel_id;
             if let Some(entry) = self.channels.get(id as usize).and_then(|s| s.load_full()) {
-                stats.push(entry.get_stats(id).await);
+                stats.push(entry.get_stats());
             }
         }
         stats
-    }
-
-    /// Connect all channels
-    pub async fn connect_all_channels(&self) -> Result<()> {
-        const MAX_CONCURRENT_CONNECTS: usize = 16;
-        let semaphore = Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT_CONNECTS));
-
-        let mut connect_tasks = Vec::with_capacity(self.active_channel_ids.len());
-
-        for channel_id_ref in self.active_channel_ids.iter() {
-            let channel_id = *channel_id_ref;
-            if let Some(entry) = self
-                .channels
-                .get(channel_id as usize)
-                .and_then(|s| s.load_full())
-            {
-                let entry_clone = Arc::clone(&entry);
-                let sem = Arc::clone(&semaphore);
-
-                let task = tokio::spawn(async move {
-                    let _permit = sem.acquire().await;
-                    match entry_clone.connect().await {
-                        Ok(_) => Ok(()),
-                        Err(e) => {
-                            error!("Ch{} connect err: {}", channel_id, e);
-                            Err(e)
-                        },
-                    }
-                });
-
-                connect_tasks.push(task);
-            }
-        }
-
-        let mut failed_channels = Vec::new();
-        for task in connect_tasks {
-            if let Ok(Err(e)) = task.await {
-                failed_channels.push(e);
-            }
-        }
-
-        if failed_channels.is_empty() {
-            Ok(())
-        } else {
-            Err(IoError::batch(format!(
-                "Failed to connect {} channels",
-                failed_channels.len()
-            )))
-        }
-    }
-
-    /// Cleanup all resources
-    pub async fn cleanup(&self) -> Result<()> {
-        info!("Cleanup started");
-
-        // Remove all channels
-        let channel_ids: Vec<u32> = self.get_channel_ids();
-        for channel_id in channel_ids {
-            let _ = self.remove_channel(channel_id).await;
-        }
-
-        info!("Cleanup done");
-        Ok(())
     }
 }
 
@@ -352,7 +293,7 @@ mod tests {
         let routing_cache = create_test_routing_cache();
         let manager = ChannelManager::new(shm_handle, routing_cache).unwrap();
 
-        let count = manager.running_channel_count().await;
+        let count = manager.running_channel_count();
         assert_eq!(count, 0);
     }
 }

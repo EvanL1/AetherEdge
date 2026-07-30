@@ -236,7 +236,7 @@ pub async fn create_channel_handler(
         request.protocol,
         parameters,
     )
-    .with_enabled(request.enabled.unwrap_or(false));
+    .with_enabled(request.enabled);
     if let Some(description) = request.description {
         definition = definition.with_description(description);
     }
@@ -257,9 +257,8 @@ pub async fn create_channel_handler(
 /// explicit mutation rather than overloading this compatibility route.
 /// The desired enabled state is changed only through `/enabled`.
 ///
-/// This retained PUT endpoint has PATCH semantics; identity migration is forbidden.
-/// A body `channel_id` may echo the path ID for compatibility, but any different
-/// value returns HTTP 400 before the application mutator can observe a side effect.
+/// This retained PUT endpoint has PATCH semantics. Identity migration is forbidden;
+/// channel identity comes only from the path.
 #[utoipa::path(
     put,
     path = "/api/channels/{id}",
@@ -273,7 +272,6 @@ pub async fn create_channel_handler(
         content = ChannelConfigUpdateRequest,
         description = "PATCH semantics on the retained PUT path. Supplied parameter keys merge and omitted keys remain unchanged. Identity migration is forbidden.",
         example = json!({
-            "channel_id": 12,
             "name": "Packaging controller 2",
             "parameters": {"host": "192.0.2.11", "port": 502}
         })
@@ -300,14 +298,6 @@ pub async fn update_channel_handler(
 ) -> Result<Json<ChannelMutationResponse>, AppError> {
     let id = path_channel_id(&id)?;
     let request = json_body(payload)?;
-    if request
-        .channel_id
-        .is_some_and(|requested_id| requested_id != id)
-    {
-        return Err(AppError::bad_request(
-            "channel_id identity migration is forbidden on ordinary updates",
-        ));
-    }
 
     let compatibility = ChannelResponseCompatibility {
         name: request.name.clone(),

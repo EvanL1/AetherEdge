@@ -38,20 +38,9 @@ impl Default for CompositeLogHandler {
 
 #[async_trait]
 impl ChannelLogHandler for CompositeLogHandler {
-    async fn on_log(&self, channel_id: u32, event: ChannelLogEvent) {
-        let len = self.handlers.len();
-        if len == 0 {
-            return;
-        }
-
-        // Clone for first N-1 handlers, move for the last one
-        for (i, handler) in self.handlers.iter().enumerate() {
-            if i == len - 1 {
-                handler.on_log(channel_id, event).await;
-                return;
-            } else {
-                handler.on_log(channel_id, event.clone()).await;
-            }
+    async fn on_log(&self, channel_id: u32, event: &ChannelLogEvent) {
+        for handler in &self.handlers {
+            handler.on_log(channel_id, event).await;
         }
     }
 
@@ -67,10 +56,10 @@ pub struct TracingLogHandler;
 
 #[async_trait]
 impl ChannelLogHandler for TracingLogHandler {
-    async fn on_log(&self, channel_id: u32, event: ChannelLogEvent) {
+    async fn on_log(&self, channel_id: u32, event: &ChannelLogEvent) {
         use tracing::{debug, error, info, trace, warn};
 
-        match &event {
+        match event {
             ChannelLogEvent::Connected {
                 endpoint,
                 duration_ms,
