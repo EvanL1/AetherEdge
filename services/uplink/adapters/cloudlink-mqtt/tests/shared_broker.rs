@@ -13,6 +13,7 @@ use std::time::Duration;
 use aether_cloudlink::{
     CandidateMessage, CloudLinkCodec, GatewaySessionAuthenticator, SessionBinding,
     SessionChallenge, SessionChallengeRequest, TopologyBinding, UplinkAuthentication,
+    UplinkSigningProjection,
 };
 use aether_cloudlink_mqtt::{
     CLOUDLINK_MQTT_QOS, CLOUDLINK_MQTT_RETAIN, CloudLinkMqttConfig, CloudLinkTlsConfig,
@@ -671,7 +672,7 @@ async fn external_cloud_dual_phase1_before_edge_restart() {
     let heartbeat = CloudLinkCodec::encode(
         &aether_cloudlink::HeartbeatMessage::new(
             &session,
-            TimestampMs::new(1_721_000_000_123),
+            TimestampMs::new(1_721_000_000_500),
             Vec::new(),
             &test_uplink_authentication(),
         )
@@ -691,7 +692,7 @@ async fn external_cloud_dual_phase1_before_edge_restart() {
     let runtime_manifest = runtime_manifest_fixture();
     let manifest_payload = CloudLinkCodec::runtime_manifest_report(
         &runtime_manifest,
-        TimestampMs::new(1_721_000_000_123),
+        TimestampMs::new(1_721_000_000_400),
     )
     .expect("manifest report");
     let manifest_record = manifest_spool
@@ -700,7 +701,7 @@ async fn external_cloud_dual_phase1_before_edge_restart() {
                 CloudLinkMessageKind::RuntimeManifestReport,
                 "manifest-dual",
                 &manifest_payload,
-                TimestampMs::new(1_721_000_000_123),
+                TimestampMs::new(1_721_000_000_500),
                 None,
             )
             .expect("sealed manifest"),
@@ -727,7 +728,7 @@ async fn external_cloud_dual_phase1_before_edge_restart() {
     let sample = PointSample::new(
         PointAddress::new(InstanceId::new(42), PointKind::Telemetry, PointId::new(8)),
         12.5,
-        TimestampMs::new(1_721_000_000_123),
+        TimestampMs::new(1_721_000_000_500),
         PointQuality::Uncertain,
     );
     let payload = CloudLinkCodec::telemetry_batch(
@@ -741,7 +742,7 @@ async fn external_cloud_dual_phase1_before_edge_restart() {
                 CloudLinkMessageKind::TelemetryBatch,
                 "telemetry-ack-loss",
                 &payload,
-                TimestampMs::new(1_721_000_000_123),
+                TimestampMs::new(1_721_000_000_500),
                 Some(TimestampMs::new(1_721_003_600_000)),
             )
             .expect("sealed telemetry"),
@@ -933,7 +934,7 @@ async fn external_cloud_dual_phase2_after_edge_restart() {
     let sample = PointSample::new(
         PointAddress::new(InstanceId::new(42), PointKind::Telemetry, PointId::new(9)),
         13.5,
-        TimestampMs::new(1_721_000_000_123),
+        TimestampMs::new(1_721_000_000_500),
         PointQuality::Good,
     );
     let partial_spool = MemoryCloudLinkSpool::new("partial", 4).expect("partial spool");
@@ -948,7 +949,7 @@ async fn external_cloud_dual_phase2_after_edge_restart() {
                 CloudLinkMessageKind::TelemetryBatch,
                 "partial-success",
                 &partial_payload,
-                TimestampMs::new(1_721_000_000_123),
+                TimestampMs::new(1_721_000_000_500),
                 None,
             )
             .expect("partial sealed"),
@@ -975,7 +976,7 @@ async fn external_cloud_dual_phase2_after_edge_restart() {
         4,
         5,
         "capacity-overflow",
-        TimestampMs::new(1_721_000_000_300),
+        TimestampMs::new(1_721_000_000_500),
     );
     let loss_payload = aether_cloudlink::DataLossPayload::from_evidence(&loss);
     let loss_record = loss_spool
@@ -984,7 +985,7 @@ async fn external_cloud_dual_phase2_after_edge_restart() {
                 CloudLinkMessageKind::DataLoss,
                 "loss-dual",
                 &loss_payload,
-                TimestampMs::new(1_721_000_000_300),
+                TimestampMs::new(1_721_000_000_500),
                 None,
             )
             .expect("loss sealed"),
@@ -1114,7 +1115,7 @@ fn contextual_fixture(
     position_and_expiry: Option<(&str, &str)>,
 ) -> Value {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../contracts/cloudlink/v1/fixtures")
+        .join("../../../../contracts/cloudlink/v1/fixtures")
         .join(name);
     let mut value: Value =
         serde_json::from_slice(&std::fs::read(path).expect("dual fixture")).expect("fixture JSON");
@@ -1130,6 +1131,39 @@ fn contextual_fixture(
         value["delivery"]["position"] = json!(position);
         value["expires_at_ms"] = json!(expires_at);
     }
+    let delivery = &value["delivery"];
+    let signing_projection = UplinkSigningProjection::delivery(
+        value["gateway_id"].as_str().expect("fixture gateway ID"),
+        value["credential_generation"]
+            .as_str()
+            .expect("fixture credential generation"),
+        value["session_id"].as_str().expect("fixture session ID"),
+        value["session_epoch"]
+            .as_str()
+            .expect("fixture session epoch"),
+        value["message_kind"]
+            .as_str()
+            .expect("fixture message kind"),
+        value["sent_at_ms"].as_str().expect("fixture sent time"),
+        value["expires_at_ms"].as_str(),
+        delivery["stream_id"].as_str().expect("fixture stream ID"),
+        delivery["stream_epoch"]
+            .as_str()
+            .expect("fixture stream epoch"),
+        delivery["position"].as_str().expect("fixture position"),
+        delivery["batch_id"].as_str().expect("fixture batch ID"),
+        delivery["digest"]
+            .as_str()
+            .expect("fixture business digest"),
+    )
+    .expect("contextual fixture signing projection");
+    value["message_authentication"] = serde_json::to_value(
+        test_uplink_authentication()
+            .authenticate(&signing_projection)
+            .expect("contextual fixture authentication")
+            .expect("Gateway-signed fixture authentication"),
+    )
+    .expect("contextual fixture authentication JSON");
     value
 }
 
