@@ -14,6 +14,7 @@ on:
       - crates/aether-domain/**
       - crates/aether-ports/**
       - libs/aether-shm-bridge/**
+      - services/automation/**
       - services/history/**
       - services/io/**
       - services/uplink/**
