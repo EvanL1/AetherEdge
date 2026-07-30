@@ -645,15 +645,28 @@ export function buildDocumentRecord({ path: relativePath, content, updated, publ
   };
 }
 
-function lastCommittedDate(root, relativePath) {
+export function sourceUpdatedDate(content) {
+  const { metadata } = parseFrontmatter(content);
+  const declared = metadata.match(/^updated:\s*(.+)$/m);
+  if (!declared) return null;
+
+  const value = parseScalar(declared[1]);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
+  const instant = new Date(`${value}T00:00:00Z`);
+  return !Number.isNaN(instant.getTime()) && instant.toISOString().startsWith(value)
+    ? value
+    : null;
+}
+
+function lastCommittedDate(root, relativePath, content) {
   try {
     const value = execFileSync('git', ['log', '-1', '--format=%cs', '--', relativePath], {
       cwd: root,
       encoding: 'utf8',
     }).trim();
-    return value || '2026-07-18';
+    return value || sourceUpdatedDate(content) || '2026-07-18';
   } catch {
-    return '2026-07-18';
+    return sourceUpdatedDate(content) || '2026-07-18';
   }
 }
 
@@ -661,14 +674,15 @@ export async function buildManifest(root = repoRoot) {
   const paths = await discoverAgentReadablePaths(root);
   const publishedPaths = await discoverPublishedPaths(root, paths);
   const documents = await Promise.all(
-    paths.map(async (relativePath) =>
-      buildDocumentRecord({
+    paths.map(async (relativePath) => {
+      const content = await fs.readFile(path.join(root, relativePath), 'utf8');
+      return buildDocumentRecord({
         path: relativePath,
-        content: await fs.readFile(path.join(root, relativePath), 'utf8'),
-        updated: lastCommittedDate(root, relativePath),
+        content,
+        updated: lastCommittedDate(root, relativePath, content),
         published: publishedPaths.has(relativePath),
-      })
-    )
+      });
+    })
   );
   return {
     $schema: manifestSchemaUrl,

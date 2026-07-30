@@ -24,15 +24,19 @@ name = "aether"
 version = "0.0.1"
 dependencies = [
  "aether-application",
+ "aether-cloud-enrollment-http",
  "aether-config",
  "aether-dataplane",
  "aether-domain",
  "aether-pack",
+ "aether-ports",
  "aether-routing",
  "aether-rules",
  "aether-runtime-catalog",
  "aether-shm-bridge",
+ "aether-store-local",
  "anyhow",
+ "base64",
  "chrono",
  "clap",
  "colored",
@@ -42,6 +46,7 @@ dependencies = [
  "ratatui",
  "reqwest",
  "rmcp",
+ "rpassword",
  "rustyline",
  "schemars 1.2.1",
  "serde",
@@ -57,6 +62,7 @@ dependencies = [
  "tracing-subscriber",
  "uuid",
  "wiremock",
+ "zeroize",
 ]
 
 [[package]]
@@ -235,6 +241,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "aether-cloud-enrollment-http"
+version = "0.0.1"
+dependencies = [
+ "aether-ports",
+ "async-trait",
+ "base64",
+ "bytes",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
+ "uuid",
+ "wiremock",
+ "zeroize",
+]
+
+[[package]]
 name = "aether-cloudlink"
 version = "0.0.1"
 dependencies = [
@@ -267,10 +290,12 @@ dependencies = [
  "aether-ports",
  "aether-store-local",
  "async-trait",
+ "base64",
  "ed25519-dalek",
  "native-tls",
  "rumqttc",
  "serde_json",
+ "serde_json_canonicalizer",
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
@@ -516,7 +541,10 @@ dependencies = [
  "aether-domain",
  "async-trait",
  "serde",
+ "sha2",
  "tokio",
+ "url",
+ "uuid",
  "zeroize",
 ]
 
@@ -640,12 +668,16 @@ dependencies = [
 name = "aether-store-local"
 version = "0.0.1"
 dependencies = [
+ "aether-application",
  "aether-domain",
  "aether-ports",
  "aether-testkit",
  "async-trait",
+ "base64",
+ "ed25519-dalek",
  "fs2",
  "libc",
+ "rand_core 0.6.4",
  "serde",
  "serde_json",
  "sha2",
@@ -653,6 +685,8 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
+ "uuid",
+ "zeroize",
 ]
 
 [[package]]
@@ -1968,6 +2002,7 @@ checksum = "70e796c081cee67dc755e1a36a0a172b897fab85fc3f6bc48307991f64e4eca9"
 dependencies = [
  "curve25519-dalek",
  "ed25519",
+ "rand_core 0.6.4",
  "serde",
  "sha2",
  "subtle",
@@ -3979,6 +4014,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "rpassword"
+version = "7.5.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2da316a15f47e3d053de9cb2c439650bd8fa4aaeb9365f2e5f27f492ff73c196"
+dependencies = [
+ "libc",
+ "rtoolbox",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "rsa"
 version = "0.9.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3998,6 +4044,16 @@ dependencies = [
  "spki",
  "subtle",
  "zeroize",
+]
+
+[[package]]
+name = "rtoolbox"
+version = "0.0.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "50a0e551c1e27e1731aba276dbeaeac73f53c7cd34d1bda485d02bd1e0f36844"
+dependencies = [
+ "libc",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -6260,6 +6316,7 @@ dependencies = [
  "crossbeam-utils",
  "crypto-common",
  "digest",
+ "ed25519-dalek",
  "either",
  "fastrand",
  "form_urlencoded",
@@ -6284,11 +6341,9 @@ dependencies = [
  "percent-encoding",
  "proc-macro2",
  "quote",
- "rand 0.8.7",
+ "rand_core 0.6.4",
  "regex-automata",
  "regex-syntax",
- "rustls",
- "rustls-webpki",
  "scopeguard",
  "serde",
  "serde_core",
@@ -6296,11 +6351,7 @@ dependencies = [
  "sha2",
  "slab",
  "smallvec",
- "sqlx",
  "sqlx-core",
- "sqlx-macros",
- "sqlx-macros-core",
- "sqlx-postgres",
  "sqlx-sqlite",
  "syn 2.0.118",
  "sync_wrapper",

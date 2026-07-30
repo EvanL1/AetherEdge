@@ -15,6 +15,9 @@ categories = ["embedded", "asynchronous"]
 aether-domain = { version = "0.0.1", path = "../aether-domain" }
 async-trait = { workspace = true }
 serde = { workspace = true }
+sha2 = { workspace = true }
+url = "2.5.8"
+uuid = { workspace = true, features = ["v5"] }
 zeroize = { workspace = true }
 
 [dev-dependencies]

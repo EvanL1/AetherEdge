@@ -17,6 +17,7 @@ rules are defined in:
 - [ADR-0025: Physical IO and optional protocol extensions](docs/adr/0025-physical-io-and-optional-protocol-extensions.md)
 - [ADR-0026: Minimal kernel and out-of-tree integrations](docs/adr/0026-minimal-kernel-and-out-of-tree-integrations.md)
 - [ADR-0027: Exact IO protocol capabilities](docs/adr/0027-exact-io-protocol-capabilities.md)
+- [ADR-0028: AetherCloud gateway enrollment identity boundary](docs/adr/0028-aethercloud-gateway-enrollment.md)
 - [Target repository layout](docs/architecture/target-layout.md)
 - [AI invariants](ai/invariants.md)
 - [Capability safety policy](ai/safety-policy.yaml)

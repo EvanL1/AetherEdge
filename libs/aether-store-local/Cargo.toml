@@ -15,12 +15,17 @@ categories = ["embedded", "asynchronous"]
 aether-domain = { version = "0.0.1", path = "../../crates/aether-domain" }
 aether-ports = { version = "0.0.1", path = "../../crates/aether-ports" }
 async-trait = { workspace = true }
+base64 = "0.22"
+ed25519-dalek = { version = "2.2", features = ["rand_core", "zeroize"] }
 fs2 = "0.4"
+rand_core = { version = "0.6", features = ["getrandom"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = { workspace = true }
 thiserror = { workspace = true }
 tokio = { version = "1.35", default-features = false, features = ["rt", "sync"] }
+uuid = { workspace = true }
+zeroize = { workspace = true }
 sqlx = { workspace = true, optional = true }
 
 [target.'cfg(unix)'.dependencies]
@@ -31,6 +36,7 @@ default = []
 sqlite-audit = ["dep:sqlx"]
 
 [dev-dependencies]
+aether-application = { version = "0.0.1", path = "../../crates/aether-application" }
 aether-testkit = { path = "../../crates/aether-testkit" }
 tempfile = { workspace = true }
 tokio = { workspace = true }

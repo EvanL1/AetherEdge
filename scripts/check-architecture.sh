@@ -8,7 +8,8 @@ readonly PERIPHERAL_GRAPH_PATTERN='^(redis|sqlx-postgres|tokio-postgres|postgres
 echo "Checking typed repository architecture contracts..."
 cargo test -p aether-architecture-tests \
     --test workspace_boundaries \
-    --test source_boundaries
+    --test source_boundaries \
+    --test cloud_enrollment_boundaries
 
 echo "Checking governed application-boundary behavior..."
 cargo test -p aether-acquisition-port --test port_contract

@@ -13,7 +13,10 @@ aether-routing = { path = "../../libs/aether-routing" }
 aether-rules = { path = "../../libs/aether-rules" }
 aether-pack = { path = "../../crates/aether-pack" }
 aether-application = { path = "../../crates/aether-application" }
+aether-ports = { path = "../../crates/aether-ports" }
 aether-runtime-catalog = { path = "../../libs/aether-runtime-catalog" }
+aether-store-local = { path = "../../libs/aether-store-local" }
+aether-cloud-enrollment-http = { path = "../../services/uplink/adapters/cloud-enrollment-http" }
 common = { path = "../../libs/common" }
 
 # Cross-platform config schema. Replaces the previous io/automation service
@@ -62,6 +65,7 @@ colored = { workspace = true }
 
 # Interactive REPL
 rustyline = "15"
+rpassword = "7.4"
 
 # TUI dashboard
 ratatui = "0.29"
@@ -69,6 +73,7 @@ crossterm = "0.28"
 
 # HTTP client
 reqwest = { workspace = true }
+zeroize = { workspace = true }
 
 # MCP Server
 rmcp = { version = "2.2", features = ["server", "macros", "transport-io"] }
@@ -80,4 +85,5 @@ schemars = "1.2"
 workspace = true
 
 [dev-dependencies]
+base64 = "0.22"
 wiremock = "0.6.5"
