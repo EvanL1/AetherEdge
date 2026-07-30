@@ -2,10 +2,14 @@
 //!
 //! SAE J1939 is a CAN-based protocol used in heavy-duty vehicles and industrial equipment.
 
+#[cfg(target_os = "linux")]
 mod client;
 
 // Re-export client
-pub use client::{J1939Client, J1939Config};
+#[cfg(target_os = "linux")]
+pub(crate) use client::validate_point_mapping;
+#[cfg(target_os = "linux")]
+pub use client::{J1939Client, J1939Config, J1939PointConfig};
 
 // Re-export voltage_j1939 types for convenience
 pub use voltage_j1939::{

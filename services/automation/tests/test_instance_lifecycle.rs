@@ -59,7 +59,6 @@ async fn create_instance_full_flow_requires_no_external_service() -> Result<()> 
     assert_eq!(instance.instance_id(), 1001);
     assert_eq!(instance.instance_name(), "battery_001");
     assert!(helpers::assert_instance_exists(env.pool(), 1001).await?);
-    assert_eq!(manager.get_instance_id("battery_001").await?, 1001);
     env.cleanup().await?;
     Ok(())
 }

@@ -552,19 +552,6 @@ impl AetherMcp {
     }
 }
 
-#[cfg(test)]
-#[derive(Deserialize, schemars::JsonSchema)]
-struct ChannelsWriteParams {
-    /// Channel ID
-    channel_id: u32,
-    /// Simulation point type: T | S
-    point_type: String,
-    /// Point ID (numeric or semantic)
-    id: String,
-    /// Value to write
-    value: f64,
-}
-
 #[derive(Deserialize, schemars::JsonSchema)]
 struct ChannelsCreateParams {
     /// Channel name
@@ -701,6 +688,9 @@ struct RoutingActionUpsertParams {
     /// Whether the new route participates in command dispatch.
     #[serde(default = "default_routing_enabled")]
     enabled: bool,
+    /// Current shared logical-routing revision from the latest routing query.
+    #[schemars(range(min = 1))]
+    expected_revision: u64,
     /// Explicitly confirms this high-risk physical topology change.
     confirmed: bool,
 }
@@ -715,6 +705,9 @@ struct RoutingActionDeleteParams {
     instance_id: u32,
     /// Logical action-point ID within the instance model.
     action_point_id: u32,
+    /// Current shared logical-routing revision from the latest routing query.
+    #[schemars(range(min = 1))]
+    expected_revision: u64,
     /// Explicitly confirms this high-risk physical topology change.
     confirmed: bool,
 }
@@ -727,6 +720,9 @@ struct RoutingActionSetEnabledParams {
     action_point_id: u32,
     /// Whether the route participates in command dispatch.
     enabled: bool,
+    /// Current shared logical-routing revision from the latest routing query.
+    #[schemars(range(min = 1))]
+    expected_revision: u64,
     /// Explicitly confirms this high-risk physical topology change.
     confirmed: bool,
 }
@@ -1007,10 +1003,13 @@ impl AetherMcp {
                 .upsert_action_route(
                     p.instance_id,
                     p.action_point_id,
-                    p.channel_id,
-                    &p.channel_type,
-                    p.channel_point_id,
-                    p.enabled,
+                    crate::routing::RoutingTarget {
+                        channel_id: p.channel_id,
+                        channel_type: &p.channel_type,
+                        channel_point_id: p.channel_point_id,
+                        enabled: p.enabled,
+                    },
+                    p.expected_revision,
                     p.confirmed,
                 )
                 .await,
@@ -1027,7 +1026,12 @@ impl AetherMcp {
     ) -> CallToolResult {
         to_call_result(
             self.routing
-                .delete_action_route(p.instance_id, p.action_point_id, p.confirmed)
+                .delete_action_route(
+                    p.instance_id,
+                    p.action_point_id,
+                    p.expected_revision,
+                    p.confirmed,
+                )
                 .await,
         )
     }
@@ -1042,7 +1046,13 @@ impl AetherMcp {
     ) -> CallToolResult {
         to_call_result(
             self.routing
-                .set_action_route_enabled(p.instance_id, p.action_point_id, p.enabled, p.confirmed)
+                .set_action_route_enabled(
+                    p.instance_id,
+                    p.action_point_id,
+                    p.enabled,
+                    p.expected_revision,
+                    p.confirmed,
+                )
                 .await,
         )
     }
@@ -1055,21 +1065,6 @@ impl AetherMcp {
 #[cfg(test)]
 #[tool_router(router = legacy_write_test_router)]
 impl AetherMcp {
-    #[tool(
-        description = "Inject a simulated T/S value into the acquisition SHM plane. This does not command a device, but downstream rules and alarms treat it as telemetry.",
-        annotations(read_only_hint = false)
-    )]
-    async fn channels_write(
-        &self,
-        Parameters(p): Parameters<ChannelsWriteParams>,
-    ) -> CallToolResult {
-        to_call_result(
-            self.channels
-                .write_point(p.channel_id, &p.point_type, &p.id, p.value)
-                .await,
-        )
-    }
-
     #[tool(
         description = "Batch create/update/delete points on a channel. `body` is {\"create\":[...],\"update\":[...],\"delete\":[...]}.",
         annotations(read_only_hint = false)
@@ -1305,7 +1300,6 @@ mod tests {
     /// stays here until its application capability and exact MCP mapping are
     /// both reviewed; direct wrappers exist only for unit coverage.
     const UNEXPOSED_WRITE_TOOL_NAMES: &[&str] = &[
-        "channels_write",
         "channels_points_batch",
         "net_mqtt_config_set",
         "net_mqtt_reconnect",
@@ -2078,15 +2072,14 @@ mod tests {
     }
 
     // NOTE: `ModelClient::list_instances` GETs bare `/api/instances` with an
-    // optional `?product=` query string -- there's no `/list` suffix (unlike
-    // `channels_list`'s neighboring io route, this one really doesn't
-    // have it).
+    // optional canonical `?product_name=` query string. There is no `/list`
+    // suffix for the full model response.
     #[tokio::test]
     async fn models_instances_forwards_the_product_filter() {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
             .and(path("/api/instances"))
-            .and(query_param("product", "ESS"))
+            .and(query_param("product_name", "ESS"))
             .respond_with(
                 ResponseTemplate::new(200).set_body_json(serde_json::json!({ "instances": [] })),
             )
@@ -2170,34 +2163,6 @@ mod tests {
         assert!(names.contains(&"channels_list".to_string()), "{names:?}");
         // Route-count safety net: 23 read-only + 22 governed writes.
         assert_eq!(names.len(), 45, "{names:?}");
-    }
-
-    #[tokio::test]
-    async fn channels_write_posts_the_flattened_body() {
-        let server = MockServer::start().await;
-        Mock::given(method("POST"))
-            .and(path("/api/channels/1001/write"))
-            .and(body_json(
-                serde_json::json!({ "type": "T", "id": "5", "value": 50.0 }),
-            ))
-            .respond_with(
-                ResponseTemplate::new(200).set_body_json(serde_json::json!({ "success": true })),
-            )
-            .expect(1)
-            .mount(&server)
-            .await;
-
-        let mcp = write_mcp(&server.uri());
-        let result = mcp
-            .channels_write(Parameters(ChannelsWriteParams {
-                channel_id: 1001,
-                point_type: "T".to_string(),
-                id: "5".to_string(),
-                value: 50.0,
-            }))
-            .await;
-
-        assert_ne!(result.is_error, Some(true), "{result:?}");
     }
 
     #[tokio::test]
@@ -2970,6 +2935,7 @@ mod tests {
                 "four_remote": "A",
                 "channel_point_id": 5,
                 "enabled": true,
+                "expected_revision": 9,
                 "confirmed": true
             })))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
@@ -2986,6 +2952,7 @@ mod tests {
                 channel_type: "A".to_string(),
                 channel_point_id: 5,
                 enabled: true,
+                expected_revision: 9,
                 confirmed: true,
             }))
             .await;
@@ -3001,6 +2968,7 @@ mod tests {
             .routing_action_delete(Parameters(RoutingActionDeleteParams {
                 instance_id: 7,
                 action_point_id: 1,
+                expected_revision: 9,
                 confirmed: false,
             }))
             .await;
@@ -3017,6 +2985,7 @@ mod tests {
             .and(header_exists("x-request-id"))
             .and(body_json(serde_json::json!({
                 "enabled": false,
+                "expected_revision": 9,
                 "confirmed": true
             })))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
@@ -3030,6 +2999,7 @@ mod tests {
                 instance_id: 7,
                 action_point_id: 1,
                 enabled: false,
+                expected_revision: 9,
                 confirmed: true,
             }))
             .await;
@@ -3161,10 +3131,13 @@ mod tests {
     }
 
     #[test]
-    fn channel_mutation_mcp_schemas_require_expected_revision() {
+    fn cas_mutation_mcp_schemas_require_expected_revision() {
         for schema in [
             serde_json::to_value(schemars::schema_for!(ChannelsUpdateParams)).unwrap(),
             serde_json::to_value(schemars::schema_for!(ChannelMutationIdParams)).unwrap(),
+            serde_json::to_value(schemars::schema_for!(RoutingActionUpsertParams)).unwrap(),
+            serde_json::to_value(schemars::schema_for!(RoutingActionDeleteParams)).unwrap(),
+            serde_json::to_value(schemars::schema_for!(RoutingActionSetEnabledParams)).unwrap(),
         ] {
             let required = schema["required"]
                 .as_array()

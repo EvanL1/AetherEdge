@@ -13,6 +13,7 @@ use aether_automation::infra::application_control::{
     AutomationCommandDispatcher, ControlAuthenticator,
 };
 use aether_automation::infra::measurement_routing::SqliteMeasurementRoutingMutator;
+use aether_automation::infra::runtime_topology::AutomationTopologyHandle;
 use aether_automation::{InstanceManager, ProductLoader};
 use aether_domain::{ChannelCommandAddress, ChannelId, InstanceId, PointId, PointKind};
 use aether_pack::ProductLibrary;
@@ -57,26 +58,12 @@ impl RoutingFixture {
     }
 
     async fn missing_measurement_table() -> Self {
-        let pool = sqlx::sqlite::SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect("sqlite::memory:")
+        let fixture = Self::complete().await;
+        sqlx::query("DROP TABLE measurement_routing")
+            .execute(&fixture.pool)
             .await
-            .expect("open degraded routing database");
-        for statement in [
-            common::test_utils::schema::CHANNELS_TABLE,
-            common::test_utils::schema::ADJUSTMENT_POINTS_TABLE,
-            common::test_utils::schema::INSTANCES_TABLE,
-            common::test_utils::schema::ACTION_ROUTING_TABLE,
-        ] {
-            sqlx::query(statement)
-                .execute(&pool)
-                .await
-                .expect("minimal schema");
-        }
-        common::test_utils::schema::initialize_configuration_revisions(&pool)
-            .await
-            .expect("logical-routing revision");
-        Self::with_pool(pool).await
+            .expect("inject topology publication failure");
+        fixture
     }
 
     async fn with_pool(pool: SqlitePool) -> Self {
@@ -115,9 +102,20 @@ impl RoutingFixture {
         )
         .expect("generic model fixture");
         let library = ProductLibrary::load(Some(models.path())).expect("load model fixture");
+        let runtime_topology = Arc::new(
+            AutomationTopologyHandle::from_sqlite_lazy(
+                models.path().join("live.shm"),
+                models.path().join("health.shm"),
+                &pool,
+                Arc::new(ShmDeviceCommandSink::new()),
+            )
+            .await
+            .expect("lazy runtime topology"),
+        );
         let manager = Arc::new(InstanceManager::new(
             pool.clone(),
             Arc::new(ProductLoader::with_library(pool.clone(), Arc::new(library))),
+            runtime_topology,
         ));
         let mutator = SqliteActionRoutingMutator::new(Arc::clone(&manager));
         Self {
@@ -244,6 +242,27 @@ async fn action_route_request(
     (status, body)
 }
 
+async fn get_json(router: &axum::Router, uri: &str) -> serde_json::Value {
+    let response = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(uri)
+                .body(Body::empty())
+                .expect("routing query request"),
+        )
+        .await
+        .expect("routing query response");
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = response
+        .into_body()
+        .collect()
+        .await
+        .expect("routing query body")
+        .to_bytes();
+    serde_json::from_slice(&bytes).expect("typed routing query response")
+}
+
 const fn revision(value: u64) -> LogicalRoutingRevision {
     LogicalRoutingRevision::new(value)
 }
@@ -262,7 +281,7 @@ fn route(instance_id: u32, action_id: u32, channel_id: u32, point_id: u32) -> Ac
 }
 
 #[tokio::test]
-async fn mixed_global_delete_is_rejected_before_either_plane_changes() {
+async fn mixed_global_delete_surface_is_absent_and_neither_plane_changes() {
     let fixture = RoutingFixture::complete().await;
     for statement in [
         "INSERT INTO action_routing \
@@ -290,7 +309,7 @@ async fn mixed_global_delete_is_rejected_before_either_plane_changes() {
         .await
         .expect("mixed delete response");
 
-    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED);
     let (measurement_count, action_count, head): (i64, i64, i64) = (
         sqlx::query_scalar("SELECT COUNT(*) FROM measurement_routing")
             .fetch_one(&fixture.pool)
@@ -311,6 +330,119 @@ async fn mixed_global_delete_is_rejected_before_either_plane_changes() {
 }
 
 #[tokio::test]
+async fn routing_queries_share_revision_and_keep_disabled_routes_visible() {
+    let fixture = RoutingFixture::complete().await;
+    for statement in [
+        "INSERT INTO telemetry_points (channel_id, point_id, signal_name) \
+         VALUES (3, 6, 'temperature')",
+        "INSERT INTO measurement_routing \
+         (instance_id, instance_name, measurement_id, channel_id, channel_type, channel_point_id, enabled) \
+         VALUES (7, 'actuator_7', 2, 3, 'T', 6, 0)",
+        "INSERT INTO action_routing \
+         (instance_id, instance_name, action_id, channel_id, channel_type, channel_point_id, enabled) \
+         VALUES (7, 'actuator_7', 1, 3, 'A', 5, 0)",
+    ] {
+        sqlx::query(statement)
+            .execute(&fixture.pool)
+            .await
+            .expect("seed disabled routing");
+    }
+    let router = fixture.router().await;
+
+    let all = get_json(&router, "/api/routing").await;
+    let instance = get_json(&router, "/api/instances/7/routing").await;
+    let channel = get_json(&router, "/api/routing/by-channel/3").await;
+
+    for response in [&all, &instance, &channel] {
+        assert_eq!(
+            response.pointer("/data/logical_routing_revision"),
+            Some(&serde_json::json!(1)),
+            "every routing query must expose the CAS head: {response}"
+        );
+    }
+    assert_eq!(
+        all.pointer("/data/measurement_routing/0/enabled"),
+        Some(&serde_json::json!(false))
+    );
+    assert_eq!(
+        all.pointer("/data/action_routing/0/enabled"),
+        Some(&serde_json::json!(false))
+    );
+    assert_eq!(
+        instance.pointer("/data/measurement/0/enabled"),
+        Some(&serde_json::json!(false)),
+        "disabled measurement routes must remain manageable"
+    );
+    assert_eq!(
+        instance.pointer("/data/action/0/enabled"),
+        Some(&serde_json::json!(false)),
+        "disabled action routes must remain manageable"
+    );
+    assert_eq!(
+        channel.pointer("/data/uplink/0/enabled"),
+        Some(&serde_json::json!(false))
+    );
+    assert_eq!(
+        channel.pointer("/data/downlink/0/enabled"),
+        Some(&serde_json::json!(false))
+    );
+}
+
+#[tokio::test]
+async fn action_point_detail_uses_the_same_revisioned_disabled_route_snapshot() {
+    let fixture = RoutingFixture::complete().await;
+    let key = ActionRouteKey::new(InstanceId::new(7), PointId::new(1));
+    fixture
+        .mutator
+        .mutate_revisioned(RevisionedActionRoutingMutation::upsert(
+            route(7, 1, 3, 5),
+            revision(1),
+        ))
+        .await
+        .expect("upsert action route");
+    fixture
+        .mutator
+        .mutate_revisioned(RevisionedActionRoutingMutation::set_enabled(
+            key,
+            false,
+            revision(2),
+        ))
+        .await
+        .expect("disable action route");
+    let router = fixture.router().await;
+
+    let response = router
+        .oneshot(
+            Request::builder()
+                .uri("/api/instances/7/actions/1")
+                .body(Body::empty())
+                .expect("action-detail request"),
+        )
+        .await
+        .expect("action-detail response");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.headers()["etag"], "\"3\"");
+    let body: serde_json::Value = serde_json::from_slice(
+        &response
+            .into_body()
+            .collect()
+            .await
+            .expect("action-detail body")
+            .to_bytes(),
+    )
+    .expect("typed action-detail response");
+    assert_eq!(
+        body.pointer("/data/routing/enabled"),
+        Some(&serde_json::json!(false))
+    );
+    assert_eq!(
+        body.pointer("/data/routing/channel_point_name"),
+        Some(&serde_json::json!("speed_setpoint"))
+    );
+}
+
+#[tokio::test]
 async fn mutations_publish_the_committed_m2c_view_and_revoke_it_on_disable_or_delete() {
     let fixture = RoutingFixture::complete().await;
     let key = ActionRouteKey::new(InstanceId::new(7), PointId::new(1));
@@ -325,6 +457,15 @@ async fn mutations_publish_the_committed_m2c_view_and_revoke_it_on_disable_or_de
         .expect("upsert action route");
     assert_eq!(upsert.affected_routes(), 1);
     assert_eq!(upsert.resulting_revision(), revision(2));
+    assert!(upsert.runtime_status().is_published());
+    let published = fixture
+        .manager
+        .runtime_topology()
+        .load()
+        .action_route(7, 1)
+        .expect("published action route");
+    assert_eq!(published.channel_id().get(), 3);
+    assert_eq!(published.point_id().get(), 5);
     let stored: (i64, String, i64, bool) = sqlx::query_as(
         "SELECT channel_id, channel_type, channel_point_id, enabled \
          FROM action_routing WHERE instance_id = 7 AND action_id = 1",
@@ -333,7 +474,7 @@ async fn mutations_publish_the_committed_m2c_view_and_revoke_it_on_disable_or_de
     .await
     .expect("stored action route");
     assert_eq!(stored, (3, "A".to_string(), 5, true));
-    fixture
+    let disabled = fixture
         .mutator
         .mutate_revisioned(RevisionedActionRoutingMutation::set_enabled(
             key,
@@ -342,6 +483,15 @@ async fn mutations_publish_the_committed_m2c_view_and_revoke_it_on_disable_or_de
         ))
         .await
         .expect("disable route");
+    assert!(disabled.runtime_status().is_published());
+    assert!(
+        fixture
+            .manager
+            .runtime_topology()
+            .load()
+            .action_route(7, 1)
+            .is_none()
+    );
     let enabled: bool = sqlx::query_scalar(
         "SELECT enabled FROM action_routing WHERE instance_id = 7 AND action_id = 1",
     )
@@ -350,7 +500,7 @@ async fn mutations_publish_the_committed_m2c_view_and_revoke_it_on_disable_or_de
     .expect("disabled route");
     assert!(!enabled);
 
-    fixture
+    let enabled_receipt = fixture
         .mutator
         .mutate_revisioned(RevisionedActionRoutingMutation::set_enabled(
             key,
@@ -359,6 +509,15 @@ async fn mutations_publish_the_committed_m2c_view_and_revoke_it_on_disable_or_de
         ))
         .await
         .expect("enable route");
+    assert!(enabled_receipt.runtime_status().is_published());
+    assert!(
+        fixture
+            .manager
+            .runtime_topology()
+            .load()
+            .action_route(7, 1)
+            .is_some()
+    );
     let enabled: bool = sqlx::query_scalar(
         "SELECT enabled FROM action_routing WHERE instance_id = 7 AND action_id = 1",
     )
@@ -367,11 +526,20 @@ async fn mutations_publish_the_committed_m2c_view_and_revoke_it_on_disable_or_de
     .expect("enabled route");
     assert!(enabled);
 
-    fixture
+    let deleted = fixture
         .mutator
         .mutate_revisioned(RevisionedActionRoutingMutation::delete(key, revision(4)))
         .await
         .expect("delete route");
+    assert!(deleted.runtime_status().is_published());
+    assert!(
+        fixture
+            .manager
+            .runtime_topology()
+            .load()
+            .action_route(7, 1)
+            .is_none()
+    );
     let remaining: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM action_routing")
         .fetch_one(&fixture.pool)
         .await
@@ -512,9 +680,16 @@ async fn action_commit_invalidates_measurement_commands_fenced_by_the_same_head(
 }
 
 #[tokio::test]
-async fn publication_failure_revokes_the_previous_runtime_route() {
+async fn publication_failure_keeps_the_committed_runtime_route_revoked() {
     let fixture = RoutingFixture::missing_measurement_table().await;
-    assert!(fixture.manager.runtime_topology().is_none());
+    assert!(
+        fixture
+            .manager
+            .runtime_topology()
+            .load()
+            .action_route(7, 1)
+            .is_none()
+    );
 
     let receipt = fixture
         .mutator
@@ -536,8 +711,13 @@ async fn publication_failure_revokes_the_previous_runtime_route() {
         PortErrorKind::Unavailable
     );
     assert!(
-        fixture.manager.runtime_topology().is_none(),
-        "a failed publication must not create an alternate route owner"
+        fixture
+            .manager
+            .runtime_topology()
+            .load()
+            .action_route(7, 1)
+            .is_none(),
+        "a failed publication must keep command routes revoked"
     );
 }
 

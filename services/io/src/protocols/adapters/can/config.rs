@@ -1,8 +1,17 @@
 //! CAN protocol configuration types
 
+#[cfg(target_os = "linux")]
+use aether_config::io::MAX_CHANNEL_TIMING_MS;
 use aether_core::PointType;
+#[cfg(any(target_os = "linux", test))]
+use serde::de::{self, Visitor};
 use serde::{Deserialize, Serialize};
+#[cfg(any(target_os = "linux", test))]
+use serde_json::Value;
 use std::collections::HashMap;
+
+#[cfg(any(target_os = "linux", test))]
+use crate::protocols::core::error::{GatewayError, Result};
 
 /// CAN client configuration.
 #[derive(Debug, Clone)]
@@ -63,8 +72,6 @@ pub enum CanDataType {
     Int32,
     /// 32-bit floating point
     Float32,
-    /// ASCII string
-    Ascii,
 }
 
 /// CAN point mapping structure
@@ -96,6 +103,179 @@ fn default_scale() -> f64 {
     1.0
 }
 
+/// Persisted CAN point mapping decoded by both validation and runtime construction.
+#[cfg(any(target_os = "linux", test))]
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CanPointMapping {
+    #[serde(deserialize_with = "deserialize_can_id")]
+    can_id: u32,
+    start_bit: Option<u8>,
+    byte_offset: Option<u8>,
+    bit_position: Option<u8>,
+    bit_length: u8,
+    #[serde(default)]
+    data_type: CanDataType,
+    #[serde(default = "default_scale")]
+    scale: f64,
+    #[serde(default)]
+    offset: f64,
+}
+
+/// Parse and validate a CAN point mapping without cloning its JSON value.
+///
+/// CAN exposes a read-only acquisition plane, so only telemetry and signal
+/// point mappings are accepted.
+#[cfg(any(target_os = "linux", test))]
+pub(crate) fn parse_point_mapping(
+    mapping: &Value,
+    point_type: PointType,
+    point_id: u32,
+) -> Result<CanPoint> {
+    if !matches!(point_type, PointType::Telemetry | PointType::Signal) {
+        return Err(mapping_error(
+            point_id,
+            &format!("CAN exposes read-only telemetry/signal mappings, not {point_type:?}"),
+        ));
+    }
+
+    for field in ["start_bit", "byte_offset", "bit_position"] {
+        if mapping.get(field).is_some_and(Value::is_null) {
+            return Err(mapping_error(
+                point_id,
+                &format!("{field} must be an unsigned integer when present"),
+            ));
+        }
+    }
+
+    let mapping = CanPointMapping::deserialize(mapping)
+        .map_err(|error| mapping_error(point_id, &format!("invalid mapping object: {error}")))?;
+    let start_bit = match (mapping.start_bit, mapping.byte_offset, mapping.bit_position) {
+        (Some(start_bit), None, None) if start_bit <= 63 => start_bit,
+        (None, Some(byte_offset), bit_position)
+            if byte_offset <= 7 && bit_position.unwrap_or_default() <= 7 =>
+        {
+            byte_offset * 8 + bit_position.unwrap_or_default()
+        },
+        (Some(_), Some(_), _) => {
+            return Err(mapping_error(
+                point_id,
+                "use start_bit or byte_offset, not both",
+            ));
+        },
+        (Some(_), None, Some(_)) => {
+            return Err(mapping_error(
+                point_id,
+                "bit_position is valid only with byte_offset",
+            ));
+        },
+        (None, None, _) => {
+            return Err(mapping_error(
+                point_id,
+                "start_bit or byte_offset is required",
+            ));
+        },
+        (Some(_), None, None) => {
+            return Err(mapping_error(point_id, "start_bit must be in 0..63"));
+        },
+        (None, Some(_), _) => {
+            return Err(mapping_error(
+                point_id,
+                "byte_offset and bit_position must each be in 0..7",
+            ));
+        },
+    };
+
+    if !(1..=64).contains(&mapping.bit_length)
+        || u16::from(start_bit) + u16::from(mapping.bit_length) > 64
+    {
+        return Err(mapping_error(
+            point_id,
+            "bit layout must fit in a 64-bit payload",
+        ));
+    }
+
+    let width_matches = match mapping.data_type {
+        CanDataType::UInt8 => matches!(mapping.bit_length, 2 | 8),
+        CanDataType::UInt16 | CanDataType::Int16 => mapping.bit_length == 16,
+        CanDataType::UInt32 | CanDataType::Int32 | CanDataType::Float32 => mapping.bit_length == 32,
+    };
+    if !width_matches {
+        return Err(mapping_error(
+            point_id,
+            &format!(
+                "bit_length {} does not match {:?}",
+                mapping.bit_length, mapping.data_type
+            ),
+        ));
+    }
+    if !mapping.scale.is_finite() || !mapping.offset.is_finite() {
+        return Err(mapping_error(point_id, "scale and offset must be finite"));
+    }
+
+    Ok(CanPoint {
+        point_id,
+        point_type,
+        can_id: mapping.can_id,
+        byte_offset: start_bit / 8,
+        bit_position: start_bit % 8,
+        bit_length: mapping.bit_length,
+        data_type: mapping.data_type,
+        scale: mapping.scale,
+        offset: mapping.offset,
+    })
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn mapping_error(point_id: u32, reason: &str) -> GatewayError {
+    GatewayError::Config(format!(
+        "invalid CAN mapping for point {point_id}: {reason}"
+    ))
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn deserialize_can_id<'de, D>(deserializer: D) -> std::result::Result<u32, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    struct CanIdVisitor;
+
+    impl<'de> Visitor<'de> for CanIdVisitor {
+        type Value = u32;
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            formatter.write_str("a u32 CAN ID or a hexadecimal string prefixed with 0x")
+        }
+
+        fn visit_u64<E>(self, value: u64) -> std::result::Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            u32::try_from(value).map_err(|_| E::custom("CAN ID exceeds u32"))
+        }
+
+        fn visit_i64<E>(self, value: i64) -> std::result::Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            u32::try_from(value).map_err(|_| E::custom("CAN ID must be in the u32 range"))
+        }
+
+        fn visit_str<E>(self, value: &str) -> std::result::Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            let hex = value
+                .strip_prefix("0x")
+                .or_else(|| value.strip_prefix("0X"))
+                .ok_or_else(|| E::custom("CAN ID string must use a 0x prefix"))?;
+            u32::from_str_radix(hex, 16).map_err(|_| E::custom("invalid hexadecimal CAN ID"))
+        }
+    }
+
+    deserializer.deserialize_any(CanIdVisitor)
+}
+
 /// CAN channel parameters configuration (deserialized from parameters_json).
 ///
 /// # Example JSON
@@ -110,6 +290,7 @@ fn default_scale() -> f64 {
 /// }
 /// ```
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CanChannelParamsConfig {
     /// CAN device name (e.g., "can0", "vcan0").
     /// Also accepts the legacy key "interface".
@@ -170,10 +351,38 @@ fn default_data_read_interval() -> u64 {
 }
 
 impl CanChannelParamsConfig {
+    #[cfg(target_os = "linux")]
+    pub(crate) fn validate(&self) -> Result<()> {
+        if self.device.trim().is_empty() {
+            return Err(GatewayError::Config(
+                "CAN device must be non-empty".to_owned(),
+            ));
+        }
+        if self.bitrate == 0 {
+            return Err(GatewayError::Config(
+                "CAN bitrate must be greater than zero".to_owned(),
+            ));
+        }
+        for (name, value) in [
+            ("connect_timeout_ms", self.connect_timeout_ms),
+            ("read_timeout_ms", self.read_timeout_ms),
+            ("retry_interval_ms", self.retry_interval_ms),
+            ("rx_poll_interval_ms", self.rx_poll_interval_ms),
+            ("data_read_interval_ms", self.data_read_interval_ms),
+        ] {
+            if !(1..=MAX_CHANNEL_TIMING_MS).contains(&value) {
+                return Err(GatewayError::Config(format!(
+                    "CAN {name} must be between 1 and {MAX_CHANNEL_TIMING_MS}"
+                )));
+            }
+        }
+        Ok(())
+    }
+
     /// Convert to CanConfig.
-    pub fn to_config(&self) -> CanConfig {
+    pub fn into_config(self) -> CanConfig {
         CanConfig {
-            can_interface: self.device.clone(),
+            can_interface: self.device,
             bitrate: self.bitrate,
             connect_timeout_ms: self.connect_timeout_ms,
             read_timeout_ms: self.read_timeout_ms,
@@ -204,12 +413,6 @@ impl CanFrameData {
     pub fn as_slice(&self) -> &[u8] {
         &self.data[..self.len as usize]
     }
-
-    /// Get the length (used by tracing-support diagnostic logging)
-    #[cfg(feature = "tracing-support")]
-    pub fn len(&self) -> usize {
-        self.len as usize
-    }
 }
 
 /// CAN frame cache - stores the latest received frame for each CAN-ID
@@ -236,12 +439,6 @@ impl CanFrameCache {
     /// Get the latest frame data for a CAN-ID
     pub fn get(&self, can_id: u32) -> Option<&[u8]> {
         self.frames.get(&can_id).map(|f| f.as_slice())
-    }
-
-    /// Number of cached CAN-IDs (used by tracing-support diagnostic logging)
-    #[cfg(feature = "tracing-support")]
-    pub fn len(&self) -> usize {
-        self.frames.len()
     }
 
     /// Iterate cached frames (used by tracing-support diagnostic logging)
@@ -298,5 +495,86 @@ impl LynkCanId {
     /// Check if this is a LYNK protocol CAN-ID
     pub fn is_lynk_id(id: u32) -> bool {
         Self::from_u32(id).is_some()
+    }
+}
+
+#[cfg(test)]
+mod mapping_tests {
+    use aether_core::PointType;
+    use serde_json::json;
+
+    use super::{CanDataType, parse_point_mapping};
+
+    #[test]
+    fn mapping_codec_accepts_both_canonical_layout_forms() {
+        let absolute = json!({
+            "can_id": "0x351",
+            "start_bit": 8,
+            "bit_length": 16,
+            "data_type": "int16",
+            "scale": 0.1,
+            "offset": -4.0
+        });
+        let point = parse_point_mapping(&absolute, PointType::Telemetry, 10).unwrap();
+        assert_eq!(point.can_id, 0x351);
+        assert_eq!(point.byte_offset, 1);
+        assert_eq!(point.bit_position, 0);
+        assert_eq!(point.bit_length, 16);
+        assert_eq!(point.data_type, CanDataType::Int16);
+        assert_eq!(point.scale, 0.1);
+        assert_eq!(point.offset, -4.0);
+
+        let byte_relative = json!({
+            "can_id": 0x355,
+            "byte_offset": 7,
+            "bit_position": 0,
+            "bit_length": 8,
+            "data_type": "uint8"
+        });
+        let point = parse_point_mapping(&byte_relative, PointType::Signal, 11).unwrap();
+        assert_eq!(point.can_id, 0x355);
+        assert_eq!(point.byte_offset, 7);
+        assert_eq!(point.bit_position, 0);
+    }
+
+    #[test]
+    fn mapping_codec_rejects_commands_and_unknown_fields() {
+        let mapping = json!({
+            "can_id": 0x351,
+            "start_bit": 0,
+            "bit_length": 16,
+            "unexpected": true
+        });
+
+        assert!(parse_point_mapping(&mapping, PointType::Control, 12).is_err());
+        assert!(
+            parse_point_mapping(&mapping, PointType::Telemetry, 12)
+                .unwrap_err()
+                .to_string()
+                .contains("unknown field")
+        );
+    }
+
+    #[test]
+    fn mapping_codec_fails_closed_for_invalid_ids_and_bit_layouts() {
+        for mapping in [
+            json!({"can_id":"351","start_bit":0,"bit_length":16}),
+            json!({"can_id":"0x100000000","start_bit":0,"bit_length":16}),
+            json!({"can_id":1,"start_bit":0,"byte_offset":0,"bit_length":16}),
+            json!({"can_id":1,"start_bit":0,"bit_position":0,"bit_length":16}),
+            json!({"can_id":1,"start_bit":null,"byte_offset":0,"bit_length":16}),
+            json!({"can_id":1,"bit_position":0,"bit_length":16}),
+            json!({"can_id":1,"byte_offset":8,"bit_length":16}),
+            json!({"can_id":1,"byte_offset":0,"bit_position":8,"bit_length":16}),
+            json!({"can_id":1,"start_bit":64,"bit_length":16}),
+            json!({"can_id":1,"start_bit":60,"bit_length":16}),
+            json!({"can_id":1,"start_bit":0,"bit_length":8,"data_type":"uint16"}),
+            json!({"can_id":1,"start_bit":0,"bit_length":16,"data_type":"opaque"}),
+        ] {
+            assert!(
+                parse_point_mapping(&mapping, PointType::Telemetry, 13).is_err(),
+                "mapping unexpectedly accepted: {mapping}"
+            );
+        }
     }
 }

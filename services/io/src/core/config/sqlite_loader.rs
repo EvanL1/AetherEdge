@@ -2,23 +2,26 @@
 //!
 //! Loads channel configurations, point tables, and mappings from SQLite database
 
+use crate::core::channels::RuntimeChannelConfig;
 #[cfg(test)]
 use crate::core::config::{
     ADJUSTMENT_POINTS_TABLE, CHANNELS_TABLE, CONTROL_POINTS_TABLE, SERVICE_CONFIG_TABLE,
     SIGNAL_POINTS_TABLE, TELEMETRY_POINTS_TABLE, install_channel_revision_triggers,
 };
 use crate::core::config::{
-    AdjustmentPoint, AppConfig, ChannelConfig, ControlPoint, RuntimeChannelConfig, ServiceConfig,
-    SignalPoint, TelemetryPoint,
+    AdjustmentPoint, ApiConfig, ChannelConfig, ControlPoint, ServiceConfig, SignalPoint,
+    TelemetryPoint,
 };
 use crate::core::config::{DEFAULT_PORT, Point};
 use crate::error::{IoError, Result};
+use aether_config::io::StoredChannelConfig;
+use aether_ports::ChannelRevision;
 use common::DEFAULT_API_HOST;
 use common::sqlite::ServiceConfigLoader;
-use sqlx::{Row, SqlitePool};
-use std::collections::HashMap;
-use std::path::Path;
-use std::sync::Arc;
+use futures::TryStreamExt;
+use sqlx::sqlite::SqliteRow;
+use sqlx::{Decode, QueryBuilder, Row, Sqlite, SqlitePool, Transaction, Type};
+use std::collections::{BTreeMap, HashMap};
 use tracing::info;
 
 // Control point defaults.
@@ -31,67 +34,46 @@ const DEFAULT_CONTROL_ON_VALUE: u16 = 1;
 const DEFAULT_CONTROL_OFF_VALUE: u16 = 0;
 const DEFAULT_CONTROL_PULSE_MS: u32 = 100;
 
-/// Io-specific SQLite configuration loader
+struct PointTableCodec<T> {
+    select_from: &'static str,
+    table: &'static str,
+    parse: fn(&SqliteRow) -> Result<(u32, T)>,
+    insert: fn(&mut RuntimeChannelConfig, T),
+}
+
+/// Minimal post-activation authority index for one bulk reconciliation pass.
+///
+/// This deliberately carries no configuration or point DTOs. The full runtime
+/// snapshot is loaded once before activation; these two revision maps only
+/// prove whether that generation stayed authoritative while protocols were
+/// being connected.
+pub(crate) struct RuntimeAuthoritySnapshot {
+    pub(crate) channels: BTreeMap<u32, (ChannelRevision, bool)>,
+    pub(crate) tombstones: BTreeMap<u32, ChannelRevision>,
+}
+
+/// Io-specific SQLite configuration loader.
+#[derive(Clone)]
 pub struct IoSqliteLoader {
-    base_loader: Option<ServiceConfigLoader>,
-    pool: SqlitePool,
+    base_loader: ServiceConfigLoader,
 }
 
 impl IoSqliteLoader {
-    /// Create a new io SQLite loader
-    pub async fn new(db_path: impl AsRef<Path>) -> Result<Self> {
-        let db_path = db_path.as_ref();
-
-        // Check if database exists
-        if !db_path.exists() {
-            return Err(IoError::ConfigError(format!(
-                "aether-io database not found: {:?}. Please run: aether sync",
-                db_path
-            )));
-        }
-
-        // Create base service config loader (single connection pool)
-        let base_loader = ServiceConfigLoader::new(db_path, "aether-io", DEFAULT_PORT)
-            .await
-            .map_err(|e| {
-                IoError::ConfigError(format!("Failed to initialize SQLite loader: {}", e))
-            })?;
-
-        // Get pool reference from base_loader
-        let pool = base_loader.pool().clone();
-
-        info!("Connected to io database: {:?}", db_path);
-
-        Ok(Self {
-            base_loader: Some(base_loader),
-            pool,
-        })
-    }
-
-    /// Create a loader from an existing pool (for connection reuse)
-    /// Used by factory when pool is already available
-    pub fn with_pool(pool: SqlitePool) -> Self {
+    /// Create a loader from the process-wide SQLite pool.
+    #[must_use]
+    pub fn from_pool(pool: SqlitePool) -> Self {
         Self {
-            base_loader: None,
-            pool,
+            base_loader: ServiceConfigLoader::from_pool(pool, "aether-io", DEFAULT_PORT),
         }
     }
 
-    /// Get the database pool for custom queries
-    fn pool(&self) -> &SqlitePool {
-        &self.pool
-    }
-
-    /// Load complete application configuration from database
-    pub async fn load_config(&self) -> Result<AppConfig> {
+    /// Load process-level service and API configuration.
+    pub async fn load_service_config(&self) -> Result<(ServiceConfig, ApiConfig)> {
         // Load base service configuration
-        let base_loader = self.base_loader.as_ref().ok_or_else(|| {
-            IoError::ConfigError("Base loader not available (created with with_pool)".to_string())
-        })?;
-        let service_config = base_loader
-            .load_config()
-            .await
-            .map_err(|e| IoError::ConfigError(format!("Failed to load service config: {}", e)))?;
+        let service_config =
+            self.base_loader.load_config().await.map_err(|e| {
+                IoError::ConfigError(format!("Failed to load service config: {}", e))
+            })?;
 
         // Convert to io config
         let service = ServiceConfig {
@@ -114,291 +96,523 @@ impl IoSqliteLoader {
             port: service_config.port,
         };
 
-        // Load channels
-        let channels = self.load_channels().await?;
-
-        Ok(AppConfig {
-            service,
-            api,
-            logging: crate::core::config::LoggingConfig::default(),
-            channels,
-        })
+        Ok((service, api))
     }
 
-    /// Load all channel configurations from database
-    async fn load_channels(&self) -> Result<Vec<Arc<ChannelConfig>>> {
-        let rows = sqlx::query(
-            "SELECT channel_id, name, protocol, enabled, config FROM channels ORDER BY channel_id",
-        )
-        .fetch_all(self.pool())
-        .await
-        .map_err(|e| IoError::ConfigError(format!("Failed to load channels: {}", e)))?;
-
+    /// Load every channel row and its complete point topology from one read transaction.
+    pub async fn load_runtime_channels(&self) -> Result<Vec<RuntimeChannelConfig>> {
+        let mut transaction =
+            self.base_loader.pool().begin().await.map_err(|e| {
+                IoError::ConfigError(format!("Failed to begin channel snapshot: {e}"))
+            })?;
         let mut channels = Vec::new();
-
-        for row in rows {
-            let channel_id: u32 = row
-                .try_get("channel_id")
-                .map_err(|e| IoError::ConfigError(format!("Failed to get channel_id: {}", e)))?;
-            let name: String = row
-                .try_get("name")
-                .map_err(|e| IoError::ConfigError(format!("Failed to get name: {}", e)))?;
-            let protocol: String = row
-                .try_get("protocol")
-                .map_err(|e| IoError::ConfigError(format!("Failed to get protocol: {}", e)))?;
-            let enabled: bool = row
-                .try_get("enabled")
-                .map_err(|e| IoError::ConfigError(format!("Failed to get enabled: {}", e)))?;
-            let config_json: Option<String> = row
-                .try_get("config")
-                .map_err(|e| IoError::ConfigError(format!("Failed to get config: {}", e)))?;
-            let config_json = config_json.unwrap_or_else(|| "{}".to_string());
-
-            // Parse additional config from JSON
-            let extra_config: serde_json::Value =
-                serde_json::from_str(&config_json).map_err(|e| {
-                    IoError::ConfigError(format!(
-                        "Invalid channel config JSON for channel {}: {}",
-                        channel_id, e
-                    ))
-                })?;
-            let mut extra_config_obj = match extra_config {
-                serde_json::Value::Object(obj) => obj,
-                _ => {
-                    return Err(IoError::ConfigError(format!(
-                        "Invalid channel config for channel {}: expected JSON object",
-                        channel_id
-                    )));
-                },
-            };
-
-            let description = match extra_config_obj.remove("description") {
-                None => None,
-                Some(serde_json::Value::String(s)) => Some(s),
-                Some(_) => {
-                    return Err(IoError::ConfigError(format!(
-                        "Invalid channel config for channel {}: 'description' must be a string",
-                        channel_id
-                    )));
-                },
-            };
-
-            // Parse parameters from config JSON
-            // Read from the "parameters" field in the JSON, not from top level
-            let parameters = match extra_config_obj.remove("parameters") {
-                None => HashMap::new(),
-                Some(serde_json::Value::Object(obj)) => obj.into_iter().collect(),
-                Some(_) => {
-                    return Err(IoError::ConfigError(format!(
-                        "Invalid channel config for channel {}: 'parameters' must be an object",
-                        channel_id
-                    )));
-                },
-            };
-
-            // Parse logging config from JSON
-            let logging = match extra_config_obj.remove("logging") {
-                None => crate::core::config::ChannelLoggingConfig::default(),
-                Some(logging_value) => serde_json::from_value(logging_value).unwrap_or_else(|e| {
-                    tracing::warn!(
-                        "Ch{} invalid logging config, using default: {}",
-                        channel_id,
-                        e
-                    );
-                    crate::core::config::ChannelLoggingConfig::default()
-                }),
-            };
-
-            info!(
-                "Loaded channel {} ({}) - points will be loaded at runtime",
-                channel_id, name
-            );
-
-            // Create channel config (without runtime fields)
-            let channel = ChannelConfig {
-                core: crate::core::config::ChannelCore {
-                    id: channel_id,
-                    name,
-                    description,
-                    protocol,
-                    enabled,
-                },
-                parameters,
-                logging,
-            };
-
-            // Note: Points will be loaded at runtime when creating RuntimeChannelConfig
-            // Wrap in Arc for cheap cloning during startup
-            channels.push(Arc::new(channel));
+        {
+            let mut rows = sqlx::query(
+                "SELECT channel_id, name, protocol, enabled, config, revision \
+                 FROM channels ORDER BY channel_id",
+            )
+            .fetch(&mut *transaction);
+            while let Some(row) = rows.try_next().await.map_err(|error| {
+                IoError::ConfigError(format!("Failed to load channels snapshot: {error}"))
+            })? {
+                let (channel, revision) = Self::parse_channel_row(&row)?;
+                channels.push(RuntimeChannelConfig::from_persisted(
+                    channel,
+                    ChannelRevision::new(revision),
+                ));
+            }
         }
+        Self::load_runtime_channel_points(&mut transaction, &mut channels, None).await?;
 
+        transaction
+            .commit()
+            .await
+            .map_err(|e| IoError::ConfigError(format!("Failed to commit channel snapshot: {e}")))?;
         Ok(channels)
     }
 
-    /// Parse common base point fields from a SQLite row
-    fn parse_base_point(row: &sqlx::sqlite::SqliteRow) -> Result<Point> {
-        let point_id: i64 = row
-            .try_get("point_id")
-            .map_err(|e| IoError::ConfigError(format!("Failed to get point_id: {}", e)))?;
-        let signal_name: String = row
-            .try_get("signal_name")
-            .map_err(|e| IoError::ConfigError(format!("Failed to get signal_name: {}", e)))?;
-        let unit: Option<String> = row.try_get("unit").ok().filter(|s: &String| !s.is_empty());
-        let description: Option<String> = row.try_get("description").ok();
-        let protocol_mappings: Option<String> = row
-            .try_get("protocol_mappings")
-            .ok()
-            .filter(|s: &String| !s.is_empty() && s != "null" && s != "{}");
-        let point_id_u32 = u32::try_from(point_id)
-            .map_err(|_| IoError::ConfigError(format!("point_id {} out of u32 range", point_id)))?;
-        Ok(Point {
-            point_id: point_id_u32,
-            signal_name,
-            description,
-            unit,
-            protocol_mappings,
+    /// Load one complete channel snapshot and require the committed revision.
+    pub async fn load_runtime_channel(
+        &self,
+        channel_id: u32,
+        expected_revision: u64,
+    ) -> Result<RuntimeChannelConfig> {
+        let mut transaction =
+            self.base_loader.pool().begin().await.map_err(|e| {
+                IoError::ConfigError(format!("Failed to begin channel snapshot: {e}"))
+            })?;
+        let row = sqlx::query(
+            "SELECT channel_id, name, protocol, enabled, config, revision \
+             FROM channels WHERE channel_id = ?",
+        )
+        .bind(i64::from(channel_id))
+        .fetch_optional(&mut *transaction)
+        .await
+        .map_err(|e| IoError::ConfigError(format!("Failed to load channel {channel_id}: {e}")))?
+        .ok_or_else(|| IoError::ConfigError(format!("Channel {channel_id} does not exist")))?;
+        let (channel, revision) = Self::parse_channel_row(&row)?;
+        if revision != expected_revision {
+            return Err(IoError::ConfigError(format!(
+                "Channel {channel_id} revision changed while loading runtime snapshot"
+            )));
+        }
+
+        let mut runtime_config =
+            RuntimeChannelConfig::from_persisted(channel, ChannelRevision::new(revision));
+        Self::load_runtime_channel_points(
+            &mut transaction,
+            std::slice::from_mut(&mut runtime_config),
+            Some(channel_id),
+        )
+        .await?;
+        transaction
+            .commit()
+            .await
+            .map_err(|e| IoError::ConfigError(format!("Failed to commit channel snapshot: {e}")))?;
+        Ok(runtime_config)
+    }
+
+    /// Load the fixed-size post-activation authority witness.
+    ///
+    /// The query count is constant with channel count: one `channels` scan and
+    /// one tombstone scan in the same SQLite read transaction.
+    pub(crate) async fn load_runtime_authority(&self) -> Result<RuntimeAuthoritySnapshot> {
+        let mut transaction = self.base_loader.pool().begin().await.map_err(|error| {
+            IoError::ConfigError(format!(
+                "Failed to begin runtime authority snapshot: {error}"
+            ))
+        })?;
+        let mut channels = BTreeMap::new();
+        {
+            let mut rows = sqlx::query(
+                "SELECT channel_id, enabled, revision FROM channels ORDER BY channel_id",
+            )
+            .fetch(&mut *transaction);
+            while let Some(row) = rows.try_next().await.map_err(|error| {
+                IoError::ConfigError(format!("Failed to load runtime channel authority: {error}"))
+            })? {
+                let channel_id = Self::read_channel_id(&row, "channels")?;
+                let enabled = Self::read_boolean(&row, "channels", "enabled", None)?;
+                let revision = Self::read_revision(&row, "channels", "revision", channel_id)?;
+                if channels
+                    .insert(channel_id, (ChannelRevision::new(revision), enabled))
+                    .is_some()
+                {
+                    return Err(IoError::ConfigError(format!(
+                        "Duplicate channel {channel_id} in runtime authority snapshot"
+                    )));
+                }
+            }
+        }
+
+        let mut tombstones = BTreeMap::new();
+        {
+            let mut rows = sqlx::query(
+                "SELECT channel_id, last_revision \
+                 FROM channel_revision_tombstones ORDER BY channel_id",
+            )
+            .fetch(&mut *transaction);
+            while let Some(row) = rows.try_next().await.map_err(|error| {
+                IoError::ConfigError(format!(
+                    "Failed to load runtime channel tombstones: {error}"
+                ))
+            })? {
+                let channel_id = Self::read_channel_id(&row, "channel_revision_tombstones")?;
+                let revision = Self::read_revision(
+                    &row,
+                    "channel_revision_tombstones",
+                    "last_revision",
+                    channel_id,
+                )?;
+                if tombstones
+                    .insert(channel_id, ChannelRevision::new(revision))
+                    .is_some()
+                {
+                    return Err(IoError::ConfigError(format!(
+                        "Duplicate channel {channel_id} in runtime tombstone snapshot"
+                    )));
+                }
+            }
+        }
+
+        transaction.commit().await.map_err(|error| {
+            IoError::ConfigError(format!(
+                "Failed to commit runtime authority snapshot: {error}"
+            ))
+        })?;
+        Ok(RuntimeAuthoritySnapshot {
+            channels,
+            tombstones,
         })
     }
 
-    /// Load all points for a RuntimeChannelConfig with protocol-aware mapping
-    pub async fn load_runtime_channel_points(
-        &self,
-        runtime_config: &mut RuntimeChannelConfig,
-    ) -> Result<()> {
-        // Clear existing points
-        runtime_config.telemetry_points.clear();
-        runtime_config.signal_points.clear();
-        runtime_config.control_points.clear();
-        runtime_config.adjustment_points.clear();
+    fn read_column<'row, T>(
+        row: &'row SqliteRow,
+        table: &'static str,
+        column: &'static str,
+    ) -> Result<T>
+    where
+        T: Decode<'row, Sqlite> + Type<Sqlite>,
+    {
+        row.try_get(column).map_err(|error| {
+            IoError::ConfigError(format!(
+                "Invalid persisted column {table}.{column}: {error}"
+            ))
+        })
+    }
 
-        let channel_id = runtime_config.id();
+    fn read_boolean(
+        row: &SqliteRow,
+        table: &'static str,
+        column: &'static str,
+        null_default: Option<bool>,
+    ) -> Result<bool> {
+        let value: Option<i64> = Self::read_column(row, table, column)?;
+        match value {
+            Some(0) => Ok(false),
+            Some(1) => Ok(true),
+            None => null_default.ok_or_else(|| {
+                IoError::ConfigError(format!(
+                    "Invalid persisted column {table}.{column}: NULL is not allowed"
+                ))
+            }),
+            Some(value) => Err(IoError::ConfigError(format!(
+                "Invalid persisted column {table}.{column}: expected 0 or 1, got {value}"
+            ))),
+        }
+    }
 
-        // Load telemetry points from telemetry_points table (with embedded protocol mappings)
-        let telem_rows = sqlx::query(
-            "SELECT point_id, signal_name, scale, offset, unit, reverse, data_type, description, protocol_mappings
-             FROM telemetry_points
-             WHERE channel_id = ?
-             ORDER BY point_id",
-        )
-        .bind(channel_id as i64)
-        .fetch_all(self.pool())
-        .await
-        .map_err(|e| IoError::ConfigError(format!("Failed to load telemetry points: {}", e)))?;
+    fn read_optional_finite_f64(
+        row: &SqliteRow,
+        table: &'static str,
+        column: &'static str,
+    ) -> Result<Option<f64>> {
+        let value: Option<f64> = Self::read_column(row, table, column)?;
+        if value.is_some_and(|value| !value.is_finite()) {
+            return Err(IoError::ConfigError(format!(
+                "Invalid persisted column {table}.{column}: value must be finite"
+            )));
+        }
+        Ok(value)
+    }
 
-        // Load signal points from signal_points table (with embedded protocol mappings)
-        let signal_rows = sqlx::query(
-            "SELECT point_id, signal_name, unit, reverse, data_type, description, protocol_mappings
-             FROM signal_points
-             WHERE channel_id = ?
-             ORDER BY point_id",
-        )
-        .bind(channel_id as i64)
-        .fetch_all(self.pool())
-        .await
-        .map_err(|e| IoError::ConfigError(format!("Failed to load signal points: {}", e)))?;
+    fn read_channel_id(row: &SqliteRow, table: &'static str) -> Result<u32> {
+        let channel_id: i64 = Self::read_column(row, table, "channel_id")?;
+        u32::try_from(channel_id).map_err(|_| {
+            IoError::ConfigError(format!(
+                "Invalid persisted column {table}.channel_id: {channel_id} is outside u32"
+            ))
+        })
+    }
 
-        // Load control points from control_points table (with embedded protocol mappings)
-        let control_rows = sqlx::query(
-            "SELECT point_id, signal_name, unit, reverse, data_type, description, protocol_mappings
-             FROM control_points
-             WHERE channel_id = ?
-             ORDER BY point_id",
-        )
-        .bind(channel_id as i64)
-        .fetch_all(self.pool())
-        .await
-        .map_err(|e| IoError::ConfigError(format!("Failed to load control points: {}", e)))?;
+    fn read_revision(
+        row: &SqliteRow,
+        table: &'static str,
+        column: &'static str,
+        channel_id: u32,
+    ) -> Result<u64> {
+        let revision: i64 = Self::read_column(row, table, column)?;
+        let revision = u64::try_from(revision).map_err(|_| {
+            IoError::ConfigError(format!(
+                "Invalid persisted column {table}.{column} for channel {channel_id}"
+            ))
+        })?;
+        if revision == 0 {
+            return Err(IoError::ConfigError(format!(
+                "Invalid persisted column {table}.{column} for channel {channel_id}: \
+                 revision must be positive"
+            )));
+        }
+        Ok(revision)
+    }
 
-        // Load adjustment points from adjustment_points table (with embedded protocol mappings)
-        let adjustment_rows = sqlx::query(
-            "SELECT point_id, signal_name, scale, offset, unit, reverse, data_type, description, protocol_mappings,
-                    min_value, max_value, step
-             FROM adjustment_points
-             WHERE channel_id = ?
-             ORDER BY point_id",
-        )
-        .bind(channel_id as i64)
-        .fetch_all(self.pool())
-        .await
-        .map_err(|e| {
-            IoError::ConfigError(format!("Failed to load adjustment points: {}", e))
+    fn parse_channel_row(row: &SqliteRow) -> Result<(ChannelConfig, u64)> {
+        let channel_id = Self::read_channel_id(row, "channels")?;
+        let name: String = Self::read_column(row, "channels", "name")?;
+        let protocol: String = Self::read_column(row, "channels", "protocol")?;
+        let enabled = Self::read_boolean(row, "channels", "enabled", None)?;
+        let revision = Self::read_revision(row, "channels", "revision", channel_id)?;
+        let config_json: Option<String> = Self::read_column(row, "channels", "config")?;
+        let stored = StoredChannelConfig::decode(config_json.as_deref()).map_err(|error| {
+            IoError::ConfigError(format!(
+                "Invalid stored channel configuration for channel {channel_id}: {error}"
+            ))
         })?;
 
-        // Process telemetry points
-        for row in telem_rows {
-            let base = Self::parse_base_point(&row)?;
-            let scale: f64 = row.try_get("scale").unwrap_or(1.0);
-            let offset: f64 = row.try_get("offset").unwrap_or(0.0);
-            let reverse: bool = row.try_get("reverse").unwrap_or(false);
-            let data_type: String = row
-                .try_get("data_type")
-                .unwrap_or_else(|_| "float32".to_string());
-            runtime_config.telemetry_points.push(TelemetryPoint {
+        Ok((
+            ChannelConfig {
+                core: crate::core::config::ChannelCore {
+                    id: channel_id,
+                    name,
+                    description: stored.description,
+                    protocol,
+                    enabled,
+                },
+                parameters: stored.parameters,
+                logging: stored.logging,
+            },
+            revision,
+        ))
+    }
+
+    fn parse_base_point(row: &SqliteRow, table: &'static str) -> Result<(u32, Point)> {
+        let channel_id = Self::read_channel_id(row, table)?;
+        let point_id: i64 = Self::read_column(row, table, "point_id")?;
+        let point_id_u32 = u32::try_from(point_id).map_err(|_| {
+            IoError::ConfigError(format!(
+                "Invalid persisted column {table}.point_id: {point_id} is outside u32"
+            ))
+        })?;
+        let signal_name: String = Self::read_column(row, table, "signal_name")?;
+        let unit: Option<String> = Self::read_column(row, table, "unit")?;
+        let description: Option<String> = Self::read_column(row, table, "description")?;
+        let mapping: Option<String> = Self::read_column(row, table, "protocol_mappings")?;
+        let protocol_mappings =
+            Self::parse_protocol_mapping(mapping, table, channel_id, point_id_u32)?;
+
+        Ok((
+            channel_id,
+            Point {
+                point_id: point_id_u32,
+                signal_name,
+                description,
+                unit: unit.filter(|unit| !unit.is_empty()),
+                protocol_mappings,
+            },
+        ))
+    }
+
+    fn parse_protocol_mapping(
+        mapping: Option<String>,
+        table: &'static str,
+        channel_id: u32,
+        point_id: u32,
+    ) -> Result<Option<String>> {
+        let Some(mapping) = mapping else {
+            return Ok(None);
+        };
+        let trimmed = mapping.trim();
+        if trimmed.is_empty() {
+            return Ok(None);
+        }
+        let value: serde_json::Value = serde_json::from_str(trimmed).map_err(|error| {
+            IoError::ConfigError(format!(
+                "Invalid persisted column {table}.protocol_mappings for channel {channel_id}, \
+                 point {point_id}: {error}"
+            ))
+        })?;
+        if value.is_null() || value.as_object().is_some_and(serde_json::Map::is_empty) {
+            return Ok(None);
+        }
+        Ok(Some(mapping))
+    }
+
+    fn parse_telemetry_point(row: &SqliteRow) -> Result<(u32, TelemetryPoint)> {
+        const TABLE: &str = "telemetry_points";
+        let (channel_id, base) = Self::parse_base_point(row, TABLE)?;
+        // Decode/type failures propagate above; only a legacy SQL NULL takes the schema default.
+        let scale = Self::read_optional_finite_f64(row, TABLE, "scale")?.unwrap_or(1.0);
+        let offset = Self::read_optional_finite_f64(row, TABLE, "offset")?.unwrap_or(0.0);
+        let reverse = Self::read_boolean(row, TABLE, "reverse", Some(false))?;
+        let data_type: Option<String> = Self::read_column(row, TABLE, "data_type")?;
+        Ok((
+            channel_id,
+            TelemetryPoint {
                 base,
                 scale,
                 offset,
-                data_type,
+                data_type: match data_type {
+                    Some(value) => value,
+                    None => "float32".to_string(),
+                },
                 reverse,
-            });
-        }
+            },
+        ))
+    }
 
-        // Process signal points
-        for row in signal_rows {
-            let base = Self::parse_base_point(&row)?;
-            let reverse: bool = row.try_get("reverse").unwrap_or(false);
-            runtime_config
-                .signal_points
-                .push(SignalPoint { base, reverse });
-        }
+    fn parse_signal_point(row: &SqliteRow) -> Result<(u32, SignalPoint)> {
+        const TABLE: &str = "signal_points";
+        let (channel_id, base) = Self::parse_base_point(row, TABLE)?;
+        let reverse = Self::read_boolean(row, TABLE, "reverse", Some(false))?;
+        Ok((channel_id, SignalPoint { base, reverse }))
+    }
 
-        // Process control points
-        for row in control_rows {
-            let base = Self::parse_base_point(&row)?;
-            let reverse: bool = row.try_get("reverse").unwrap_or(false);
-            runtime_config.control_points.push(ControlPoint {
+    fn parse_control_point(row: &SqliteRow) -> Result<(u32, ControlPoint)> {
+        const TABLE: &str = "control_points";
+        let (channel_id, base) = Self::parse_base_point(row, TABLE)?;
+        let reverse = Self::read_boolean(row, TABLE, "reverse", Some(false))?;
+        Ok((
+            channel_id,
+            ControlPoint {
                 base,
                 reverse,
                 control_type: DEFAULT_CONTROL_TYPE.to_string(),
                 on_value: DEFAULT_CONTROL_ON_VALUE,
                 off_value: DEFAULT_CONTROL_OFF_VALUE,
                 pulse_duration_ms: Some(DEFAULT_CONTROL_PULSE_MS),
-            });
-        }
+            },
+        ))
+    }
 
-        // Process adjustment points
-        for row in adjustment_rows {
-            let base = Self::parse_base_point(&row)?;
-            let scale: f64 = row.try_get("scale").unwrap_or(1.0);
-            let offset: f64 = row.try_get("offset").unwrap_or(0.0);
-            let data_type: String = row
-                .try_get("data_type")
-                .unwrap_or_else(|_| "float32".to_string());
-            let min_value: Option<f64> = row.try_get("min_value").unwrap_or(None);
-            let max_value: Option<f64> = row.try_get("max_value").unwrap_or(None);
-            let step: f64 = row.try_get("step").unwrap_or(1.0);
-            runtime_config.adjustment_points.push(AdjustmentPoint {
+    fn parse_adjustment_point(row: &SqliteRow) -> Result<(u32, AdjustmentPoint)> {
+        const TABLE: &str = "adjustment_points";
+        let (channel_id, base) = Self::parse_base_point(row, TABLE)?;
+        let scale = Self::read_optional_finite_f64(row, TABLE, "scale")?.unwrap_or(1.0);
+        let offset = Self::read_optional_finite_f64(row, TABLE, "offset")?.unwrap_or(0.0);
+        let data_type: Option<String> = Self::read_column(row, TABLE, "data_type")?;
+        let min_value = Self::read_optional_finite_f64(row, TABLE, "min_value")?;
+        let max_value = Self::read_optional_finite_f64(row, TABLE, "max_value")?;
+        let step = Self::read_optional_finite_f64(row, TABLE, "step")?.unwrap_or(1.0);
+        Ok((
+            channel_id,
+            AdjustmentPoint {
                 base,
                 min_value,
                 max_value,
                 step,
-                data_type,
+                data_type: match data_type {
+                    Some(value) => value,
+                    None => "float32".to_string(),
+                },
                 scale,
                 offset,
-            });
+            },
+        ))
+    }
+
+    async fn load_point_table<T>(
+        transaction: &mut Transaction<'_, Sqlite>,
+        channels: &mut [RuntimeChannelConfig],
+        channel_indices: &HashMap<u32, usize>,
+        channel_filter: Option<u32>,
+        codec: PointTableCodec<T>,
+    ) -> Result<()> {
+        let mut query = QueryBuilder::<Sqlite>::new(codec.select_from);
+        if let Some(channel_id) = channel_filter {
+            query
+                .push(" WHERE channel_id = ")
+                .push_bind(i64::from(channel_id));
+        }
+        query.push(" ORDER BY channel_id, point_id");
+        let mut rows = query.build().fetch(&mut **transaction);
+        while let Some(row) = rows.try_next().await.map_err(|error| {
+            IoError::ConfigError(format!("Failed to load {} snapshot: {error}", codec.table))
+        })? {
+            let (channel_id, point) = (codec.parse)(&row)?;
+            let channel =
+                Self::runtime_channel_mut(channels, channel_indices, channel_id, codec.table)?;
+            (codec.insert)(channel, point);
+        }
+        Ok(())
+    }
+
+    fn runtime_channel_mut<'channels>(
+        channels: &'channels mut [RuntimeChannelConfig],
+        channel_indices: &HashMap<u32, usize>,
+        channel_id: u32,
+        table: &'static str,
+    ) -> Result<&'channels mut RuntimeChannelConfig> {
+        let index = channel_indices.get(&channel_id).copied().ok_or_else(|| {
+            IoError::ConfigError(format!(
+                "Persisted {table} row references missing channel {channel_id}"
+            ))
+        })?;
+        Ok(&mut channels[index])
+    }
+
+    /// Load complete point topology with four table scans on the current snapshot connection.
+    async fn load_runtime_channel_points(
+        transaction: &mut Transaction<'_, Sqlite>,
+        channels: &mut [RuntimeChannelConfig],
+        channel_filter: Option<u32>,
+    ) -> Result<()> {
+        let mut channel_indices = HashMap::with_capacity(channels.len());
+        for (index, channel) in channels.iter_mut().enumerate() {
+            channel.telemetry_points.clear();
+            channel.signal_points.clear();
+            channel.control_points.clear();
+            channel.adjustment_points.clear();
+            if channel_indices.insert(channel.id(), index).is_some() {
+                return Err(IoError::ConfigError(format!(
+                    "Duplicate channel {} in runtime snapshot",
+                    channel.id()
+                )));
+            }
         }
 
-        info!(
-            "Loaded {} points for channel {}: {} telemetry, {} signal, {} control, {} adjustment",
-            runtime_config.telemetry_points.len()
-                + runtime_config.signal_points.len()
-                + runtime_config.control_points.len()
-                + runtime_config.adjustment_points.len(),
-            runtime_config.id(),
-            runtime_config.telemetry_points.len(),
-            runtime_config.signal_points.len(),
-            runtime_config.control_points.len(),
-            runtime_config.adjustment_points.len()
-        );
+        Self::load_point_table(
+            transaction,
+            channels,
+            &channel_indices,
+            channel_filter,
+            PointTableCodec {
+                select_from: "SELECT channel_id, point_id, signal_name, scale, offset, unit, \
+                              reverse, data_type, description, protocol_mappings \
+                              FROM telemetry_points",
+                table: "telemetry_points",
+                parse: Self::parse_telemetry_point,
+                insert: |channel, point| channel.telemetry_points.push(point),
+            },
+        )
+        .await?;
+
+        Self::load_point_table(
+            transaction,
+            channels,
+            &channel_indices,
+            channel_filter,
+            PointTableCodec {
+                select_from: "SELECT channel_id, point_id, signal_name, unit, reverse, \
+                              description, protocol_mappings FROM signal_points",
+                table: "signal_points",
+                parse: Self::parse_signal_point,
+                insert: |channel, point| channel.signal_points.push(point),
+            },
+        )
+        .await?;
+
+        Self::load_point_table(
+            transaction,
+            channels,
+            &channel_indices,
+            channel_filter,
+            PointTableCodec {
+                select_from: "SELECT channel_id, point_id, signal_name, unit, reverse, \
+                              description, protocol_mappings FROM control_points",
+                table: "control_points",
+                parse: Self::parse_control_point,
+                insert: |channel, point| channel.control_points.push(point),
+            },
+        )
+        .await?;
+
+        Self::load_point_table(
+            transaction,
+            channels,
+            &channel_indices,
+            channel_filter,
+            PointTableCodec {
+                select_from: "SELECT channel_id, point_id, signal_name, scale, offset, unit, \
+                              data_type, description, protocol_mappings, min_value, max_value, step \
+                              FROM adjustment_points",
+                table: "adjustment_points",
+                parse: Self::parse_adjustment_point,
+                insert: |channel, point| channel.adjustment_points.push(point),
+            },
+        )
+        .await?;
+
+        for channel in channels {
+            info!(
+                "Loaded {} points for channel {}: {} telemetry, {} signal, {} control, {} adjustment",
+                channel.point_count(),
+                channel.id(),
+                channel.telemetry_points.len(),
+                channel.signal_points.len(),
+                channel.control_points.len(),
+                channel.adjustment_points.len()
+            );
+        }
 
         Ok(())
     }
@@ -545,88 +759,96 @@ mod tests {
         (temp_dir, db_path.to_string_lossy().to_string())
     }
 
-    #[tokio::test]
-    async fn test_loader_creation_success() {
-        let (_temp_dir, db_path) = create_test_database().await;
-
-        let loader = IoSqliteLoader::new(&db_path).await;
-        assert!(loader.is_ok(), "Should create loader successfully");
-    }
-
-    #[tokio::test]
-    async fn test_loader_creation_missing_database() {
-        let result = IoSqliteLoader::new("/nonexistent/database.db").await;
-        assert!(result.is_err(), "Should fail with missing database");
-
-        match result {
-            Err(e) => {
-                let err_msg = e.to_string();
-                assert!(
-                    err_msg.contains("not found"),
-                    "Error should mention database not found, got: {}",
-                    err_msg
-                );
-            },
-            Ok(_) => panic!("Expected error, got Ok"),
-        }
+    async fn test_loader(db_path: impl AsRef<std::path::Path>) -> IoSqliteLoader {
+        let pool = SqlitePool::connect(&format!("sqlite://{}", db_path.as_ref().display()))
+            .await
+            .unwrap();
+        IoSqliteLoader::from_pool(pool)
     }
 
     #[tokio::test]
     async fn test_load_complete_config() {
         let (_temp_dir, db_path) = create_test_database().await;
-        let loader = IoSqliteLoader::new(&db_path).await.unwrap();
+        let loader = test_loader(&db_path).await;
 
-        let config = loader.load_config().await;
-        assert!(config.is_ok(), "Should load config successfully");
-
-        let config = config.unwrap();
-        assert_eq!(config.service.name, "aether-io");
-        assert_eq!(config.api.port, 6001); // Default port (test uses wrong key 'port' instead of 'service.port')
-        assert_eq!(config.channels.len(), 3, "Should load all 3 channels");
+        let (service, api) = loader.load_service_config().await.unwrap();
+        let channels = loader.load_runtime_channels().await.unwrap();
+        assert_eq!(service.name, "aether-io");
+        assert_eq!(api.port, 6001); // Default port (test uses wrong key 'port' instead of 'service.port')
+        assert_eq!(channels.len(), 3, "Should load all 3 channels");
     }
 
     #[tokio::test]
     async fn test_load_channels() {
         let (_temp_dir, db_path) = create_test_database().await;
-        let loader = IoSqliteLoader::new(&db_path).await.unwrap();
+        let loader = test_loader(&db_path).await;
 
-        let config = loader.load_config().await.unwrap();
+        let channels = loader.load_runtime_channels().await.unwrap();
 
         // Verify first channel (Modbus)
-        let channel1 = &config.channels[0];
+        let channel1 = &channels[0];
         assert_eq!(channel1.id(), 1001);
         assert_eq!(channel1.name(), "Test Modbus Channel");
         assert_eq!(channel1.protocol(), "modbus_tcp");
-        assert!(channel1.is_enabled());
-        assert!(channel1.parameters.contains_key("host"));
+        assert!(channel1.channel_config().core.enabled);
+        assert!(channel1.base.parameters.contains_key("host"));
 
         // Verify the second Modbus channel.
-        let channel2 = &config.channels[1];
+        let channel2 = &channels[1];
         assert_eq!(channel2.id(), 1002);
         assert_eq!(channel2.protocol(), "modbus_tcp");
-        assert!(channel2.is_enabled());
+        assert!(channel2.channel_config().core.enabled);
 
         // Verify third channel (Disabled)
-        let channel3 = &config.channels[2];
+        let channel3 = &channels[2];
         assert_eq!(channel3.id(), 1003);
-        assert!(!channel3.is_enabled());
+        assert!(!channel3.channel_config().core.enabled);
+    }
+
+    #[tokio::test]
+    async fn runtime_authority_batches_channel_revisions_and_tombstones() {
+        let (_temp_dir, db_path) = create_test_database().await;
+        let pool = SqlitePool::connect(&format!("sqlite://{db_path}"))
+            .await
+            .unwrap();
+        sqlx::query("UPDATE channels SET enabled = 0 WHERE channel_id = 1002")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM channels WHERE channel_id = 1003")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let authority = IoSqliteLoader::from_pool(pool)
+            .load_runtime_authority()
+            .await
+            .unwrap();
+
+        assert_eq!(
+            authority.channels,
+            BTreeMap::from([
+                (1001, (ChannelRevision::new(1), true)),
+                (1002, (ChannelRevision::new(2), false)),
+            ])
+        );
+        assert_eq!(
+            authority.tombstones,
+            BTreeMap::from([(1003, ChannelRevision::new(2))])
+        );
     }
 
     #[tokio::test]
     async fn test_load_runtime_channel_points_modbus() {
         let (_temp_dir, db_path) = create_test_database().await;
-        let loader = IoSqliteLoader::new(&db_path).await.unwrap();
-        let config = loader.load_config().await.unwrap();
-
-        // Create runtime config for first channel (Modbus)
-        let channel = config.channels.into_iter().next().unwrap();
-        let mut runtime_config = RuntimeChannelConfig::from_base((*channel).clone());
-
-        // Load points
-        let result = loader
-            .load_runtime_channel_points(&mut runtime_config)
-            .await;
-        assert!(result.is_ok(), "Should load points successfully");
+        let loader = test_loader(&db_path).await;
+        let runtime_config = loader
+            .load_runtime_channels()
+            .await
+            .unwrap()
+            .into_iter()
+            .next()
+            .unwrap();
 
         // Verify loaded points
         assert_eq!(runtime_config.telemetry_points.len(), 1);
@@ -643,20 +865,270 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_load_runtime_channel_requires_committed_revision() {
+        let (_temp_dir, db_path) = create_test_database().await;
+        let loader = test_loader(&db_path).await;
+
+        let snapshot = loader.load_runtime_channel(1001, 1).await.unwrap();
+        assert_eq!(snapshot.id(), 1001);
+        assert_eq!(snapshot.telemetry_points.len(), 1);
+        assert_eq!(snapshot.signal_points.len(), 1);
+        assert_eq!(snapshot.control_points.len(), 1);
+        assert_eq!(snapshot.adjustment_points.len(), 1);
+
+        let error = loader
+            .load_runtime_channel(1001, 2)
+            .await
+            .expect_err("stale revision must not produce a runtime snapshot");
+        assert!(error.to_string().contains("revision changed"));
+    }
+
+    #[tokio::test]
+    async fn batch_snapshot_groups_every_point_type_by_channel() {
+        let (_temp_dir, db_path) = create_test_database().await;
+        let pool = SqlitePool::connect(&format!("sqlite://{db_path}"))
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO signal_points \
+             (channel_id, point_id, signal_name, reverse, data_type) \
+             VALUES (1002, 12, 'Second status', 1, 'bool')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO control_points \
+             (channel_id, point_id, signal_name, reverse, data_type) \
+             VALUES (1002, 13, 'Second control', 1, 'bool')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO adjustment_points \
+             (channel_id, point_id, signal_name, scale, offset, data_type, min_value, max_value, step) \
+             VALUES (1002, 14, 'Second setpoint', 2.0, 3.0, 'float64', 1.0, 9.0, 0.25)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        pool.close().await;
+
+        let snapshots = test_loader(&db_path)
+            .await
+            .load_runtime_channels()
+            .await
+            .unwrap();
+        let first = snapshots
+            .iter()
+            .find(|snapshot| snapshot.id() == 1001)
+            .unwrap();
+        let second = snapshots
+            .iter()
+            .find(|snapshot| snapshot.id() == 1002)
+            .unwrap();
+        let empty = snapshots
+            .iter()
+            .find(|snapshot| snapshot.id() == 1003)
+            .unwrap();
+
+        assert_eq!(first.telemetry_points[0].base.signal_name, "Temperature");
+        assert_eq!(first.signal_points[0].base.signal_name, "Status");
+        assert_eq!(first.control_points[0].base.signal_name, "Start");
+        assert_eq!(first.adjustment_points[0].base.signal_name, "Setpoint");
+
+        assert_eq!(
+            second.telemetry_points[0].base.signal_name,
+            "Modbus Point 1"
+        );
+        assert_eq!(second.signal_points[0].base.point_id, 12);
+        assert_eq!(second.control_points[0].base.point_id, 13);
+        assert_eq!(second.adjustment_points[0].base.point_id, 14);
+        assert_eq!(second.adjustment_points[0].step, 0.25);
+
+        assert_eq!(empty.point_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn single_and_batch_runtime_snapshots_are_equivalent() {
+        let (_temp_dir, db_path) = create_test_database().await;
+        let loader = test_loader(&db_path).await;
+
+        let batch = loader
+            .load_runtime_channels()
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|snapshot| snapshot.id() == 1001)
+            .unwrap();
+        let single = loader.load_runtime_channel(1001, 1).await.unwrap();
+
+        let snapshot_json = |snapshot: &RuntimeChannelConfig| {
+            serde_json::json!({
+                "base": &snapshot.base,
+                "telemetry": &snapshot.telemetry_points,
+                "signal": &snapshot.signal_points,
+                "control": &snapshot.control_points,
+                "adjustment": &snapshot.adjustment_points,
+            })
+        };
+        assert_eq!(snapshot_json(&single), snapshot_json(&batch));
+    }
+
+    #[tokio::test]
+    async fn malformed_point_columns_and_mapping_json_fail_closed() {
+        let (_temp_dir, db_path) = create_test_database().await;
+        let pool = SqlitePool::connect(&format!("sqlite://{db_path}"))
+            .await
+            .unwrap();
+        sqlx::query(
+            "UPDATE telemetry_points SET scale = 'not-a-number' \
+             WHERE channel_id = 1001 AND point_id = 1",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        pool.close().await;
+
+        let error = test_loader(&db_path)
+            .await
+            .load_runtime_channels()
+            .await
+            .expect_err("malformed persisted numeric columns must not use defaults");
+        assert!(error.to_string().contains("telemetry_points.scale"));
+
+        let pool = SqlitePool::connect(&format!("sqlite://{db_path}"))
+            .await
+            .unwrap();
+        sqlx::query(
+            "UPDATE telemetry_points SET scale = 1.0, protocol_mappings = '{bad json' \
+             WHERE channel_id = 1001 AND point_id = 1",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        pool.close().await;
+
+        let error = test_loader(&db_path)
+            .await
+            .load_runtime_channels()
+            .await
+            .expect_err("malformed persisted mapping JSON must fail closed");
+        assert!(
+            error
+                .to_string()
+                .contains("telemetry_points.protocol_mappings")
+        );
+    }
+
+    #[tokio::test]
+    async fn nullable_legacy_rows_keep_their_documented_defaults() {
+        let (_temp_dir, db_path) = create_test_database().await;
+        let pool = SqlitePool::connect(&format!("sqlite://{db_path}"))
+            .await
+            .unwrap();
+        let telemetry_row = sqlx::query(
+            "SELECT 1001 AS channel_id, 1 AS point_id, 'Legacy telemetry' AS signal_name, \
+             NULL AS scale, NULL AS offset, NULL AS unit, NULL AS reverse, NULL AS data_type, \
+             NULL AS description, NULL AS protocol_mappings",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let (_, telemetry) = IoSqliteLoader::parse_telemetry_point(&telemetry_row).unwrap();
+        assert_eq!(telemetry.scale, 1.0);
+        assert_eq!(telemetry.offset, 0.0);
+        assert!(!telemetry.reverse);
+        assert_eq!(telemetry.data_type, "float32");
+
+        let signal_row = sqlx::query(
+            "SELECT 1001 AS channel_id, 2 AS point_id, 'Legacy signal' AS signal_name, \
+             NULL AS unit, NULL AS reverse, NULL AS description, NULL AS protocol_mappings",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let (_, signal) = IoSqliteLoader::parse_signal_point(&signal_row).unwrap();
+        assert!(!signal.reverse);
+
+        let control_row = sqlx::query(
+            "SELECT 1001 AS channel_id, 3 AS point_id, 'Legacy control' AS signal_name, \
+             NULL AS unit, NULL AS reverse, NULL AS description, NULL AS protocol_mappings",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let (_, control) = IoSqliteLoader::parse_control_point(&control_row).unwrap();
+        assert!(!control.reverse);
+
+        let adjustment_row = sqlx::query(
+            "SELECT 1001 AS channel_id, 4 AS point_id, 'Legacy adjustment' AS signal_name, \
+             NULL AS scale, NULL AS offset, NULL AS unit, NULL AS data_type, NULL AS description, \
+             NULL AS protocol_mappings, NULL AS min_value, NULL AS max_value, NULL AS step",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let (_, adjustment) = IoSqliteLoader::parse_adjustment_point(&adjustment_row).unwrap();
+        assert_eq!(adjustment.scale, 1.0);
+        assert_eq!(adjustment.offset, 0.0);
+        assert_eq!(adjustment.step, 1.0);
+        assert_eq!(adjustment.data_type, "float32");
+
+        let snapshot = test_loader(&db_path)
+            .await
+            .load_runtime_channels()
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|snapshot| snapshot.id() == 1001)
+            .unwrap();
+        assert_eq!(snapshot.point_count(), 4);
+    }
+
+    #[tokio::test]
+    async fn stored_channel_payload_is_strict_and_accepts_null_description() {
+        let (_temp_dir, db_path) = create_test_database().await;
+        let db_url = format!("sqlite://{db_path}");
+        let pool = SqlitePool::connect(&db_url).await.unwrap();
+        sqlx::query(
+            "UPDATE channels SET config = ? WHERE channel_id = 1001",
+        )
+        .bind(
+            r#"{"description":null,"parameters":{"host":"192.168.1.100","port":502},"future":true}"#,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let loader = test_loader(&db_path).await;
+        let snapshot = loader.load_runtime_channel(1001, 2).await.unwrap();
+        assert!(snapshot.base.core.description.is_none());
+
+        sqlx::query("UPDATE channels SET config = ? WHERE channel_id = 1001")
+            .bind(r#"{"logging":"debug"}"#)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let error = loader
+            .load_runtime_channel(1001, 3)
+            .await
+            .expect_err("invalid logging must not fall back to defaults");
+        assert!(error.to_string().contains("logging policy is invalid"));
+    }
+
+    #[tokio::test]
     async fn test_load_runtime_channel_points_second_modbus_channel() {
         let (_temp_dir, db_path) = create_test_database().await;
-        let loader = IoSqliteLoader::new(&db_path).await.unwrap();
-        let config = loader.load_config().await.unwrap();
-
-        // Get the second Modbus channel.
-        let channel = config.channels.into_iter().nth(1).unwrap();
-        let mut runtime_config = RuntimeChannelConfig::from_base((*channel).clone());
-
-        // Load points
-        let result = loader
-            .load_runtime_channel_points(&mut runtime_config)
-            .await;
-        assert!(result.is_ok(), "Should load points successfully");
+        let loader = test_loader(&db_path).await;
+        let runtime_config = loader
+            .load_runtime_channels()
+            .await
+            .unwrap()
+            .into_iter()
+            .nth(1)
+            .unwrap();
 
         // Verify loaded points
         assert_eq!(runtime_config.telemetry_points.len(), 1);
@@ -672,21 +1144,20 @@ mod tests {
     #[tokio::test]
     async fn test_parameter_preservation() {
         let (_temp_dir, db_path) = create_test_database().await;
-        let loader = IoSqliteLoader::new(&db_path).await.unwrap();
-        let config = loader.load_config().await.unwrap();
+        let loader = test_loader(&db_path).await;
+        let channels = loader.load_runtime_channels().await.unwrap();
 
         // Check that custom parameters from database are preserved
-        let modbus_channel = config
-            .channels
+        let modbus_channel = channels
             .iter()
             .find(|c| c.protocol() == "modbus_tcp")
             .unwrap();
         assert_eq!(
-            modbus_channel.parameters.get("host").unwrap().as_str(),
+            modbus_channel.base.parameters.get("host").unwrap().as_str(),
             Some("192.168.1.100")
         );
         assert_eq!(
-            modbus_channel.parameters.get("port").unwrap().as_i64(),
+            modbus_channel.base.parameters.get("port").unwrap().as_i64(),
             Some(502)
         );
     }
@@ -694,15 +1165,13 @@ mod tests {
     #[tokio::test]
     async fn test_point_data_types() {
         let (_temp_dir, db_path) = create_test_database().await;
-        let loader = IoSqliteLoader::new(&db_path).await.unwrap();
-        let config = loader.load_config().await.unwrap();
-
-        let channel = config.channels.into_iter().next().unwrap();
-        let mut runtime_config = RuntimeChannelConfig::from_base((*channel).clone());
-
-        loader
-            .load_runtime_channel_points(&mut runtime_config)
+        let loader = test_loader(&db_path).await;
+        let runtime_config = loader
+            .load_runtime_channels()
             .await
+            .unwrap()
+            .into_iter()
+            .next()
             .unwrap();
 
         // Check telemetry point
@@ -739,10 +1208,9 @@ mod tests {
         let db_path = temp_dir.path().join("empty.db");
         let db_url = format!("sqlite://{}?mode=rwc", db_path.display());
 
-        // Create empty database with only service_config
+        // Create an empty, complete IO schema.
         let pool = SqlitePool::connect(&db_url).await.unwrap();
-        sqlx::query(SERVICE_CONFIG_TABLE)
-            .execute(&pool)
+        common::test_utils::schema::init_io_schema(&pool)
             .await
             .unwrap();
 
@@ -755,15 +1223,11 @@ mod tests {
         .await
         .unwrap();
 
-        // Create empty channels table
-        sqlx::query(CHANNELS_TABLE).execute(&pool).await.unwrap();
-        install_channel_revision_triggers(&pool).await.unwrap();
-
         pool.close().await;
 
         // Should load successfully with no channels
-        let loader = IoSqliteLoader::new(db_path).await.unwrap();
-        let config = loader.load_config().await.unwrap();
-        assert_eq!(config.channels.len(), 0);
+        let loader = test_loader(&db_path).await;
+        let channels = loader.load_runtime_channels().await.unwrap();
+        assert!(channels.is_empty());
     }
 }

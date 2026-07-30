@@ -366,25 +366,28 @@ pub async fn load_products(
 }
 
 /// Setup the SQLite/SHM instance manager.
-pub async fn setup_instance_manager(
+async fn setup_instance_manager(
     sqlite_pool: &SqlitePool,
     product_loader: Arc<ProductLoader>,
+    runtime_topology: Arc<crate::infra::runtime_topology::AutomationTopologyHandle>,
 ) -> Result<Arc<InstanceManager>> {
-    let instance_manager = Arc::new(InstanceManager::new(sqlite_pool.clone(), product_loader));
+    let instance_manager = Arc::new(InstanceManager::new(
+        sqlite_pool.clone(),
+        product_loader,
+        runtime_topology,
+    ));
 
     // Instances loaded by aether (may be empty on first startup)
     let instance_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM instances")
         .fetch_one(sqlite_pool)
         .await
-        .unwrap_or(0);
+        .map_err(|error| AutomationError::DatabaseError(error.to_string()))?;
 
     if instance_count == 0 {
         warn!("No instances in DB — run `aether sync` to load instance config");
     } else {
         info!("{} instances loaded", instance_count);
     }
-
-    instance_manager.populate_name_cache().await?;
 
     Ok(instance_manager)
 }
@@ -494,19 +497,6 @@ pub async fn create_app_state(service_info: &ServiceInfo) -> Result<Arc<AppState
     // Initialize environment
     init_environment(service_info)?;
 
-    // Wait for io to be healthy before opening SHM (io must create the SHM file first)
-    let io_base = common::io_url();
-    let io_health = format!("{io_base}/health");
-    if let Err(e) = common::dependency::wait_for_dependency(
-        "aether-io",
-        &io_health,
-        std::time::Duration::from_secs(30),
-    )
-    .await
-    {
-        warn!("io health check failed: {e}. Continuing startup (SHM may be unavailable).");
-    }
-
     // Check system requirements
     let requirements = SystemRequirements {
         min_cpu_cores: 2,
@@ -535,8 +525,27 @@ pub async fn create_app_state(service_info: &ServiceInfo) -> Result<Arc<AppState
     // in main, after IO's canonical generation becomes available.
     let shm_dispatch = Arc::new(aether_shm_bridge::ShmDeviceCommandSink::new());
 
+    let point_path = aether_shm_bridge::default_shm_path();
+    let health_path = std::env::var("AETHER_CHANNEL_HEALTH_SHM_PATH")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| aether_shm_bridge::channel_health_path_from_shm(&point_path));
+    let runtime_topology = Arc::new(
+        crate::infra::runtime_topology::AutomationTopologyHandle::from_sqlite_lazy(
+            point_path,
+            health_path,
+            &sqlite_pool,
+            Arc::clone(&shm_dispatch),
+        )
+        .await
+        .map_err(|error| {
+            AutomationError::DispatchDegraded(format!(
+                "failed to compose the automation runtime topology: {error}"
+            ))
+        })?,
+    );
+
     let instance_manager =
-        setup_instance_manager(&sqlite_pool, Arc::clone(&product_loader)).await?;
+        setup_instance_manager(&sqlite_pool, product_loader, runtime_topology).await?;
 
     let audit_sink = SqliteAuditSink::initialize(sqlite_pool.clone())
         .await

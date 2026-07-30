@@ -1,6 +1,4 @@
 use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
-use utoipa::{IntoParams, ToSchema};
 
 // ── Core data types ───────────────────────────────────────────────────────────
 
@@ -17,7 +15,7 @@ pub struct DataPoint {
 }
 
 /// One row returned from a historical query.
-#[derive(Debug, Clone, Serialize, ToSchema)]
+#[derive(Debug, Clone)]
 pub struct HistoryRecord {
     pub timestamp: String,
     pub series_key: String,
@@ -27,47 +25,15 @@ pub struct HistoryRecord {
     pub source: String,
 }
 
-// ── Query models ──────────────────────────────────────────────────────────────
-
-// ── Batch query models ────────────────────────────────────────────────────────
-
-/// One (`series_key`, `point_id`) pair in a batch query request.
-#[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
-pub struct BatchSeriesItem {
-    pub series_key: String,
-    pub point_id: String,
-}
-
-/// Request body for `POST /hisApi/data/batch-query`.
-#[derive(Debug, Deserialize, ToSchema)]
-#[schema(example = json!({
-    "start_time": "2026-05-11T02:14:34.712Z",
-    "end_time":   "2026-05-11T08:14:34.712Z",
-    "series": [
-        { "series_key": "inst:9:M",  "point_id": "101" },
-        { "series_key": "inst:9:M",  "point_id": "102" },
-        { "series_key": "inst:12:M", "point_id": "201" }
-    ],
-    "limit_per_series": 500
-}))]
-pub struct BatchQueryRequest {
-    pub start_time: String,
-    pub end_time: String,
-    /// 最多 20 条 series
-    pub series: Vec<BatchSeriesItem>,
-    /// 每条 series 最多返回的数据点数，默认 1000，最大 5000
-    pub limit_per_series: Option<i64>,
-}
-
 /// One data point in a batch query response.
-#[derive(Debug, Serialize, ToSchema)]
+#[derive(Debug)]
 pub struct SeriesPoint {
     pub time: String,
     pub value: Option<f64>,
 }
 
 /// Query result for one (`series_key`, `point_id`) series.
-#[derive(Debug, Serialize, ToSchema)]
+#[derive(Debug)]
 pub struct SeriesResult {
     pub series_key: String,
     pub point_id: String,
@@ -75,34 +41,19 @@ pub struct SeriesResult {
     pub data: Vec<SeriesPoint>,
 }
 
-/// Response body for `POST /hisApi/data/batch-query`.
-#[derive(Debug, Serialize, ToSchema)]
-pub struct BatchQueryResponse {
-    pub start_time: String,
-    pub end_time: String,
-    pub series: Vec<SeriesResult>,
-}
-
-/// Query string parameters for `GET /hisApi/data/query`.
-#[derive(Debug, Deserialize, IntoParams)]
-pub struct QueryRangeParams {
+/// Validated range query passed to storage adapters.
+#[derive(Debug)]
+pub struct HistoryRangeQuery {
     pub series_key: String,
     pub point_id: String,
-    pub start_time: Option<String>,
-    pub end_time: Option<String>,
-    pub page: Option<i64>,
-    pub page_size: Option<i64>,
+    pub start_time: DateTime<Utc>,
+    pub end_time: DateTime<Utc>,
+    pub page: i64,
+    pub page_size: i64,
 }
 
-/// Query string parameters for `GET /hisApi/data/latest`.
-#[derive(Debug, Deserialize, IntoParams)]
-pub struct LatestParams {
-    pub series_key: String,
-    pub point_id: String,
-}
-
-/// Response for `GET /hisApi/data/range`.
-#[derive(Debug, Serialize, ToSchema)]
+/// Aggregate statistics returned by storage adapters.
+#[derive(Debug)]
 pub struct DataStats {
     pub earliest_timestamp: Option<String>,
     pub latest_timestamp: Option<String>,
@@ -283,26 +234,13 @@ pub mod pattern_serde {
 /// Controls collection frequency, write batch size, query limits, and
 /// SHM logical-series selectors. Storage backend connection parameters are
 /// managed separately via `/hisApi/storage`.
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-#[schema(example = json!({
-    "collection_interval_secs": 30,
-    "flush_interval_secs": 60,
-    "batch_size": 1000,
-    "cleanup_enabled": true,
-    "cleanup_older_than_days": 30,
-    "default_page_size": 100,
-    "max_page_size": 1000,
-    "max_time_range_days": 365,
-    "subscribe_patterns": {"inst:*:M": null, "inst:4:M": 60},
-    "exclude_patterns": []
-}))]
+#[derive(Debug, Clone)]
 pub struct ServiceConfig {
     /// Collection interval in seconds.
     ///
     /// How often the collector samples selected SHM series into the in-memory
     /// buffer. Shorter intervals increase data freshness and local I/O.
     /// Recommended range: 10–300.
-    #[schema(example = 30, minimum = 1)]
     pub collection_interval_secs: u64,
 
     /// Flush interval in seconds.
@@ -310,7 +248,6 @@ pub struct ServiceConfig {
     /// How often the in-memory buffer is batch-written to the database.
     /// Should not be shorter than `collection_interval_secs`.
     /// Recommended range: 30–600.
-    #[schema(example = 60, minimum = 1)]
     pub flush_interval_secs: u64,
 
     /// Maximum records per flush batch.
@@ -318,14 +255,12 @@ pub struct ServiceConfig {
     /// Records beyond this limit are deferred to the next flush cycle.
     /// Larger values increase single-transaction latency.
     /// Recommended range: 100–5000.
-    #[schema(example = 1000, minimum = 1)]
     pub batch_size: usize,
 
     /// Enable automatic data retention cleanup.
     ///
     /// When enabled, a daily job at 02:00 UTC deletes records older than
     /// `cleanup_older_than_days`.
-    #[schema(example = true)]
     pub cleanup_enabled: bool,
 
     /// Data retention period in days.
@@ -333,27 +268,23 @@ pub struct ServiceConfig {
     /// The cleanup job removes all records older than this value.
     /// Only effective when `cleanup_enabled = true`.
     /// Recommended range: 7–3650.
-    #[schema(example = 30, minimum = 1)]
     pub cleanup_older_than_days: i32,
 
     /// Default page size (records per page).
     ///
     /// Used when the caller omits the `page_size` query parameter.
-    #[schema(example = 100, minimum = 1)]
     pub default_page_size: i64,
 
     /// Maximum allowed page size (records per page).
     ///
     /// Client-supplied `page_size` values exceeding this limit are clamped
     /// to prevent oversized single queries.
-    #[schema(example = 1000, minimum = 1)]
     pub max_page_size: i64,
 
     /// Maximum query time span in days.
     ///
     /// A single query's `start_time`-to-`end_time` range may not exceed this
     /// value; requests exceeding it are rejected. Recommended range: 1–3650.
-    #[schema(example = 365, minimum = 1)]
     pub max_time_range_days: i64,
 
     /// Logical series selectors using `*` and `?` glob syntax.
@@ -370,15 +301,12 @@ pub struct ServiceConfig {
     /// ```json
     /// {"inst:*:M": null, "inst:4:M": 60}
     /// ```
-    #[serde(with = "pattern_serde")]
-    #[schema(value_type = Object, example = json!({"inst:*:M": null, "inst:4:M": 60}))]
     pub subscribe_patterns: Vec<PatternEntry>,
 
     /// Exclusion patterns (**regex syntax** — distinct from the glob syntax
     /// used in `subscribe_patterns`).
     ///
     /// 命中任意一条正则的逻辑序列将被跳过，不采集。
-    #[schema(example = json!([]))]
     pub exclude_patterns: Vec<String>,
 }
 
@@ -438,18 +366,6 @@ mod config_tests {
         assert_eq!(cfg.max_page_size, 1);
         assert_eq!(cfg.max_time_range_days, 1);
     }
-
-    #[test]
-    fn batch_series_json_uses_domain_series_key() {
-        let item = BatchSeriesItem {
-            series_key: "inst:9:M".to_string(),
-            point_id: "101".to_string(),
-        };
-
-        let value = serde_json::to_value(item).expect("serialize batch series item");
-
-        assert_eq!(value["series_key"], "inst:9:M");
-    }
 }
 
 // ── Internal storage connection settings ─────────────────────────────────────
@@ -465,142 +381,6 @@ pub struct StorageSettings {
     pub backend: String,
     /// Local SQLite file path or external database DSN.
     pub url: String,
-}
-
-// ── Storage configuration request ────────────────────────────────────────────
-
-/// Connectivity test request body (`POST /hisApi/storage/test`).
-///
-/// The probe **does not write any data or modify any runtime state**.
-/// For PostgreSQL / TimescaleDB it connects to the built-in `postgres`
-/// maintenance database and executes `SELECT 1`, so **the target business
-/// database does not need to exist** for the test to pass.
-#[derive(Debug, Deserialize, ToSchema)]
-pub struct StorageTestRequest {
-    /// Database backend type.
-    ///
-    /// - `postgres` — standard PostgreSQL
-    /// - `timescaledb` — PostgreSQL + TimescaleDB extension (same connection params as postgres)
-    /// - `influxdb` — InfluxDB (reserved; not yet implemented)
-    #[schema(example = "timescaledb")]
-    pub backend: String,
-
-    /// Database host address (IP or hostname).
-    #[schema(example = "192.168.20.21")]
-    pub host: String,
-
-    /// Database port.
-    ///
-    /// Default: `5432` for PostgreSQL / TimescaleDB; `8086` for InfluxDB.
-    #[schema(example = 5432, minimum = 1, maximum = 65535)]
-    pub port: Option<u16>,
-
-    /// Database username (PostgreSQL / TimescaleDB).
-    #[cfg_attr(not(feature = "postgres-storage"), allow(dead_code))]
-    #[schema(example = "postgres")]
-    pub username: String,
-
-    /// Database password (PostgreSQL / TimescaleDB).
-    #[cfg_attr(not(feature = "postgres-storage"), allow(dead_code))]
-    #[schema(example = "secret")]
-    pub password: String,
-}
-
-impl StorageTestRequest {
-    /// Friendly `host:port` string for log / response messages.
-    pub fn addr(&self) -> String {
-        let default_port = match self.backend.as_str() {
-            "influxdb" => 8086,
-            _ => 5432,
-        };
-        format!("{}:{}", self.host, self.port.unwrap_or(default_port))
-    }
-
-    /// Build a PostgreSQL DSN pointing at the always-present `postgres`
-    /// maintenance database (used for postgres / timescaledb probing).
-    #[cfg(feature = "postgres-storage")]
-    pub fn pg_probe_dsn(&self) -> String {
-        build_dsn(
-            &self.host,
-            self.port,
-            "postgres",
-            &self.username,
-            &self.password,
-        )
-    }
-}
-
-/// Request body for `PUT /hisApi/storage`.
-///
-/// This endpoint **only persists parameters**; it does not establish a
-/// database connection immediately. After saving, apply and connect via
-/// `POST /hisApi/storage/reconnect`, or verify connectivity first via
-/// `POST /hisApi/storage/test`.
-#[derive(Debug, Clone, Deserialize, ToSchema)]
-#[schema(example = json!({
-    "enabled": true,
-    "backend": "timescaledb",
-    "host": "192.168.20.21",
-    "port": 5432,
-    "database": "history",
-    "username": "postgres",
-    "password": "postgres"
-}))]
-pub struct StorageConfigRequest {
-    /// Enable historical storage.
-    ///
-    /// `true`: collection and writes begin after service startup or reconnect.
-    /// `false`: writes are stopped (existing data is unaffected).
-    #[schema(example = true)]
-    pub enabled: bool,
-
-    /// Database backend type.
-    ///
-    /// - `postgres`: standard PostgreSQL, suitable for general historical storage.
-    /// - `timescaledb`: PostgreSQL + TimescaleDB extension, optimised for
-    ///   time-series data; recommended for production.
-    #[schema(example = "timescaledb")]
-    pub backend: String,
-
-    /// Database host address.
-    ///
-    /// IP address or hostname, e.g. `192.168.20.21` or `db.example.com`.
-    #[schema(example = "192.168.20.21")]
-    pub host: String,
-
-    /// Database port (default `5432`).
-    #[schema(example = 5432, minimum = 1, maximum = 65535)]
-    pub port: Option<u16>,
-
-    /// Database name.
-    ///
-    /// Historical data is written to this database. The database is created
-    /// automatically on first connect; tables are initialised on first use.
-    #[schema(example = "history")]
-    pub database: String,
-
-    /// Database username.
-    #[schema(example = "postgres")]
-    pub username: String,
-
-    /// Database password.
-    ///
-    /// Special characters (`@`, `#`, `:`, etc.) do not need to be
-    /// percent-encoded — the backend handles URL-encoding automatically.
-    #[schema(example = "postgres")]
-    pub password: String,
-}
-
-impl StorageConfigRequest {
-    pub fn to_dsn(&self) -> String {
-        build_dsn(
-            &self.host,
-            self.port,
-            &self.database,
-            &self.username,
-            &self.password,
-        )
-    }
 }
 
 // ── Shared DSN builder ────────────────────────────────────────────────────────

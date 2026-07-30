@@ -5,154 +5,38 @@
 #![allow(clippy::disallowed_methods)] // json! macro used in multiple functions
 
 use common::FourRemote;
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use utoipa::ToSchema;
 
-// Import Core types for zero-duplication architecture
-use crate::config::{Instance, InstanceCore};
+// === Query Parameters ===
 
-// Import shared serde helpers
-use common::serde_helpers::{deserialize_optional_i32, deserialize_optional_u32};
+/// Supported live-data planes for an instance query.
+#[derive(Debug, Clone, Copy, Deserialize, ToSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum InstanceDataType {
+    Measurement,
+    Action,
+}
 
-// === Custom Deserializer for FourRemote ===
-
-/// Deserialize `Option<FourRemote>` from null, empty string, or valid enum value
-fn deserialize_optional_four_remote<'de, D>(deserializer: D) -> Result<Option<FourRemote>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let opt: Option<String> = Option::deserialize(deserializer)?;
-    match opt {
-        None => Ok(None),
-        Some(s) if s.is_empty() => Ok(None),
-        Some(s) => {
-            // Parse directly using FromStr - avoids clone and intermediate Value
-            s.parse::<FourRemote>()
-                .map(Some)
-                .map_err(serde::de::Error::custom)
-        },
+impl From<InstanceDataType> for crate::instance_query::InstanceDataPlane {
+    fn from(value: InstanceDataType) -> Self {
+        match value {
+            InstanceDataType::Measurement => Self::Measurement,
+            InstanceDataType::Action => Self::Action,
+        }
     }
 }
 
-// === Query Parameters ===
-
-/// Query parameter for filtering by data type
+/// Query parameter for filtering by live-data plane.
 #[derive(Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct DataTypeQuery {
     #[serde(rename = "type")]
-    pub data_type: Option<String>, // 'measurement', 'action', or null for both
-}
-
-// === Parameter Management ===
-
-/// Request to update instance parameter routing
-#[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
-pub struct RoutingUpdate {
-    pub routings: HashMap<String, String>,
-    #[serde(default)]
-    pub routing_type: RoutingType,
-}
-
-/// Type of routing being updated
-#[derive(Debug, Clone, Deserialize, Serialize, Default, ToSchema)]
-#[serde(rename_all = "lowercase")]
-pub enum RoutingType {
-    #[default]
-    Measurement,
-    Action,
-}
-
-/// API-layer model-point direction (M/A only).
-///
-/// Used in RoutingRequest to explicitly specify whether the point_id
-/// refers to a measurement point or an action point.
-/// Unlike the device/protocol `aether_core::PointType` representation (T/S/C/A),
-/// automation only routes Measurement and Action points.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-pub enum PointType {
-    /// Measurement point routing
-    #[serde(rename = "M")]
-    Measurement,
-    /// Action point routing
-    #[serde(rename = "A")]
-    Action,
+    pub data_type: Option<InstanceDataType>,
 }
 
 // === Routing Management ===
-
-/// Request to create or update a channel-to-instance point routing
-///
-/// `channel_id`, `four_remote`, and `channel_point_id` form a unit to identify a channel point.
-/// All three must be present for a valid routing, or all null/empty to unbind the routing.
-///
-/// Supports null, empty string "", or omitted fields to indicate "unbind routing".
-#[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
-pub struct RoutingRequest {
-    /// Point type: "M" for measurement, "A" for action
-    #[schema(example = "M")]
-    pub point_type: PointType,
-    /// Point ID (measurement_id or action_id based on point_type)
-    #[schema(example = 101)]
-    pub point_id: u32,
-    #[schema(example = 1)]
-    #[serde(default, deserialize_with = "deserialize_optional_i32")]
-    pub channel_id: Option<i32>,
-    #[schema(value_type = Option<String>, example = "T")]
-    #[serde(default, deserialize_with = "deserialize_optional_four_remote")]
-    pub four_remote: Option<FourRemote>,
-    #[schema(example = 101)]
-    #[serde(default, deserialize_with = "deserialize_optional_u32")]
-    pub channel_point_id: Option<u32>,
-    /// Current shared logical-routing revision required for compare-and-set.
-    #[schema(example = 7)]
-    #[serde(default)]
-    pub expected_revision: u64,
-    /// Explicit confirmation required when this request changes an action route.
-    #[serde(default)]
-    #[schema(default = false, example = true)]
-    pub confirmed: bool,
-}
-
-/// Request to create or update routing for a single point
-///
-/// `channel_id`, `four_remote`, and `channel_point_id` can all be null to unbind the routing
-#[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
-pub struct SinglePointRoutingRequest {
-    #[schema(example = 1)]
-    pub channel_id: Option<i32>,
-    #[schema(value_type = Option<String>, example = "T")]
-    pub four_remote: Option<FourRemote>,
-    #[schema(example = 101)]
-    pub channel_point_id: Option<u32>,
-    #[serde(default = "default_enabled")]
-    #[schema(example = true)]
-    pub enabled: bool,
-    /// Explicitly confirms a high-risk physical command-topology change.
-    #[serde(default)]
-    #[schema(default = false, example = true)]
-    pub confirmed: bool,
-}
-
-/// Request to toggle routing enabled state for a single point
-#[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
-pub struct ToggleRoutingRequest {
-    #[schema(example = true)]
-    pub enabled: bool,
-    /// Explicitly confirms a high-risk physical command-topology change.
-    #[serde(default)]
-    #[schema(default = false, example = true)]
-    pub confirmed: bool,
-}
-
-/// Confirmation body for destructive action-routing commands.
-#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, ToSchema)]
-pub struct RoutingMutationConfirmation {
-    /// Explicitly confirms a high-risk physical command-topology change.
-    #[serde(default)]
-    #[schema(default = false, example = true)]
-    pub confirmed: bool,
-}
 
 /// Governed measurement-route upsert with a mandatory shared CAS revision.
 #[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
@@ -194,6 +78,120 @@ pub struct MeasurementRoutingDeleteRequest {
     pub confirmed: bool,
 }
 
+/// Physical channel address nested in an instance-scoped routing response.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct RoutingChannelDto {
+    pub id: u32,
+    pub four_remote: String,
+    pub point_id: u32,
+}
+
+/// One instance-scoped logical route.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct InstanceRoutingEntryDto {
+    pub channel: RoutingChannelDto,
+    pub point_id: u32,
+    pub enabled: bool,
+}
+
+/// Complete instance routing view and its shared CAS head.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct InstanceRoutingResponseDto {
+    pub instance_id: u32,
+    pub measurement: Vec<InstanceRoutingEntryDto>,
+    pub action: Vec<InstanceRoutingEntryDto>,
+    pub logical_routing_revision: u64,
+}
+
+/// Flat routing row used by global and channel-scoped query responses.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct RoutingListEntryDto {
+    pub routing_id: i64,
+    pub instance_id: u32,
+    pub instance_name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub channel_id: Option<u32>,
+    pub channel_type: String,
+    pub channel_point_id: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub measurement_point_id: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub action_point_id: Option<u32>,
+    pub enabled: bool,
+}
+
+impl RoutingListEntryDto {
+    pub(crate) fn measurement(
+        route: crate::routing_loader::RoutingRoute,
+        include_channel: bool,
+    ) -> Self {
+        Self::new(route, include_channel, true)
+    }
+
+    pub(crate) fn action(
+        route: crate::routing_loader::RoutingRoute,
+        include_channel: bool,
+    ) -> Self {
+        Self::new(route, include_channel, false)
+    }
+
+    fn new(
+        route: crate::routing_loader::RoutingRoute,
+        include_channel: bool,
+        measurement: bool,
+    ) -> Self {
+        Self {
+            routing_id: route.routing_id,
+            instance_id: route.instance_id,
+            instance_name: route.instance_name,
+            channel_id: include_channel.then_some(route.channel_id),
+            channel_type: route.channel_type,
+            channel_point_id: route.channel_point_id,
+            measurement_point_id: measurement.then_some(route.point_id),
+            action_point_id: (!measurement).then_some(route.point_id),
+            enabled: route.enabled,
+        }
+    }
+}
+
+impl From<crate::routing_loader::RoutingRoute> for InstanceRoutingEntryDto {
+    fn from(route: crate::routing_loader::RoutingRoute) -> Self {
+        Self {
+            channel: RoutingChannelDto {
+                id: route.channel_id,
+                four_remote: route.channel_type,
+                point_id: route.channel_point_id,
+            },
+            point_id: route.point_id,
+            enabled: route.enabled,
+        }
+    }
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct RoutingTotalsDto {
+    pub measurement: usize,
+    pub action: usize,
+}
+
+/// Complete desired-routing query response.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct AllRoutingResponseDto {
+    pub measurement_routing: Vec<RoutingListEntryDto>,
+    pub action_routing: Vec<RoutingListEntryDto>,
+    pub total: RoutingTotalsDto,
+    pub logical_routing_revision: u64,
+}
+
+/// Desired routes that touch one physical channel.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct ChannelRoutingResponseDto {
+    pub channel_id: u32,
+    pub uplink: Vec<RoutingListEntryDto>,
+    pub downlink: Vec<RoutingListEntryDto>,
+    pub logical_routing_revision: u64,
+}
+
 /// Channel point kinds that are valid destinations for an action route.
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, ToSchema)]
 pub enum ActionRoutingFourRemote {
@@ -207,9 +205,8 @@ pub enum ActionRoutingFourRemote {
 
 /// Swagger request body for a governed action-route upsert or unbind command.
 ///
-/// This is intentionally separate from [`SinglePointRoutingRequest`]:
-/// measurement routing supports T/S destinations without high-risk
-/// confirmation, while action routing supports only C/A and requires it.
+/// Measurement routing supports T/S destinations, while this command accepts
+/// only C/A destinations and always requires explicit confirmation.
 #[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
 pub struct ActionRoutingUpsertBody {
     #[schema(example = 1)]
@@ -405,53 +402,6 @@ pub struct ActionRequest {
     pub confirmed: bool,
 }
 
-// === Instance Result Responses ===
-
-/// Instance operation result (create/update/delete)
-/// Uses InstanceCore to eliminate field duplication
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct InstanceResult {
-    /// Core instance fields (instance_id, instance_name, product_name, properties)
-    #[serde(flatten)]
-    #[schema(value_type = Object)]
-    pub core: InstanceCore,
-
-    /// Runtime status
-    #[schema(example = "active")]
-    pub runtime_status: String,
-
-    /// Operation message
-    #[schema(example = "Instance created successfully")]
-    pub message: Option<String>,
-}
-
-impl From<(Instance, String, Option<String>)> for InstanceResult {
-    fn from((instance, runtime_status, message): (Instance, String, Option<String>)) -> Self {
-        Self {
-            core: instance.core, // Move instead of clone
-            runtime_status,
-            message,
-        }
-    }
-}
-
-/// Instance detail response (complete information)
-/// Uses Instance to eliminate field duplication
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct InstanceDetail {
-    /// Complete instance configuration
-    #[serde(flatten)]
-    #[schema(value_type = Object)]
-    pub instance: Instance,
-
-    /// Runtime status
-    #[schema(example = "active")]
-    pub runtime_status: String,
-
-    /// Point statistics (measurement_count, action_count, etc.)
-    pub point_statistics: HashMap<String, usize>,
-}
-
 // === Runtime Point Structures (Product Point + Instance Routing) ===
 
 /// Point routing configuration (instance-specific attribute)
@@ -459,7 +409,7 @@ pub struct InstanceDetail {
 /// This structure represents the routing configuration for an instance point.
 /// It defines how the point is mapped to a channel point.
 /// `channel_id`, `channel_type`, and `channel_point_id` form a unit - all null means unbound.
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct PointRouting {
     /// Channel ID (null if routing is unbound)
     #[schema(example = 1)]
@@ -491,7 +441,7 @@ pub struct PointRouting {
 /// This is the runtime view of a measurement point, combining:
 /// - Product template definition (measurement_id, name, unit, description)
 /// - Instance-specific routing configuration (if configured)
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct InstanceMeasurementPoint {
     /// Measurement ID
     #[schema(example = 101)]
@@ -519,7 +469,7 @@ pub struct InstanceMeasurementPoint {
 /// This is the runtime view of an action point, combining:
 /// - Product template definition (action_id, name, unit, description)
 /// - Instance-specific routing configuration (if configured)
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct InstanceActionPoint {
     /// Action ID
     #[schema(example = 201)]
@@ -548,7 +498,7 @@ pub struct InstanceActionPoint {
 /// **not** carry routing because they are not part of the device data flow. The template
 /// (`property_id`, `name`, `unit`, `description`) comes from the product, and `value`
 /// is the per-instance value stored in `instances.properties` (keyed by `name`).
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct InstancePropertyPoint {
     /// Property ID (from product template)
     #[schema(example = 1)]
@@ -577,7 +527,7 @@ pub struct InstancePropertyPoint {
 /// Returns all measurement, action, and property points for an instance.
 /// Measurements and actions include their routing configurations; properties carry
 /// the per-instance value (no routing — they are static metadata, not data-flow points).
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct InstancePointsResponse {
     /// Instance name
     #[schema(example = "pump_01")]
@@ -591,127 +541,194 @@ pub struct InstancePointsResponse {
 
     /// Property points with current values (no routing)
     pub properties: Vec<InstancePropertyPoint>,
+
+    /// Shared CAS head for every measurement/action route in this response.
+    pub logical_routing_revision: u64,
 }
 
-// === Unit Tests ===
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// Test null values are deserialized as None
-    #[test]
-    fn test_routing_request_with_null_values() {
-        let json = r#"{"point_type": "M", "point_id": 3, "channel_id": null, "channel_point_id": null, "four_remote": null}"#;
-        let req: RoutingRequest = serde_json::from_str(json).unwrap();
-        assert_eq!(req.point_type, PointType::Measurement);
-        assert!(req.channel_id.is_none());
-        assert!(req.four_remote.is_none());
-        assert!(req.channel_point_id.is_none());
-        assert_eq!(req.point_id, 3);
+impl From<crate::instance_query::PointRoutingView> for PointRouting {
+    fn from(view: crate::instance_query::PointRoutingView) -> Self {
+        Self {
+            channel_id: view.channel_id,
+            channel_type: view.channel_type,
+            channel_point_id: view.channel_point_id,
+            enabled: view.enabled,
+            channel_name: view.channel_name,
+            channel_point_name: view.channel_point_name,
+        }
     }
+}
 
-    /// Test empty strings are deserialized as None
-    #[test]
-    fn test_routing_request_with_empty_strings() {
-        let json = r#"{"point_type": "A", "point_id": 3, "channel_id": "", "channel_point_id": "", "four_remote": ""}"#;
-        let req: RoutingRequest = serde_json::from_str(json).unwrap();
-        assert_eq!(req.point_type, PointType::Action);
-        assert!(req.channel_id.is_none());
-        assert!(req.four_remote.is_none());
-        assert!(req.channel_point_id.is_none());
-        assert_eq!(req.point_id, 3);
+impl From<crate::instance_query::InstanceMeasurementPointView> for InstanceMeasurementPoint {
+    fn from(view: crate::instance_query::InstanceMeasurementPointView) -> Self {
+        Self {
+            measurement_id: view.measurement_id,
+            name: view.name,
+            unit: view.unit,
+            description: view.description,
+            routing: view.routing.map(PointRouting::from),
+        }
     }
+}
 
-    /// Test omitted optional fields default to None (requires #[serde(default)])
-    #[test]
-    fn test_routing_request_with_omitted_fields() {
-        let json = r#"{"point_type": "M", "point_id": 3}"#;
-        let req: RoutingRequest = serde_json::from_str(json).unwrap();
-        assert_eq!(req.point_type, PointType::Measurement);
-        assert!(req.channel_id.is_none());
-        assert!(req.four_remote.is_none());
-        assert!(req.channel_point_id.is_none());
-        assert_eq!(req.point_id, 3);
+impl From<crate::instance_query::InstanceActionPointView> for InstanceActionPoint {
+    fn from(view: crate::instance_query::InstanceActionPointView) -> Self {
+        Self {
+            action_id: view.action_id,
+            name: view.name,
+            unit: view.unit,
+            description: view.description,
+            routing: view.routing.map(PointRouting::from),
+        }
     }
+}
 
-    /// Test valid values are deserialized correctly
-    #[test]
-    fn test_routing_request_with_valid_values() {
-        let json = r#"{"point_type": "M", "point_id": 3, "channel_id": 1, "channel_point_id": 101, "four_remote": "T"}"#;
-        let req: RoutingRequest = serde_json::from_str(json).unwrap();
-        assert_eq!(req.point_type, PointType::Measurement);
-        assert_eq!(req.channel_id, Some(1));
-        assert_eq!(req.four_remote, Some(FourRemote::Telemetry));
-        assert_eq!(req.channel_point_id, Some(101));
-        assert_eq!(req.point_id, 3);
+impl From<crate::instance_query::InstancePropertyView> for InstancePropertyPoint {
+    fn from(view: crate::instance_query::InstancePropertyView) -> Self {
+        Self {
+            property_id: view.property_id,
+            name: view.name,
+            unit: view.unit,
+            description: view.description,
+            value: view.value,
+        }
     }
+}
 
-    /// Test mixed null and empty string (original failing scenario)
-    #[test]
-    fn test_routing_request_mixed_null_and_empty() {
-        let json = r#"{"point_type": "A", "point_id": 3, "channel_id": null, "channel_point_id": null, "four_remote": ""}"#;
-        let req: RoutingRequest = serde_json::from_str(json).unwrap();
-        assert_eq!(req.point_type, PointType::Action);
-        assert!(req.channel_id.is_none());
-        assert!(req.four_remote.is_none());
-        assert!(req.channel_point_id.is_none());
-        assert_eq!(req.point_id, 3);
+impl From<crate::instance_query::InstancePointsView> for InstancePointsResponse {
+    fn from(view: crate::instance_query::InstancePointsView) -> Self {
+        Self {
+            instance_name: view.instance_name,
+            measurements: view
+                .measurements
+                .into_iter()
+                .map(InstanceMeasurementPoint::from)
+                .collect(),
+            actions: view
+                .actions
+                .into_iter()
+                .map(InstanceActionPoint::from)
+                .collect(),
+            properties: view
+                .properties
+                .into_iter()
+                .map(InstancePropertyPoint::from)
+                .collect(),
+            logical_routing_revision: view.logical_routing_revision,
+        }
     }
+}
 
-    /// Test string numbers are parsed correctly ("123" → 123)
-    #[test]
-    fn test_routing_request_string_numbers() {
-        let json = r#"{"point_type": "M", "point_id": 3, "channel_id": "1", "channel_point_id": "101", "four_remote": "T"}"#;
-        let req: RoutingRequest = serde_json::from_str(json).unwrap();
-        assert_eq!(req.point_type, PointType::Measurement);
-        assert_eq!(req.channel_id, Some(1));
-        assert_eq!(req.channel_point_id, Some(101));
-        assert_eq!(req.four_remote, Some(FourRemote::Telemetry));
+/// Lightweight commissioned-instance summary.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct InstanceSummaryDto {
+    pub instance_id: u32,
+    pub instance_name: String,
+    pub product_name: String,
+    pub parent_id: Option<u32>,
+    pub properties: HashMap<String, serde_json::Value>,
+}
+
+impl From<crate::config::Instance> for InstanceSummaryDto {
+    fn from(instance: crate::config::Instance) -> Self {
+        Self {
+            instance_id: instance.core.instance_id,
+            instance_name: instance.core.instance_name,
+            product_name: instance.core.product_name,
+            parent_id: instance.core.parent_id,
+            properties: instance.core.properties,
+        }
     }
+}
 
-    /// Test all FourRemote variants with standard aliases
-    #[test]
-    fn test_routing_request_four_remote_variants() {
-        // Telemetry (T, YC, telemetry, yc)
-        let json = r#"{"point_type": "M", "point_id": 1, "four_remote": "T"}"#;
-        let req: RoutingRequest = serde_json::from_str(json).unwrap();
-        assert_eq!(req.four_remote, Some(FourRemote::Telemetry));
+/// Bounded result for `GET /api/instances/search`.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct InstanceSearchResponseDto {
+    pub count: usize,
+    pub limit: u32,
+    pub list: Vec<InstanceSummaryDto>,
+}
 
-        // Signal (S, YX, signal, yx)
-        let json = r#"{"point_type": "M", "point_id": 1, "four_remote": "S"}"#;
-        let req: RoutingRequest = serde_json::from_str(json).unwrap();
-        assert_eq!(req.four_remote, Some(FourRemote::Signal));
+/// Paginated commissioned-instance list.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct InstanceListResponseDto {
+    pub total: u32,
+    pub page: u32,
+    pub page_size: u32,
+    pub list: Vec<InstanceSummaryDto>,
+}
 
-        // Control (C, YK, control, yk)
-        let json = r#"{"point_type": "A", "point_id": 1, "four_remote": "C"}"#;
-        let req: RoutingRequest = serde_json::from_str(json).unwrap();
-        assert_eq!(req.four_remote, Some(FourRemote::Control));
+/// Minimal identity for instance pickers.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct InstancePickerItemDto {
+    pub id: u32,
+    pub name: String,
+}
 
-        // Adjustment (A, YT, adjustment, setpoint, yt)
-        let json = r#"{"point_type": "A", "point_id": 1, "four_remote": "A"}"#;
-        let req: RoutingRequest = serde_json::from_str(json).unwrap();
-        assert_eq!(req.four_remote, Some(FourRemote::Adjustment));
-    }
+/// Minimal unpaginated instance-picker list.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct InstancePickerResponseDto {
+    pub list: Vec<InstancePickerItemDto>,
+}
 
-    /// Test point_type serialization and deserialization
-    #[test]
-    fn test_point_type_serde() {
-        // Test Measurement
-        assert_eq!(
-            serde_json::to_string(&PointType::Measurement).unwrap(),
-            "\"M\""
-        );
-        assert_eq!(
-            serde_json::from_str::<PointType>("\"M\"").unwrap(),
-            PointType::Measurement
-        );
+/// Detail response for one commissioned instance.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct InstanceDetailResponseDto {
+    pub instance: InstanceSummaryDto,
+}
 
-        // Test Action
-        assert_eq!(serde_json::to_string(&PointType::Action).unwrap(), "\"A\"");
-        assert_eq!(
-            serde_json::from_str::<PointType>("\"A\"").unwrap(),
-            PointType::Action
-        );
+/// One live value read from the authoritative SHM generation.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct InstanceLiveSampleDto {
+    pub value: f64,
+    pub timestamp_ms: u64,
+}
+
+/// Complete live-data view when no plane filter is supplied.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct InstanceLiveDataDto {
+    pub measurements: std::collections::BTreeMap<String, InstanceLiveSampleDto>,
+    pub actions: std::collections::BTreeMap<String, InstanceLiveSampleDto>,
+}
+
+/// Live-data response: one filtered value map or the complete two-plane view.
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(untagged)]
+pub enum InstanceDataResponseDto {
+    Values(std::collections::BTreeMap<String, InstanceLiveSampleDto>),
+    Complete(InstanceLiveDataDto),
+}
+
+fn live_values(
+    values: std::collections::BTreeMap<u32, crate::instance_query::InstanceLiveSample>,
+) -> std::collections::BTreeMap<String, InstanceLiveSampleDto> {
+    values
+        .into_iter()
+        .map(|(point_id, sample)| {
+            (
+                point_id.to_string(),
+                InstanceLiveSampleDto {
+                    value: sample.value,
+                    timestamp_ms: sample.timestamp_ms,
+                },
+            )
+        })
+        .collect()
+}
+
+impl From<crate::instance_query::InstanceLiveDataView> for InstanceDataResponseDto {
+    fn from(view: crate::instance_query::InstanceLiveDataView) -> Self {
+        match view {
+            crate::instance_query::InstanceLiveDataView::Values(values) => {
+                Self::Values(live_values(values))
+            },
+            crate::instance_query::InstanceLiveDataView::Complete {
+                measurements,
+                actions,
+            } => Self::Complete(InstanceLiveDataDto {
+                measurements: live_values(measurements),
+                actions: live_values(actions),
+            }),
+        }
     }
 }

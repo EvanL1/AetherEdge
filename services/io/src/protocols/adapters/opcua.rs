@@ -16,12 +16,12 @@
 //!     .with_subscription(SubscriptionConfig::default())
 //!     .with_points(points);
 //!
-//! let mut channel = OpcUaChannel::new(config, store, 1);
+//! let mut channel = OpcUaChannel::new(config);
 //! channel.connect().await?;
-//! channel.start_polling(PollingConfig::default()).await?;
+//! let result = channel.poll_once().await;
 //!
-//! // Receive events via subscription
-//! let mut rx = channel.subscribe();
+//! // Take the runtime's single event receiver
+//! let mut rx = channel.take_event_receiver().expect("event receiver available");
 //! while let Some(event) = rx.recv().await {
 //!     match event {
 //!         DataEvent::DataUpdate(batch) => { /* process data */ }
@@ -35,6 +35,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::time::Duration;
 
+use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use opcua::client::{ClientBuilder, DataChangeCallback, IdentityToken, MonitoredItem, Session};
 use opcua::crypto::SecurityPolicy;
@@ -42,9 +43,6 @@ use opcua::types::{
     AttributeId, DataValue, Identifier, MessageSecurityMode, MonitoredItemCreateRequest, NodeId,
     StatusCode, TimestampsToReturn, UAString, UserTokenPolicy, Variant, WriteValue,
 };
-use tokio::sync::broadcast;
-
-use async_trait::async_trait;
 
 // ============================================================================
 // Default timeout constants for OPC UA
@@ -56,15 +54,135 @@ const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 use crate::protocols::core::data::{DataBatch, DataPoint, Value};
 use crate::protocols::core::diagnostics::AtomicDiagnostics;
 use crate::protocols::core::error::{GatewayError, Result};
-use crate::protocols::core::point::{PointConfig, ProtocolAddress};
-use crate::protocols::core::quality::Quality;
+use crate::protocols::core::point::PointConfig;
 use crate::protocols::core::traits::{
     AdjustmentCommand, CommunicationMode, ConnectionState, ControlCommand, DataEvent,
-    DataEventHandler, DataEventReceiver, DataEventSender, Diagnostics, EventDrivenProtocol,
-    PollResult, Protocol, ProtocolCapabilities, ProtocolClient, WriteResult,
+    DataEventReceiver, DataEventSender, Diagnostics, EventDrivenProtocol, PointFailure, PollResult,
+    Protocol, ProtocolCapabilities, ProtocolClient, WriteResult, data_event_channel,
 };
-use crate::protocols::gateway::ChannelRuntime;
+use crate::protocols::runtime::ChannelRuntime;
+use aether_config::io::MAX_CHANNEL_TIMING_MS;
 use aether_core::PointType;
+use aether_domain::PointQuality;
+
+/// OPC UA node address owned by this adapter.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct OpcUaAddress {
+    pub node_id: String,
+    #[serde(default)]
+    pub namespace_index: u16,
+}
+
+impl OpcUaAddress {
+    pub fn new(node_id: impl Into<String>, namespace_index: u16) -> Self {
+        Self {
+            node_id: node_id.into(),
+            namespace_index,
+        }
+    }
+}
+
+/// Decode the persisted OPC UA point mapping owned by this adapter.
+///
+/// Accepted representations are a JSON address string, an object containing
+/// `address`, or `{ "namespace_index": ..., "node_id": ... }`.
+pub(crate) fn parse_point_mapping(mapping: &str) -> Result<OpcUaAddress> {
+    let value: serde_json::Value = serde_json::from_str(mapping)
+        .map_err(|error| GatewayError::Config(format!("invalid OPC UA point mapping: {error}")))?;
+    parse_point_mapping_value(&value)
+}
+
+/// Decode an OPC UA point mapping from an already parsed JSON value.
+pub(crate) fn parse_point_mapping_value(mapping: &serde_json::Value) -> Result<OpcUaAddress> {
+    let values = match mapping {
+        serde_json::Value::String(address) => return parse_point_address(address),
+        serde_json::Value::Object(values) => values,
+        _ => {
+            return Err(GatewayError::Config(
+                "OPC UA point mapping must be a string or object".to_string(),
+            ));
+        },
+    };
+
+    let allowed_fields = if values.contains_key("address") {
+        &["address"][..]
+    } else {
+        &["namespace_index", "node_id"][..]
+    };
+    if let Some(field) = values
+        .keys()
+        .find(|field| !allowed_fields.contains(&field.as_str()))
+    {
+        return Err(GatewayError::Config(format!(
+            "unknown OPC UA point mapping field '{field}'"
+        )));
+    }
+
+    if let Some(address) = values.get("address") {
+        let address = address.as_str().ok_or_else(|| {
+            GatewayError::Config("OPC UA point 'address' must be a string".to_string())
+        })?;
+        return parse_point_address(address);
+    }
+
+    let node_id = values
+        .get("node_id")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| {
+            GatewayError::Config("OPC UA point mapping requires 'address' or 'node_id'".to_string())
+        })?;
+    if node_id.starts_with("ns=") {
+        return parse_point_address(node_id);
+    }
+    let namespace_index = match values.get("namespace_index") {
+        Some(value) => {
+            let value = value.as_u64().ok_or_else(|| {
+                GatewayError::Config("OPC UA 'namespace_index' must be a u16".to_string())
+            })?;
+            u16::try_from(value).map_err(|_| {
+                GatewayError::Config("OPC UA 'namespace_index' exceeds u16".to_string())
+            })?
+        },
+        None => 0,
+    };
+    validate_node_id(node_id)?;
+    Ok(OpcUaAddress {
+        node_id: node_id.to_owned(),
+        namespace_index,
+    })
+}
+
+fn parse_point_address(address: &str) -> Result<OpcUaAddress> {
+    let (namespace_index, node_id) = if let Some(namespaced) = address.strip_prefix("ns=") {
+        let (namespace, node_id) = namespaced.split_once(';').ok_or_else(|| {
+            GatewayError::Config(format!(
+                "invalid OPC UA address '{address}': expected 'ns=N;i=ID' or 'ns=N;s=Name'"
+            ))
+        })?;
+        let namespace_index = namespace.parse::<u16>().map_err(|_| {
+            GatewayError::Config(format!("invalid OPC UA namespace index: {namespace}"))
+        })?;
+        (namespace_index, node_id)
+    } else {
+        (0, address)
+    };
+
+    validate_node_id(node_id)?;
+
+    Ok(OpcUaAddress {
+        node_id: node_id.to_string(),
+        namespace_index,
+    })
+}
+
+fn validate_node_id(node_id: &str) -> Result<()> {
+    if matches!(node_id.as_bytes(), [b'i' | b's' | b'g' | b'b', b'=', ..]) {
+        return Ok(());
+    }
+    Err(GatewayError::Config(format!(
+        "invalid OPC UA node ID '{node_id}': expected i=, s=, g=, or b="
+    )))
+}
 
 /// OPC UA security policy.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -284,7 +402,7 @@ pub struct OpcUaChannelConfig {
     pub pki_dir: Option<String>,
 
     /// Point configurations.
-    pub points: Vec<PointConfig>,
+    pub points: Vec<PointConfig<OpcUaAddress>>,
 
     /// NodeID to point_id mapping (built from points).
     /// Split by identifier type for O(1) lookup without format! allocation.
@@ -385,28 +503,27 @@ impl OpcUaChannelConfig {
     }
 
     /// Add point configurations.
-    pub fn with_points(mut self, points: Vec<PointConfig>) -> Self {
+    pub fn with_points(mut self, points: Vec<PointConfig<OpcUaAddress>>) -> Self {
         // Build NodeID mapping and point_index from point configs
         for (i, point) in points.iter().enumerate() {
             self.point_index.insert(point.id, i);
-            if let ProtocolAddress::OpcUa(addr) = &point.address {
-                let ns = addr.namespace_index;
-                let node_id = &addr.node_id;
+            let addr = &point.address;
+            let ns = addr.namespace_index;
+            let node_id = &addr.node_id;
 
-                // Parse identifier type and store in appropriate map
-                if let Some(num_str) = node_id.strip_prefix("i=") {
-                    // Numeric identifier (most common)
-                    if let Ok(num) = num_str.parse::<u32>() {
-                        self.numeric_mapping.insert((ns, num), point.id);
-                    }
-                } else if let Some(s) = node_id.strip_prefix("s=") {
-                    // String identifier
-                    self.string_mapping.insert((ns, s.to_string()), point.id);
-                } else {
-                    // Guid or ByteString - use full key format
-                    let key = make_node_id_key(ns, node_id);
-                    self.other_mapping.insert(key, point.id);
+            // Parse identifier type and store in appropriate map
+            if let Some(num_str) = node_id.strip_prefix("i=") {
+                // Numeric identifier (most common)
+                if let Ok(num) = num_str.parse::<u32>() {
+                    self.numeric_mapping.insert((ns, num), point.id);
                 }
+            } else if let Some(s) = node_id.strip_prefix("s=") {
+                // String identifier
+                self.string_mapping.insert((ns, s.to_string()), point.id);
+            } else {
+                // Guid or ByteString - use full key format
+                let key = make_node_id_key(ns, node_id);
+                self.other_mapping.insert(key, point.id);
             }
         }
         self.points = points;
@@ -414,7 +531,7 @@ impl OpcUaChannelConfig {
     }
 
     /// Find point config by ID (O(1) lookup).
-    pub fn find_point_config(&self, point_id: u32) -> Option<&PointConfig> {
+    pub fn find_point_config(&self, point_id: u32) -> Option<&PointConfig<OpcUaAddress>> {
         self.point_index
             .get(&point_id)
             .map(|&idx| &self.points[idx])
@@ -467,6 +584,7 @@ impl OpcUaChannelConfig {
 /// }
 /// ```
 #[derive(Debug, Clone, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct OpcUaParamsConfig {
     /// OPC UA server endpoint URL
     pub endpoint_url: String,
@@ -529,12 +647,53 @@ fn default_sampling_interval() -> u64 {
 }
 
 impl OpcUaParamsConfig {
+    pub(crate) fn validate(&self) -> Result<()> {
+        let endpoint = self.endpoint_url.trim();
+        if endpoint
+            .strip_prefix("opc.tcp://")
+            .is_none_or(|authority| authority.trim_matches('/').is_empty())
+        {
+            return Err(GatewayError::Config(
+                "OPC UA endpoint_url must be a nonblank opc.tcp:// URL".to_owned(),
+            ));
+        }
+        if self.application_name.trim().is_empty() {
+            return Err(GatewayError::Config(
+                "OPC UA application_name must be nonblank".to_owned(),
+            ));
+        }
+        match (&self.username, &self.password) {
+            (None, None) => {},
+            (Some(username), Some(password))
+                if !username.trim().is_empty() && !password.is_empty() => {},
+            _ => {
+                return Err(GatewayError::Config(
+                    "OPC UA username and password must be supplied together and nonblank"
+                        .to_owned(),
+                ));
+            },
+        }
+        for (name, value) in [
+            ("connect_timeout_ms", self.connect_timeout_ms),
+            ("session_timeout_ms", self.session_timeout_ms),
+            ("publishing_interval_ms", self.publishing_interval_ms),
+            ("sampling_interval_ms", self.sampling_interval_ms),
+        ] {
+            if !(1..=MAX_CHANNEL_TIMING_MS).contains(&value) {
+                return Err(GatewayError::Config(format!(
+                    "OPC UA {name} must be between 1 and {MAX_CHANNEL_TIMING_MS}"
+                )));
+            }
+        }
+        Ok(())
+    }
+
     /// Convert to OpcUaChannelConfig.
     ///
     /// Note: Points must be set separately via `with_points()`.
-    pub fn to_config(&self) -> OpcUaChannelConfig {
-        let mut config = OpcUaChannelConfig::new(&self.endpoint_url)
-            .with_application_name(&self.application_name)
+    pub fn into_config(self) -> OpcUaChannelConfig {
+        let mut config = OpcUaChannelConfig::new(self.endpoint_url)
+            .with_application_name(self.application_name)
             .with_connect_timeout(Duration::from_millis(self.connect_timeout_ms))
             .with_session_timeout(Duration::from_millis(self.session_timeout_ms))
             .with_trust_server_certs(self.trust_server_certs)
@@ -548,7 +707,7 @@ impl OpcUaParamsConfig {
             });
 
         // Set identity based on username/password
-        if let (Some(username), Some(password)) = (&self.username, &self.password) {
+        if let (Some(username), Some(password)) = (self.username, self.password) {
             config = config.with_user_identity(username, password);
         }
 
@@ -569,10 +728,6 @@ fn make_node_id_key(namespace_index: u16, identifier: &str) -> String {
 /// Note: This adapter follows the "protocol layer separated from storage" design.
 /// The channel emits DataEvent::DataUpdate events; the service layer handles persistence.
 pub struct OpcUaChannel {
-    /// Channel unique identifier.
-    channel_id: u32,
-    /// Channel instance name.
-    name: String,
     /// Configuration.
     config: OpcUaChannelConfig,
     /// opcua session.
@@ -587,23 +742,20 @@ pub struct OpcUaChannel {
     diag_monitored_items_count: AtomicUsize,
     /// OPC UA specific: Last data received timestamp (Unix millis, 0 = never).
     diag_last_data_received_ms: Arc<AtomicU64>,
-    /// Broadcast sender for event-driven subscribers (multiple subscribers supported).
+    /// Event sender for the unified channel task.
     event_tx: DataEventSender,
-    /// Event handler.
-    event_handler: Option<Arc<dyn DataEventHandler>>,
+    /// Sole event receiver, taken once by the unified channel task.
+    event_rx: Option<DataEventReceiver>,
     /// Current subscription ID.
     subscription_id: Option<u32>,
 }
 
 impl OpcUaChannel {
     /// Create a new OPC UA channel.
-    pub fn new(config: OpcUaChannelConfig, channel_id: u32, name: String) -> Self {
-        // Use broadcast channel for multiple subscribers
-        let (event_tx, _) = broadcast::channel(1024);
+    pub fn new(config: OpcUaChannelConfig) -> Self {
+        let (event_tx, event_rx) = data_event_channel();
 
         Self {
-            channel_id,
-            name,
             config,
             session: None,
             state: Arc::new(std::sync::RwLock::new(ConnectionState::Disconnected)),
@@ -612,7 +764,7 @@ impl OpcUaChannel {
             diag_monitored_items_count: AtomicUsize::new(0),
             diag_last_data_received_ms: Arc::new(AtomicU64::new(0)),
             event_tx,
-            event_handler: None,
+            event_rx: Some(event_rx),
             subscription_id: None,
         }
     }
@@ -633,7 +785,7 @@ impl OpcUaChannel {
     }
 
     /// Find point config by ID (O(1) via config's point_index).
-    fn find_point(&self, id: u32) -> Option<&PointConfig> {
+    fn find_point(&self, id: u32) -> Option<&PointConfig<OpcUaAddress>> {
         self.config.find_point_config(id)
     }
 
@@ -641,17 +793,11 @@ impl OpcUaChannel {
     fn resolve_opcua_addr(
         &self,
         id: u32,
-    ) -> std::result::Result<
-        (&PointConfig, &crate::protocols::core::point::OpcUaAddress),
-        (u32, String),
-    > {
+    ) -> std::result::Result<(&PointConfig<OpcUaAddress>, &OpcUaAddress), (u32, String)> {
         let point = self
             .find_point(id)
             .ok_or_else(|| (id, "Point not found".to_string()))?;
-        match &point.address {
-            ProtocolAddress::OpcUa(addr) => Ok((point, addr)),
-            _ => Err((id, "Invalid address type".to_string())),
-        }
+        Ok((point, &point.address))
     }
 
     /// Create subscription and add monitored items.
@@ -666,7 +812,6 @@ impl OpcUaChannel {
         let diagnostics = self.diagnostics.clone();
         let last_data_received_ms = self.diag_last_data_received_ms.clone();
         let config = Arc::new(self.config.clone()); // Clone once, wrap in Arc
-        let event_handler = self.event_handler.clone();
 
         let subscription_id = session
             .create_subscription(
@@ -677,29 +822,16 @@ impl OpcUaChannel {
                 sub_config.priority,
                 sub_config.publishing_enabled,
                 DataChangeCallback::new(move |data_value: DataValue, item: &MonitoredItem| {
-                    // Clone Arc (cheap reference count increment) instead of full config
-                    let event_tx = event_tx.clone();
-                    let diagnostics = diagnostics.clone();
-                    let last_data_received_ms = last_data_received_ms.clone();
-                    let config = Arc::clone(&config);
-                    let event_handler = event_handler.clone();
-
-                    // Collect the data we need before spawning
                     let node_id = item.item_to_monitor().node_id.clone();
-                    // Use stack-allocated array instead of Vec (single element)
                     let item_data = [(node_id, data_value)];
 
-                    tokio::spawn(async move {
-                        handle_data_change(
-                            &config,
-                            &item_data,
-                            &event_tx,
-                            &diagnostics,
-                            &last_data_received_ms,
-                            event_handler.as_ref(),
-                        )
-                        .await;
-                    });
+                    handle_data_change(
+                        &config,
+                        &item_data,
+                        &event_tx,
+                        &diagnostics,
+                        &last_data_received_ms,
+                    );
                 }),
             )
             .await
@@ -726,10 +858,8 @@ impl OpcUaChannel {
         let mut items_to_create: Vec<MonitoredItemCreateRequest> =
             Vec::with_capacity(self.config.points.len());
         for point in &self.config.points {
-            if let ProtocolAddress::OpcUa(addr) = &point.address {
-                let node_id = parse_node_id(&addr.node_id, addr.namespace_index);
-                items_to_create.push(node_id.into());
-            }
+            let node_id = parse_node_id(&point.address.node_id, point.address.namespace_index);
+            items_to_create.push(node_id.into());
         }
 
         if items_to_create.is_empty() {
@@ -921,7 +1051,7 @@ impl ProtocolClient for OpcUaChannel {
         // Send connection event
         let _ = self
             .event_tx
-            .send(DataEvent::ConnectionChanged(ConnectionState::Connected));
+            .try_send(DataEvent::ConnectionChanged(ConnectionState::Connected));
 
         Ok(())
     }
@@ -943,7 +1073,7 @@ impl ProtocolClient for OpcUaChannel {
         // Send disconnect event
         let _ = self
             .event_tx
-            .send(DataEvent::ConnectionChanged(ConnectionState::Disconnected));
+            .try_send(DataEvent::ConnectionChanged(ConnectionState::Disconnected));
 
         Ok(())
     }
@@ -1034,14 +1164,8 @@ impl ProtocolClient for OpcUaChannel {
 }
 
 impl EventDrivenProtocol for OpcUaChannel {
-    fn subscribe(&self) -> DataEventReceiver {
-        // Broadcast channel supports multiple subscribers
-        // Each call to subscribe() returns a new receiver that gets all future events
-        self.event_tx.subscribe()
-    }
-
-    fn set_event_handler(&mut self, handler: Arc<dyn DataEventHandler>) {
-        self.event_handler = Some(handler);
+    fn take_event_receiver(&mut self) -> Option<DataEventReceiver> {
+        self.event_rx.take()
     }
 
     async fn start(&mut self) -> Result<()> {
@@ -1093,13 +1217,12 @@ fn parse_node_id(identifier: &str, namespace_index: u16) -> NodeId {
 ///
 /// Processes OPC UA data change notifications and emits events.
 /// The service layer (io) is responsible for persistence.
-async fn handle_data_change(
+fn handle_data_change(
     config: &OpcUaChannelConfig,
     items: &[(NodeId, DataValue)],
     event_tx: &DataEventSender,
     diagnostics: &Arc<AtomicDiagnostics>,
     last_data_received_ms: &Arc<AtomicU64>,
-    event_handler: Option<&Arc<dyn DataEventHandler>>,
 ) {
     let mut batch = DataBatch::new();
 
@@ -1113,8 +1236,12 @@ async fn handle_data_change(
         // Find point config (O(1) via point_index)
         let point_config = config.find_point_config(point_id);
 
-        if let Some(dp) = convert_data_value_with_id(point_id, point_config, data_value) {
-            batch.add(dp);
+        match convert_data_value_with_id(point_id, point_config, data_value) {
+            Ok(point) => batch.add(point),
+            Err(failure) => diagnostics.record_error(format!(
+                "OPC UA point {} rejected: {}",
+                failure.point_id, failure.error
+            )),
         }
     }
 
@@ -1122,15 +1249,8 @@ async fn handle_data_change(
         return;
     }
 
-    // Send event (service layer handles storage)
-    // Arc wrap for zero-copy sharing between event_tx and handler
-    let batch_arc = Arc::new(batch);
-    let _ = event_tx.send(DataEvent::DataUpdate(Arc::clone(&batch_arc)));
-
-    // Call event handler
-    if let Some(handler) = event_handler {
-        handler.on_data_update(batch_arc).await;
-    }
+    // Queue the event; the service-layer channel task owns persistence.
+    let _ = event_tx.try_send(DataEvent::DataUpdate(batch));
 
     // Update diagnostics (lock-free)
     diagnostics.inc_read();
@@ -1144,18 +1264,21 @@ async fn handle_data_change(
 /// Convert DataValue to DataPoint with explicit ID.
 fn convert_data_value_with_id(
     point_id: u32,
-    config: Option<&PointConfig>,
+    config: Option<&PointConfig<OpcUaAddress>>,
     dv: &DataValue,
-) -> Option<DataPoint> {
-    // Get value
-    let value = dv.value.as_ref()?;
-    let converted_value = convert_variant_to_value(value);
+) -> std::result::Result<DataPoint, PointFailure> {
+    let value = dv
+        .value
+        .as_ref()
+        .ok_or_else(|| PointFailure::new(point_id, "OPC UA data value is null"))?;
+    let converted_value =
+        convert_variant_to_value(value).map_err(|error| PointFailure::new(point_id, error))?;
 
     // Convert quality
     let quality = dv
         .status
         .map(convert_status_code_to_quality)
-        .unwrap_or(Quality::Good);
+        .unwrap_or(PointQuality::Good);
 
     // Get timestamp
     let timestamp = Utc::now();
@@ -1170,19 +1293,21 @@ fn convert_data_value_with_id(
         .unwrap_or(PointType::Telemetry);
 
     // Apply transform if config is available
-    let final_value = if let Some(cfg) = config {
-        if let Some(f) = converted_value.as_f64() {
-            Value::Float(cfg.transform.apply(f))
-        } else if let Some(b) = converted_value.as_bool() {
-            Value::Bool(cfg.transform.apply_bool(b))
-        } else {
-            converted_value
-        }
-    } else {
-        converted_value
+    let final_value = match (config, converted_value) {
+        (Some(cfg), Value::Float(value)) => Value::Float(cfg.transform.apply(value)),
+        (Some(cfg), Value::Integer(value)) => Value::Float(cfg.transform.apply(value as f64)),
+        (Some(cfg), Value::Bool(value)) => Value::Bool(cfg.transform.apply_bool(value)),
+        (_, value) => value,
     };
 
-    Some(DataPoint {
+    if matches!(final_value, Value::Float(value) if !value.is_finite()) {
+        return Err(PointFailure::new(
+            point_id,
+            "OPC UA transformed value is not finite",
+        ));
+    }
+
+    Ok(DataPoint {
         id: point_id,
         point_type,
         value: final_value,
@@ -1192,33 +1317,37 @@ fn convert_data_value_with_id(
     })
 }
 
-/// Convert OPC UA Variant to Value.
-fn convert_variant_to_value(variant: &Variant) -> Value {
+/// Convert an OPC UA scalar to the numeric live-acquisition representation.
+fn convert_variant_to_value(variant: &Variant) -> std::result::Result<Value, &'static str> {
     match variant {
-        Variant::Boolean(v) => Value::Bool(*v),
-        Variant::SByte(v) => Value::Integer(*v as i64),
-        Variant::Byte(v) => Value::Integer(*v as i64),
-        Variant::Int16(v) => Value::Integer(*v as i64),
-        Variant::UInt16(v) => Value::Integer(*v as i64),
-        Variant::Int32(v) => Value::Integer(*v as i64),
-        Variant::UInt32(v) => Value::Integer(*v as i64),
-        Variant::Int64(v) => Value::Integer(*v),
-        Variant::UInt64(v) => Value::Integer(*v as i64),
-        Variant::Float(v) => Value::Float(*v as f64),
-        Variant::Double(v) => Value::Float(*v),
-        Variant::String(v) => Value::String(v.as_ref().to_string()),
-        _ => Value::Null,
+        Variant::Boolean(v) => Ok(Value::Bool(*v)),
+        Variant::SByte(v) => Ok(Value::Integer(*v as i64)),
+        Variant::Byte(v) => Ok(Value::Integer(*v as i64)),
+        Variant::Int16(v) => Ok(Value::Integer(*v as i64)),
+        Variant::UInt16(v) => Ok(Value::Integer(*v as i64)),
+        Variant::Int32(v) => Ok(Value::Integer(*v as i64)),
+        Variant::UInt32(v) => Ok(Value::Integer(*v as i64)),
+        Variant::Int64(v) => Ok(Value::Integer(*v)),
+        Variant::UInt64(v) => i64::try_from(*v)
+            .map(Value::Integer)
+            .map_err(|_| "OPC UA UInt64 value exceeds the live-state integer range"),
+        Variant::Float(v) if v.is_finite() => Ok(Value::Float(*v as f64)),
+        Variant::Double(v) if v.is_finite() => Ok(Value::Float(*v)),
+        Variant::Float(_) | Variant::Double(_) => Err("OPC UA floating-point value is not finite"),
+        Variant::String(_) => Err("OPC UA string value is not supported for live acquisition"),
+        Variant::Empty => Err("OPC UA data value is null"),
+        _ => Err("OPC UA value type is not supported for live acquisition"),
     }
 }
 
 /// Convert OPC UA StatusCode to Quality.
-fn convert_status_code_to_quality(status: StatusCode) -> Quality {
+fn convert_status_code_to_quality(status: StatusCode) -> PointQuality {
     if status.is_good() {
-        Quality::Good
+        PointQuality::Good
     } else if status.is_bad() {
-        Quality::Bad
+        PointQuality::Bad
     } else {
-        Quality::Uncertain
+        PointQuality::Uncertain
     }
 }
 
@@ -1326,18 +1455,6 @@ impl HasMetadata for OpcUaChannel {
 
 #[async_trait]
 impl ChannelRuntime for OpcUaChannel {
-    fn id(&self) -> u32 {
-        self.channel_id
-    }
-
-    fn name(&self) -> &str {
-        &self.name
-    }
-
-    fn protocol(&self) -> &str {
-        "opcua"
-    }
-
     fn is_event_driven(&self) -> bool {
         true
     }
@@ -1372,8 +1489,8 @@ impl ChannelRuntime for OpcUaChannel {
         Ok(result.success_count)
     }
 
-    fn subscribe(&self) -> Option<DataEventReceiver> {
-        Some(<Self as EventDrivenProtocol>::subscribe(self))
+    fn take_event_receiver(&mut self) -> Option<DataEventReceiver> {
+        <Self as EventDrivenProtocol>::take_event_receiver(self)
     }
 
     async fn start_events(&mut self) -> Result<()> {
@@ -1396,6 +1513,53 @@ impl ChannelRuntime for OpcUaChannel {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn persisted_point_mapping_accepts_string_form() {
+        let address = parse_point_mapping(r#""ns=2;i=1234""#).expect("valid string mapping");
+
+        assert_eq!(address.namespace_index, 2);
+        assert_eq!(address.node_id, "i=1234");
+    }
+
+    #[test]
+    fn persisted_point_mapping_accepts_object_forms_without_cloning_value() {
+        for mapping in [
+            serde_json::json!({"address": "ns=2;i=1234"}),
+            serde_json::json!({"namespace_index": 2, "node_id": "i=1234"}),
+        ] {
+            let address =
+                parse_point_mapping_value(&mapping).expect("valid borrowed object mapping");
+            assert_eq!(address.namespace_index, 2);
+            assert_eq!(address.node_id, "i=1234");
+        }
+    }
+
+    #[test]
+    fn persisted_point_mapping_rejects_unknown_fields() {
+        for mapping in [
+            serde_json::json!({"address": "ns=2;i=1234", "attribute": 13}),
+            serde_json::json!({
+                "namespace_index": 2,
+                "node_id": "i=1234",
+                "attribute": 13
+            }),
+        ] {
+            assert!(parse_point_mapping_value(&mapping).is_err());
+        }
+    }
+
+    #[test]
+    fn persisted_point_mapping_rejects_malformed_values() {
+        for mapping in [
+            "null",
+            r#"{"address":1}"#,
+            r#"{"namespace_index":65536,"node_id":"i=1"}"#,
+            r#"{"node_id":"invalid"}"#,
+        ] {
+            assert!(parse_point_mapping(mapping).is_err(), "{mapping}");
+        }
+    }
 
     #[test]
     fn test_opcua_config() {
@@ -1444,29 +1608,94 @@ mod tests {
 
     #[test]
     fn test_variant_conversion() {
-        let value = convert_variant_to_value(&Variant::Double(25.5));
+        let value =
+            convert_variant_to_value(&Variant::Double(25.5)).expect("double value is numeric");
         assert_eq!(value.as_f64(), Some(25.5));
 
-        let value = convert_variant_to_value(&Variant::Boolean(true));
+        let value =
+            convert_variant_to_value(&Variant::Boolean(true)).expect("boolean value is supported");
         assert_eq!(value.as_bool(), Some(true));
 
-        let value = convert_variant_to_value(&Variant::Int32(100));
+        let value =
+            convert_variant_to_value(&Variant::Int32(100)).expect("integer value is numeric");
         assert_eq!(value.as_i64(), Some(100));
+    }
+
+    #[test]
+    fn mixed_subscription_update_keeps_numeric_points_and_diagnoses_non_numeric_values() {
+        let config = OpcUaChannelConfig::new("opc.tcp://localhost:4840").with_points(
+            (1..=6)
+                .map(|id| PointConfig::telemetry(id, OpcUaAddress::new(format!("i={id}"), 2)))
+                .collect(),
+        );
+        let (event_tx, mut event_rx) = tokio::sync::mpsc::channel(4);
+        let diagnostics = Arc::new(AtomicDiagnostics::new());
+        let last_data_received_ms = Arc::new(AtomicU64::new(0));
+        let items = [
+            (
+                NodeId::new(2, 1_u32),
+                DataValue::value_only(Variant::Double(25.5)),
+            ),
+            (
+                NodeId::new(2, 2_u32),
+                DataValue::value_only(Variant::String(UAString::from("not numeric"))),
+            ),
+            (NodeId::new(2, 3_u32), DataValue::value_only(Variant::Empty)),
+            (
+                NodeId::new(2, 4_u32),
+                DataValue::value_only(Variant::UInt64(u64::MAX)),
+            ),
+            (
+                NodeId::new(2, 5_u32),
+                DataValue::value_only(Variant::Double(f64::NAN)),
+            ),
+            (
+                NodeId::new(2, 6_u32),
+                DataValue::value_only(Variant::Boolean(true)),
+            ),
+        ];
+
+        handle_data_change(
+            &config,
+            &items,
+            &event_tx,
+            &diagnostics,
+            &last_data_received_ms,
+        );
+
+        let DataEvent::DataUpdate(batch) = event_rx.try_recv().expect("numeric update emitted")
+        else {
+            panic!("expected data update");
+        };
+        assert_eq!(batch.len(), 2);
+        assert_eq!(
+            batch.iter().map(|point| point.id).collect::<Vec<_>>(),
+            vec![1, 6]
+        );
+        assert!(matches!(
+            batch
+                .iter()
+                .find(|point| point.id == 6)
+                .map(|point| &point.value),
+            Some(Value::Bool(true))
+        ));
+        assert_eq!(diagnostics.error_count(), 4);
+        assert_eq!(diagnostics.read_count(), 1);
     }
 
     #[test]
     fn test_quality_conversion() {
         let quality = convert_status_code_to_quality(StatusCode::Good);
-        assert_eq!(quality, Quality::Good);
+        assert_eq!(quality, PointQuality::Good);
 
         let quality = convert_status_code_to_quality(StatusCode::BadNodeIdUnknown);
-        assert_eq!(quality, Quality::Bad);
+        assert_eq!(quality, PointQuality::Bad);
     }
 
     #[test]
     fn test_channel_capabilities() {
         let config = OpcUaChannelConfig::new("opc.tcp://localhost:4840");
-        let channel = OpcUaChannel::new(config, 1, "test_opcua".to_string());
+        let channel = OpcUaChannel::new(config);
 
         assert_eq!(ProtocolCapabilities::name(&channel), "OPC UA");
         assert!(

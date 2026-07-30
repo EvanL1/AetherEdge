@@ -12,10 +12,12 @@ use aether_shm_bridge::{
     ChannelPointManifest, PhysicalPointAddress, PointWatchEvent, ShmClientConfig,
     ShmDeviceCommandSink, ShmReadTopologyGeneration, SlotSource, SubscriptionBitmap,
 };
-use aether_sqlite_topology::{LogicalPointRoutes, SqliteLiveTopologySnapshot};
+use aether_sqlite_topology::{
+    LogicalCommandRoutes, LogicalPointRoutes, RoutedCommandTarget, SqliteLiveTopologySnapshot,
+};
 use arc_swap::ArcSwap;
 use sqlx::SqlitePool;
-use tokio::sync::{Mutex, MutexGuard, OwnedMutexGuard, OwnedRwLockReadGuard, RwLock, watch};
+use tokio::sync::{Mutex, OwnedMutexGuard, OwnedRwLockReadGuard, RwLock, watch};
 
 const WRITER_STALE_AFTER: Duration = Duration::from_secs(30);
 
@@ -23,8 +25,29 @@ struct CandidateParts {
     point_manifest: Arc<ChannelPointManifest>,
     health_manifest: Arc<aether_shm_bridge::ChannelHealthManifest>,
     measurement_routes: Arc<LogicalPointRoutes>,
-    action_routes: Arc<LogicalPointRoutes>,
+    action_routes: Arc<LogicalCommandRoutes>,
     digest: u64,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum RefreshMode {
+    ValidatePhysical,
+    PublishConfiguration,
+}
+
+#[derive(Clone, Copy)]
+enum RoutingPlane {
+    Measurement,
+    Action,
+}
+
+impl RoutingPlane {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Measurement => "measurement",
+            Self::Action => "action",
+        }
+    }
 }
 
 impl CandidateParts {
@@ -45,7 +68,7 @@ impl CandidateParts {
 pub struct AutomationTopologyGeneration {
     read: Arc<ShmReadTopologyGeneration>,
     measurement_routes: Arc<LogicalPointRoutes>,
-    action_routes: Arc<LogicalPointRoutes>,
+    action_routes: Arc<LogicalCommandRoutes>,
     digest: u64,
     sequence: u64,
     physical_validated: bool,
@@ -130,6 +153,13 @@ impl AutomationTopologyGeneration {
     /// Resolves one logical action point in this generation.
     #[must_use]
     pub fn action_route(&self, instance_id: u32, point_id: u32) -> Option<PhysicalPointAddress> {
+        self.command_route(instance_id, point_id)
+            .map(RoutedCommandTarget::physical_target)
+    }
+
+    /// Resolves one command route with constraints from this exact generation.
+    #[must_use]
+    pub fn command_route(&self, instance_id: u32, point_id: u32) -> Option<RoutedCommandTarget> {
         self.action_routes.get(&(instance_id, point_id)).copied()
     }
 
@@ -228,7 +258,7 @@ impl AutomationTopologyGeneration {
         event.matches_manifest(self.read.point_manifest())
     }
 
-    /// Accepts a hint only after subscriptions are rebuilt for this sequence.
+    /// Accepts a hint only for the exact sequence whose index was published.
     #[must_use]
     pub fn accepts_ready_point_watch_event(
         &self,
@@ -246,55 +276,6 @@ impl AutomationTopologyGeneration {
     }
 }
 
-/// Tracks the exact topology sequence represented by PointWatch subscriptions.
-pub struct PointWatchReadiness {
-    ready_sequence: AtomicU64,
-    rebuild_gate: Mutex<()>,
-}
-
-impl PointWatchReadiness {
-    /// Creates a gate that rejects hints until the first successful rebuild.
-    #[must_use]
-    pub fn new() -> Self {
-        Self {
-            ready_sequence: AtomicU64::new(u64::MAX),
-            rebuild_gate: Mutex::new(()),
-        }
-    }
-
-    /// Serializes all rule/subscription rebuilds that can alter the dispatcher.
-    pub async fn lock_rebuild(&self) -> MutexGuard<'_, ()> {
-        self.rebuild_gate.lock().await
-    }
-
-    /// Closes the event-driven path while subscriptions are rebuilding.
-    pub fn mark_unready(&self) {
-        self.ready_sequence.store(u64::MAX, Ordering::Release);
-    }
-
-    /// Opens the event-driven path for one exact topology sequence.
-    pub fn mark_ready(&self, sequence: u64) {
-        self.ready_sequence.store(sequence, Ordering::Release);
-    }
-
-    /// Returns whether an event matches both the current manifest and rebuilt index.
-    #[must_use]
-    pub fn accepts(
-        &self,
-        generation: &AutomationTopologyGeneration,
-        event: PointWatchEvent,
-    ) -> bool {
-        generation
-            .accepts_ready_point_watch_event(event, self.ready_sequence.load(Ordering::Acquire))
-    }
-}
-
-impl Default for PointWatchReadiness {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 /// Service-owned coordinator for coherent automation topology replacement.
 pub struct AutomationTopologyHandle {
     current: ArcSwap<AutomationTopologyGeneration>,
@@ -308,6 +289,17 @@ pub struct AutomationTopologyHandle {
 }
 
 impl AutomationTopologyHandle {
+    /// Loads one canonical SQLite snapshot and creates an offline-first runtime.
+    pub async fn from_sqlite_lazy(
+        point_path: impl Into<PathBuf>,
+        health_path: impl Into<PathBuf>,
+        pool: &SqlitePool,
+        command_sink: Arc<ShmDeviceCommandSink>,
+    ) -> PortResult<Self> {
+        let snapshot = aether_sqlite_topology::load_sqlite_live_topology(pool).await?;
+        Self::new_lazy(point_path, health_path, snapshot, command_sink)
+    }
+
     /// Creates an offline-first generation from one SQLite transaction.
     ///
     /// No SHM file is opened here. [`Self::refresh`] eagerly validates both
@@ -372,31 +364,27 @@ impl AutomationTopologyHandle {
 
     /// Revokes commands and retains the refresh lease across one SQLite
     /// action-routing mutation, closing the commit-to-publication window.
-    pub async fn begin_action_routing_mutation(self: &Arc<Self>) -> ActionRoutingMutationLease {
-        let refresh_guard = Arc::clone(&self.refresh_gate).lock_owned().await;
-        let previous_generation = self.load();
-        let revoked_generation = self.revoke_action_routes_locked().await;
-        let restore_generation = (!Arc::ptr_eq(&previous_generation, &revoked_generation))
-            .then_some(previous_generation);
-        ActionRoutingMutationLease {
-            topology: Arc::clone(self),
-            restore_generation,
-            revoked_generation,
-            refresh_guard: Some(refresh_guard),
-        }
+    pub async fn begin_action_routing_mutation(self: &Arc<Self>) -> RoutingMutationLease {
+        self.begin_routing_mutation(RoutingPlane::Action).await
     }
 
     /// Revokes C2M before a measurement-route transaction and retains the
     /// refresh lease until the exact committed SQLite snapshot is published.
-    pub async fn begin_measurement_routing_mutation(
-        self: &Arc<Self>,
-    ) -> MeasurementRoutingMutationLease {
+    pub async fn begin_measurement_routing_mutation(self: &Arc<Self>) -> RoutingMutationLease {
+        self.begin_routing_mutation(RoutingPlane::Measurement).await
+    }
+
+    async fn begin_routing_mutation(self: &Arc<Self>, plane: RoutingPlane) -> RoutingMutationLease {
         let refresh_guard = Arc::clone(&self.refresh_gate).lock_owned().await;
         let previous_generation = self.load();
-        let revoked_generation = self.revoke_measurement_routes_locked().await;
+        let revoked_generation = match plane {
+            RoutingPlane::Measurement => self.revoke_measurement_routes_locked().await,
+            RoutingPlane::Action => self.revoke_action_routes_locked().await,
+        };
         let restore_generation = (!Arc::ptr_eq(&previous_generation, &revoked_generation))
             .then_some(previous_generation);
-        MeasurementRoutingMutationLease {
+        RoutingMutationLease {
+            plane,
             topology: Arc::clone(self),
             restore_generation,
             revoked_generation,
@@ -411,14 +399,28 @@ impl AutomationTopologyHandle {
     /// and leaves the current service generation untouched.
     pub async fn refresh(&self, pool: &SqlitePool) -> PortResult<bool> {
         let _refresh = self.refresh_gate.lock().await;
-        self.refresh_locked(pool).await
+        match self
+            .refresh_locked(pool, RefreshMode::ValidatePhysical)
+            .await
+        {
+            Ok(changed) => Ok(changed),
+            Err(error) => {
+                if error.kind() == PortErrorKind::InvalidData {
+                    self.revoke_action_routes_locked().await;
+                }
+                Err(error)
+            },
+        }
     }
 
     /// Refreshes a committed service mutation and revokes commands before
     /// releasing the publication lock if the new view cannot be installed.
     pub async fn refresh_or_revoke_commands(&self, pool: &SqlitePool) -> PortResult<bool> {
         let _refresh = self.refresh_gate.lock().await;
-        match self.refresh_locked(pool).await {
+        match self
+            .refresh_locked(pool, RefreshMode::PublishConfiguration)
+            .await
+        {
             Ok(changed) => Ok(changed),
             Err(error) => {
                 self.revoke_action_routes_locked().await;
@@ -427,7 +429,7 @@ impl AutomationTopologyHandle {
         }
     }
 
-    async fn refresh_locked(&self, pool: &SqlitePool) -> PortResult<bool> {
+    async fn refresh_locked(&self, pool: &SqlitePool, mode: RefreshMode) -> PortResult<bool> {
         let snapshot = aether_sqlite_topology::load_sqlite_live_topology(pool).await?;
         let parts = CandidateParts::from_snapshot(snapshot);
         let current = self.current.load_full();
@@ -437,6 +439,10 @@ impl AutomationTopologyHandle {
             || current.action_routes_revoked;
         let physical_current =
             current.physical_validated && current.read.validate_layouts().is_ok();
+
+        if !physical_changed && !logical_changed && mode == RefreshMode::PublishConfiguration {
+            return Ok(false);
+        }
 
         if !physical_changed && physical_current && self.command_sink.is_writer_available() {
             if !logical_changed {
@@ -566,7 +572,7 @@ impl AutomationTopologyHandle {
         let revoked = Arc::new(AutomationTopologyGeneration {
             read: Arc::clone(&current.read),
             measurement_routes: Arc::clone(&current.measurement_routes),
-            action_routes: Arc::new(LogicalPointRoutes::new()),
+            action_routes: Arc::new(LogicalCommandRoutes::new()),
             digest: current.digest,
             sequence,
             physical_validated: current.physical_validated,
@@ -581,20 +587,23 @@ impl AutomationTopologyHandle {
     async fn restore_revoked_generation(
         &self,
         previous: Arc<AutomationTopologyGeneration>,
-        revoked: Arc<AutomationTopologyGeneration>,
+        revoked: &Arc<AutomationTopologyGeneration>,
+        plane: RoutingPlane,
     ) {
         let _commands = self.command_gate.write().await;
         let current = self.current.load_full();
-        if !Arc::ptr_eq(&current, &revoked) {
+        if !Arc::ptr_eq(&current, revoked) {
             tracing::error!(
+                plane = plane.as_str(),
                 expected_sequence = revoked.sequence(),
                 current_sequence = current.sequence(),
-                "refusing to restore an action-routing generation over a concurrent publication"
+                "refusing to restore a logical-routing generation over a concurrent publication"
             );
             return;
         }
-        self.current.store(Arc::clone(&previous));
-        self.notify_change(previous.sequence());
+        let sequence = previous.sequence();
+        self.current.store(previous);
+        self.notify_change(sequence);
     }
 
     fn next_sequence(&self) -> u64 {
@@ -614,23 +623,17 @@ pub struct PinnedAutomationCommandView {
     _guard: OwnedRwLockReadGuard<()>,
 }
 
-/// Exclusive refresh lease spanning SQLite action-route mutation and publish.
-pub struct ActionRoutingMutationLease {
+/// Exclusive refresh lease spanning one logical-route mutation and publication.
+#[must_use = "the lease must span the SQLite mutation and runtime publication"]
+pub struct RoutingMutationLease {
+    plane: RoutingPlane,
     topology: Arc<AutomationTopologyHandle>,
     restore_generation: Option<Arc<AutomationTopologyGeneration>>,
     revoked_generation: Arc<AutomationTopologyGeneration>,
     refresh_guard: Option<OwnedMutexGuard<()>>,
 }
 
-/// Exclusive refresh lease spanning one SQLite measurement-route mutation.
-pub struct MeasurementRoutingMutationLease {
-    topology: Arc<AutomationTopologyHandle>,
-    restore_generation: Option<Arc<AutomationTopologyGeneration>>,
-    revoked_generation: Arc<AutomationTopologyGeneration>,
-    refresh_guard: Option<OwnedMutexGuard<()>>,
-}
-
-impl MeasurementRoutingMutationLease {
+impl RoutingMutationLease {
     /// Restores the pre-mutation generation after a known-uncommitted failure.
     pub(crate) async fn restore(mut self) {
         self.restore_before_commit().await;
@@ -644,7 +647,9 @@ impl MeasurementRoutingMutationLease {
     /// Publishes the committed SQLite view before releasing the refresh lease.
     pub async fn publish(mut self, pool: &SqlitePool) -> PortResult<bool> {
         self.commit_started();
-        self.topology.refresh_locked(pool).await
+        self.topology
+            .refresh_locked(pool, RefreshMode::PublishConfiguration)
+            .await
     }
 
     async fn restore_before_commit(&mut self) {
@@ -652,90 +657,38 @@ impl MeasurementRoutingMutationLease {
             return;
         };
         self.topology
-            .restore_revoked_generation(previous, Arc::clone(&self.revoked_generation))
+            .restore_revoked_generation(previous, &self.revoked_generation, self.plane)
             .await;
         self.restore_generation = None;
     }
 }
 
-impl Drop for MeasurementRoutingMutationLease {
+impl Drop for RoutingMutationLease {
     fn drop(&mut self) {
         let Some(previous) = self.restore_generation.take() else {
             return;
         };
         let revoked = Arc::clone(&self.revoked_generation);
         let topology = Arc::clone(&self.topology);
+        let plane = self.plane;
         let Some(refresh_guard) = self.refresh_guard.take() else {
             tracing::error!(
-                "measurement-routing mutation lease lost its refresh guard before restoration"
+                plane = plane.as_str(),
+                "logical-routing mutation lease lost its refresh guard before restoration"
             );
             return;
         };
         let Ok(runtime) = tokio::runtime::Handle::try_current() else {
             tracing::error!(
-                "cannot schedule measurement-routing restoration outside a Tokio runtime"
+                plane = plane.as_str(),
+                "cannot schedule logical-routing restoration outside a Tokio runtime"
             );
             return;
         };
         drop(runtime.spawn(async move {
-            topology.restore_revoked_generation(previous, revoked).await;
-            drop(refresh_guard);
-        }));
-    }
-}
-
-impl ActionRoutingMutationLease {
-    /// Restores the pre-mutation generation after a known-uncommitted failure.
-    pub(crate) async fn restore(mut self) {
-        self.restore_before_commit().await;
-    }
-
-    /// Disarms rollback restoration immediately before SQLite commit begins.
-    ///
-    /// Once commit is attempted its error result may be ambiguous, so restoring
-    /// the previous generation could contradict durable SQLite state.
-    pub(crate) fn commit_started(&mut self) {
-        self.restore_generation = None;
-    }
-
-    /// Publishes the committed SQLite view before releasing the refresh lease.
-    pub async fn publish(mut self, pool: &SqlitePool) -> PortResult<bool> {
-        self.commit_started();
-        self.topology.refresh_locked(pool).await
-    }
-
-    async fn restore_before_commit(&mut self) {
-        let Some(previous) = self.restore_generation.as_ref().cloned() else {
-            return;
-        };
-        self.topology
-            .restore_revoked_generation(previous, Arc::clone(&self.revoked_generation))
-            .await;
-        self.restore_generation = None;
-    }
-}
-
-impl Drop for ActionRoutingMutationLease {
-    fn drop(&mut self) {
-        let Some(previous) = self.restore_generation.take() else {
-            return;
-        };
-        let revoked = Arc::clone(&self.revoked_generation);
-        let topology = Arc::clone(&self.topology);
-        let Some(refresh_guard) = self.refresh_guard.take() else {
-            tracing::error!(
-                "action-routing mutation lease lost its refresh guard before rollback restoration"
-            );
-            return;
-        };
-        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
-            tracing::error!(
-                "cannot schedule action-routing rollback restoration outside a Tokio runtime"
-            );
-            return;
-        };
-        drop(runtime.spawn(async move {
-            topology.restore_revoked_generation(previous, revoked).await;
+            topology
+                .restore_revoked_generation(previous, &revoked, plane)
+                .await;
             drop(refresh_guard);
         }));
     }

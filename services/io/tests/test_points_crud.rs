@@ -83,9 +83,6 @@ async fn create_test_app() -> Result<axum::Router> {
         routing_cache,
     )?);
 
-    // Create command TX cache
-    let command_tx_cache = Arc::new(aether_io::api::command_cache::CommandTxCache::new());
-
     // Create router
     let point_topology = Arc::new(aether_io::point_topology::PointTopologyApplication::new(
         pool.clone(),
@@ -98,7 +95,6 @@ async fn create_test_app() -> Result<axum::Router> {
     let router = aether_io::api::routes::create_api_routes_with_point_topology(
         channel_manager,
         pool,
-        command_tx_cache,
         point_topology,
         authenticator,
     );
@@ -181,7 +177,7 @@ async fn test_telemetry_point_crud_lifecycle() -> Result<()> {
         "scale": 0.1,
         "offset": -40.0,
         "unit": "°C",
-        "reverse": "false",
+        "reverse": false,
         "data_type": "int16",
         "description": "Outdoor temperature sensor"
     });
@@ -305,7 +301,7 @@ async fn test_signal_point_crud_lifecycle() -> Result<()> {
         "scale": 1.0,
         "offset": 0.0,
         "unit": "",
-        "reverse": "false",
+        "reverse": false,
         "data_type": "bool",
         "description": "Front door open/close status"
     });
@@ -407,7 +403,7 @@ async fn test_control_point_crud_lifecycle() -> Result<()> {
         "scale": 1.0,
         "offset": 0.0,
         "unit": "",
-        "reverse": "false",
+        "reverse": false,
         "data_type": "bool",
         "description": "Water pump on/off control"
     });
@@ -507,7 +503,7 @@ async fn test_adjustment_point_crud_lifecycle() -> Result<()> {
         "scale": 0.1,
         "offset": 0.0,
         "unit": "°C",
-        "reverse": "false",
+        "reverse": false,
         "data_type": "int16",
         "description": "Target temperature setpoint"
     });
@@ -746,6 +742,130 @@ async fn test_update_with_empty_fields() -> Result<()> {
 
     // Should return 400 Bad Request (no fields to update)
     assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn create_persists_mapping_and_metadata_update_preserves_it() -> Result<()> {
+    let mut app = create_test_app().await?;
+    let channel_id = 1001;
+    let point_id = 700;
+    let mapping = json!({
+        "slave_id": 1,
+        "function_code": 3,
+        "register_address": 100,
+        "data_type": "uint16",
+        "byte_order": "ABCD"
+    });
+
+    let create_payload = json!({
+        "channel_id": channel_id,
+        "point_id": point_id,
+        "signal_name": "Mapped_Telemetry",
+        "scale": 1.0,
+        "offset": 0.0,
+        "reverse": false,
+        "data_type": "uint16",
+        "protocol_mappings": serde_json::to_string(&mapping)?
+    });
+    let (status, _) = make_request(
+        &mut app,
+        "POST",
+        &format!("/api/channels/{channel_id}/T/points/{point_id}"),
+        Some(create_payload),
+    )
+    .await?;
+    assert_eq!(status, StatusCode::OK);
+
+    let (status, created) = make_request(
+        &mut app,
+        "GET",
+        &format!("/api/channels/{channel_id}/T/points/{point_id}"),
+        None,
+    )
+    .await?;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(created["data"]["protocol_mapping"], mapping);
+
+    let (status, _) = make_request(
+        &mut app,
+        "PUT",
+        &format!("/api/channels/{channel_id}/T/points/{point_id}"),
+        Some(json!({"description": "metadata-only update"})),
+    )
+    .await?;
+    assert_eq!(status, StatusCode::OK);
+
+    let (status, updated) = make_request(
+        &mut app,
+        "GET",
+        &format!("/api/channels/{channel_id}/T/points/{point_id}"),
+        None,
+    )
+    .await?;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(updated["data"]["protocol_mapping"], mapping);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn point_create_and_update_reject_wrong_types_and_unknown_fields() -> Result<()> {
+    let mut app = create_test_app().await?;
+    let channel_id = 1001;
+
+    let (status, _) = make_request(
+        &mut app,
+        "POST",
+        &format!("/api/channels/{channel_id}/S/points/701"),
+        Some(json!({
+            "channel_id": channel_id,
+            "point_id": 701,
+            "signal_name": "Invalid_Signal",
+            "scale": "not-a-number",
+            "reverse": false
+        })),
+    )
+    .await?;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    let (status, _) = make_request(
+        &mut app,
+        "POST",
+        &format!("/api/channels/{channel_id}/T/points/702"),
+        Some(json!({
+            "channel_id": channel_id,
+            "point_id": 702,
+            "signal_name": "Strict_Telemetry",
+            "reverse": false,
+            "data_type": "float32"
+        })),
+    )
+    .await?;
+    assert_eq!(status, StatusCode::OK);
+
+    let (status, _) = make_request(
+        &mut app,
+        "PUT",
+        &format!("/api/channels/{channel_id}/T/points/702"),
+        Some(json!({
+            "signal_name": "must-not-be-applied",
+            "unexpected_field": true
+        })),
+    )
+    .await?;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    let (status, point) = make_request(
+        &mut app,
+        "GET",
+        &format!("/api/channels/{channel_id}/T/points/702"),
+        None,
+    )
+    .await?;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(point["data"]["signal_name"], "Strict_Telemetry");
 
     Ok(())
 }

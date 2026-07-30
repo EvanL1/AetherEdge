@@ -242,9 +242,6 @@ async fn create_test_app_with_pool(pool: sqlx::SqlitePool) -> Result<axum::Route
         routing_cache,
     )?);
 
-    // Create command TX cache
-    let command_tx_cache = Arc::new(aether_io::api::command_cache::CommandTxCache::new());
-
     let point_topology = Arc::new(aether_io::point_topology::PointTopologyApplication::new(
         pool.clone(),
         Arc::new(aether_store_local::MemoryAuditSink::new()),
@@ -256,7 +253,6 @@ async fn create_test_app_with_pool(pool: sqlx::SqlitePool) -> Result<axum::Route
     let router = aether_io::api::routes::create_api_routes_with_point_topology(
         channel_manager,
         pool,
-        command_tx_cache,
         point_topology,
         authenticator,
     );
@@ -1016,6 +1012,7 @@ async fn test_modbus_validation_invalid_byte_order() -> Result<()> {
 // GPIO Protocol Validation Tests
 // ============================================================================
 
+#[cfg(all(feature = "gpio", target_os = "linux"))]
 #[tokio::test]
 async fn test_gpio_validation_success() -> Result<()> {
     let pool = create_test_database_with_gpio_channel().await?;

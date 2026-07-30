@@ -2,8 +2,7 @@
 //!
 //! Domain-specific error handling for Model Service.
 //!
-//! Simplified error types (15 variants) - reduced from 40+ to improve maintainability.
-//! All errors map to ErrorCategory for HTTP status codes.
+//! Transport-neutral failures used by Automation application and adapters.
 
 use thiserror::Error;
 
@@ -122,151 +121,6 @@ pub enum AutomationError {
     InternalError(String),
 }
 
-// ============================================================================
-// AetherErrorTrait Implementation
-// ============================================================================
-
-impl errors::AetherErrorTrait for AutomationError {
-    fn error_code(&self) -> &'static str {
-        match self {
-            // Configuration
-            Self::ConfigError(_) => "AUTOMATION_CONFIG_ERROR",
-            Self::InvalidConfig(_) => "AUTOMATION_INVALID_CONFIG",
-            Self::MissingConfig(_) => "AUTOMATION_MISSING_CONFIG",
-
-            // Database
-            Self::DatabaseError(_) => "AUTOMATION_DATABASE_ERROR",
-
-            // Instance
-            Self::InstanceNotFound(_) => "AUTOMATION_INSTANCE_NOT_FOUND",
-            Self::InstanceExists(_) => "AUTOMATION_INSTANCE_EXISTS",
-
-            // Rule Engine
-            Self::RuleNotFound(_) => "AUTOMATION_RULE_NOT_FOUND",
-            Self::RuleExists(_) => "AUTOMATION_RULE_EXISTS",
-            Self::InvalidRule(_) => "AUTOMATION_INVALID_RULE",
-            Self::ParseError(_) => "AUTOMATION_PARSE_ERROR",
-            Self::ExecutionError(_) => "AUTOMATION_EXECUTION_ERROR",
-            Self::SchedulerError(_) => "AUTOMATION_SCHEDULER_ERROR",
-
-            // Validation
-            Self::InvalidData(_) => "AUTOMATION_INVALID_DATA",
-            Self::InvalidRouting(_) => "AUTOMATION_INVALID_ROUTING",
-            Self::RoutingConflict(_) => "AUTOMATION_ROUTING_CONFLICT",
-            Self::ConfigurationConflict(_) => "AUTOMATION_CONFIGURATION_CONFLICT",
-            Self::AuthorizationDenied(_) => "AUTOMATION_AUTHORIZATION_DENIED",
-            Self::AuditUnavailable(_) => "AUTOMATION_AUDIT_UNAVAILABLE",
-
-            // Data
-            Self::SerializationError(_) => "AUTOMATION_SERIALIZATION_ERROR",
-
-            // Dispatch
-            Self::DispatchDegraded(_) => "AUTOMATION_DISPATCH_DEGRADED",
-            Self::ChannelUnreachable { .. } => "AUTOMATION_CHANNEL_UNREACHABLE",
-
-            // Internal
-            Self::InternalError(_) => "AUTOMATION_INTERNAL_ERROR",
-        }
-    }
-
-    fn category(&self) -> errors::ErrorCategory {
-        use errors::ErrorCategory;
-
-        match self {
-            // Configuration → Configuration
-            Self::ConfigError(_) | Self::InvalidConfig(_) | Self::MissingConfig(_) => {
-                ErrorCategory::Configuration
-            },
-
-            // Database → Database
-            Self::DatabaseError(_) => ErrorCategory::Database,
-
-            // NotFound
-            Self::InstanceNotFound(_) | Self::RuleNotFound(_) => ErrorCategory::NotFound,
-
-            // Conflict
-            Self::InstanceExists(_)
-            | Self::RuleExists(_)
-            | Self::RoutingConflict(_)
-            | Self::ConfigurationConflict(_) => ErrorCategory::Conflict,
-
-            // Validation
-            Self::InvalidData(_)
-            | Self::InvalidRouting(_)
-            | Self::InvalidRule(_)
-            | Self::ParseError(_) => ErrorCategory::Validation,
-
-            Self::AuthorizationDenied(_) => ErrorCategory::Permission,
-            Self::AuditUnavailable(_) => ErrorCategory::ResourceBusy,
-
-            // Dispatch degraded → Network (HTTP 502: downstream io unreachable)
-            Self::DispatchDegraded(_) => ErrorCategory::Network,
-
-            // Channel offline → ResourceBusy (HTTP 503: temporarily unavailable, retry-able)
-            Self::ChannelUnreachable { .. } => ErrorCategory::ResourceBusy,
-
-            // Internal (execution, scheduling, serialization, etc.)
-            Self::ExecutionError(_)
-            | Self::SchedulerError(_)
-            | Self::SerializationError(_)
-            | Self::InternalError(_) => ErrorCategory::Internal,
-        }
-    }
-
-    fn suggestion(&self) -> Option<String> {
-        match self {
-            Self::ConfigError(_) | Self::InvalidConfig(_) => Some(
-                "Check aether-automation configuration in config/automation/ and run 'aether sync'".to_string()
-            ),
-            Self::MissingConfig(_) => Some(
-                "Add the missing configuration to config/automation/ and run 'aether sync'".to_string()
-            ),
-            Self::DatabaseError(_) => Some(
-                "Run 'aether doctor' to check database status. Try 'aether init' if database is missing".to_string()
-            ),
-            Self::InstanceNotFound(_) => Some(
-                "Use GET /api/instances to list available instances, or create a new one with POST /api/instances".to_string()
-            ),
-            Self::InstanceExists(_) => Some(
-                "Instance already exists. Use PUT /api/instances/{id} to update, or choose a different ID".to_string()
-            ),
-            Self::RuleNotFound(_) => Some(
-                "Use GET /api/rules to list available rules, or create a new one with POST /api/rules".to_string()
-            ),
-            Self::RuleExists(_) => Some(
-                "Rule already exists. Use PUT /api/rules/{id} to update, or choose a different ID".to_string()
-            ),
-            Self::InvalidRule(_) | Self::ParseError(_) => Some(
-                "Check rule syntax. See docs/API_REFERENCE.md for rule format documentation".to_string()
-            ),
-            Self::InvalidRouting(_) => Some(
-                "Verify routing configuration. Check that source and target channels/instances exist".to_string()
-            ),
-            Self::RoutingConflict(_) => Some(
-                "Reload the current logical-routing revision and review the newer topology before submitting a fresh command".to_string()
-            ),
-            Self::ConfigurationConflict(_) => Some(
-                "Reload the current instances revision and review routed descendants before submitting a fresh command".to_string()
-            ),
-            Self::AuthorizationDenied(_) => Some(
-                "Use a signed Admin/Engineer session or the local aether CLI to issue device commands".to_string()
-            ),
-            Self::AuditUnavailable(_) => Some(
-                "Check the local automation SQLite database; this request was not executed and may be submitted after audit persistence recovers".to_string()
-            ),
-            Self::ExecutionError(_) => Some(
-                "Check rule conditions and actions. Use 'aether rules execute <id>' and inspect \
-                 the local rule_history table for execution_path and error details"
-                    .to_string()
-            ),
-            Self::SchedulerError(_) => Some(
-                "Check scheduler status with GET /api/scheduler/status".to_string()
-            ),
-            _ => None,
-        }
-    }
-}
-
 impl From<aether_application::ApplicationError> for AutomationError {
     fn from(error: aether_application::ApplicationError) -> Self {
         use aether_application::ApplicationError;
@@ -307,43 +161,6 @@ impl From<aether_application::ApplicationError> for AutomationError {
                 PortErrorKind::Permanent => Self::InternalError(port_error.to_string()),
             },
         }
-    }
-}
-
-// ============================================================================
-// API Adaptation: AutomationError → AppError conversion
-// ============================================================================
-
-/// Automatically convert AutomationError to AppError using AetherErrorTrait for HTTP status mapping
-impl From<AutomationError> for common::AppError {
-    fn from(err: AutomationError) -> Self {
-        use common::{AppError, ErrorInfo};
-        use errors::AetherErrorTrait;
-
-        let status = err.http_status();
-        let mut error_info = ErrorInfo::new(err.to_string())
-            .with_code(status.as_u16())
-            .with_details(format!(
-                "error_code: {}, category: {:?}, retryable: {}",
-                err.error_code(),
-                err.category(),
-                err.is_retryable()
-            ));
-
-        // Add suggestion if available
-        if let Some(suggestion) = err.suggestion() {
-            error_info = error_info.with_suggestion(suggestion);
-        }
-
-        AppError::new(status, error_info)
-    }
-}
-
-/// Implement IntoResponse so AutomationError can be returned directly from Axum handlers
-impl axum::response::IntoResponse for AutomationError {
-    fn into_response(self) -> axum::response::Response {
-        let app_error: common::AppError = self.into();
-        app_error.into_response()
     }
 }
 

@@ -69,10 +69,11 @@ it does not move live-state authority into SQLite.
    records. It returns conflict while any governed measurement or action route
    references the channel and never cascades, deletes, or nulls logical
    topology as an incidental I/O mutation.
-7. Ordinary update cannot change channel identity. A body `channel_id` may
-   echo the path ID during migration, but a different ID is rejected before
-   the application port runs. A future identity migration, if needed, is a
-   separate high-risk use case that coordinates every referencing aggregate.
+7. Ordinary update cannot change channel identity. Identity comes only from
+   the request path; `channel_id` is not part of the update DTO and unknown
+   fields are rejected before the application port runs. A future identity
+   migration, if needed, is a separate high-risk use case that coordinates
+   every referencing aggregate.
 8. HTTP, CLI, and MCP use the same application commands. HTTP independently
    verifies the signed access token and forwards the generated or validated
    request ID, explicit confirmation, and optional expected revision. The

@@ -8,96 +8,24 @@ use aether_ports::{
     AutomationRuleMutator, AutomationRulesRevision, PortError, PortErrorKind, PortResult,
     RevisionedRuleMutation, RuleMutation, RuleMutationReceipt,
 };
-use aether_rules::{RuleScheduler, TriggerConfig};
+use aether_rules::TriggerConfig;
 use async_trait::async_trait;
 use serde_json::Value;
 use sqlx::SqlitePool;
 
-use crate::infra::runtime_topology::{AutomationTopologyHandle, PointWatchReadiness};
-
-enum RuleRuntimeRefresh {
-    Refreshed,
-    PointWatchGated(PortError),
-}
+use crate::infra::rule_runtime::{RuleRuntimeCoordinator, RuleRuntimeRefresh};
 
 /// Owns durable rule mutation and the corresponding scheduler refresh.
 pub struct SqliteRuleMutator<S: StateStore> {
     pool: SqlitePool,
-    scheduler: Arc<RuleScheduler<S>>,
-    topology: Option<Arc<AutomationTopologyHandle>>,
-    point_watch_readiness: Option<Arc<PointWatchReadiness>>,
-    point_watch_bitmap: Option<Arc<aether_shm_bridge::SubscriptionBitmap>>,
-    manifest_source: Option<aether_shm_bridge::ChannelPointManifestSource>,
+    runtime: Arc<RuleRuntimeCoordinator<S>>,
 }
 
 impl<S: StateStore + 'static> SqliteRuleMutator<S> {
     /// Creates the adapter over the rule database and active scheduler.
     #[must_use]
-    pub fn new(pool: SqlitePool, scheduler: Arc<RuleScheduler<S>>) -> Self {
-        Self {
-            pool,
-            scheduler,
-            topology: None,
-            point_watch_readiness: None,
-            point_watch_bitmap: None,
-            manifest_source: None,
-        }
-    }
-
-    /// Serializes production subscription reloads with topology publication.
-    #[must_use]
-    pub fn with_topology_guard(
-        mut self,
-        topology: Arc<AutomationTopologyHandle>,
-        point_watch_readiness: Arc<PointWatchReadiness>,
-        point_watch_bitmap: Option<Arc<aether_shm_bridge::SubscriptionBitmap>>,
-        manifest_source: aether_shm_bridge::ChannelPointManifestSource,
-    ) -> Self {
-        self.topology = Some(topology);
-        self.point_watch_readiness = Some(point_watch_readiness);
-        self.point_watch_bitmap = point_watch_bitmap;
-        self.manifest_source = Some(manifest_source);
-        self
-    }
-
-    async fn reload_scheduler(&self) -> PortResult<RuleRuntimeRefresh> {
-        let (Some(topology), Some(readiness), Some(manifest_source)) = (
-            &self.topology,
-            &self.point_watch_readiness,
-            &self.manifest_source,
-        ) else {
-            return self
-                .scheduler
-                .reload_rules()
-                .await
-                .map(|_| RuleRuntimeRefresh::Refreshed)
-                .map_err(scheduler_reload_error);
-        };
-
-        let _rebuild = readiness.lock_rebuild().await;
-        let view = Arc::clone(topology).pin_command().await;
-        readiness.mark_unready();
-        self.scheduler
-            .reload_rules()
-            .await
-            .map_err(scheduler_reload_error)?;
-        let generation = view.generation();
-        let point_watch_rebuilt = generation
-            .rebuild_point_watch(&self.scheduler, self.point_watch_bitmap.as_deref())
-            .await;
-        let manifest_matches = manifest_source.load().is_some_and(|manifest| {
-            manifest.layout_hash() == generation.point_manifest().layout_hash()
-                && manifest.slot_count() == generation.point_manifest().slot_count()
-        });
-        if point_watch_rebuilt && manifest_matches {
-            readiness.mark_ready(generation.sequence());
-            Ok(RuleRuntimeRefresh::Refreshed)
-        } else {
-            Ok(RuleRuntimeRefresh::PointWatchGated(PortError::new(
-                PortErrorKind::Unavailable,
-                "PointWatch subscription publication does not match the active topology generation",
-            )))
-        }
+    pub fn new(pool: SqlitePool, runtime: Arc<RuleRuntimeCoordinator<S>>) -> Self {
+        Self { pool, runtime }
     }
 }
 
@@ -318,8 +246,8 @@ impl<S: StateStore + 'static> AutomationRuleMutator for SqliteRuleMutator<S> {
             })?,
         );
 
-        match self.reload_scheduler().await {
-            Ok(RuleRuntimeRefresh::Refreshed) => match rule_id {
+        match self.runtime.reload().await {
+            Ok(RuleRuntimeRefresh::Refreshed { .. }) => match rule_id {
                 Some(rule_id) => Ok(RuleMutationReceipt::new_at_revision(
                     rule_id,
                     kind,
@@ -327,11 +255,11 @@ impl<S: StateStore + 'static> AutomationRuleMutator for SqliteRuleMutator<S> {
                 )),
                 None => Ok(RuleMutationReceipt::reload_at_revision(resulting_revision)),
             },
-            Ok(RuleRuntimeRefresh::PointWatchGated(failure)) => Ok(
+            Ok(RuleRuntimeRefresh::PointWatchGated { failure, .. }) => Ok(
                 RuleMutationReceipt::point_watch_gated(rule_id, kind, resulting_revision, failure),
             ),
             Err(failure) => {
-                self.scheduler.stop();
+                self.runtime.stop();
                 Ok(RuleMutationReceipt::scheduler_stopped_at_revision(
                     rule_id,
                     kind,
@@ -366,12 +294,5 @@ fn database_error(error: sqlx::Error) -> PortError {
     PortError::new(
         PortErrorKind::Unavailable,
         format!("rule database mutation failed: {error}"),
-    )
-}
-
-fn scheduler_reload_error(error: aether_rules::RuleError) -> PortError {
-    PortError::new(
-        PortErrorKind::Unavailable,
-        format!("rule scheduler reload failed: {error}"),
     )
 }

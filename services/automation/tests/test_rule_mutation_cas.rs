@@ -6,7 +6,8 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use aether_automation::infra::rule_mutation::SqliteRuleMutator;
-use aether_automation::infra::runtime_topology::{AutomationTopologyHandle, PointWatchReadiness};
+use aether_automation::infra::rule_runtime::RuleRuntimeCoordinator;
+use aether_automation::infra::runtime_topology::AutomationTopologyHandle;
 use aether_calc::MemoryStateStore;
 use aether_domain::PointKind;
 use aether_ports::{
@@ -45,7 +46,8 @@ fn scheduler(pool: &sqlx::SqlitePool) -> Arc<RuleScheduler<MemoryStateStore>> {
 #[tokio::test]
 async fn concurrent_mutations_with_one_expected_revision_have_one_winner() {
     let (_directory, pool) = rules_pool(4).await;
-    let mutator = Arc::new(SqliteRuleMutator::new(pool.clone(), scheduler(&pool)));
+    let runtime = Arc::new(RuleRuntimeCoordinator::new(scheduler(&pool)));
+    let mutator = Arc::new(SqliteRuleMutator::new(pool.clone(), runtime));
     let expected = AutomationRulesRevision::new(1);
 
     let (first, second) = tokio::join!(
@@ -80,7 +82,8 @@ async fn concurrent_mutations_with_one_expected_revision_have_one_winner() {
 #[tokio::test]
 async fn legacy_rust_rule_mutation_reads_the_current_head_and_uses_the_cas_path() {
     let (_directory, pool) = rules_pool(1).await;
-    let mutator = SqliteRuleMutator::new(pool.clone(), scheduler(&pool));
+    let runtime = Arc::new(RuleRuntimeCoordinator::new(scheduler(&pool)));
+    let mutator = SqliteRuleMutator::new(pool.clone(), runtime);
 
     let receipt = mutator
         .mutate(RuleMutation::create("legacy", None))
@@ -153,7 +156,6 @@ async fn point_watch_publication_failure_is_gated_and_a_later_reload_recovers() 
 
     let recovery_sink = ShmDeviceCommandSink::new();
     let manifest_source = recovery_sink.manifest_source();
-    let readiness = Arc::new(PointWatchReadiness::new());
     let mut configured_scheduler = RuleScheduler::new(
         Arc::new(MemoryRuleLiveState::new()),
         pool.clone(),
@@ -164,12 +166,14 @@ async fn point_watch_publication_failure_is_gated_and_a_later_reload_recovers() 
     configured_scheduler.set_point_watch_rebuild_handle(Arc::new(Mutex::new(dispatcher)));
     let scheduler = Arc::new(configured_scheduler);
     let bitmap = Arc::new(SubscriptionBitmap::new_in_memory().expect("bitmap"));
-    let mutator = SqliteRuleMutator::new(pool.clone(), Arc::clone(&scheduler)).with_topology_guard(
-        Arc::clone(&topology),
-        Arc::clone(&readiness),
-        Some(bitmap),
-        manifest_source,
+    let runtime = Arc::new(
+        RuleRuntimeCoordinator::new(Arc::clone(&scheduler)).with_point_watch(
+            Arc::clone(&topology),
+            bitmap,
+            manifest_source,
+        ),
     );
+    let mutator = SqliteRuleMutator::new(pool.clone(), Arc::clone(&runtime));
     let point_watch_event = PointWatchEvent::new(
         3,
         PointKind::Telemetry,
@@ -204,7 +208,7 @@ async fn point_watch_publication_failure_is_gated_and_a_later_reload_recovers() 
     assert_eq!(gated.runtime_status().as_str(), "point_watch_gated");
     assert!(scheduler.is_running(), "tick fallback must remain active");
     assert!(
-        !readiness.accepts(&topology.load(), point_watch_event),
+        !runtime.accepts_point_watch(&topology.load(), point_watch_event),
         "hints must remain fail-closed while the manifest publication is unavailable"
     );
 
@@ -224,7 +228,7 @@ async fn point_watch_publication_failure_is_gated_and_a_later_reload_recovers() 
     );
     assert!(recovered.scheduler_refresh().is_refreshed());
     assert!(
-        readiness.accepts(&topology.load(), point_watch_event),
+        runtime.accepts_point_watch(&topology.load(), point_watch_event),
         "a matching recovery publication must reopen the exact rebuilt generation"
     );
 }

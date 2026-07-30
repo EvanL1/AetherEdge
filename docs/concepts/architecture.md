@@ -1,7 +1,7 @@
 ---
 title: System Architecture
 description: Isolated edge services communicating over shared memory, per-consumer UDS events, SQLite, HTTP, and MQTT
-updated: 2026-07-11
+updated: 2026-07-30
 ---
 
 # System Architecture
@@ -50,13 +50,40 @@ used as tooling fallbacks when runtime configuration does not override them.
 
 | Service | Port | Role |
 |---------|------|------|
-| aether-io | 6001 | Communication service — explicitly compiled physical protocol drivers (Modbus, IEC 104, IEC 61850, OPC UA, MQTT, HTTP, DL/T 645, CAN/J1939, GPIO, BLE, Zigbee, Matter, Aether-485), channel management, sole writer of telemetry into shared memory |
+| aether-io | 6001 | Communication service — explicitly compiled physical protocol drivers (Modbus, IEC 104, IEC 61850, OPC UA, MQTT, HTTP, DL/T 645, CAN/J1939, GPIO, BLE, Zigbee, Aether-485), channel management, sole writer of telemetry into shared memory |
 | aether-automation | 6002 | Model service — product definitions, device instances, rule engine execution |
 | aether-history | 6004 | Historical data service — embedded SQLite by default; optional PostgreSQL / TimescaleDB via `postgres-storage` |
 | aether-api | 6005 | API gateway — unified REST API, WebSocket push to browsers, JWT authentication |
 | aether-uplink | 6006 | Network service — MQTT broker integration for the cloud uplink, TLS certificate management |
 | aether-alarm | 6007 | Alarm service — alarm rules, alarm events, notifications |
 | TimescaleDB | 5432 | Optional time-series database for historical data, runtime-configured through aether-history |
+
+## IO runtime composition
+
+```text
+SQLite
+  ├─ fixed 5-scan snapshot transaction
+       └─ owned RuntimeChannelConfig
+            └─ process-wide immutable protocol registry
+                 └─ selected adapter compiles its typed mappings once
+                      └─ ChannelManager common lifecycle/task/SHM wiring
+  └─ fixed 2-scan post-activation authority witness
+```
+
+A full reconciliation reads the channel table and four typed point tables once,
+independent of channel count. After runtime projection, one channel
+revision/enabled scan and one tombstone scan verify that the projected
+generation is still authoritative; drift fences the affected runtime instead
+of leaving stale acquisition online. The owned snapshot is passed by value
+through projection, and protocol runtimes never reopen SQLite.
+
+The selected adapter owns its strict parameter and mapping schemas and concrete
+typed addresses. `ChannelManager` therefore has no SQLite pool, protocol
+switch, or mapping prepass; it adds only shared runtime policy, logging,
+command guards, lifecycle/task publication, and SHM wiring. The SHM acquisition
+path accepts only finite numeric or boolean T/S samples with
+`aether_domain::PointQuality`; text, missing, and non-finite values fail closed
+before a live-state write.
 
 ## Optional Data Processing application
 
@@ -148,13 +175,9 @@ atomically renamed over their canonical paths. Existing consumers keep the
 old inode until their periodic identity check reopens the new generation, and
 their subscription bitmaps are not truncated:
 
-1. During startup, aether-automation calls
-   `common::dependency::wait_for_dependency("aether-io", <aether-io>/health, 30s)`
-   (`services/automation/src/bootstrap.rs`). The helper
-   (`libs/common/src/dependency.rs`) polls the health URL every 2 seconds
-   until it returns HTTP 2xx or the timeout expires. If aether-io is still not
-   healthy after 30 seconds, aether-automation logs a warning and continues
-   starting — with shared memory possibly unavailable until aether-io comes up.
+1. aether-automation has no HTTP liveness dependency on aether-io. It loads
+   the canonical topology from SQLite, creates a lazy SHM generation, and can
+   finish starting while the writer is offline.
 2. When aether-automation opens live state,
    `ShmReadTopologyGeneration` checks both physical headers and the commit
    witness. A hash, slot count, epoch, or writer-generation mismatch remains

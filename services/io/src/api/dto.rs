@@ -13,129 +13,6 @@ pub use common::{
     ServiceStatus as SharedServiceStatus, SuccessResponse,
 };
 
-/// Control command (remote control)
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct ControlRequest {
-    #[schema(example = 101)]
-    pub point_id: u32,
-    #[schema(example = 1)]
-    pub value: u8, // 0 or 1
-}
-
-/// Adjustment command (setpoint)
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct AdjustmentRequest {
-    #[schema(example = 201)]
-    pub point_id: u32,
-    #[schema(example = 5000.0)]
-    pub value: f64,
-}
-
-/// Batch control commands
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct BatchControlRequest {
-    #[schema(example = json!([{"point_id": 101, "value": 1}, {"point_id": 102, "value": 0}]))]
-    pub commands: Vec<ControlRequest>,
-}
-
-/// Batch adjustment commands
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct BatchAdjustmentRequest {
-    #[schema(example = json!([{"point_id": 201, "value": 5000.0}, {"point_id": 202, "value": 380.0}]))]
-    pub commands: Vec<AdjustmentRequest>,
-}
-
-/// Batch command execution result
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct BatchCommandResult {
-    pub total: usize,
-    pub succeeded: usize,
-    pub failed: usize,
-    pub errors: Vec<BatchCommandError>,
-}
-
-/// Unified write response - supports both single and batch operations
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-#[serde(untagged)]
-pub enum WriteResponse {
-    /// Single point write response
-    Single(WritePointResponse),
-    /// Batch write response
-    Batch(BatchCommandResult),
-}
-
-/// Individual command error in batch
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct BatchCommandError {
-    #[schema(example = 101)]
-    pub point_id: u32,
-    #[schema(example = "Invalid control value")]
-    pub error: String,
-}
-
-/// Control value request for RESTful endpoints
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct ControlValueRequest {
-    #[schema(example = 1)]
-    pub value: u8, // 0 or 1
-}
-
-/// Adjustment value request for RESTful endpoints
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct AdjustmentValueRequest {
-    #[schema(example = 50.0)]
-    pub value: f64,
-}
-
-/// Simulation write request for acquisition-owned T/S points, single or batch.
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct WritePointRequest {
-    /// Simulation point type: T/Telemetry or S/Signal.
-    #[serde(alias = "point_type", alias = "t")]
-    #[schema(example = "T")]
-    pub r#type: String,
-
-    /// Single point or batch points (automatically detected)
-    #[serde(flatten)]
-    pub data: WritePointData,
-}
-
-/// Write point data - supports single or batch writes
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-#[serde(untagged)]
-pub enum WritePointData {
-    /// Single point write: {"id": "1", "value": 50.0}
-    Single {
-        #[serde(alias = "point_id")]
-        #[schema(example = "1")]
-        id: String,
-        #[schema(example = 50.0)]
-        value: f64,
-    },
-    /// Batch write: {"points": [{"id": "1", "value": 50.0}, ...]}
-    Batch { points: Vec<PointValue> },
-}
-
-/// Point value for batch operations
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct PointValue {
-    #[serde(alias = "point_id")]
-    #[schema(example = "1")]
-    pub id: String,
-    #[schema(example = 50.0)]
-    pub value: f64,
-}
-
-/// Write point response with operation details
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct WritePointResponse {
-    pub channel_id: u32,
-    pub point_type: String,
-    pub point_id: u32,
-    pub value: f64,
-    pub timestamp_ms: i64,
-}
-
 /// service status response
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct ServiceStatus {
@@ -173,26 +50,9 @@ pub struct ChannelStatusDto {
     pub name: String,
     pub protocol: String,
     pub connected: bool,
-    pub running: bool,
     #[schema(value_type = String, format = "date-time")]
     pub last_update: DateTime<Utc>,
     pub statistics: HashMap<String, serde_json::Value>,
-}
-
-impl From<crate::core::channels::ChannelStatus> for ChannelStatusDto {
-    /// Convert from `ComBase` `ChannelStatus` to API `ChannelStatus`
-    fn from(status: crate::core::channels::ChannelStatus) -> Self {
-        Self {
-            id: 0,                           // Will be filled by handler
-            name: "Unknown".to_string(),     // Will be filled by handler
-            protocol: "Unknown".to_string(), // Will be filled by handler
-            connected: status.is_connected,
-            running: status.is_connected, // Use is_connected as running status
-            last_update: DateTime::<Utc>::from_timestamp(status.last_update, 0)
-                .unwrap_or_else(Utc::now),
-            statistics: HashMap::new(), // Will be filled by handler
-        }
-    }
 }
 
 /// Create a health status with memory and CPU checks
@@ -290,9 +150,9 @@ pub struct ChannelCreateRequest {
     pub protocol: String,
 
     /// Enable channel immediately after creation. Defaults to false so commissioning is explicit.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schema(default = false, example = false, nullable = true)]
-    pub enabled: Option<bool>,
+    #[serde(default)]
+    #[schema(default = false, example = false)]
+    pub enabled: bool,
 
     /// Protocol-specific parameters validated with no type coercion or fallback.
     /// Modbus TCP requires `host: non-empty string` and
@@ -310,15 +170,11 @@ pub struct ChannelCreateRequest {
 
 /// Channel configuration update request with PATCH semantics.
 ///
-/// Omitted or `null` fields are left unchanged. `channel_id` is retained only
-/// for wire compatibility and, when present, must equal the path identifier;
-/// ordinary channel updates never migrate identity.
+/// Omitted or `null` fields are left unchanged. Channel identity comes only
+/// from the request path; identity migration is forbidden.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ChannelConfigUpdateRequest {
-    /// Compatibility echo of the path ID. A different value is rejected.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schema(example = 6, maximum = 9999, nullable = true)]
-    pub channel_id: Option<u32>,
     pub name: Option<String>,
     pub description: Option<String>,
     pub protocol: Option<String>,
@@ -586,7 +442,6 @@ pub struct ChannelDetail {
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct ChannelRuntimeStatus {
     pub connected: bool,
-    pub running: bool,
     #[schema(value_type = String, format = "date-time")]
     pub last_update: DateTime<Utc>,
     pub statistics: HashMap<String, serde_json::Value>,
@@ -909,7 +764,6 @@ mod tests {
             name: "Test Channel".to_string(),
             protocol: "modbus_tcp".to_string(),
             connected: true,
-            running: true,
             last_update: now,
             statistics: parameters,
         };
@@ -1009,7 +863,6 @@ mod tests {
             name: "Simple Channel".to_string(),
             protocol: "Modbus TCP".to_string(),
             connected: false,
-            running: false,
             last_update: now,
             statistics: HashMap::new(),
         };
@@ -1017,21 +870,6 @@ mod tests {
         let serialized = serde_json::to_string(&status).unwrap();
         assert!(serialized.contains('1'));
         assert!(serialized.contains("false"));
-    }
-
-    #[test]
-    fn test_combase_channel_status_conversion() {
-        let combase_status = crate::core::channels::ChannelStatus {
-            is_connected: true,
-            last_update: 1_234_567_890,
-        };
-        let api_status = ChannelStatusDto::from(combase_status);
-
-        assert_eq!(api_status.id, 0); // Default value
-        assert_eq!(api_status.name, "Unknown");
-        assert_eq!(api_status.protocol, "Unknown");
-        assert!(api_status.connected);
-        assert!(api_status.statistics.is_empty());
     }
 
     #[test]
@@ -1057,7 +895,7 @@ mod tests {
             Some("Test channel for Modbus TCP".to_string())
         );
         assert_eq!(request.protocol, "modbus_tcp");
-        assert_eq!(request.enabled, Some(true));
+        assert!(request.enabled);
         assert_eq!(request.parameters.len(), 3);
         assert_eq!(
             request.parameters.get("host"),
@@ -1065,6 +903,18 @@ mod tests {
         );
         assert_eq!(request.parameters.get("port"), Some(&json!(502)));
         assert_eq!(request.parameters.get("slave_id"), Some(&json!(1)));
+    }
+
+    #[test]
+    fn channel_create_defaults_to_disabled() {
+        let request: ChannelCreateRequest = serde_json::from_value(json!({
+            "name": "Commission later",
+            "protocol": "modbus_tcp",
+            "parameters": {}
+        }))
+        .unwrap();
+
+        assert!(!request.enabled);
     }
 
     #[test]
@@ -1078,7 +928,6 @@ mod tests {
         }"#;
 
         let request: ChannelConfigUpdateRequest = serde_json::from_str(json_data).unwrap();
-        assert!(request.channel_id.is_none()); // Not provided, defaults to None
         assert_eq!(request.name, Some("Updated Channel Name".to_string()));
         assert_eq!(request.description, Some("Updated description".to_string()));
         assert!(request.protocol.is_none());
@@ -1086,22 +935,6 @@ mod tests {
 
         let params = request.parameters.unwrap();
         assert_eq!(params.get("timeout"), Some(&json!(5000)));
-    }
-
-    #[test]
-    fn test_channel_config_update_request_with_channel_id() {
-        let json_data = r#"{
-            "channel_id": 6,
-            "name": "Migrated Channel"
-        }"#;
-
-        let request: ChannelConfigUpdateRequest = serde_json::from_str(json_data).unwrap();
-        assert_eq!(request.channel_id, Some(6));
-        assert_eq!(request.name, Some("Migrated Channel".to_string()));
-        assert!(request.description.is_none());
-        assert!(request.protocol.is_none());
-        assert!(request.parameters.is_none());
-        assert!(request.logging.is_none());
     }
 
     #[test]

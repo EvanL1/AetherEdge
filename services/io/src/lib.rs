@@ -11,15 +11,14 @@ pub mod channel_mutator;
 pub mod error;
 pub mod point_topology;
 pub mod protocols;
-pub mod utils;
 
 pub mod api {
     //! REST API Module
     //!
     //! Provides HTTP API endpoints for the communication service.
 
-    pub mod command_cache;
     pub mod dto;
+    pub mod error_response;
     pub mod routes;
 
     pub mod handlers {
@@ -71,23 +70,22 @@ pub mod runtime {
 
     // Re-export common types
     pub use lifecycle::{
-        shutdown_handler, shutdown_services, start_cleanup_task, start_communication_service,
-        wait_for_shutdown,
+        shutdown_handler, shutdown_services, start_cleanup_task, wait_for_shutdown,
     };
     pub use reconnect::{ReconnectContext, ReconnectError, ReconnectHelper, ReconnectPolicy};
 }
 
-// Re-export dto at crate root for compatibility
-pub use crate::api::dto;
+// Private compatibility alias for HTTP modules during the namespace migration.
+// Internal runtime modules are forbidden from depending on this name.
+use crate::api::dto;
 pub use channel_mutator::{ChannelRuntimeLifecycle, SqliteChannelMutator};
 
 // Re-export commonly used types
-pub use error::{ErrorExt, IoError, Result};
+pub use error::{IoError, Result};
 
 // Re-export core functionality
 pub use core::bootstrap::ServiceArgs;
-pub use core::channels::ChannelManager;
-pub use core::config::ConfigManager;
+pub use core::channels::{ChannelManager, RuntimeChannelConfig};
 
 // Re-export runtime helpers for convenience
 pub use runtime::{shutdown_services, wait_for_shutdown};

@@ -15,25 +15,24 @@ use common::SuccessResponse;
 use serde_json::json;
 use std::sync::Arc;
 
-use crate::app_state::AppState;
-use crate::dto::{
+use crate::api::dto::{
     ActionRoutingConfirmationBody, ActionRoutingToggleBody, ActionRoutingUpsertBody,
-    MeasurementRoutingDeleteRequest, MeasurementRoutingToggleRequest,
-    MeasurementRoutingUpsertRequest,
+    InstanceActionPoint, InstanceMeasurementPoint, MeasurementRoutingDeleteRequest,
+    MeasurementRoutingToggleRequest, MeasurementRoutingUpsertRequest,
 };
+use crate::app_state::AppState;
 use crate::error::AutomationError;
 
 // ============================================================================
 // Measurement Point Handlers
 // ============================================================================
 
-/// Get full details for a single measurement point (definition + routing + current value).
+/// Get one measurement point definition and its desired routing.
 ///
 /// Returns the point definition from `instance.measurement_points`, the
-/// associated C2M routing (which channel and channel-point it maps to), and
-/// the latest measurement value from `inst:{id}:M`. Used by the point-detail
-/// dialog on the frontend. Returns 404 if the instance or `point_id` does
-/// not exist.
+/// associated C2M routing (which channel and channel-point it maps to), and a
+/// routing revision ETag. Live values remain owned by the SHM-backed data
+/// query. Returns 404 if the instance or `point_id` does not exist.
 #[utoipa::path(
     get,
     path = "/api/instances/{id}/measurements/{point_id}",
@@ -42,7 +41,7 @@ use crate::error::AutomationError;
         ("point_id" = u32, Path, description = "Measurement point ID")
     ),
     responses(
-        (status = 200, description = "Measurement point with routing", body = crate::dto::InstanceMeasurementPoint),
+        (status = 200, description = "Measurement point with routing", body = crate::api::dto::InstanceMeasurementPoint),
         (status = 404, description = "Instance or point not found"),
         (status = 500, description = "Database error")
     ),
@@ -52,22 +51,15 @@ pub async fn get_measurement_point(
     State(state): State<Arc<AppState>>,
     Path((id, point_id)): Path<(u32, u32)>,
 ) -> Result<Response, AutomationError> {
-    let point = state
+    let (point, revision) = state
         .instance_manager
         .load_single_measurement_point(id, point_id)
         .await
         .map_err(|e| {
             AutomationError::InternalError(format!("Failed to load measurement point: {}", e))
         })?;
-    let revision: i64 = sqlx::query_scalar(
-        "SELECT revision FROM configuration_revisions WHERE scope = 'logical_routing'",
-    )
-    .fetch_one(state.instance_manager.pool())
-    .await
-    .map_err(|error| {
-        AutomationError::InternalError(format!("Failed to load logical-routing revision: {error}"))
-    })?;
-    let mut response = Json(SuccessResponse::new(point)).into_response();
+    let mut response =
+        Json(SuccessResponse::new(InstanceMeasurementPoint::from(point))).into_response();
     let etag = HeaderValue::from_str(&format!("\"{revision}\""))
         .map_err(|error| AutomationError::InternalError(error.to_string()))?;
     response.headers_mut().insert(ETAG, etag);
@@ -87,7 +79,7 @@ pub async fn get_measurement_point(
         ("id" = u32, Path, description = "Instance ID"),
         ("point_id" = u32, Path, description = "Measurement point ID")
     ),
-    request_body = crate::dto::MeasurementRoutingUpsertRequest,
+    request_body = crate::api::dto::MeasurementRoutingUpsertRequest,
     responses(
         (status = 200, description = "Routing created/updated", body = serde_json::Value,
             example = json!({"message": "Routing updated for measurement point 101"})
@@ -186,7 +178,7 @@ pub async fn delete_measurement_routing(
         ("id" = u32, Path, description = "Instance ID"),
         ("point_id" = u32, Path, description = "Measurement point ID")
     ),
-    request_body = crate::dto::MeasurementRoutingToggleRequest,
+    request_body = crate::api::dto::MeasurementRoutingToggleRequest,
     responses(
         (status = 200, description = "Routing enabled/disabled", body = serde_json::Value,
             example = json!({"message": "Routing enabled for measurement point 101", "rows_affected": 1})
@@ -235,12 +227,11 @@ pub async fn toggle_measurement_routing(
 // Action Point Handlers
 // ============================================================================
 
-/// Get full details for a single action point (definition + M2C routing + last written value).
+/// Get one action point definition and its desired M2C routing.
 ///
-/// The action-point counterpart of `/measurement-point/{id}`. Returns the
-/// `action_point` definition, the associated M2C routing (which channel
-/// C/A point it targets), and the most recently written command value from
-/// `inst:{id}:A`.
+/// The action-point counterpart of the measurement detail query. Returns the
+/// action definition, target C/A point, and a routing revision ETag. It does
+/// not synthesize command state from desired routing.
 #[utoipa::path(
     get,
     path = "/api/instances/{id}/actions/{point_id}",
@@ -249,7 +240,7 @@ pub async fn toggle_measurement_routing(
         ("point_id" = u32, Path, description = "Action point ID")
     ),
     responses(
-        (status = 200, description = "Action point with routing", body = crate::dto::InstanceActionPoint),
+        (status = 200, description = "Action point with routing", body = crate::api::dto::InstanceActionPoint),
         (status = 404, description = "Instance or point not found"),
         (status = 500, description = "Database error")
     ),
@@ -259,22 +250,14 @@ pub async fn get_action_point(
     State(state): State<Arc<AppState>>,
     Path((id, point_id)): Path<(u32, u32)>,
 ) -> Result<Response, AutomationError> {
-    let point = state
+    let (point, revision) = state
         .instance_manager
         .load_single_action_point(id, point_id)
         .await
         .map_err(|e| {
             AutomationError::InternalError(format!("Failed to load action point: {}", e))
         })?;
-    let revision: i64 = sqlx::query_scalar(
-        "SELECT revision FROM configuration_revisions WHERE scope = 'logical_routing'",
-    )
-    .fetch_one(state.instance_manager.pool())
-    .await
-    .map_err(|error| {
-        AutomationError::InternalError(format!("Failed to load logical-routing revision: {error}"))
-    })?;
-    let mut response = Json(SuccessResponse::new(point)).into_response();
+    let mut response = Json(SuccessResponse::new(InstanceActionPoint::from(point))).into_response();
     let etag = HeaderValue::from_str(&format!("\"{revision}\""))
         .map_err(|error| AutomationError::InternalError(error.to_string()))?;
     response.headers_mut().insert(ETAG, etag);
@@ -297,11 +280,11 @@ pub async fn get_action_point(
         ("x-request-id" = Option<String>, Header, description = "Optional UUID audit correlation ID")
     ),
     request_body(
-        content = crate::dto::ActionRoutingUpsertBody,
+        content = crate::api::dto::ActionRoutingUpsertBody,
         description = "Governed action-route upsert or unbind; confirmed=true is required"
     ),
     responses(
-        (status = 200, description = "Action-routing mutation accepted. If audit.status=incomplete or runtime.status=commands_revoked, retryable=false and the mutation must not be retried.", body = crate::dto::ActionRoutingMutationResponse,
+        (status = 200, description = "Action-routing mutation accepted. If audit.status=incomplete or runtime.status=commands_revoked, retryable=false and the mutation must not be retried.", body = crate::api::dto::ActionRoutingMutationResponse,
             example = json!({
                 "success": true,
                 "data": {
@@ -359,11 +342,11 @@ pub async fn upsert_action_routing(
         ("x-request-id" = Option<String>, Header, description = "Optional UUID audit correlation ID")
     ),
     request_body(
-        content = crate::dto::ActionRoutingConfirmationBody,
+        content = crate::api::dto::ActionRoutingConfirmationBody,
         description = "Governed action-route deletion; confirmed=true is required"
     ),
     responses(
-        (status = 200, description = "Action-routing mutation accepted. If audit.status=incomplete or runtime.status=commands_revoked, retryable=false and the mutation must not be retried.", body = crate::dto::ActionRoutingMutationResponse,
+        (status = 200, description = "Action-routing mutation accepted. If audit.status=incomplete or runtime.status=commands_revoked, retryable=false and the mutation must not be retried.", body = crate::api::dto::ActionRoutingMutationResponse,
             example = json!({
                 "success": true,
                 "data": {
@@ -427,11 +410,11 @@ pub async fn delete_action_routing(
         ("x-request-id" = Option<String>, Header, description = "Optional UUID audit correlation ID")
     ),
     request_body(
-        content = crate::dto::ActionRoutingToggleBody,
+        content = crate::api::dto::ActionRoutingToggleBody,
         description = "Governed action-route enable/disable; confirmed=true is required"
     ),
     responses(
-        (status = 200, description = "Action-routing mutation accepted. If audit.status=incomplete or runtime.status=commands_revoked, retryable=false and the mutation must not be retried.", body = crate::dto::ActionRoutingMutationResponse,
+        (status = 200, description = "Action-routing mutation accepted. If audit.status=incomplete or runtime.status=commands_revoked, retryable=false and the mutation must not be retried.", body = crate::api::dto::ActionRoutingMutationResponse,
             example = json!({
                 "success": true,
                 "data": {

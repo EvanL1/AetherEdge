@@ -101,12 +101,12 @@ pub async fn health_check(
 
     // Report the validated active Pack/site product-library size.
     let product_start = Instant::now();
-    let products = state.instance_manager.product_loader().get_all_products();
+    let product_count = state.instance_manager.product_loader().product_count();
     checks.insert(
         "products".to_string(),
         json!({
             "status": "healthy",
-            "count": products.len(),
+            "count": product_count,
             "duration_ms": product_start.elapsed().as_millis()
         }),
     );

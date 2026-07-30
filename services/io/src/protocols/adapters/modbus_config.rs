@@ -5,8 +5,12 @@
 
 use std::time::Duration;
 
-use serde::Deserialize;
+use aether_core::PointType;
+use serde::de::{self, Visitor};
+use serde::{Deserialize, Deserializer, Serialize};
+use serde_json::Value;
 
+use crate::protocols::core::error::{GatewayError, Result};
 use crate::protocols::core::point::{ByteOrder, DataFormat, PointConfig};
 
 // ============================================================================
@@ -33,6 +37,48 @@ pub const DEFAULT_MAX_RECONNECT_ATTEMPTS: u32 = 0;
 
 /// Default consecutive zero-data cycles before triggering reconnect
 pub const DEFAULT_ZERO_DATA_THRESHOLD: u32 = 5;
+
+/// Modbus point address owned by the Modbus adapter.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModbusAddress {
+    pub slave_id: u8,
+    pub function_code: u8,
+    pub register: u16,
+    #[serde(default)]
+    pub format: DataFormat,
+    #[serde(default)]
+    pub byte_order: ByteOrder,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bit_position: Option<u8>,
+}
+
+impl ModbusAddress {
+    pub fn holding_register(slave_id: u8, register: u16, format: DataFormat) -> Self {
+        Self {
+            slave_id,
+            function_code: 3,
+            register,
+            format,
+            byte_order: ByteOrder::default(),
+            bit_position: None,
+        }
+    }
+
+    pub fn coil(slave_id: u8, register: u16) -> Self {
+        Self {
+            slave_id,
+            function_code: 1,
+            register,
+            format: DataFormat::Bool,
+            byte_order: ByteOrder::default(),
+            bit_position: None,
+        }
+    }
+
+    pub fn register_count(&self) -> u16 {
+        self.format.register_count()
+    }
+}
 
 // ============================================================================
 // ReconnectConfig
@@ -106,126 +152,215 @@ pub enum ConnectionMode {
 /// Modbus point mapping configuration (deserialized from protocol_mappings JSON).
 ///
 /// # Required Fields
+/// - `slave_id`: Unit/slave ID in 1..=247.
+/// - `function_code`: Function code compatible with the point direction.
 /// - `register_address`: The Modbus register address (0-based).
 ///
 /// # Optional Fields
-/// - `slave_id`: Unit/slave ID (default: 1)
-/// - `function_code`: Modbus function code (default: 3 = holding registers)
 /// - `data_type`: Data format (default: uint16)
 /// - `byte_order`: Byte order for multi-byte values (default: ABCD)
 /// - `bit_position`: Bit position for boolean extraction from register (0-15)
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ModbusMappingConfig {
-    #[serde(default = "default_slave_id")]
+    #[serde(deserialize_with = "deserialize_u8")]
     pub slave_id: u8,
 
-    #[serde(default = "default_function_code")]
+    #[serde(deserialize_with = "deserialize_u8")]
     pub function_code: u8,
 
     /// Register address (0-based). **Required field**.
+    #[serde(deserialize_with = "deserialize_u16")]
     pub register_address: u16,
 
     #[serde(default)]
     pub data_type: DataFormat,
 
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_byte_order")]
     pub byte_order: ByteOrder,
 
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_optional_u8")]
     pub bit_position: Option<u8>,
 }
 
-fn default_slave_id() -> u8 {
-    1
-}
+/// Parse and validate one Modbus mapping without taking ownership of its JSON value.
+///
+/// This is the single codec used by both registry validation and runtime point
+/// construction, so accepted aliases and validation bounds cannot drift.
+pub(crate) fn parse_point_mapping(
+    point_type: PointType,
+    point_id: u32,
+    mapping: &Value,
+) -> Result<ModbusAddress> {
+    let mapping = ModbusMappingConfig::deserialize(mapping).map_err(|error| {
+        GatewayError::Config(format!(
+            "invalid Modbus mapping for point {point_id}: {error}"
+        ))
+    })?;
 
-fn default_function_code() -> u8 {
-    3
-}
-
-// ============================================================================
-// ModbusChannelParamsConfig (JSON deserialization)
-// ============================================================================
-
-/// Modbus channel parameters configuration (deserialized from parameters_json).
-#[derive(Debug, Clone, Deserialize)]
-pub struct ModbusChannelParamsConfig {
-    #[serde(default)]
-    pub host: Option<String>,
-
-    #[serde(default = "default_modbus_port")]
-    pub port: u16,
-
-    #[serde(default)]
-    pub device: Option<String>,
-
-    #[serde(default = "default_baud_rate")]
-    pub baud_rate: u32,
-
-    #[serde(default = "default_connect_timeout_ms")]
-    pub connect_timeout_ms: u64,
-
-    #[serde(default = "default_io_timeout_ms")]
-    pub io_timeout_ms: u64,
-
-    #[serde(default = "default_max_batch_size_config")]
-    pub max_batch_size: u16,
-
-    #[serde(default = "default_max_gap_config")]
-    pub max_gap: u16,
-}
-
-fn default_modbus_port() -> u16 {
-    502
-}
-
-fn default_baud_rate() -> u32 {
-    9600
-}
-
-fn default_connect_timeout_ms() -> u64 {
-    DEFAULT_CONNECT_TIMEOUT_MS
-}
-
-fn default_io_timeout_ms() -> u64 {
-    DEFAULT_IO_TIMEOUT_MS
-}
-
-fn default_max_batch_size_config() -> u16 {
-    64
-}
-
-fn default_max_gap_config() -> u16 {
-    10
-}
-
-impl ModbusChannelParamsConfig {
-    pub fn is_tcp(&self) -> bool {
-        self.host.is_some()
+    if !(1..=247).contains(&mapping.slave_id) {
+        return Err(mapping_error(point_id, "slave_id must be in 1..247"));
     }
 
-    pub fn tcp_address(&self) -> Option<String> {
-        self.host.as_ref().map(|h| format!("{}:{}", h, self.port))
+    let valid_function = match point_type {
+        PointType::Telemetry | PointType::Signal => {
+            matches!(mapping.function_code, 1..=4)
+        },
+        PointType::Control => matches!(mapping.function_code, 5 | 6 | 15 | 16),
+        PointType::Adjustment => matches!(mapping.function_code, 6 | 16),
+    };
+    if !valid_function {
+        return Err(mapping_error(
+            point_id,
+            &format!(
+                "function_code {} does not match {point_type:?}",
+                mapping.function_code
+            ),
+        ));
     }
 
-    /// Convert to ModbusChannelConfig.
-    ///
-    /// Note: Points must be set separately via `with_points()`.
-    pub fn to_channel_config(&self) -> ModbusChannelConfig {
-        if self.is_tcp() {
-            ModbusChannelConfig::tcp(self.tcp_address().unwrap_or_default())
-                .with_connect_timeout(Duration::from_millis(self.connect_timeout_ms))
-                .with_io_timeout(Duration::from_millis(self.io_timeout_ms))
-                .with_max_batch_size(self.max_batch_size)
-                .with_max_gap(self.max_gap)
-        } else if let Some(device) = &self.device {
-            ModbusChannelConfig::rtu(device, self.baud_rate)
-                .with_io_timeout(Duration::from_millis(self.io_timeout_ms))
-                .with_max_batch_size(self.max_batch_size)
-                .with_max_gap(self.max_gap)
-        } else {
-            ModbusChannelConfig::tcp("")
+    if mapping.bit_position.is_some_and(|bit| bit > 15) {
+        return Err(mapping_error(point_id, "bit_position must be in 0..15"));
+    }
+
+    if mapping.data_type == DataFormat::String {
+        return Err(mapping_error(
+            point_id,
+            "data_type must be a numeric or boolean Modbus format",
+        ));
+    }
+
+    Ok(ModbusAddress {
+        slave_id: mapping.slave_id,
+        function_code: mapping.function_code,
+        register: mapping.register_address,
+        format: mapping.data_type,
+        byte_order: mapping.byte_order,
+        bit_position: mapping.bit_position,
+    })
+}
+
+fn mapping_error(point_id: u32, reason: &str) -> GatewayError {
+    GatewayError::Config(format!(
+        "invalid Modbus mapping for point {point_id}: {reason}"
+    ))
+}
+
+fn deserialize_u8<'de, D>(deserializer: D) -> std::result::Result<u8, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = deserialize_unsigned(deserializer)?;
+    u8::try_from(value).map_err(|_| de::Error::custom("expected an integer in 0..=255"))
+}
+
+fn deserialize_u16<'de, D>(deserializer: D) -> std::result::Result<u16, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = deserialize_unsigned(deserializer)?;
+    u16::try_from(value).map_err(|_| de::Error::custom("expected an integer in 0..=65535"))
+}
+
+fn deserialize_unsigned<'de, D>(deserializer: D) -> std::result::Result<u64, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    struct UnsignedVisitor;
+
+    impl<'de> Visitor<'de> for UnsignedVisitor {
+        type Value = u64;
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            formatter.write_str("an unsigned integer or its decimal string representation")
         }
+
+        fn visit_u64<E>(self, value: u64) -> std::result::Result<Self::Value, E> {
+            Ok(value)
+        }
+
+        fn visit_i64<E>(self, value: i64) -> std::result::Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            u64::try_from(value).map_err(|_| E::custom("expected an unsigned integer"))
+        }
+
+        fn visit_str<E>(self, value: &str) -> std::result::Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            value
+                .parse()
+                .map_err(|_| E::custom("expected an unsigned decimal integer string"))
+        }
+    }
+
+    deserializer.deserialize_any(UnsignedVisitor)
+}
+
+fn deserialize_optional_u8<'de, D>(deserializer: D) -> std::result::Result<Option<u8>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    struct OptionalU8Visitor;
+
+    impl<'de> Visitor<'de> for OptionalU8Visitor {
+        type Value = Option<u8>;
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            formatter.write_str("null, an unsigned byte, or its decimal string representation")
+        }
+
+        fn visit_none<E>(self) -> std::result::Result<Self::Value, E> {
+            Ok(None)
+        }
+
+        fn visit_unit<E>(self) -> std::result::Result<Self::Value, E> {
+            Ok(None)
+        }
+
+        fn visit_some<D>(self, deserializer: D) -> std::result::Result<Self::Value, D::Error>
+        where
+            D: Deserializer<'de>,
+        {
+            deserialize_u8(deserializer).map(Some)
+        }
+    }
+
+    deserializer.deserialize_option(OptionalU8Visitor)
+}
+
+fn deserialize_byte_order<'de, D>(deserializer: D) -> std::result::Result<ByteOrder, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = <&str>::deserialize(deserializer)?;
+    if ["ABCD", "AB", "BIG_ENDIAN", "BE"]
+        .iter()
+        .any(|alias| value.eq_ignore_ascii_case(alias))
+    {
+        Ok(ByteOrder::Abcd)
+    } else if ["DCBA", "BA", "LITTLE_ENDIAN", "LE"]
+        .iter()
+        .any(|alias| value.eq_ignore_ascii_case(alias))
+    {
+        Ok(ByteOrder::Dcba)
+    } else if ["BADC", "WORD_SWAP"]
+        .iter()
+        .any(|alias| value.eq_ignore_ascii_case(alias))
+    {
+        Ok(ByteOrder::Badc)
+    } else if ["CDAB", "BYTE_SWAP"]
+        .iter()
+        .any(|alias| value.eq_ignore_ascii_case(alias))
+    {
+        Ok(ByteOrder::Cdab)
+    } else {
+        Err(de::Error::unknown_variant(
+            value,
+            &["ABCD", "DCBA", "BADC", "CDAB"],
+        ))
     }
 }
 
@@ -251,7 +386,7 @@ pub struct ModbusChannelConfig {
     #[cfg(feature = "modbus")]
     pub baud_rate: u32,
     /// Point configurations
-    pub points: Vec<PointConfig>,
+    pub points: Vec<PointConfig<ModbusAddress>>,
     /// Maximum registers per batch read (default: 125)
     pub max_batch_size: u16,
     /// Maximum gap between registers to allow merging (default: 10)
@@ -309,7 +444,7 @@ impl ModbusChannelConfig {
     }
 
     /// Add point configurations.
-    pub fn with_points(mut self, points: Vec<PointConfig>) -> Self {
+    pub fn with_points(mut self, points: Vec<PointConfig<ModbusAddress>>) -> Self {
         self.points = points;
         self
     }
@@ -330,5 +465,77 @@ impl ModbusChannelConfig {
     pub fn with_reconnect(mut self, config: ReconnectConfig) -> Self {
         self.reconnect = config;
         self
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use aether_core::PointType;
+    use serde_json::json;
+
+    use super::parse_point_mapping;
+    use crate::protocols::core::point::{ByteOrder, DataFormat};
+
+    #[test]
+    fn point_mapping_codec_preserves_runtime_aliases_without_owning_the_value() {
+        let mapping = json!({
+            "slave_id": "7",
+            "function_code": "3",
+            "register_address": "42",
+            "data_type": "F32",
+            "byte_order": "big_endian",
+            "bit_position": "15"
+        });
+
+        let address = parse_point_mapping(PointType::Telemetry, 11, &mapping).unwrap();
+
+        assert_eq!(address.slave_id, 7);
+        assert_eq!(address.function_code, 3);
+        assert_eq!(address.register, 42);
+        assert_eq!(address.format, DataFormat::Float32);
+        assert_eq!(address.byte_order, ByteOrder::Abcd);
+        assert_eq!(address.bit_position, Some(15));
+        assert_eq!(mapping["register_address"], "42");
+    }
+
+    #[test]
+    fn point_mapping_codec_rejects_unknown_fields_and_out_of_range_bits() {
+        let unknown = json!({
+            "slave_id": 1,
+            "function_code": 3,
+            "register_address": 0,
+            "surprise": true
+        });
+        assert!(
+            parse_point_mapping(PointType::Telemetry, 12, &unknown)
+                .unwrap_err()
+                .to_string()
+                .contains("unknown field")
+        );
+
+        let invalid_bit = json!({
+            "slave_id": 1,
+            "function_code": 3,
+            "register_address": 0,
+            "bit_position": 16
+        });
+        assert!(
+            parse_point_mapping(PointType::Telemetry, 13, &invalid_bit)
+                .unwrap_err()
+                .to_string()
+                .contains("0..15")
+        );
+    }
+
+    #[test]
+    fn point_mapping_codec_enforces_function_direction() {
+        let mapping = json!({
+            "slave_id": 1,
+            "function_code": 5,
+            "register_address": 0
+        });
+
+        assert!(parse_point_mapping(PointType::Telemetry, 14, &mapping).is_err());
+        assert!(parse_point_mapping(PointType::Control, 14, &mapping).is_ok());
     }
 }

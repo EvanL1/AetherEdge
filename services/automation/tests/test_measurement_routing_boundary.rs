@@ -13,6 +13,7 @@ use aether_automation::infra::application_control::{
     AutomationCommandDispatcher, ControlAuthenticator,
 };
 use aether_automation::infra::measurement_routing::SqliteMeasurementRoutingMutator;
+use aether_automation::infra::runtime_topology::AutomationTopologyHandle;
 use aether_automation::{InstanceManager, ProductLoader};
 use aether_pack::ProductLibrary;
 use aether_ports::{AuditSink, CommandDispatcher, DeviceCommandSink};
@@ -30,6 +31,7 @@ const JWT_SECRET: &str = "0123456789abcdef0123456789abcdef";
 struct Fixture {
     _models: tempfile::TempDir,
     pool: SqlitePool,
+    manager: Arc<InstanceManager>,
     router: axum::Router,
 }
 
@@ -74,16 +76,27 @@ impl Fixture {
         )
         .expect("model fixture");
         let library = ProductLibrary::load(Some(models.path())).expect("load model");
+        let physical_sink = Arc::new(ShmDeviceCommandSink::new());
+        let runtime_topology = Arc::new(
+            AutomationTopologyHandle::from_sqlite_lazy(
+                models.path().join("live.shm"),
+                models.path().join("health.shm"),
+                &pool,
+                Arc::clone(&physical_sink),
+            )
+            .await
+            .expect("lazy runtime topology"),
+        );
         let manager = Arc::new(InstanceManager::new(
             pool.clone(),
             Arc::new(ProductLoader::with_library(pool.clone(), Arc::new(library))),
+            runtime_topology,
         ));
         let audit: Arc<dyn AuditSink> = Arc::new(
             aether_store_local::SqliteAuditSink::initialize(pool.clone())
                 .await
                 .expect("audit sink"),
         );
-        let physical_sink = Arc::new(ShmDeviceCommandSink::new());
         let dispatcher: Arc<dyn CommandDispatcher> = Arc::new(AutomationCommandDispatcher::new(
             Arc::clone(&manager),
             physical_sink.clone() as Arc<dyn DeviceCommandSink>,
@@ -108,7 +121,8 @@ impl Fixture {
             )),
             Arc::new(
                 aether_automation::instance_configuration::InstanceConfigurationApplication::new(
-                    manager, audit,
+                    Arc::clone(&manager),
+                    audit,
                 ),
             ),
             Arc::new(ControlAuthenticator::new(JWT_SECRET, None).expect("authenticator")),
@@ -118,6 +132,7 @@ impl Fixture {
         Self {
             _models: models,
             pool,
+            manager,
             router,
         }
     }
@@ -208,6 +223,14 @@ async fn upsert_uses_shared_revision_validates_and_publishes_with_durable_audit(
     assert_eq!(body["data"]["resulting_revision"], 2);
     assert_eq!(body["data"]["audit"]["status"], "recorded");
     assert_eq!(body["data"]["runtime"]["status"], "published");
+    let published = fixture
+        .manager
+        .runtime_topology()
+        .load()
+        .measurement_route(7, 1)
+        .expect("published measurement route");
+    assert_eq!(published.channel_id().get(), 3);
+    assert_eq!(published.point_id().get(), 5);
     let stored: (i64, String, i64, bool) = sqlx::query_as(
         "SELECT channel_id, channel_type, channel_point_id, enabled \
          FROM measurement_routing WHERE instance_id = 7 AND measurement_id = 1",
@@ -229,6 +252,39 @@ async fn upsert_uses_shared_revision_validates_and_publishes_with_durable_audit(
             .await
             .expect("audit events");
     assert_eq!(outcomes, ["attempted", "succeeded"]);
+}
+
+#[tokio::test]
+async fn committed_route_stays_revoked_when_complete_topology_publication_fails() {
+    let fixture = Fixture::new().await;
+    sqlx::query("DROP TABLE action_routing")
+        .execute(&fixture.pool)
+        .await
+        .expect("inject topology publication failure");
+
+    let (status, body) = fixture.put(1, 5).await;
+
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["data"]["runtime"]["status"], "measurements_revoked");
+    assert_eq!(body["data"]["runtime"]["reconciliation_required"], true);
+    assert_eq!(body["data"]["retryable"], false);
+    let stored: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM measurement_routing \
+         WHERE instance_id = 7 AND measurement_id = 1",
+    )
+    .fetch_one(&fixture.pool)
+    .await
+    .expect("committed measurement route");
+    assert_eq!(stored, 1);
+    assert!(
+        fixture
+            .manager
+            .runtime_topology()
+            .load()
+            .measurement_route(7, 1)
+            .is_none(),
+        "failed publication must keep measurement routing revoked"
+    );
 }
 
 #[tokio::test]
@@ -277,4 +333,85 @@ async fn delete_requires_the_current_revision_and_advances_the_shared_head() {
         .await
         .expect("route count");
     assert_eq!(remaining, 0);
+}
+
+#[tokio::test]
+async fn point_detail_keeps_disabled_routing_visible_at_the_returned_revision() {
+    let fixture = Fixture::new().await;
+    assert_eq!(fixture.put(1, 5).await.0, StatusCode::OK);
+    let (status, body) = fixture
+        .request(
+            "PATCH",
+            serde_json::json!({
+                "enabled": false,
+                "expected_revision": 2,
+                "confirmed": true
+            }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["data"]["resulting_revision"], 3);
+
+    let response = fixture
+        .router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/instances/7/measurements/1")
+                .body(Body::empty())
+                .expect("point-detail request"),
+        )
+        .await
+        .expect("point-detail response");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.headers()["etag"], "\"3\"");
+    let body: serde_json::Value = serde_json::from_slice(
+        &response
+            .into_body()
+            .collect()
+            .await
+            .expect("point-detail body")
+            .to_bytes(),
+    )
+    .expect("typed point-detail response");
+    assert_eq!(
+        body.pointer("/data/routing/enabled"),
+        Some(&serde_json::json!(false)),
+        "disabled routing must remain visible for management"
+    );
+    assert_eq!(
+        body.pointer("/data/routing/channel_point_name"),
+        Some(&serde_json::json!("temperature"))
+    );
+
+    let response = fixture
+        .router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/instances/7/points")
+                .body(Body::empty())
+                .expect("instance-points request"),
+        )
+        .await
+        .expect("instance-points response");
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: serde_json::Value = serde_json::from_slice(
+        &response
+            .into_body()
+            .collect()
+            .await
+            .expect("instance-points body")
+            .to_bytes(),
+    )
+    .expect("typed instance-points response");
+    assert_eq!(
+        body.pointer("/data/logical_routing_revision"),
+        Some(&serde_json::json!(3))
+    );
+    assert_eq!(
+        body.pointer("/data/measurements/0/routing/enabled"),
+        Some(&serde_json::json!(false))
+    );
 }

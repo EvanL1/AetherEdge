@@ -2,24 +2,17 @@
 //!
 //! Data collection via HTTP REST API polling with JSONPath mapping.
 //!
-//! ## Design Overview
-//!
-//! Two operating modes:
-//! - **Polling**: io actively fetches data from device REST APIs
-//! - **Webhook**: Device pushes data to io (requires API route integration)
-//!
-//! This file implements Polling mode. Webhook mode requires integration
-//! with the io API server and is handled separately.
+//! The unified channel task owns the polling loop and reconnect policy. This
+//! adapter performs one bounded request per `poll_once` call.
 //!
 //! ## Configuration Example
 //!
 //! ```json
 //! {
-//!   "mode": "polling",
 //!   "url": "http://192.168.1.100/api/data",
 //!   "method": "GET",
 //!   "headers": {"Authorization": "Bearer xxx"},
-//!   "interval_ms": 5000,
+//!   "poll_interval_ms": 5000,
 //!   "timeout_ms": 3000,
 //!   "json_mapping": {
 //!     "timestamp_path": "$.timestamp"
@@ -27,295 +20,117 @@
 //! }
 //! ```
 
+use aether_config::io::MAX_CHANNEL_TIMING_MS;
 use async_trait::async_trait;
+use bytes::{Bytes, BytesMut};
+use futures::StreamExt;
 use reqwest::{Client, Method};
 use serde::{Deserialize, Serialize};
-use sqlx::SqlitePool;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::time::Duration;
-use tokio::sync::broadcast;
-use tracing::{debug, error, info, trace};
+use tracing::{debug, info};
 
+use crate::core::channels::RuntimeChannelConfig;
 use crate::protocols::ChannelRuntime;
+use crate::protocols::adapters::json_mapper::{JsonMapper, JsonMappingConfig};
 use crate::protocols::core::data::DataBatch;
 use crate::protocols::core::diagnostics::AtomicDiagnostics;
 use crate::protocols::core::error::{GatewayError, Result};
-use crate::protocols::core::json_mapper::{JsonMapper, JsonMappingConfig};
-use crate::protocols::core::traits::{
-    ConnectionState, DataEvent, DataEventReceiver, DataEventSender, Diagnostics, PollResult,
-};
-
-/// HTTP channel operating mode
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum HttpMode {
-    /// Polling mode: io fetches data at intervals
-    #[default]
-    Polling,
-    /// Webhook mode: device pushes data to io
-    Webhook,
-}
+use crate::protocols::core::traits::{ConnectionState, Diagnostics, PollResult};
 
 /// HTTP method for requests
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "UPPERCASE")]
-pub enum HttpMethod {
+enum HttpMethod {
     #[default]
-    GET,
-    POST,
-    PUT,
+    Get,
+    Post,
+    Put,
 }
 
 impl From<HttpMethod> for Method {
     fn from(m: HttpMethod) -> Self {
         match m {
-            HttpMethod::GET => Method::GET,
-            HttpMethod::POST => Method::POST,
-            HttpMethod::PUT => Method::PUT,
+            HttpMethod::Get => Method::GET,
+            HttpMethod::Post => Method::POST,
+            HttpMethod::Put => Method::PUT,
         }
     }
 }
 
 /// HTTP channel parameters (from database config JSON)
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct HttpParamsConfig {
-    /// Operating mode
-    #[serde(default)]
-    pub mode: HttpMode,
-
-    /// Target URL for polling mode
-    #[serde(default)]
-    pub url: Option<String>,
+#[serde(deny_unknown_fields)]
+pub(crate) struct HttpParamsConfig {
+    /// Target URL
+    url: String,
 
     /// HTTP method for polling
     #[serde(default)]
-    pub method: HttpMethod,
+    method: HttpMethod,
 
     /// Request headers
     #[serde(default)]
-    pub headers: HashMap<String, String>,
+    headers: HashMap<String, String>,
 
     /// Request body (for POST/PUT)
     #[serde(default)]
-    pub body: Option<String>,
-
-    /// Polling interval in milliseconds
-    #[serde(default = "default_interval_ms")]
-    pub interval_ms: u64,
+    body: Option<String>,
 
     /// Request timeout in milliseconds
     #[serde(default = "default_timeout_ms")]
-    pub timeout_ms: u64,
+    timeout_ms: u64,
 
     /// JSON mapping configuration
     #[serde(default)]
-    pub json_mapping: JsonMappingConfig,
-
-    // === Webhook mode specific ===
-    /// Webhook listen path (for webhook mode)
-    #[serde(default)]
-    pub listen_path: Option<String>,
-
-    /// Authentication token for webhook validation
-    #[serde(default)]
-    pub auth_token: Option<String>,
-
-    /// Maximum retries on failure
-    #[serde(default = "default_max_retries")]
-    pub max_retries: u32,
-
-    /// Retry delay in milliseconds
-    #[serde(default = "default_retry_delay_ms")]
-    pub retry_delay_ms: u64,
-}
-
-fn default_interval_ms() -> u64 {
-    5000
+    json_mapping: JsonMappingConfig,
 }
 
 fn default_timeout_ms() -> u64 {
     3000
 }
 
-fn default_max_retries() -> u32 {
-    3
-}
-
-fn default_retry_delay_ms() -> u64 {
-    1000
-}
-
-impl Default for HttpParamsConfig {
-    fn default() -> Self {
-        Self {
-            mode: HttpMode::Polling,
-            url: None,
-            method: HttpMethod::GET,
-            headers: HashMap::new(),
-            body: None,
-            interval_ms: default_interval_ms(),
-            timeout_ms: default_timeout_ms(),
-            json_mapping: JsonMappingConfig::default(),
-            listen_path: None,
-            auth_token: None,
-            max_retries: default_max_retries(),
-            retry_delay_ms: default_retry_delay_ms(),
-        }
-    }
-}
-
 impl HttpParamsConfig {
-    /// Convert to runtime configuration
-    pub fn to_config(&self) -> HttpConfig {
-        HttpConfig {
-            mode: self.mode,
-            url: self.url.clone(),
-            method: self.method,
-            headers: self.headers.clone(),
-            body: self.body.clone(),
-            interval: Duration::from_millis(self.interval_ms),
-            timeout: Duration::from_millis(self.timeout_ms),
-            json_mapping: self.json_mapping.clone(),
-            listen_path: self.listen_path.clone(),
-            auth_token: self.auth_token.clone(),
-            max_retries: self.max_retries,
-            retry_delay: Duration::from_millis(self.retry_delay_ms),
-        }
-    }
-}
-
-/// HTTP runtime configuration
-#[derive(Debug, Clone)]
-pub struct HttpConfig {
-    pub mode: HttpMode,
-    pub url: Option<String>,
-    pub method: HttpMethod,
-    pub headers: HashMap<String, String>,
-    pub body: Option<String>,
-    pub interval: Duration,
-    pub timeout: Duration,
-    pub json_mapping: JsonMappingConfig,
-    pub listen_path: Option<String>,
-    pub auth_token: Option<String>,
-    pub max_retries: u32,
-    pub retry_delay: Duration,
-}
-
-/// Build an HTTP request with configured method, headers, and optional body.
-fn build_request(client: &Client, config: &HttpConfig, url: &str) -> reqwest::RequestBuilder {
-    let mut request = client.request(config.method.into(), url);
-    for (key, value) in &config.headers {
-        request = request.header(key.as_str(), value.as_str());
-    }
-    if let Some(body) = &config.body {
-        request = request
-            .header("Content-Type", "application/json")
-            .body(body.clone());
-    }
-    request
-}
-
-/// Guard against oversized responses to prevent OOM (max 10MB).
-fn check_response_size(response: &reqwest::Response) -> Result<()> {
-    if let Some(len) = response.content_length()
-        && len > 10 * 1024 * 1024
-    {
-        return Err(GatewayError::Protocol(format!(
-            "Response too large: {len} bytes (max 10MB)"
-        )));
-    }
-    Ok(())
-}
-
-/// HTTP Channel implementation (Polling mode)
-///
-/// Polls a device REST API at configured intervals and extracts
-/// data points from JSON responses using JSONPath mappings.
-pub struct HttpChannel {
-    /// Channel configuration
-    config: HttpConfig,
-    /// Channel ID
-    channel_id: u32,
-    /// Channel name
-    name: String,
-    /// JSON mapper (loaded from database)
-    mapper: Option<Arc<JsonMapper>>,
-    /// HTTP client
-    client: Option<Client>,
-    /// Polling task handle
-    poll_task_handle: Option<tokio::task::JoinHandle<()>>,
-    /// Connection state
-    state: AtomicU8,
-    /// Event broadcast sender (for webhook mode or optional polling events)
-    event_tx: DataEventSender,
-    /// Diagnostics
-    diagnostics: Arc<AtomicDiagnostics>,
-    /// Database pool for loading mappings
-    db_pool: Option<SqlitePool>,
-    /// Consecutive failure count
-    consecutive_failures: std::sync::atomic::AtomicU32,
-}
-
-impl HttpChannel {
-    /// Create a new HTTP channel
-    pub fn new(config: HttpConfig, channel_id: u32, name: String) -> Self {
-        let (event_tx, _) = broadcast::channel(256);
-
-        Self {
-            config,
-            channel_id,
-            name,
-            mapper: None,
-            client: None,
-            poll_task_handle: None,
-            state: AtomicU8::new(ConnectionState::Disconnected as u8),
-            event_tx,
-            diagnostics: Arc::new(AtomicDiagnostics::new()),
-            db_pool: None,
-            consecutive_failures: std::sync::atomic::AtomicU32::new(0),
+    fn blocked_ip(ip: std::net::IpAddr) -> bool {
+        match ip {
+            std::net::IpAddr::V4(v4) => {
+                v4.is_loopback() || v4.is_link_local() || v4.is_unspecified()
+            },
+            std::net::IpAddr::V6(v6) => {
+                v6.is_loopback()
+                    || v6.is_unicast_link_local()
+                    || v6.is_unspecified()
+                    || v6
+                        .to_ipv4_mapped()
+                        .is_some_and(|v4| Self::blocked_ip(v4.into()))
+            },
         }
     }
 
-    /// Load JSON mappings from database
-    async fn load_mapper(&mut self) -> Result<()> {
-        if self.mapper.is_some() {
-            return Ok(());
+    pub(crate) fn validate(&self) -> Result<()> {
+        let url = self.url.trim();
+        if url.is_empty() {
+            return Err(GatewayError::Config(
+                "HTTP url must be a non-empty string".to_string(),
+            ));
         }
-
-        let pool = self.db_pool.as_ref().ok_or_else(|| {
-            GatewayError::Config("Database pool not set for HTTP channel".to_string())
-        })?;
-
-        let mapper = JsonMapper::from_database(pool, self.channel_id)
-            .await?
-            .with_config(&self.config.json_mapping)?;
-
-        info!(
-            channel_id = self.channel_id,
-            mapping_count = mapper.len(),
-            "Loaded HTTP JSON mappings"
-        );
-
-        self.mapper = Some(Arc::new(mapper));
+        Self::validate_url(url)?;
+        if !(1..=MAX_CHANNEL_TIMING_MS).contains(&self.timeout_ms) {
+            return Err(GatewayError::Config(format!(
+                "HTTP timeout_ms must be between 1 and {MAX_CHANNEL_TIMING_MS} milliseconds"
+            )));
+        }
+        for (name, value) in &self.headers {
+            reqwest::header::HeaderName::from_bytes(name.as_bytes()).map_err(|error| {
+                GatewayError::Config(format!("Invalid HTTP header name '{name}': {error}"))
+            })?;
+            reqwest::header::HeaderValue::from_bytes(value.as_bytes()).map_err(|error| {
+                GatewayError::Config(format!("Invalid HTTP header value for '{name}': {error}"))
+            })?;
+        }
         Ok(())
-    }
-
-    /// Set connection state
-    fn set_state(&self, state: ConnectionState) {
-        self.state.store(state as u8, Ordering::SeqCst);
-        if let Err(e) = self.event_tx.send(DataEvent::ConnectionChanged(state)) {
-            trace!("No subscribers for ConnectionChanged event: {e}");
-        }
-    }
-
-    /// Create HTTP client
-    fn create_client(&self) -> Result<Client> {
-        Client::builder()
-            .timeout(self.config.timeout)
-            .build()
-            .map_err(|e| GatewayError::Protocol(format!("Failed to create HTTP client: {e}")))
     }
 
     /// Validate URL to prevent SSRF attacks targeting internal services.
@@ -330,51 +145,168 @@ impl HttpChannel {
             .host_str()
             .ok_or_else(|| GatewayError::Config("URL has no host".into()))?;
         let host_lower = host.to_lowercase();
+        if !matches!(parsed.scheme(), "http" | "https") {
+            return Err(GatewayError::Config(
+                "HTTP url must use the http or https scheme".to_string(),
+            ));
+        }
+        if !parsed.username().is_empty() || parsed.password().is_some() {
+            return Err(GatewayError::Config(
+                "HTTP URL credentials must be supplied through request headers".to_string(),
+            ));
+        }
+        if parsed.fragment().is_some() {
+            return Err(GatewayError::Config(
+                "HTTP URL fragments are not sent to devices and are therefore unsupported"
+                    .to_string(),
+            ));
+        }
 
-        // Block well-known internal hostnames
-        if host_lower == "localhost" || host_lower == "0.0.0.0" {
+        // Block well-known loopback aliases as well as the RFC 6761
+        // localhost namespace. Private-LAN device names remain allowed.
+        if host_lower == "localhost"
+            || host_lower.ends_with(".localhost")
+            || matches!(
+                host_lower.as_str(),
+                "localhost.localdomain"
+                    | "localhost6"
+                    | "localhost6.localdomain6"
+                    | "ip6-localhost"
+                    | "ip6-loopback"
+            )
+        {
             return Err(GatewayError::Config(format!(
                 "SSRF protection: blocked request to internal address '{host}'"
             )));
         }
 
-        // IP-based checks: block loopback and link-local addresses
-        // Note: RFC 1918 private addresses are allowed (industrial devices live there)
-        if let Ok(ip) = host.parse::<std::net::IpAddr>() {
-            let is_blocked = match ip {
-                std::net::IpAddr::V4(v4) => {
-                    v4.is_loopback()       // 127.0.0.0/8
-                    || v4.is_link_local()  // 169.254.0.0/16
-                    || v4.is_unspecified() // 0.0.0.0
-                },
-                std::net::IpAddr::V6(v6) => {
-                    v6.is_loopback()       // ::1
-                    || v6.is_unspecified() // ::
-                },
-            };
-            if is_blocked {
-                return Err(GatewayError::Config(format!(
-                    "SSRF protection: blocked request to internal address '{host}'"
-                )));
-            }
+        // Industrial devices commonly use RFC 1918 addresses, so only
+        // loopback, link-local, and unspecified IPs are rejected.
+        let ip_literal = host
+            .strip_prefix('[')
+            .and_then(|host| host.strip_suffix(']'))
+            .unwrap_or(host);
+        if let Ok(ip) = ip_literal.parse::<std::net::IpAddr>()
+            && Self::blocked_ip(ip)
+        {
+            return Err(GatewayError::Config(format!(
+                "SSRF protection: blocked request to internal address '{host}'"
+            )));
         }
 
         Ok(())
     }
+}
+
+/// Build an HTTP request with configured method, headers, and optional body.
+fn build_request(client: &Client, config: &HttpParamsConfig, url: &str) -> reqwest::RequestBuilder {
+    let mut request = client.request(config.method.into(), url);
+    for (key, value) in &config.headers {
+        request = request.header(key.as_str(), value.as_str());
+    }
+    if let Some(body) = &config.body {
+        request = request
+            .header("Content-Type", "application/json")
+            .body(body.clone());
+    }
+    request
+}
+
+const MAX_RESPONSE_BYTES: usize = 10 * 1024 * 1024;
+
+/// Read a response with a hard limit even when the peer omits Content-Length.
+async fn read_bounded_body(response: reqwest::Response) -> Result<Bytes> {
+    if let Some(len) = response.content_length()
+        && len > MAX_RESPONSE_BYTES as u64
+    {
+        return Err(GatewayError::Protocol(format!(
+            "Response too large: {len} bytes (max {MAX_RESPONSE_BYTES} bytes)"
+        )));
+    }
+
+    let mut body = BytesMut::new();
+    let mut stream = response.bytes_stream();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|error| {
+            GatewayError::Protocol(format!("Failed to read response body: {error}"))
+        })?;
+        let next_len = body
+            .len()
+            .checked_add(chunk.len())
+            .ok_or_else(|| GatewayError::Protocol("HTTP response size overflow".to_string()))?;
+        if next_len > MAX_RESPONSE_BYTES {
+            return Err(GatewayError::Protocol(format!(
+                "Response exceeds {MAX_RESPONSE_BYTES} bytes"
+            )));
+        }
+        body.extend_from_slice(&chunk);
+    }
+    Ok(body.freeze())
+}
+
+/// HTTP Channel implementation (Polling mode)
+///
+/// Polls a device REST API at configured intervals and extracts
+/// data points from JSON responses using JSONPath mappings.
+pub(crate) struct HttpChannel {
+    /// Channel configuration
+    config: HttpParamsConfig,
+    /// Channel ID
+    channel_id: u32,
+    /// JSON mapper compiled from the immutable runtime snapshot
+    mapper: JsonMapper,
+    /// HTTP client
+    client: Option<Client>,
+    /// Connection state
+    state: AtomicU8,
+    /// Diagnostics
+    diagnostics: Arc<AtomicDiagnostics>,
+}
+
+impl HttpChannel {
+    /// Create a new HTTP channel from one complete runtime snapshot.
+    pub(crate) fn new(config: HttpParamsConfig, runtime: &RuntimeChannelConfig) -> Result<Self> {
+        config.validate()?;
+        let mapper = JsonMapper::from_runtime_config(runtime)?.with_config(&config.json_mapping)?;
+
+        info!(
+            channel_id = runtime.id(),
+            mapping_count = mapper.len(),
+            "Compiled HTTP JSON mappings"
+        );
+
+        Ok(Self {
+            config,
+            channel_id: runtime.id(),
+            mapper,
+            client: None,
+            state: AtomicU8::new(ConnectionState::Disconnected as u8),
+            diagnostics: Arc::new(AtomicDiagnostics::new()),
+        })
+    }
+
+    /// Set connection state
+    fn set_state(&self, state: ConnectionState) {
+        self.state.store(state as u8, Ordering::SeqCst);
+    }
+
+    /// Create HTTP client
+    fn create_client(&self) -> Result<Client> {
+        Client::builder()
+            .timeout(Duration::from_millis(self.config.timeout_ms))
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .map_err(|e| GatewayError::Protocol(format!("Failed to create HTTP client: {e}")))
+    }
 
     /// Execute a single poll request
     async fn poll_once_internal(&self) -> Result<DataBatch> {
-        let url = self.config.url.as_ref().ok_or_else(|| {
-            GatewayError::Config("No URL configured for HTTP polling".to_string())
-        })?;
+        let url = &self.config.url;
         let client = self
             .client
             .as_ref()
             .ok_or_else(|| GatewayError::Protocol("HTTP client not initialized".to_string()))?;
-        let mapper = self
-            .mapper
-            .as_ref()
-            .ok_or_else(|| GatewayError::Config("JSON mapper not configured".to_string()))?;
+        let mapper = &self.mapper;
 
         let response = build_request(client, &self.config, url)
             .send()
@@ -389,12 +321,7 @@ impl HttpChannel {
                 status.canonical_reason().unwrap_or("Unknown")
             )));
         }
-        check_response_size(&response)?;
-
-        let body = response
-            .bytes()
-            .await
-            .map_err(|e| GatewayError::Protocol(format!("Failed to read response body: {e}")))?;
+        let body = read_bounded_body(response).await?;
 
         let batch = mapper.parse(&body)?;
         debug!(
@@ -405,130 +332,16 @@ impl HttpChannel {
         );
         Ok(batch)
     }
-
-    /// Run the polling loop (for background polling mode)
-    async fn run_poll_loop(
-        channel_id: u32,
-        client: Client,
-        config: HttpConfig,
-        mapper: Arc<JsonMapper>,
-        state: Arc<AtomicU8>,
-        event_tx: DataEventSender,
-        diagnostics: Arc<AtomicDiagnostics>,
-    ) {
-        let url = match &config.url {
-            Some(u) => u.clone(),
-            None => {
-                error!(channel_id, "No URL configured for HTTP polling");
-                return;
-            },
-        };
-
-        info!(
-            channel_id,
-            url = %url,
-            interval_ms = config.interval.as_millis(),
-            "HTTP polling loop started"
-        );
-
-        let mut interval = tokio::time::interval(config.interval);
-        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-        let mut consecutive_failures = 0u32;
-
-        loop {
-            interval.tick().await;
-
-            let response = match build_request(&client, &config, &url).send().await {
-                Ok(r) => r,
-                Err(e) => {
-                    consecutive_failures += 1;
-                    debug!(channel_id, error = %e, "HTTP request failed");
-                    diagnostics.record_error(e.to_string());
-                    if consecutive_failures >= config.max_retries && config.max_retries > 0 {
-                        state.store(ConnectionState::Error as u8, Ordering::SeqCst);
-                        let _ = event_tx.send(DataEvent::ConnectionChanged(ConnectionState::Error));
-                        let _ = event_tx.send(DataEvent::Error(e.to_string()));
-                    }
-                    continue;
-                },
-            };
-
-            if !response.status().is_success() {
-                consecutive_failures += 1;
-                let status = response.status().as_u16();
-                debug!(channel_id, status, "HTTP request returned error status");
-                diagnostics.record_error(format!("HTTP status {status}"));
-                continue;
-            }
-
-            if let Some(len) = response.content_length()
-                && len > 10 * 1024 * 1024
-            {
-                diagnostics.record_error(format!("Response too large: {len} bytes (max 10MB)"));
-                consecutive_failures += 1;
-                continue;
-            }
-
-            let body = match response.bytes().await {
-                Ok(b) => b,
-                Err(e) => {
-                    debug!(channel_id, error = %e, "Failed to read response body");
-                    diagnostics.record_error(e.to_string());
-                    continue;
-                },
-            };
-
-            match mapper.parse(&body) {
-                Ok(batch) => {
-                    if !batch.is_empty() {
-                        diagnostics.add_read(batch.len() as u64);
-                        let _ = event_tx.send(DataEvent::DataUpdate(Arc::new(batch)));
-                    }
-                    consecutive_failures = 0;
-                    state.store(ConnectionState::Connected as u8, Ordering::SeqCst);
-                },
-                Err(e) => {
-                    debug!(channel_id, error = %e, "Failed to parse HTTP response");
-                    diagnostics.record_error(e.to_string());
-                },
-            }
-        }
-    }
 }
 
 #[async_trait]
 impl ChannelRuntime for HttpChannel {
-    fn id(&self) -> u32 {
-        self.channel_id
-    }
-
-    fn name(&self) -> &str {
-        &self.name
-    }
-
-    fn protocol(&self) -> &str {
-        "http"
-    }
-
-    fn is_event_driven(&self) -> bool {
-        // Webhook mode is event-driven, polling mode is not
-        self.config.mode == HttpMode::Webhook
-    }
-
     async fn connect(&mut self) -> Result<()> {
         if self.client.is_some() {
             return Ok(());
         }
 
         self.set_state(ConnectionState::Connecting);
-
-        // SSRF protection: validate URL once at connect time
-        if let Some(url) = &self.config.url {
-            Self::validate_url(url)?;
-        }
-
-        // Load JSON mappings if not already loaded
-        self.load_mapper().await?;
 
         // Create HTTP client
         let client = self.create_client()?;
@@ -538,8 +351,7 @@ impl ChannelRuntime for HttpChannel {
 
         info!(
             channel_id = self.channel_id,
-            mode = ?self.config.mode,
-            url = ?self.config.url,
+            url = %self.config.url,
             "HTTP channel connected"
         );
 
@@ -547,11 +359,6 @@ impl ChannelRuntime for HttpChannel {
     }
 
     async fn disconnect(&mut self) -> Result<()> {
-        // Stop polling task if running
-        if let Some(handle) = self.poll_task_handle.take() {
-            handle.abort();
-        }
-
         self.client = None;
         self.set_state(ConnectionState::Disconnected);
 
@@ -560,94 +367,19 @@ impl ChannelRuntime for HttpChannel {
     }
 
     async fn poll_once(&mut self) -> PollResult {
-        // Only polling mode supports poll_once
-        if self.config.mode != HttpMode::Polling {
-            return PollResult::success(DataBatch::new());
-        }
-
         match self.poll_once_internal().await {
             Ok(batch) => {
-                self.consecutive_failures.store(0, Ordering::SeqCst);
                 self.diagnostics.add_read(batch.len() as u64);
+                self.set_state(ConnectionState::Connected);
                 PollResult::success(batch)
             },
             Err(e) => {
-                // Protocol-level error (not point-level), return empty result
-                // Error is already recorded in diagnostics
-                self.consecutive_failures.fetch_add(1, Ordering::SeqCst);
                 self.diagnostics.record_error(e.to_string());
+                self.client = None;
+                self.set_state(ConnectionState::Error);
                 PollResult::success(DataBatch::new())
             },
         }
-    }
-
-    async fn write_control(&mut self, _commands: &[(u32, f64)]) -> Result<usize> {
-        // HTTP polling is typically read-only
-        // Control would require POSTing to device-specific endpoints
-        Err(GatewayError::Protocol(
-            "HTTP channel does not support control commands".to_string(),
-        ))
-    }
-
-    async fn write_adjustment(&mut self, _adjustments: &[(u32, f64)]) -> Result<usize> {
-        Err(GatewayError::Protocol(
-            "HTTP channel does not support adjustment commands".to_string(),
-        ))
-    }
-
-    fn subscribe(&self) -> Option<DataEventReceiver> {
-        // Both modes support subscribe for monitoring
-        Some(self.event_tx.subscribe())
-    }
-
-    async fn start_events(&mut self) -> Result<()> {
-        // Connect if not already connected
-        if self.client.is_none() {
-            self.connect().await?;
-        }
-
-        // For polling mode, start background polling task
-        if self.config.mode == HttpMode::Polling && self.poll_task_handle.is_none() {
-            let mapper = self.mapper.clone().ok_or_else(|| {
-                GatewayError::Config("Mapper not loaded for HTTP polling".to_string())
-            })?;
-            let client = self
-                .client
-                .clone()
-                .ok_or_else(|| GatewayError::Config("HTTP client not initialized".to_string()))?;
-            let config = self.config.clone();
-            let channel_id = self.channel_id;
-            let state = Arc::new(AtomicU8::new(ConnectionState::Connected as u8));
-            let event_tx = self.event_tx.clone();
-            let diagnostics = self.diagnostics.clone();
-
-            let handle = tokio::spawn(async move {
-                Self::run_poll_loop(
-                    channel_id,
-                    client,
-                    config,
-                    mapper,
-                    state,
-                    event_tx,
-                    diagnostics,
-                )
-                .await;
-            });
-
-            self.poll_task_handle = Some(handle);
-            info!(channel_id = self.channel_id, "HTTP polling task started");
-        }
-
-        Ok(())
-    }
-
-    async fn stop_events(&mut self) -> Result<()> {
-        // Stop polling task
-        if let Some(handle) = self.poll_task_handle.take() {
-            handle.abort();
-            info!(channel_id = self.channel_id, "HTTP polling task stopped");
-        }
-        Ok(())
     }
 
     async fn diagnostics(&self) -> Result<Diagnostics> {
@@ -672,88 +404,76 @@ impl std::fmt::Debug for HttpChannel {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("HttpChannel")
             .field("channel_id", &self.channel_id)
-            .field("name", &self.name)
-            .field("mode", &self.config.mode)
             .field("url", &self.config.url)
             .field("state", &self.connection_state())
             .finish()
     }
 }
 
-// ============================================================================
-// Webhook Handler (for API integration)
-// ============================================================================
+use crate::protocols::core::metadata::{
+    DriverMetadata, HasMetadata, ParameterMetadata, ParameterType,
+};
 
-/// Webhook data handler for processing incoming HTTP POST requests
-///
-/// This struct is designed to be integrated with the io API router.
-/// It validates incoming requests and processes JSON payloads.
-#[derive(Clone)]
-pub struct WebhookHandler {
-    /// Channel ID
-    pub channel_id: u32,
-    /// JSON mapper
-    pub mapper: Arc<JsonMapper>,
-    /// Event sender
-    pub event_tx: DataEventSender,
-    /// Authentication token (optional)
-    pub auth_token: Option<String>,
-    /// Diagnostics
-    pub diagnostics: Arc<AtomicDiagnostics>,
-}
-
-impl WebhookHandler {
-    /// Create a new webhook handler
-    pub fn new(
-        channel_id: u32,
-        mapper: Arc<JsonMapper>,
-        event_tx: DataEventSender,
-        auth_token: Option<String>,
-    ) -> Self {
-        Self {
-            channel_id,
-            mapper,
-            event_tx,
-            auth_token,
-            diagnostics: Arc::new(AtomicDiagnostics::new()),
+impl HasMetadata for HttpChannel {
+    #[allow(clippy::disallowed_methods)]
+    fn metadata() -> DriverMetadata {
+        DriverMetadata {
+            name: "http",
+            display_name: "HTTP JSON Polling",
+            description: "Read-only HTTP polling with point-owned JSONPath mappings.",
+            is_recommended: true,
+            example_config: serde_json::json!({
+                "url": "http://192.168.1.100/api/data",
+                "method": "GET",
+                "poll_interval_ms": 5000,
+                "timeout_ms": 3000
+            }),
+            parameters: vec![
+                ParameterMetadata::required(
+                    "url",
+                    "URL",
+                    "HTTP or HTTPS endpoint polled for JSON data",
+                    ParameterType::String,
+                )
+                .with_min_length(1),
+                ParameterMetadata::optional(
+                    "method",
+                    "Method",
+                    "HTTP request method: GET, POST, or PUT",
+                    ParameterType::String,
+                    serde_json::json!("GET"),
+                ),
+                ParameterMetadata::optional(
+                    "headers",
+                    "Headers",
+                    "Request headers",
+                    ParameterType::Object,
+                    serde_json::json!({}),
+                ),
+                ParameterMetadata::optional(
+                    "body",
+                    "Body",
+                    "Optional request body for POST or PUT",
+                    ParameterType::String,
+                    serde_json::Value::Null,
+                ),
+                ParameterMetadata::optional(
+                    "timeout_ms",
+                    "Request Timeout (ms)",
+                    "Timeout for one HTTP request",
+                    ParameterType::Integer,
+                    serde_json::json!(3000),
+                )
+                .with_integer_range(1, 86_400_000),
+                ParameterMetadata::optional(
+                    "json_mapping",
+                    "JSON Mapping",
+                    "Optional source timestamp JSONPath settings",
+                    ParameterType::Object,
+                    serde_json::json!({}),
+                ),
+            ],
         }
-    }
-
-    /// Process incoming webhook payload
-    ///
-    /// Returns the number of extracted data points, or an error.
-    pub fn process(&self, payload: &[u8], auth_header: Option<&str>) -> Result<usize> {
-        // Validate auth token if configured
-        if let Some(expected) = &self.auth_token {
-            let provided = auth_header.ok_or_else(|| {
-                GatewayError::Protocol("Missing authorization header".to_string())
-            })?;
-
-            // Support "Bearer <token>" format
-            let token = provided.strip_prefix("Bearer ").unwrap_or(provided);
-            if token != expected {
-                return Err(GatewayError::Protocol(
-                    "Invalid authorization token".to_string(),
-                ));
-            }
-        }
-
-        // Parse payload
-        let batch = self.mapper.parse(payload)?;
-        let count = batch.len();
-
-        if !batch.is_empty() {
-            self.diagnostics.add_read(count as u64);
-            let _ = self.event_tx.send(DataEvent::DataUpdate(Arc::new(batch)));
-        }
-
-        debug!(
-            channel_id = self.channel_id,
-            points = count,
-            "Processed webhook payload"
-        );
-
-        Ok(count)
     }
 }
 
@@ -761,46 +481,51 @@ impl WebhookHandler {
 #[allow(clippy::disallowed_methods)]
 mod tests {
     use super::*;
+    use crate::core::config::{ChannelConfig, ChannelCore, ChannelLoggingConfig};
 
-    #[test]
-    fn test_http_params_default() {
-        let params = HttpParamsConfig::default();
-        assert_eq!(params.mode, HttpMode::Polling);
-        assert!(params.url.is_none());
-        assert_eq!(params.method, HttpMethod::GET);
-        assert!(params.headers.is_empty());
+    fn runtime_snapshot(parameters: HashMap<String, serde_json::Value>) -> RuntimeChannelConfig {
+        RuntimeChannelConfig::from_base(ChannelConfig {
+            core: ChannelCore {
+                id: 1,
+                name: "http-test".to_string(),
+                description: None,
+                protocol: "http".to_string(),
+                enabled: true,
+            },
+            parameters,
+            logging: ChannelLoggingConfig::default(),
+        })
     }
 
     #[test]
     fn test_http_params_deserialize() {
         let json = r#"{
-            "mode": "polling",
             "url": "http://192.168.1.100/api/data",
             "method": "GET",
             "headers": {"Authorization": "Bearer xxx"},
-            "interval_ms": 5000,
             "timeout_ms": 3000
         }"#;
 
         let params: HttpParamsConfig = serde_json::from_str(json).unwrap();
-        assert_eq!(params.mode, HttpMode::Polling);
-        assert_eq!(
-            params.url,
-            Some("http://192.168.1.100/api/data".to_string())
-        );
-        assert_eq!(params.interval_ms, 5000);
+        assert_eq!(params.url, "http://192.168.1.100/api/data");
+        assert_eq!(params.timeout_ms, 3000);
         assert!(params.headers.contains_key("Authorization"));
     }
 
     #[test]
-    fn test_http_mode_deserialize() {
-        assert_eq!(
-            serde_json::from_str::<HttpMode>(r#""polling""#).unwrap(),
-            HttpMode::Polling
+    fn http_params_require_url_and_reject_retired_mode() {
+        assert!(serde_json::from_str::<HttpParamsConfig>(r#"{"method":"GET"}"#).is_err());
+        assert!(
+            serde_json::from_str::<HttpParamsConfig>(
+                r#"{"url":"http://192.0.2.10/data","mode":"polling"}"#,
+            )
+            .is_err()
         );
-        assert_eq!(
-            serde_json::from_str::<HttpMode>(r#""webhook""#).unwrap(),
-            HttpMode::Webhook
+        assert!(
+            serde_json::from_str::<HttpParamsConfig>(
+                r#"{"url":"http://192.0.2.10/data","mode":"webhook"}"#,
+            )
+            .is_err()
         );
     }
 
@@ -808,11 +533,79 @@ mod tests {
     fn test_http_method_deserialize() {
         assert_eq!(
             serde_json::from_str::<HttpMethod>(r#""GET""#).unwrap(),
-            HttpMethod::GET
+            HttpMethod::Get
         );
         assert_eq!(
             serde_json::from_str::<HttpMethod>(r#""POST""#).unwrap(),
-            HttpMethod::POST
+            HttpMethod::Post
         );
+    }
+
+    #[test]
+    fn webhook_and_retired_polling_fields_fail_before_connect() {
+        for (key, value) in [
+            ("mode", serde_json::json!("webhook")),
+            ("listen_path", serde_json::json!("/hooks/device")),
+            ("interval_ms", serde_json::json!(5000)),
+            ("max_retries", serde_json::json!(3)),
+        ] {
+            let mut parameters = serde_json::json!({
+                "url": "http://192.0.2.10/data"
+            });
+            parameters
+                .as_object_mut()
+                .unwrap()
+                .insert(key.to_string(), value);
+            assert!(serde_json::from_value::<HttpParamsConfig>(parameters).is_err());
+        }
+    }
+
+    #[test]
+    fn invalid_url_fails_before_connect() {
+        let mut parameters = HashMap::new();
+        parameters.insert("url".to_string(), serde_json::json!("file:///etc/passwd"));
+        let runtime = runtime_snapshot(parameters);
+        let config = HttpParamsConfig {
+            url: "file:///etc/passwd".to_string(),
+            method: HttpMethod::Get,
+            headers: HashMap::new(),
+            body: None,
+            timeout_ms: 3000,
+            json_mapping: JsonMappingConfig::default(),
+        };
+
+        let error = HttpChannel::new(config, &runtime).expect_err("unsupported scheme");
+        assert!(
+            error.to_string().contains("URL has no host")
+                || error.to_string().contains("http or https")
+        );
+    }
+
+    #[test]
+    fn ssrf_validation_blocks_ipv6_and_localhost_aliases() {
+        for url in [
+            "http://127.0.0.1/data",
+            "http://169.254.1.2/data",
+            "http://0.0.0.0/data",
+            "http://[::1]/data",
+            "http://[::]/data",
+            "http://[fe80::1]/data",
+            "http://[::ffff:127.0.0.1]/data",
+            "http://device.localhost/data",
+            "http://localhost.localdomain/data",
+            "http://ip6-localhost/data",
+            "http://ip6-loopback/data",
+        ] {
+            assert!(HttpParamsConfig::validate_url(url).is_err(), "{url}");
+        }
+
+        for url in [
+            "http://192.168.1.10/data",
+            "http://10.0.0.20/data",
+            "http://[fd00::20]/data",
+            "https://device.internal/data",
+        ] {
+            assert!(HttpParamsConfig::validate_url(url).is_ok(), "{url}");
+        }
     }
 }

@@ -15,12 +15,12 @@
 //! let config = Iec104ChannelConfig::new("192.168.1.100:2404")
 //!     .with_common_address(1);
 //!
-//! let mut channel = Iec104Channel::new(config, store);
+//! let mut channel = Iec104Channel::new(config);
 //! channel.connect().await?;
 //! channel.start_data_transfer().await?;
 //!
-//! // Receive events via subscription
-//! let mut rx = channel.subscribe();
+//! // Take the runtime's single event receiver
+//! let mut rx = channel.take_event_receiver().expect("event receiver available");
 //! while let Some(event) = rx.recv().await {
 //!     match event {
 //!         DataEvent::DataUpdate(batch) => { /* process data */ }
@@ -35,7 +35,6 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use chrono::{DateTime, TimeZone, Utc};
-use tokio::sync::broadcast;
 use voltage_iec104::{ClientConfig, Cp56Time2a, Iec104Client, Iec104Event};
 
 use async_trait::async_trait;
@@ -52,14 +51,111 @@ use crate::protocols::core::data::{DataBatch, DataPoint, Value};
 use crate::protocols::core::diagnostics::AtomicDiagnostics;
 use crate::protocols::core::error::{GatewayError, Result};
 use crate::protocols::core::point::PointConfig;
-use crate::protocols::core::quality::Quality;
 use crate::protocols::core::traits::{
     AdjustmentCommand, CommunicationMode, ConnectionState, ControlCommand, DataEvent,
-    DataEventHandler, DataEventReceiver, DataEventSender, Diagnostics, EventDrivenProtocol,
-    PollResult, Protocol, ProtocolCapabilities, ProtocolClient, WriteResult,
+    DataEventReceiver, DataEventSender, Diagnostics, EventDrivenProtocol, PointFailure, PollResult,
+    Protocol, ProtocolCapabilities, ProtocolClient, WriteResult, data_event_channel,
 };
-use crate::protocols::gateway::ChannelRuntime;
+use crate::protocols::runtime::ChannelRuntime;
+use aether_config::io::MAX_CHANNEL_TIMING_MS;
 use aether_core::PointType;
+use aether_domain::PointQuality;
+
+/// IEC 60870-5-104 information object address owned by this adapter.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct Iec104Address {
+    pub ioa: u32,
+    pub type_id: u8,
+}
+
+impl Iec104Address {
+    pub fn new(ioa: u32, type_id: u8) -> Self {
+        Self { ioa, type_id }
+    }
+}
+
+/// Decode the persisted IEC 104 point mapping owned by this adapter.
+///
+/// Accepted representations are a JSON address string, an object containing
+/// `address`, or the structured `{ "ioa": ..., "type_id": ... }` form.
+pub(crate) fn parse_point_mapping(mapping: &str) -> Result<Iec104Address> {
+    let value: serde_json::Value = serde_json::from_str(mapping)
+        .map_err(|error| GatewayError::Config(format!("invalid IEC 104 point mapping: {error}")))?;
+    parse_point_mapping_value(&value)
+}
+
+/// Decode an IEC 104 point mapping from an already parsed JSON value.
+pub(crate) fn parse_point_mapping_value(mapping: &serde_json::Value) -> Result<Iec104Address> {
+    let values = match mapping {
+        serde_json::Value::String(address) => return parse_point_address(address),
+        serde_json::Value::Object(values) => values,
+        _ => {
+            return Err(GatewayError::Config(
+                "IEC 104 point mapping must be a string or object".to_string(),
+            ));
+        },
+    };
+
+    let allowed_fields = if values.contains_key("address") {
+        &["address"][..]
+    } else {
+        &["ioa", "type_id"][..]
+    };
+    if let Some(field) = values
+        .keys()
+        .find(|field| !allowed_fields.contains(&field.as_str()))
+    {
+        return Err(GatewayError::Config(format!(
+            "unknown IEC 104 point mapping field '{field}'"
+        )));
+    }
+
+    if let Some(address) = values.get("address") {
+        let address = address.as_str().ok_or_else(|| {
+            GatewayError::Config("IEC 104 point 'address' must be a string".to_string())
+        })?;
+        return parse_point_address(address);
+    }
+
+    let ioa = values
+        .get("ioa")
+        .and_then(serde_json::Value::as_u64)
+        .ok_or_else(|| {
+            GatewayError::Config(
+                "IEC 104 point mapping requires 'address' or numeric 'ioa'".to_string(),
+            )
+        })?;
+    let ioa = u32::try_from(ioa)
+        .map_err(|_| GatewayError::Config("IEC 104 point 'ioa' exceeds u32".to_string()))?;
+    let type_id = match values.get("type_id") {
+        Some(value) => {
+            let value = value.as_u64().ok_or_else(|| {
+                GatewayError::Config("IEC 104 point 'type_id' must be a u8".to_string())
+            })?;
+            u8::try_from(value).map_err(|_| {
+                GatewayError::Config("IEC 104 point 'type_id' exceeds u8".to_string())
+            })?
+        },
+        None => 0,
+    };
+
+    Ok(Iec104Address::new(ioa, type_id))
+}
+
+fn parse_point_address(address: &str) -> Result<Iec104Address> {
+    let (ioa, type_id) = address.split_once(':').unwrap_or((address, ""));
+    let ioa = ioa.trim().parse::<u32>().map_err(|_| {
+        GatewayError::Config(format!("invalid IEC 104 information object address: {ioa}"))
+    })?;
+    let type_id = if type_id.is_empty() {
+        0
+    } else {
+        type_id.trim().parse::<u8>().map_err(|_| {
+            GatewayError::Config(format!("invalid IEC 104 point type ID: {type_id}"))
+        })?
+    };
+    Ok(Iec104Address::new(ioa, type_id))
+}
 
 /// IEC 104 channel configuration.
 #[derive(Debug, Clone)]
@@ -89,7 +185,7 @@ pub struct Iec104ChannelConfig {
     pub w: u16,
 
     /// Point configurations (IOA to point mapping)
-    pub points: Vec<PointConfig>,
+    pub points: Vec<PointConfig<Iec104Address>>,
 
     /// IOA to (point_id, point_type) mapping (built from points)
     ioa_mapping: HashMap<u32, (u32, PointType)>,
@@ -143,13 +239,11 @@ impl Iec104ChannelConfig {
     }
 
     /// Add point configurations.
-    pub fn with_points(mut self, points: Vec<PointConfig>) -> Self {
+    pub fn with_points(mut self, points: Vec<PointConfig<Iec104Address>>) -> Self {
         // Build IOA mapping from point configs (includes point_type for DataPoint creation)
         for point in &points {
-            if let crate::protocols::core::point::ProtocolAddress::Iec104(addr) = &point.address {
-                self.ioa_mapping
-                    .insert(addr.ioa, (point.id, point.point_type));
-            }
+            self.ioa_mapping
+                .insert(point.address.ioa, (point.id, point.point_type));
         }
         self.points = points;
         self
@@ -183,6 +277,7 @@ impl Iec104ChannelConfig {
 /// }
 /// ```
 #[derive(Debug, Clone, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Iec104ParamsConfig {
     /// Target address (e.g., "192.168.1.100:2404")
     pub address: String,
@@ -229,11 +324,51 @@ fn default_t3_timeout() -> u64 {
 }
 
 impl Iec104ParamsConfig {
+    pub(crate) fn validate(&self) -> Result<()> {
+        let address = self.address.trim();
+        let (host, port) = address
+            .rsplit_once(':')
+            .ok_or_else(|| GatewayError::Config("IEC 104 address must be host:port".to_owned()))?;
+        if host.trim().is_empty() || port.parse::<u16>().ok().is_none_or(|port| port == 0) {
+            return Err(GatewayError::Config(
+                "IEC 104 address must contain a nonblank host and nonzero u16 port".to_owned(),
+            ));
+        }
+        if self.common_address == 0 {
+            return Err(GatewayError::Config(
+                "IEC 104 common_address must be greater than zero".to_owned(),
+            ));
+        }
+        if !(1..=MAX_CHANNEL_TIMING_MS).contains(&self.connect_timeout_ms) {
+            return Err(GatewayError::Config(format!(
+                "IEC 104 connect_timeout_ms must be between 1 and {MAX_CHANNEL_TIMING_MS}"
+            )));
+        }
+        let max_timeout_seconds = MAX_CHANNEL_TIMING_MS / 1_000;
+        for (name, value) in [
+            ("t1_timeout_s", self.t1_timeout_s),
+            ("t2_timeout_s", self.t2_timeout_s),
+            ("t3_timeout_s", self.t3_timeout_s),
+        ] {
+            if !(1..=max_timeout_seconds).contains(&value) {
+                return Err(GatewayError::Config(format!(
+                    "IEC 104 {name} must be between 1 and {max_timeout_seconds}"
+                )));
+            }
+        }
+        if self.t2_timeout_s >= self.t1_timeout_s {
+            return Err(GatewayError::Config(
+                "IEC 104 t2_timeout_s must be less than t1_timeout_s".to_owned(),
+            ));
+        }
+        Ok(())
+    }
+
     /// Convert to Iec104ChannelConfig.
     ///
     /// Note: Points must be set separately via `with_points()`.
-    pub fn to_config(&self) -> Iec104ChannelConfig {
-        Iec104ChannelConfig::new(&self.address)
+    pub fn into_config(self) -> Iec104ChannelConfig {
+        Iec104ChannelConfig::new(self.address)
             .with_common_address(self.common_address)
             .with_connect_timeout(Duration::from_millis(self.connect_timeout_ms))
             .with_t1_timeout(Duration::from_secs(self.t1_timeout_s))
@@ -250,19 +385,16 @@ impl Iec104ParamsConfig {
 /// Note: This adapter follows the "protocol layer separated from storage" design.
 /// The channel returns DataBatch via events; the service layer handles persistence.
 pub struct Iec104Channel {
-    /// Channel unique identifier.
-    channel_id: u32,
-    /// Channel instance name.
-    name: String,
     config: Iec104ChannelConfig,
     client: Iec104Client,
     state: Arc<std::sync::RwLock<ConnectionState>>,
     diagnostics: Arc<AtomicDiagnostics>,
     /// Last interrogation timestamp (Unix millis, 0 = never)
     last_interrogation_ms: AtomicU64,
-    /// Broadcast sender for event-driven subscribers (multiple subscribers supported).
+    /// Event sender for the unified channel task.
     event_tx: DataEventSender,
-    event_handler: Option<Arc<dyn DataEventHandler>>,
+    /// Sole event receiver, taken once by the unified channel task.
+    event_rx: Option<DataEventReceiver>,
     poll_task: Option<tokio::task::JoinHandle<()>>,
     /// Point ID -> index lookup for O(1) access
     point_index: HashMap<u32, usize>,
@@ -270,11 +402,10 @@ pub struct Iec104Channel {
 
 impl Iec104Channel {
     /// Create a new IEC 104 channel.
-    pub fn new(config: Iec104ChannelConfig, channel_id: u32, name: String) -> Self {
+    pub fn new(config: Iec104ChannelConfig) -> Self {
         let client_config = config.to_client_config();
         let client = Iec104Client::new(client_config);
-        // Use broadcast channel for multiple subscribers
-        let (event_tx, _) = broadcast::channel(1024);
+        let (event_tx, event_rx) = data_event_channel();
 
         // Build point ID -> index mapping for O(1) lookup
         let point_index: HashMap<u32, usize> = config
@@ -285,15 +416,13 @@ impl Iec104Channel {
             .collect();
 
         Self {
-            channel_id,
-            name,
             config,
             client,
             state: Arc::new(std::sync::RwLock::new(ConnectionState::Disconnected)),
             diagnostics: Arc::new(AtomicDiagnostics::new()),
             last_interrogation_ms: AtomicU64::new(0),
             event_tx,
-            event_handler: None,
+            event_rx: Some(event_rx),
             poll_task: None,
             point_index,
         }
@@ -388,13 +517,13 @@ impl Iec104Channel {
                 self.set_state(ConnectionState::Connected);
                 let _ = self
                     .event_tx
-                    .send(DataEvent::ConnectionChanged(ConnectionState::Connected));
+                    .try_send(DataEvent::ConnectionChanged(ConnectionState::Connected));
             },
             Iec104Event::Disconnected => {
                 self.set_state(ConnectionState::Disconnected);
                 let _ = self
                     .event_tx
-                    .send(DataEvent::ConnectionChanged(ConnectionState::Disconnected));
+                    .try_send(DataEvent::ConnectionChanged(ConnectionState::Disconnected));
             },
             Iec104Event::DataTransferStarted => {
                 // Data transfer is active
@@ -403,11 +532,16 @@ impl Iec104Channel {
                 // Data transfer stopped
             },
             Iec104Event::DataUpdate(points) => {
-                let batch = self.convert_data_points(points).await;
-                if !batch.is_empty() {
+                let PollResult { data, failures } = self.convert_data_points(points);
+                for failure in failures {
+                    self.record_error(format!(
+                        "IEC 104 point {} rejected: {}",
+                        failure.point_id, failure.error
+                    ));
+                }
+                if !data.is_empty() {
                     // Send event (service layer handles storage)
-                    // Arc wrap for O(1) broadcast clone
-                    let _ = self.event_tx.send(DataEvent::DataUpdate(Arc::new(batch)));
+                    let _ = self.event_tx.try_send(DataEvent::DataUpdate(data));
 
                     // Update diagnostics (lock-free)
                     self.diagnostics.inc_read();
@@ -430,14 +564,16 @@ impl Iec104Channel {
             },
             Iec104Event::Error(msg) => {
                 self.record_error(msg.clone());
-                let _ = self.event_tx.send(DataEvent::Error(msg));
+                let _ = self.event_tx.try_send(DataEvent::Error(msg));
             },
         }
     }
 
-    /// Convert IEC 104 data points to DataBatch.
-    async fn convert_data_points(&self, points: Vec<voltage_iec104::DataPoint>) -> DataBatch {
-        let mut batch = DataBatch::new();
+    /// Convert IEC 104 data points, preserving numeric samples when peers
+    /// include indeterminate or non-finite values in the same update.
+    fn convert_data_points(&self, points: Vec<voltage_iec104::DataPoint>) -> PollResult {
+        let mut batch = DataBatch::with_capacity(points.len());
+        let mut failures = Vec::new();
 
         for point in points {
             // Look up (point_id, point_type) from IOA, or use IOA with Telemetry as fallback
@@ -448,8 +584,13 @@ impl Iec104Channel {
                 .copied()
                 .unwrap_or((point.ioa, PointType::Telemetry));
 
-            // Convert value
-            let value = convert_iec104_value(&point.value);
+            let value = match convert_iec104_value(&point.value) {
+                Ok(value) => value,
+                Err(error) => {
+                    failures.push(PointFailure::new(point_id, error));
+                    continue;
+                },
+            };
 
             // Convert quality
             let quality = convert_iec104_quality(&point.quality);
@@ -469,7 +610,11 @@ impl Iec104Channel {
             batch.add(dp);
         }
 
-        batch
+        if failures.is_empty() {
+            PollResult::success(batch)
+        } else {
+            PollResult::partial(batch, failures)
+        }
     }
 
     /// Record an error (lock-free).
@@ -478,7 +623,7 @@ impl Iec104Channel {
     }
 
     /// Find point config by ID (O(1) lookup).
-    fn find_point(&self, id: u32) -> Option<&PointConfig> {
+    fn find_point(&self, id: u32) -> Option<&PointConfig<Iec104Address>> {
         self.point_index
             .get(&id)
             .map(|&idx| &self.config.points[idx])
@@ -488,17 +633,11 @@ impl Iec104Channel {
     fn resolve_iec104_addr(
         &self,
         id: u32,
-    ) -> std::result::Result<
-        (&PointConfig, &crate::protocols::core::point::Iec104Address),
-        (u32, String),
-    > {
+    ) -> std::result::Result<(&PointConfig<Iec104Address>, &Iec104Address), (u32, String)> {
         let point = self
             .find_point(id)
             .ok_or_else(|| (id, "Point not found".to_string()))?;
-        match &point.address {
-            crate::protocols::core::point::ProtocolAddress::Iec104(addr) => Ok((point, addr)),
-            _ => Err((id, "Invalid address type".to_string())),
-        }
+        Ok((point, &point.address))
     }
 }
 
@@ -600,24 +739,24 @@ impl ProtocolClient for Iec104Channel {
             Ok(ev) => ev,
             Err(_e) => {
                 // Lock-free error recording
-                self.diagnostics.inc_error();
+                self.diagnostics.add_error(1);
                 // Return empty result with no failure tracking (connection-level error)
                 return PollResult::success(DataBatch::new());
             },
         };
 
-        let batch = if let Some(voltage_iec104::Iec104Event::DataUpdate(points)) = event {
-            self.convert_data_points(points).await
+        let result = if let Some(voltage_iec104::Iec104Event::DataUpdate(points)) = event {
+            self.convert_data_points(points)
         } else {
-            DataBatch::new()
+            PollResult::success(DataBatch::new())
         };
 
-        if !batch.is_empty() {
+        if !result.data.is_empty() {
             // Lock-free read count increment
             self.diagnostics.inc_read();
         }
 
-        PollResult::success(batch)
+        result
     }
 
     async fn write_control(&mut self, commands: &[ControlCommand]) -> Result<WriteResult> {
@@ -689,14 +828,8 @@ impl ProtocolClient for Iec104Channel {
 }
 
 impl EventDrivenProtocol for Iec104Channel {
-    fn subscribe(&self) -> DataEventReceiver {
-        // Broadcast channel supports multiple subscribers
-        // Each call to subscribe() returns a new receiver that gets all future events
-        self.event_tx.subscribe()
-    }
-
-    fn set_event_handler(&mut self, handler: Arc<dyn DataEventHandler>) {
-        self.event_handler = Some(handler);
+    fn take_event_receiver(&mut self) -> Option<DataEventReceiver> {
+        self.event_rx.take()
     }
 
     async fn start(&mut self) -> Result<()> {
@@ -715,27 +848,32 @@ impl EventDrivenProtocol for Iec104Channel {
     }
 }
 
-/// Convert IEC 104 DataValue to Value.
-fn convert_iec104_value(value: &voltage_iec104::DataValue) -> Value {
+/// Convert an IEC 104 value to the numeric live-acquisition representation.
+fn convert_iec104_value(
+    value: &voltage_iec104::DataValue,
+) -> std::result::Result<Value, &'static str> {
     match value {
-        voltage_iec104::DataValue::Single(v) => Value::Bool(*v),
+        voltage_iec104::DataValue::Single(v) => Ok(Value::Bool(*v)),
         voltage_iec104::DataValue::Double(dp) => {
             use voltage_iec104::DoublePointValue;
             match dp {
-                DoublePointValue::Off => Value::Bool(false),
-                DoublePointValue::On => Value::Bool(true),
+                DoublePointValue::Off => Ok(Value::Bool(false)),
+                DoublePointValue::On => Ok(Value::Bool(true)),
                 DoublePointValue::Indeterminate | DoublePointValue::IndeterminateOrFaulty => {
-                    Value::Null
+                    Err("IEC 104 double-point value is indeterminate")
                 },
             }
         },
-        voltage_iec104::DataValue::Normalized(v) => Value::Float(*v as f64),
-        voltage_iec104::DataValue::Scaled(v) => Value::Integer(*v as i64),
-        voltage_iec104::DataValue::Float(v) => Value::Float(*v as f64),
-        voltage_iec104::DataValue::Counter(v) => Value::Integer(*v as i64),
-        voltage_iec104::DataValue::Bitstring(v) => Value::Integer(*v as i64),
-        voltage_iec104::DataValue::StepPosition(v) => Value::Integer(*v as i64),
-        voltage_iec104::DataValue::BinaryCounter { value, .. } => Value::Integer(*value as i64),
+        voltage_iec104::DataValue::Normalized(v) if v.is_finite() => Ok(Value::Float(*v as f64)),
+        voltage_iec104::DataValue::Float(v) if v.is_finite() => Ok(Value::Float(*v as f64)),
+        voltage_iec104::DataValue::Normalized(_) | voltage_iec104::DataValue::Float(_) => {
+            Err("IEC 104 floating-point value is not finite")
+        },
+        voltage_iec104::DataValue::Scaled(v) => Ok(Value::Integer(*v as i64)),
+        voltage_iec104::DataValue::Counter(v) => Ok(Value::Integer(*v as i64)),
+        voltage_iec104::DataValue::Bitstring(v) => Ok(Value::Integer(*v as i64)),
+        voltage_iec104::DataValue::StepPosition(v) => Ok(Value::Integer(*v as i64)),
+        voltage_iec104::DataValue::BinaryCounter { value, .. } => Ok(Value::Integer(*value as i64)),
     }
 }
 
@@ -780,13 +918,13 @@ fn cp56time2a_now() -> Cp56Time2a {
 }
 
 /// Convert IEC 104 Quality to Quality.
-fn convert_iec104_quality(quality: &voltage_iec104::Quality) -> Quality {
+fn convert_iec104_quality(quality: &voltage_iec104::Quality) -> PointQuality {
     if quality.is_good() {
-        Quality::Good
+        PointQuality::Good
     } else if quality.invalid {
-        Quality::Invalid
+        PointQuality::Bad
     } else {
-        Quality::Uncertain
+        PointQuality::Uncertain
     }
 }
 
@@ -867,18 +1005,6 @@ impl HasMetadata for Iec104Channel {
 
 #[async_trait]
 impl ChannelRuntime for Iec104Channel {
-    fn id(&self) -> u32 {
-        self.channel_id
-    }
-
-    fn name(&self) -> &str {
-        &self.name
-    }
-
-    fn protocol(&self) -> &str {
-        "iec104"
-    }
-
     fn is_event_driven(&self) -> bool {
         true
     }
@@ -913,8 +1039,8 @@ impl ChannelRuntime for Iec104Channel {
         Ok(result.success_count)
     }
 
-    fn subscribe(&self) -> Option<DataEventReceiver> {
-        Some(<Self as EventDrivenProtocol>::subscribe(self))
+    fn take_event_receiver(&mut self) -> Option<DataEventReceiver> {
+        <Self as EventDrivenProtocol>::take_event_receiver(self)
     }
 
     async fn start_events(&mut self) -> Result<()> {
@@ -940,6 +1066,47 @@ mod tests {
     use super::*;
 
     #[test]
+    fn persisted_point_mapping_accepts_string_form() {
+        let address = parse_point_mapping(r#""1001:13""#).expect("valid string mapping");
+
+        assert_eq!((address.ioa, address.type_id), (1001, 13));
+    }
+
+    #[test]
+    fn persisted_point_mapping_accepts_object_forms_without_cloning_value() {
+        for (mapping, expected) in [
+            (serde_json::json!({"address": "1001:13"}), (1001, 13)),
+            (serde_json::json!({"ioa": 1001, "type_id": 13}), (1001, 13)),
+        ] {
+            let address =
+                parse_point_mapping_value(&mapping).expect("valid borrowed object mapping");
+            assert_eq!((address.ioa, address.type_id), expected);
+        }
+    }
+
+    #[test]
+    fn persisted_point_mapping_rejects_unknown_fields() {
+        for mapping in [
+            serde_json::json!({"address": "1001:13", "offset": 1}),
+            serde_json::json!({"ioa": 1001, "type_id": 13, "offset": 1}),
+        ] {
+            assert!(parse_point_mapping_value(&mapping).is_err());
+        }
+    }
+
+    #[test]
+    fn persisted_point_mapping_rejects_malformed_values() {
+        for mapping in [
+            "null",
+            r#"{"address":1}"#,
+            r#"{"ioa":4294967296}"#,
+            r#"{"ioa":1,"type_id":256}"#,
+        ] {
+            assert!(parse_point_mapping(mapping).is_err(), "{mapping}");
+        }
+    }
+
+    #[test]
     fn test_iec104_channel_config() {
         let config = Iec104ChannelConfig::new("127.0.0.1:2404")
             .with_common_address(1)
@@ -953,7 +1120,7 @@ mod tests {
     #[test]
     fn test_iec104_channel_capabilities() {
         let config = Iec104ChannelConfig::new("127.0.0.1:2404");
-        let channel = Iec104Channel::new(config, 1, "test_iec104".to_string());
+        let channel = Iec104Channel::new(config);
 
         assert_eq!(ProtocolCapabilities::name(&channel), "IEC 60870-5-104");
         assert!(
@@ -963,19 +1130,103 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn event_receiver_is_taken_once_and_receives_updates() {
+        let mut channel = Iec104Channel::new(Iec104ChannelConfig::new("127.0.0.1:2404"));
+        let mut receiver = EventDrivenProtocol::take_event_receiver(&mut channel)
+            .expect("event receiver available");
+        assert!(EventDrivenProtocol::take_event_receiver(&mut channel).is_none());
+
+        let sent = channel
+            .event_tx
+            .try_send(DataEvent::ConnectionChanged(ConnectionState::Connected));
+
+        assert!(sent.is_ok());
+        assert!(matches!(
+            receiver.recv().await,
+            Some(DataEvent::ConnectionChanged(ConnectionState::Connected))
+        ));
+    }
+
     #[test]
     fn test_convert_iec104_value() {
         assert_eq!(
-            convert_iec104_value(&voltage_iec104::DataValue::Single(true)),
+            convert_iec104_value(&voltage_iec104::DataValue::Single(true))
+                .expect("single point is numeric"),
             Value::Bool(true)
         );
         assert_eq!(
-            convert_iec104_value(&voltage_iec104::DataValue::Float(23.5)),
+            convert_iec104_value(&voltage_iec104::DataValue::Float(23.5))
+                .expect("floating point is numeric"),
             Value::Float(23.5)
         );
         assert_eq!(
-            convert_iec104_value(&voltage_iec104::DataValue::Scaled(100)),
+            convert_iec104_value(&voltage_iec104::DataValue::Scaled(100))
+                .expect("scaled point is numeric"),
             Value::Integer(100)
+        );
+    }
+
+    #[test]
+    fn mixed_acquisition_keeps_numeric_points_and_reports_indeterminate_values() {
+        use voltage_iec104::{DataPoint as Iec104DataPoint, DoublePointValue};
+
+        let channel = Iec104Channel::new(Iec104ChannelConfig::new("127.0.0.1:2404"));
+        let result = channel.convert_data_points(vec![
+            Iec104DataPoint::new(10, voltage_iec104::DataValue::Float(23.5)),
+            Iec104DataPoint::new(
+                11,
+                voltage_iec104::DataValue::Double(DoublePointValue::Indeterminate),
+            ),
+            Iec104DataPoint::new(12, voltage_iec104::DataValue::Single(true)),
+            Iec104DataPoint::new(13, voltage_iec104::DataValue::Float(f32::NAN)),
+        ]);
+
+        assert_eq!(result.data.len(), 2);
+        assert_eq!(
+            result.data.iter().map(|point| point.id).collect::<Vec<_>>(),
+            vec![10, 12]
+        );
+        assert_eq!(
+            result
+                .failures
+                .iter()
+                .map(|failure| failure.point_id)
+                .collect::<Vec<_>>(),
+            vec![11, 13]
+        );
+    }
+
+    #[tokio::test]
+    async fn mixed_event_update_emits_numeric_points_and_records_rejected_point() {
+        use voltage_iec104::{DataPoint as Iec104DataPoint, DoublePointValue};
+
+        let mut channel = Iec104Channel::new(Iec104ChannelConfig::new("127.0.0.1:2404"));
+        let mut receiver = EventDrivenProtocol::take_event_receiver(&mut channel)
+            .expect("event receiver available");
+
+        channel
+            .handle_iec104_event(Iec104Event::DataUpdate(vec![
+                Iec104DataPoint::new(10, voltage_iec104::DataValue::Scaled(100)),
+                Iec104DataPoint::new(
+                    11,
+                    voltage_iec104::DataValue::Double(DoublePointValue::IndeterminateOrFaulty),
+                ),
+            ]))
+            .await;
+
+        let DataEvent::DataUpdate(batch) = receiver.recv().await.expect("numeric update emitted")
+        else {
+            panic!("expected data update");
+        };
+        assert_eq!(batch.len(), 1);
+        assert_eq!(batch.iter().next().map(|point| point.id), Some(10));
+        assert_eq!(channel.diagnostics.error_count(), 1);
+        assert!(
+            channel
+                .diagnostics
+                .last_error()
+                .is_some_and(|error| error.contains("point 11 rejected"))
         );
     }
 

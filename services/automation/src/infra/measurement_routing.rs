@@ -9,7 +9,7 @@ use aether_ports::{
 };
 use async_trait::async_trait;
 
-use crate::infra::runtime_topology::MeasurementRoutingMutationLease;
+use crate::infra::runtime_topology::RoutingMutationLease;
 use crate::instance_manager::InstanceManager;
 
 /// Applies validated measurement-route CAS mutations to authoritative SQLite.
@@ -62,7 +62,7 @@ impl SqliteMeasurementRoutingMutator {
         let product = self
             .manager
             .product_loader()
-            .get_product(&product_name)
+            .get_definition(&product_name)
             .map_err(|error| {
                 tracing::error!(
                     instance_id,
@@ -78,7 +78,7 @@ impl SqliteMeasurementRoutingMutator {
         if !product
             .measurements
             .iter()
-            .any(|measurement| measurement.measurement_id == measurement_id)
+            .any(|measurement| measurement.id == measurement_id)
         {
             return Err(invalid(format!(
                 "measurement point {measurement_id} is not declared by instance {instance_id}"
@@ -105,25 +105,12 @@ impl SqliteMeasurementRoutingMutator {
 
     async fn publish_committed_routes(
         &self,
-        topology_lease: Option<MeasurementRoutingMutationLease>,
+        topology_lease: RoutingMutationLease,
     ) -> PortResult<()> {
-        if let Some(topology_lease) = topology_lease {
-            return topology_lease
-                .publish(self.manager.pool())
-                .await
-                .map(|_| ());
-        }
-
-        self.manager
-            .refresh_routing()
+        topology_lease
+            .publish(self.manager.pool())
             .await
             .map(|_| ())
-            .map_err(|error| {
-                PortError::new(
-                    PortErrorKind::Unavailable,
-                    format!("committed measurement routing validation failed: {error}"),
-                )
-            })
     }
 }
 
@@ -143,14 +130,9 @@ impl AutomationMeasurementRoutingMutator for SqliteMeasurementRoutingMutator {
             ));
         }
 
-        let mut topology_lease = match self.manager.runtime_topology() {
-            Some(topology) => Some(
-                Arc::clone(topology)
-                    .begin_measurement_routing_mutation()
-                    .await,
-            ),
-            None => None,
-        };
+        let mut topology_lease = Arc::clone(self.manager.runtime_topology())
+            .begin_measurement_routing_mutation()
+            .await;
 
         let staged: PortResult<_> =
             async {
@@ -286,16 +268,12 @@ impl AutomationMeasurementRoutingMutator for SqliteMeasurementRoutingMutator {
         let (transaction, affected_routes, resulting_revision) = match staged {
             Ok(staged) => staged,
             Err(error) => {
-                if let Some(topology_lease) = topology_lease.take() {
-                    topology_lease.restore().await;
-                }
+                topology_lease.restore().await;
                 return Err(error);
             },
         };
 
-        if let Some(topology_lease) = topology_lease.as_mut() {
-            topology_lease.commit_started();
-        }
+        topology_lease.commit_started();
         transaction
             .commit()
             .await

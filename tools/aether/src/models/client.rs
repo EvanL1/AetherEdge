@@ -74,13 +74,11 @@ impl ModelClient {
 
     // Instance operations
     pub async fn list_instances(&self, product: Option<&str>) -> Result<Value> {
-        let url = if let Some(p) = product {
-            format!("{}/api/instances?product={}", self.base_url, p)
-        } else {
-            format!("{}/api/instances", self.base_url)
-        };
-
-        let response = self.apply_auth(self.client.get(url))?.send().await?;
+        let mut request = self.client.get(format!("{}/api/instances", self.base_url));
+        if let Some(product_name) = product {
+            request = request.query(&[("product_name", product_name)]);
+        }
+        let response = self.apply_auth(request)?.send().await?;
 
         if response.status().is_success() {
             Ok(response.json().await?)

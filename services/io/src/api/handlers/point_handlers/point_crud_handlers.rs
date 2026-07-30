@@ -3,7 +3,6 @@
 //! Single-point CRUD handlers (Create, Update, Delete)
 
 use crate::api::routes::AppState;
-use crate::core::config::TelemetryPoint;
 use crate::dto::{AppError, SuccessResponse};
 use crate::point_topology::{
     PointDefinitionMutation, PointKind, PointMutation, PointPatchMutation, PointTopologyAcceptance,
@@ -17,7 +16,7 @@ use axum::{
 };
 
 use super::point_governance::{PointTopologyHttpBoundary, completion_audit};
-use super::point_helpers::{point_type_to_table, trigger_channel_reload_if_needed};
+use super::point_helpers::trigger_channel_reload_if_needed;
 use super::point_types::{PointCrudResult, PointUpdateRequest};
 
 fn accepted_result(
@@ -55,74 +54,128 @@ fn accepted_result(
 // Helper: Extract common fields from point creation payload
 // ----------------------------------------------------------------------------
 
-/// Common fields for S/C/A point creation
-struct CreatePointFields {
+#[derive(Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StrictPointCreateRequest {
+    #[serde(default)]
+    channel_id: Option<u32>,
+    point_id: u32,
     signal_name: String,
+    #[serde(default = "default_scale")]
     scale: f64,
+    #[serde(default)]
     offset: f64,
-    unit: String,
+    #[serde(default)]
+    unit: Option<String>,
+    #[serde(default)]
     reverse: bool,
-    data_type: String,
-    description: String,
+    #[serde(default)]
+    data_type: Option<String>,
+    #[serde(default)]
+    description: Option<String>,
+    #[serde(default)]
+    normal_state: Option<i64>,
+    #[serde(default)]
+    min_value: Option<f64>,
+    #[serde(default)]
+    max_value: Option<f64>,
+    #[serde(default)]
+    step: Option<f64>,
+    #[serde(default)]
+    protocol_mappings: Option<String>,
 }
 
-/// Extract and validate common fields from a JSON payload for point creation
-fn extract_create_fields(
-    payload: &serde_json::Value,
-    point_id: u32,
-    default_data_type: &str,
-) -> Result<CreatePointFields, AppError> {
-    let payload_point_id = payload
-        .get("point_id")
-        .and_then(|v| v.as_u64())
-        .ok_or_else(|| AppError::bad_request("Missing field: point_id"))?;
-    let payload_point_id = u32::try_from(payload_point_id).map_err(|_| {
-        AppError::bad_request(format!("point_id {} out of range", payload_point_id))
-    })?;
+const fn default_scale() -> f64 {
+    1.0
+}
 
-    if payload_point_id != point_id {
+fn parse_create_definition(
+    payload: serde_json::Value,
+    channel_id: u32,
+    point_id: u32,
+    kind: PointKind,
+) -> Result<PointDefinitionMutation, AppError> {
+    let request: StrictPointCreateRequest = serde_json::from_value(payload)
+        .map_err(|error| AppError::bad_request(format!("Invalid request body: {error}")))?;
+    if request.point_id != point_id {
         return Err(AppError::bad_request(format!(
             "Point ID mismatch: path has {}, body has {}",
-            point_id, payload_point_id
+            point_id, request.point_id
         )));
     }
+    if let Some(payload_channel_id) = request.channel_id
+        && payload_channel_id != channel_id
+    {
+        return Err(AppError::bad_request(format!(
+            "Channel ID mismatch: path has {channel_id}, body has {payload_channel_id}",
+        )));
+    }
+    if kind != PointKind::Signal && request.normal_state.is_some() {
+        return Err(AppError::bad_request(
+            "normal_state is only valid for signal points",
+        ));
+    }
+    if kind != PointKind::Adjustment
+        && (request.min_value.is_some() || request.max_value.is_some() || request.step.is_some())
+    {
+        return Err(AppError::bad_request(
+            "min_value, max_value, and step are only valid for adjustment points",
+        ));
+    }
+    let default_data_type = match kind {
+        PointKind::Telemetry => "float32",
+        PointKind::Signal | PointKind::Control => "bool",
+        PointKind::Adjustment => "int16",
+    };
 
-    let signal_name = payload
-        .get("signal_name")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| AppError::bad_request("Missing field: signal_name"))?
-        .to_string();
+    Ok(PointDefinitionMutation {
+        point_id,
+        signal_name: request.signal_name,
+        scale: request.scale,
+        offset: request.offset,
+        unit: request.unit.unwrap_or_default(),
+        reverse: request.reverse,
+        data_type: request
+            .data_type
+            .unwrap_or_else(|| default_data_type.to_string()),
+        description: request.description.unwrap_or_default(),
+        normal_state: request.normal_state.unwrap_or_default(),
+        minimum: request.min_value,
+        maximum: request.max_value,
+        step: request.step.unwrap_or(1.0),
+        protocol_mapping: Some(request.protocol_mappings),
+    })
+}
 
-    Ok(CreatePointFields {
-        signal_name,
-        scale: payload.get("scale").and_then(|v| v.as_f64()).unwrap_or(1.0),
-        offset: payload
-            .get("offset")
-            .and_then(|v| v.as_f64())
-            .unwrap_or(0.0),
-        unit: payload
-            .get("unit")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string(),
-        reverse: payload
-            .get("reverse")
-            .and_then(|v| {
-                v.as_str()
-                    .and_then(|s| s.parse::<bool>().ok())
-                    .or_else(|| v.as_bool())
-            })
-            .unwrap_or(false),
-        data_type: payload
-            .get("data_type")
-            .and_then(|v| v.as_str())
-            .unwrap_or(default_data_type)
-            .to_string(),
-        description: payload
-            .get("description")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string(),
+#[derive(Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StrictPointUpdateRequest {
+    signal_name: Option<String>,
+    description: Option<String>,
+    unit: Option<String>,
+    scale: Option<f64>,
+    offset: Option<f64>,
+    data_type: Option<String>,
+    reverse: Option<bool>,
+    min_value: Option<f64>,
+    max_value: Option<f64>,
+    step: Option<f64>,
+}
+
+fn parse_update_request(payload: serde_json::Value) -> Result<PointUpdateRequest, AppError> {
+    let request: StrictPointUpdateRequest = serde_json::from_value(payload)
+        .map_err(|error| AppError::bad_request(format!("Invalid request body: {error}")))?;
+    Ok(PointUpdateRequest {
+        signal_name: request.signal_name,
+        description: request.description,
+        unit: request.unit,
+        scale: request.scale,
+        offset: request.offset,
+        data_type: request.data_type,
+        reverse: request.reverse,
+        min_value: request.min_value,
+        max_value: request.max_value,
+        step: request.step,
     })
 }
 
@@ -161,15 +214,7 @@ pub async fn create_telemetry_point_handler(
     headers: HeaderMap,
     Json(payload): Json<serde_json::Value>,
 ) -> Result<Json<SuccessResponse<PointCrudResult>>, AppError> {
-    let point: TelemetryPoint = serde_json::from_value(payload)
-        .map_err(|e| AppError::bad_request(format!("Invalid request body: {}", e)))?;
-
-    if point.base.point_id != point_id {
-        return Err(AppError::bad_request(format!(
-            "Point ID mismatch: path has {}, body has {}",
-            point_id, point.base.point_id
-        )));
-    }
+    let definition = parse_create_definition(payload, channel_id, point_id, PointKind::Telemetry)?;
 
     let acceptance = boundary
         .mutate(
@@ -178,21 +223,7 @@ pub async fn create_telemetry_point_handler(
                 channel_id,
                 PointMutation::Create {
                     kind: PointKind::Telemetry,
-                    definition: PointDefinitionMutation {
-                        point_id,
-                        signal_name: point.base.signal_name,
-                        scale: point.scale,
-                        offset: point.offset,
-                        unit: point.base.unit.unwrap_or_default(),
-                        reverse: point.reverse,
-                        data_type: point.data_type,
-                        description: point.base.description.unwrap_or_default(),
-                        normal_state: 0,
-                        minimum: None,
-                        maximum: None,
-                        step: 1.0,
-                        protocol_mapping: Some(None),
-                    },
+                    definition,
                     force: false,
                 },
             ),
@@ -241,12 +272,7 @@ pub async fn create_signal_point_handler(
     headers: HeaderMap,
     Json(payload): Json<serde_json::Value>,
 ) -> Result<Json<SuccessResponse<PointCrudResult>>, AppError> {
-    let fields = extract_create_fields(&payload, point_id, "bool")?;
-
-    let normal_state = payload
-        .get("normal_state")
-        .and_then(|v| v.as_i64())
-        .unwrap_or(0);
+    let definition = parse_create_definition(payload, channel_id, point_id, PointKind::Signal)?;
 
     let acceptance = boundary
         .mutate(
@@ -255,21 +281,7 @@ pub async fn create_signal_point_handler(
                 channel_id,
                 PointMutation::Create {
                     kind: PointKind::Signal,
-                    definition: PointDefinitionMutation {
-                        point_id,
-                        signal_name: fields.signal_name,
-                        scale: fields.scale,
-                        offset: fields.offset,
-                        unit: fields.unit,
-                        reverse: fields.reverse,
-                        data_type: fields.data_type,
-                        description: fields.description,
-                        normal_state,
-                        minimum: None,
-                        maximum: None,
-                        step: 1.0,
-                        protocol_mapping: Some(None),
-                    },
+                    definition,
                     force: false,
                 },
             ),
@@ -299,28 +311,9 @@ async fn create_ca_point_inner(
     boundary: PointTopologyHttpBoundary,
     headers: HeaderMap,
     payload: serde_json::Value,
-    default_data_type: &str,
 ) -> Result<Json<SuccessResponse<PointCrudResult>>, AppError> {
-    point_type_to_table(point_type)?;
-    let fields = extract_create_fields(&payload, point_id, default_data_type)?;
-
-    let adjustment_constraints = if point_type == "A" {
-        let minimum = payload.get("min_value").and_then(serde_json::Value::as_f64);
-        let maximum = payload.get("max_value").and_then(serde_json::Value::as_f64);
-        let step = payload
-            .get("step")
-            .and_then(serde_json::Value::as_f64)
-            .unwrap_or(1.0);
-        aether_domain::CommandConstraints::new(minimum, maximum, Some(step)).map_err(|error| {
-            AppError::bad_request(format!("Invalid adjustment constraints: {error}"))
-        })?;
-        Some((minimum, maximum, step))
-    } else {
-        None
-    };
-
-    let (minimum, maximum, step) = adjustment_constraints.unwrap_or((None, None, 1.0));
     let kind = PointKind::parse(point_type).map_err(AppError::bad_request)?;
+    let definition = parse_create_definition(payload, channel_id, point_id, kind)?;
     let acceptance = boundary
         .mutate(
             &headers,
@@ -328,21 +321,7 @@ async fn create_ca_point_inner(
                 channel_id,
                 PointMutation::Create {
                     kind,
-                    definition: PointDefinitionMutation {
-                        point_id,
-                        signal_name: fields.signal_name,
-                        scale: fields.scale,
-                        offset: fields.offset,
-                        unit: fields.unit,
-                        reverse: fields.reverse,
-                        data_type: fields.data_type,
-                        description: fields.description,
-                        normal_state: 0,
-                        minimum,
-                        maximum,
-                        step,
-                        protocol_mapping: Some(None),
-                    },
+                    definition,
                     force: false,
                 },
             ),
@@ -406,7 +385,6 @@ pub async fn create_control_point_handler(
         boundary,
         headers,
         payload,
-        "bool",
     )
     .await
 }
@@ -451,7 +429,6 @@ pub async fn create_adjustment_point_handler(
         boundary,
         headers,
         payload,
-        "int16",
     )
     .await
 }
@@ -481,7 +458,6 @@ pub(super) async fn update_point_handler_inner(
 ) -> Result<Json<SuccessResponse<PointCrudResult>>, AppError> {
     let point_type_upper = point_type.to_ascii_uppercase();
     let kind = PointKind::parse(point_type).map_err(AppError::bad_request)?;
-    let response_type = point_type_upper.clone();
     let acceptance = boundary
         .mutate(
             &headers,
@@ -513,7 +489,7 @@ pub(super) async fn update_point_handler_inner(
     Ok(Json(SuccessResponse::new(accepted_result(
         acceptance,
         channel_id,
-        response_type,
+        point_type_upper,
         point_id,
         "Point updated successfully".to_string(),
     ))))
@@ -542,7 +518,6 @@ pub(super) async fn delete_point_handler_inner(
 ) -> Result<Json<SuccessResponse<PointCrudResult>>, AppError> {
     let point_type_upper = point_type.to_ascii_uppercase();
     let kind = PointKind::parse(point_type).map_err(AppError::bad_request)?;
-    let response_type = point_type_upper.clone();
     let acceptance = boundary
         .mutate(
             &headers,
@@ -557,7 +532,7 @@ pub(super) async fn delete_point_handler_inner(
     Ok(Json(SuccessResponse::new(accepted_result(
         acceptance,
         channel_id,
-        response_type,
+        point_type_upper,
         point_id,
         "Point deleted successfully".to_string(),
     ))))
@@ -592,8 +567,9 @@ pub async fn update_telemetry_point_handler(
     Query(reload_query): Query<crate::dto::AutoReloadQuery>,
     Extension(boundary): Extension<PointTopologyHttpBoundary>,
     headers: HeaderMap,
-    Json(update): Json<PointUpdateRequest>,
+    Json(payload): Json<serde_json::Value>,
 ) -> Result<Json<SuccessResponse<PointCrudResult>>, AppError> {
+    let update = parse_update_request(payload)?;
     update_point_handler_inner(
         channel_id,
         "T",
@@ -630,8 +606,9 @@ pub async fn update_signal_point_handler(
     Query(reload_query): Query<crate::dto::AutoReloadQuery>,
     Extension(boundary): Extension<PointTopologyHttpBoundary>,
     headers: HeaderMap,
-    Json(update): Json<PointUpdateRequest>,
+    Json(payload): Json<serde_json::Value>,
 ) -> Result<Json<SuccessResponse<PointCrudResult>>, AppError> {
+    let update = parse_update_request(payload)?;
     update_point_handler_inner(
         channel_id,
         "S",
@@ -668,8 +645,9 @@ pub async fn update_control_point_handler(
     Query(reload_query): Query<crate::dto::AutoReloadQuery>,
     Extension(boundary): Extension<PointTopologyHttpBoundary>,
     headers: HeaderMap,
-    Json(update): Json<PointUpdateRequest>,
+    Json(payload): Json<serde_json::Value>,
 ) -> Result<Json<SuccessResponse<PointCrudResult>>, AppError> {
+    let update = parse_update_request(payload)?;
     update_point_handler_inner(
         channel_id,
         "C",
@@ -706,8 +684,9 @@ pub async fn update_adjustment_point_handler(
     Query(reload_query): Query<crate::dto::AutoReloadQuery>,
     Extension(boundary): Extension<PointTopologyHttpBoundary>,
     headers: HeaderMap,
-    Json(update): Json<PointUpdateRequest>,
+    Json(payload): Json<serde_json::Value>,
 ) -> Result<Json<SuccessResponse<PointCrudResult>>, AppError> {
+    let update = parse_update_request(payload)?;
     update_point_handler_inner(
         channel_id,
         "A",

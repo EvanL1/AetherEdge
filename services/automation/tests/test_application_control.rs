@@ -7,9 +7,8 @@ use axum::http::{HeaderMap, HeaderValue};
 use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
 use serde::Serialize;
 
-use aether_automation::infra::application_control::{
-    ControlAuthenticator, command_invocation_from_headers,
-};
+use aether_automation::api::http_boundary::command_invocation_from_headers;
+use aether_automation::infra::application_control::ControlAuthenticator;
 
 const JWT_SECRET: &str = "0123456789abcdef0123456789abcdef";
 const UPLINK_TOKEN: &str = "abcdef0123456789abcdef0123456789";

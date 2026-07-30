@@ -17,7 +17,7 @@ use tokio::time::{self, Duration};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, warn};
 
-use crate::models::{PropertyEntry, PropertyPayload};
+use crate::models::{PropertyEntry, PropertyPayload, SystemMetricsPayload};
 use crate::state::AppState;
 use crate::system_monitor;
 
@@ -52,7 +52,7 @@ pub async fn run_system_monitor(state: Arc<AppState>, shutdown: CancellationToke
             continue;
         }
 
-        let metrics = system_monitor::collect();
+        let metrics = SystemMetricsPayload::from(system_monitor::collect());
         let device_sn = state.device.device_sn.clone();
 
         let entry = PropertyEntry {

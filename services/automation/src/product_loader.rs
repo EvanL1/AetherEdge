@@ -12,8 +12,7 @@ use tracing::debug;
 
 // Re-export types from local config for other modules
 pub use crate::config::{
-    ActionPoint, CreateInstanceRequest, Instance, MeasurementPoint, Product, ProductHierarchy,
-    PropertyTemplate,
+    ActionPoint, CreateInstanceRequest, Instance, MeasurementPoint, Product, PropertyTemplate,
 };
 pub use common::PointRole;
 
@@ -67,31 +66,16 @@ impl ProductLoader {
 
     // ============ Product Query Methods ============
 
+    /// Borrow the validated Pack-owned definition without building an API DTO.
+    pub(crate) fn get_definition(&self, product_name: &str) -> Result<&ProductDefinition> {
+        self.library
+            .get(product_name)
+            .context(format!("Product not found: {product_name}"))
+    }
+
     /// Get a complete product with nested structure
     pub fn get_product(&self, product_name: &str) -> Result<Product> {
-        let builtin = self
-            .library
-            .get(product_name)
-            .context(format!("Product not found: {}", product_name))?;
-        Ok(convert_product_definition(builtin))
-    }
-
-    /// Get all products
-    pub fn get_all_products(&self) -> Vec<Product> {
-        self.library
-            .all()
-            .iter()
-            .map(convert_product_definition)
-            .collect()
-    }
-
-    /// Get product hierarchy (product_name, parent_name) tuples
-    pub fn get_product_hierarchy(&self) -> ProductHierarchy {
-        self.library
-            .all()
-            .iter()
-            .map(|p| (p.name.clone(), p.parent_name.clone()))
-            .collect()
+        convert_product_definition(self.get_definition(product_name)?)
     }
 
     /// Get all product names without loading point details
@@ -104,21 +88,6 @@ impl ProductLoader {
             .iter()
             .map(|p| (p.name.clone(), p.parent_name.clone()))
             .collect()
-    }
-
-    /// Get the parent product name for a given product (from pName field in JSON)
-    ///
-    /// Returns None for root products (e.g., Station).
-    /// Returns Some("ESS") for products like Battery, PCS, etc.
-    pub fn get_product_parent_name(&self, product_name: &str) -> Option<String> {
-        self.library
-            .get(product_name)
-            .and_then(|p| p.parent_name.clone())
-    }
-
-    /// Check if a product exists
-    pub fn product_exists(&self, name: &str) -> bool {
-        self.library.exists(name)
     }
 
     /// Get the number of products
@@ -138,8 +107,8 @@ pub(crate) fn test_energy_product_loader(pool: SqlitePool) -> ProductLoader {
 // ============ Type Conversion Functions ============
 
 /// Convert one validated Pack product definition to the service DTO.
-fn convert_product_definition(builtin: &ProductDefinition) -> Product {
-    Product {
+fn convert_product_definition(builtin: &ProductDefinition) -> Result<Product> {
+    Ok(Product {
         product_name: builtin.name.clone(),
         parent_name: builtin.parent_name.clone(),
         measurements: builtin
@@ -156,11 +125,11 @@ fn convert_product_definition(builtin: &ProductDefinition) -> Product {
             .properties
             .iter()
             .map(convert_point_to_property)
-            .collect(),
-    }
+            .collect::<Result<Vec<_>>>()?,
+    })
 }
 
-fn convert_point_to_measurement(point: &ProductPointDefinition) -> MeasurementPoint {
+pub(crate) fn convert_point_to_measurement(point: &ProductPointDefinition) -> MeasurementPoint {
     MeasurementPoint {
         measurement_id: point.id,
         name: point.name.clone(),
@@ -173,7 +142,7 @@ fn convert_point_to_measurement(point: &ProductPointDefinition) -> MeasurementPo
     }
 }
 
-fn convert_point_to_action(point: &ProductPointDefinition) -> ActionPoint {
+pub(crate) fn convert_point_to_action(point: &ProductPointDefinition) -> ActionPoint {
     ActionPoint {
         action_id: point.id,
         name: point.name.clone(),
@@ -186,9 +155,12 @@ fn convert_point_to_action(point: &ProductPointDefinition) -> ActionPoint {
     }
 }
 
-fn convert_point_to_property(point: &ProductPointDefinition) -> PropertyTemplate {
-    PropertyTemplate {
-        property_id: point.id as i32,
+pub(crate) fn convert_point_to_property(
+    point: &ProductPointDefinition,
+) -> Result<PropertyTemplate> {
+    Ok(PropertyTemplate {
+        property_id: i32::try_from(point.id)
+            .context("Pack property ID exceeds the Automation API range")?,
         name: point.name.clone(),
         unit: if point.unit.is_empty() {
             None
@@ -196,7 +168,7 @@ fn convert_point_to_property(point: &ProductPointDefinition) -> PropertyTemplate
             Some(point.unit.clone())
         },
         description: None,
-    }
+    })
 }
 
 #[cfg(test)]
@@ -210,8 +182,7 @@ mod tests {
         let loader = ProductLoader::new(pool);
 
         assert_eq!(loader.product_count(), 0);
-        assert!(loader.get_all_products().is_empty());
-        assert!(!loader.product_exists("Battery"));
+        assert!(loader.get_product("Battery").is_err());
     }
 
     #[test]
@@ -230,52 +201,22 @@ mod tests {
     }
 
     #[test]
-    fn test_get_all_products() {
-        let rt = tokio::runtime::Runtime::new().unwrap();
+    fn validated_product_definitions_are_borrowed_without_reconversion() {
+        let rt = tokio::runtime::Runtime::new().expect("test runtime");
         rt.block_on(async {
-            let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+            let pool = SqlitePool::connect("sqlite::memory:")
+                .await
+                .expect("test database");
             let loader = test_energy_product_loader(pool);
 
-            let products = loader.get_all_products();
-            let names: Vec<&str> = products.iter().map(|p| p.product_name.as_str()).collect();
-            assert!(names.contains(&"Battery"));
-            assert!(names.contains(&"PCS"));
-            assert!(names.contains(&"Station"));
-        });
-    }
+            let first = loader
+                .get_definition("Battery")
+                .expect("first product definition");
+            let second = loader
+                .get_definition("Battery")
+                .expect("second product definition");
 
-    #[test]
-    fn test_product_exists() {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(async {
-            let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
-            let loader = test_energy_product_loader(pool);
-
-            assert!(loader.product_exists("Battery"));
-            assert!(loader.product_exists("PCS"));
-            assert!(!loader.product_exists("NonExistent"));
-        });
-    }
-
-    #[test]
-    fn test_product_hierarchy() {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(async {
-            let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
-            let loader = test_energy_product_loader(pool);
-
-            let hierarchy = loader.get_product_hierarchy();
-            assert!(!hierarchy.is_empty());
-
-            // Check Station is root
-            let station = hierarchy.iter().find(|(name, _)| name == "Station");
-            assert!(station.is_some());
-            assert!(station.unwrap().1.is_none());
-
-            // Check Battery -> ESS
-            let battery = hierarchy.iter().find(|(name, _)| name == "Battery");
-            assert!(battery.is_some());
-            assert_eq!(battery.unwrap().1, Some("ESS".to_string()));
+            assert!(std::ptr::eq(first, second));
         });
     }
 }

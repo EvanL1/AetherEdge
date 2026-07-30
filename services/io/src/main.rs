@@ -17,17 +17,14 @@ use errors::AetherResult;
 
 // aether-io imports
 use aether_io::{
-    api::{
-        command_cache::CommandTxCache,
-        routes::{create_api_routes_with_channel_applications, set_service_start_time},
-    },
+    api::routes::{create_api_routes_with_channel_applications, set_service_start_time},
     core::{
         bootstrap::{self, Args},
         channels::ChannelManager,
-        config::ConfigManager,
+        config::IoSqliteLoader,
     },
     error::IoError,
-    runtime::{start_cleanup_task, start_communication_service},
+    runtime::start_cleanup_task,
     shutdown_services, wait_for_shutdown,
 };
 use aether_routing::load_routing_maps;
@@ -61,27 +58,28 @@ async fn main() -> AetherResult<()> {
     }
     bootstrap::check_system_requirements()?;
 
-    // Validation mode: validate and exit
-    if args.validate {
-        bootstrap::validate_configuration().await?;
-        info!("Validation completed successfully");
-        return Ok(());
-    }
-
-    // Load configuration from unified database
+    // Resolve the authoritative database once and share one process-wide pool.
     let db_path = service_args.get_db_path("aether-io");
     info!(
         "Loading configuration from unified SQLite database: {}",
         db_path
     );
-    let config_manager = Arc::new(ConfigManager::load().await?);
-    let app_config = config_manager.config();
-
-    // Create SQLite pool for API endpoints (foreign_keys=ON via shared helper)
+    let sqlite_options =
+        common::bootstrap_database::sqlite_connect_options(&db_path).create_if_missing(false);
     let sqlite_pool = sqlx::sqlite::SqlitePoolOptions::new()
-        .connect_with(common::bootstrap_database::sqlite_connect_options(&db_path))
+        .connect_with(sqlite_options)
         .await
         .map_err(|e| IoError::ConfigError(format!("Failed to create SQLite pool: {}", e)))?;
+    let sqlite_loader = IoSqliteLoader::from_pool(sqlite_pool.clone());
+    let (service_config, api_config) = sqlite_loader.load_service_config().await?;
+
+    // Validation mode: validate and exit
+    if args.validate {
+        let channels = sqlite_loader.load_runtime_channels().await?;
+        bootstrap::validate_configuration(&service_config, &channels)?;
+        info!("Validation completed successfully");
+        return Ok(());
+    }
 
     // Load routing configuration from the unified SQLite database.
     info!("Loading routing cache from unified database...");
@@ -332,11 +330,6 @@ async fn main() -> AetherResult<()> {
         })
     };
 
-    // CommandTxCache for O(1) hot path access
-    // Bypasses ChannelManager RwLock for Control/Adjustment writes
-    let command_tx_cache = Arc::new(CommandTxCache::new());
-    info!("CommandTxCache initialized (O(1) hot path for Control/Adjustment)");
-
     let (shm_listener_shutdown_tx, shm_listener_shutdown_rx) = tokio::sync::watch::channel(false);
 
     let channel_health_writer = {
@@ -391,10 +384,8 @@ async fn main() -> AetherResult<()> {
     // Lock-free architecture - no RwLock wrapper needed
     let channel_manager = ChannelManager::with_shared_memory(
         routing_cache,
-        sqlite_pool.clone(),
         Arc::clone(&shm_handle),
         Some(Arc::clone(&channel_health_writer)),
-        Some(Arc::clone(&command_tx_cache)),
     )?;
 
     // Configure SHM listener for event-driven M2C dispatch.
@@ -413,27 +404,13 @@ async fn main() -> AetherResult<()> {
     ));
 
     // Determine bind address and start server
-    let bind_address = bootstrap::determine_bind_address(
-        args.bind_address,
-        &app_config.api.host,
-        app_config.api.port,
-    );
+    let bind_address =
+        bootstrap::determine_bind_address(args.bind_address, &api_config.host, api_config.port);
     let addr: SocketAddr = bind_address.parse().map_err(|e| {
         IoError::ConfigError(format!("Invalid bind address '{}': {}", bind_address, e))
     })?;
 
-    info!("Starting {} service", app_config.service.name);
-
-    // Start communication channels
-    let configured_count =
-        start_communication_service(config_manager.clone(), Arc::clone(&channel_manager)).await?;
-
-    // Start SHM command listener for event-driven M2C dispatch
-    // This must be started after channels are created (so they can be registered)
-    let shm_listener_handle = channel_manager.start_shm_listener();
-    if shm_listener_handle.is_some() {
-        info!("ShmCommandListener started for event-driven M2C dispatch (~1-2ms latency)");
-    }
+    info!("Starting {} service", service_config.name);
 
     let automatic_reconciliation = Arc::new(
         aether_io::automatic_reconciliation::AutomaticIoReconciler::new(
@@ -465,6 +442,14 @@ async fn main() -> AetherResult<()> {
             );
         },
     }
+
+    // Reconciliation creates every authoritative runtime projection. Start the
+    // command listener only after those channels have been registered.
+    let shm_listener_handle = channel_manager.start_shm_listener();
+    if shm_listener_handle.is_some() {
+        info!("ShmCommandListener started for event-driven M2C dispatch (~1-2ms latency)");
+    }
+
     let automatic_reconciliation_interval = Duration::from_millis(
         std::env::var("AETHER_IO_RECONCILIATION_INTERVAL_MS")
             .ok()
@@ -473,7 +458,7 @@ async fn main() -> AetherResult<()> {
     );
     let automatic_reconciliation_shutdown = shutdown_token.clone();
     let automatic_reconciliation_handle = tokio::spawn(async move {
-        aether_io::automatic_reconciliation::run_automatic_io_reconciliation(
+        aether_io::automatic_reconciliation::run_periodic_io_reconciliation(
             automatic_reconciliation,
             automatic_reconciliation_interval,
             automatic_reconciliation_shutdown,
@@ -482,11 +467,8 @@ async fn main() -> AetherResult<()> {
     });
 
     let watchdog_reconciler: Arc<dyn aether_ports::ChannelReconciler> = channel_adapter.clone();
-    let (cleanup_handle, cleanup_token) = start_cleanup_task(
-        Arc::clone(&channel_manager),
-        configured_count,
-        Some(watchdog_reconciler),
-    );
+    let (cleanup_handle, cleanup_token) =
+        start_cleanup_task(Arc::clone(&channel_manager), Some(watchdog_reconciler));
     // Start routing cache polling task (auto-detect routing changes from SQLite)
     let poll_pool = sqlite_pool.clone();
     let poll_cache = Arc::clone(&channel_manager.routing_cache);
@@ -556,7 +538,6 @@ async fn main() -> AetherResult<()> {
     let app = create_api_routes_with_channel_applications(
         Arc::clone(&channel_manager),
         sqlite_pool,
-        Arc::clone(&command_tx_cache),
         channel_management,
         channel_reconciliation,
         point_topology,

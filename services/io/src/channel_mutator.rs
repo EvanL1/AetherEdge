@@ -4,9 +4,10 @@
 //! a rebuildable projection: after desired state commits, a runtime failure is
 //! reported as a degraded receipt rather than a retryable command failure.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
 
+use aether_config::io::StoredChannelConfig;
 use aether_domain::ChannelId;
 use aether_ports::{
     ChannelDefinition, ChannelDesiredStateObservation, ChannelLoggingPolicy, ChannelMutation,
@@ -20,8 +21,8 @@ use dashmap::DashMap;
 use sqlx::{Sqlite, SqlitePool, Transaction};
 use tokio::sync::{Mutex, RwLock};
 
-use crate::core::channels::ChannelManager;
-use crate::core::config::{ChannelConfig, ChannelCore, ChannelLoggingConfig};
+use crate::core::channels::{ChannelManager, RuntimeChannelConfig};
+use crate::core::config::{ChannelConfig, ChannelCore, ChannelLoggingConfig, IoSqliteLoader};
 use crate::store::SqliteShmTopologyProjector;
 
 const MAX_CHANNEL_ID: u32 = 10_000;
@@ -44,7 +45,7 @@ pub trait ChannelRuntimeLifecycle: Send + Sync + 'static {
     fn channel_ids(&self) -> Vec<ChannelId>;
 
     /// Ensures an active runtime exists for the supplied desired state.
-    async fn activate(&self, config: Arc<ChannelConfig>) -> PortResult<()>;
+    async fn activate(&self, config: RuntimeChannelConfig) -> PortResult<()>;
 
     /// Fences acquisition/control and removes any runtime projection.
     async fn fence(&self, channel_id: ChannelId) -> PortResult<()>;
@@ -67,12 +68,11 @@ impl ChannelRuntimeLifecycle for ChannelManager {
             .collect()
     }
 
-    async fn activate(&self, config: Arc<ChannelConfig>) -> PortResult<()> {
+    async fn activate(&self, config: RuntimeChannelConfig) -> PortResult<()> {
         let entry = match self.get_channel(config.id()) {
             Some(entry) => entry,
             None => self
                 .create_channel(config)
-                .await
                 .map_err(|_| unavailable("channel runtime activation failed"))?,
         };
         if entry.is_connected() {
@@ -81,7 +81,7 @@ impl ChannelRuntimeLifecycle for ChannelManager {
         if entry.connect().await.is_err() {
             // Do not leave a failed projection that a later same-state enable
             // could mistake for an active runtime.
-            let _ = self.remove_channel(entry.channel_config.id()).await;
+            let _ = self.remove_channel(entry.channel_id()).await;
             return Err(unavailable("channel runtime connection failed"));
         }
         Ok(())
@@ -105,6 +105,7 @@ impl ChannelRuntimeLifecycle for ChannelManager {
 #[derive(Clone)]
 pub struct SqliteChannelMutator {
     pool: SqlitePool,
+    loader: IoSqliteLoader,
     runtime: Arc<dyn ChannelRuntimeLifecycle>,
     channel_locks: Arc<DashMap<u32, Arc<Mutex<()>>>>,
     allocation_lock: Arc<Mutex<()>>,
@@ -139,8 +140,10 @@ impl SqliteChannelMutator {
     where
         R: ChannelRuntimeLifecycle,
     {
+        let loader = IoSqliteLoader::from_pool(pool.clone());
         Self {
             pool,
+            loader,
             runtime,
             channel_locks: Arc::new(DashMap::new()),
             allocation_lock: Arc::new(Mutex::new(())),
@@ -156,6 +159,33 @@ impl SqliteChannelMutator {
                 .or_insert_with(|| Arc::new(Mutex::new(())))
                 .value(),
         )
+    }
+
+    async fn load_runtime_snapshot(
+        &self,
+        channel_id: ChannelId,
+        revision: ChannelRevision,
+    ) -> PortResult<RuntimeChannelConfig> {
+        self.loader
+            .load_runtime_channel(channel_id.get(), revision.get())
+            .await
+            .map_err(|_| unavailable("authoritative channel runtime snapshot is unavailable"))
+    }
+
+    async fn load_runtime_snapshots(&self) -> PortResult<Vec<RuntimeChannelConfig>> {
+        self.loader
+            .load_runtime_channels()
+            .await
+            .map_err(|_| unavailable("authoritative channel runtime snapshot is unavailable"))
+    }
+
+    async fn activate_revision(
+        &self,
+        channel_id: ChannelId,
+        revision: ChannelRevision,
+    ) -> PortResult<()> {
+        let snapshot = self.load_runtime_snapshot(channel_id, revision).await?;
+        self.runtime.activate(snapshot).await
     }
 
     /// Returns the runtime identities observed by automatic reconciliation.
@@ -174,7 +204,7 @@ impl SqliteChannelMutator {
         channel_ids: &[ChannelId],
     ) -> PortResult<()> {
         let _projection_guard = self.projection_gate.write().await;
-        let channel_ids: std::collections::BTreeSet<_> = channel_ids.iter().copied().collect();
+        let channel_ids: BTreeSet<_> = channel_ids.iter().copied().collect();
         let mut first_error = None;
         for channel_id in channel_ids {
             let lock = self.channel_lock(channel_id);
@@ -245,7 +275,7 @@ impl SqliteChannelMutator {
         let committed = StoredChannel::from_committed_config(&config, config_json, revision);
 
         let projection = if config.core.enabled {
-            match self.runtime.activate(Arc::new(config)).await {
+            match self.activate_revision(channel_id, revision).await {
                 Ok(()) => ChannelRuntimeProjection::Active,
                 Err(_) => ChannelRuntimeProjection::Degraded,
             }
@@ -303,7 +333,9 @@ impl SqliteChannelMutator {
         }
 
         let committed = StoredChannel::from_committed_config(&config, config_json, next_revision);
-        let projection = self.reconcile_after_update(channel_id, config).await;
+        let projection = self
+            .reconcile_after_update(channel_id, config.core.enabled, next_revision)
+            .await;
         let (resulting_revision, desired_enabled, projection) =
             self.observe_reconcile(&committed, projection).await;
         Ok(ChannelMutationReceipt::new(
@@ -329,22 +361,16 @@ impl SqliteChannelMutator {
         verify_expected_revision(expected_revision, stored.revision)?;
         // Safety shutdown must remain possible when a protocol was removed or
         // a staged legacy writer left malformed activation configuration.
-        let mut activation_config = if enabled {
+        if enabled {
             let config = stored.to_config()?;
             self.runtime.validate(&config)?;
-            Some(config)
-        } else {
-            None
-        };
+        }
 
         if stored.enabled == enabled {
             // Desired content is unchanged, so its revision stays stable. The
             // command still reconciles drift and is identified by request_id
             // in the application audit trail.
             let projection = if enabled {
-                let config = activation_config
-                    .take()
-                    .ok_or_else(|| invalid("enabled channel has no activation configuration"))?;
                 // A present projection can contain stale configuration. Fence
                 // it before re-activation so the default ChannelManager does
                 // not merely reconnect an old entry.
@@ -353,7 +379,7 @@ impl SqliteChannelMutator {
                 {
                     ChannelRuntimeProjection::Degraded
                 } else {
-                    match self.runtime.activate(Arc::new(config)).await {
+                    match self.activate_revision(channel_id, stored.revision).await {
                         Ok(()) => ChannelRuntimeProjection::Active,
                         Err(_) => ChannelRuntimeProjection::Degraded,
                     }
@@ -383,7 +409,7 @@ impl SqliteChannelMutator {
         if !enabled && self.runtime.fence(channel_id).await.is_err() {
             // A fence can partially remove a runtime before returning an
             // error. Re-read authority before attempting any restoration.
-            restore_authoritative_runtime(&self.pool, &*self.runtime, &stored).await;
+            restore_authoritative_runtime(&self.pool, &self.loader, &*self.runtime, &stored).await;
             return Err(unavailable("channel runtime could not be fenced"));
         }
 
@@ -403,13 +429,25 @@ impl SqliteChannelMutator {
             Ok(result) if result.rows_affected() == 1 => {},
             Ok(_) => {
                 if !enabled {
-                    restore_authoritative_runtime(&self.pool, &*self.runtime, &stored).await;
+                    restore_authoritative_runtime(
+                        &self.pool,
+                        &self.loader,
+                        &*self.runtime,
+                        &stored,
+                    )
+                    .await;
                 }
                 return Err(conflict("channel desired state changed concurrently"));
             },
             Err(error) => {
                 if !enabled {
-                    restore_authoritative_runtime(&self.pool, &*self.runtime, &stored).await;
+                    restore_authoritative_runtime(
+                        &self.pool,
+                        &self.loader,
+                        &*self.runtime,
+                        &stored,
+                    )
+                    .await;
                 }
                 return Err(map_database_error(error, "set channel enabled state"));
             },
@@ -419,17 +457,13 @@ impl SqliteChannelMutator {
         committed.enabled = enabled;
         committed.revision = next_revision;
         let projection = if enabled {
-            let mut config = activation_config
-                .take()
-                .ok_or_else(|| invalid("enabled channel has no activation configuration"))?;
-            config.core.enabled = true;
             // Desired state is committed. Remove any stale disabled-state
             // zombie before constructing the active projection.
             if self.runtime.is_present(channel_id) && self.runtime.fence(channel_id).await.is_err()
             {
                 ChannelRuntimeProjection::Degraded
             } else {
-                match self.runtime.activate(Arc::new(config)).await {
+                match self.activate_revision(channel_id, next_revision).await {
                     Ok(()) => ChannelRuntimeProjection::Active,
                     Err(_) => ChannelRuntimeProjection::Degraded,
                 }
@@ -474,14 +508,15 @@ impl SqliteChannelMutator {
             ));
         }
         if self.runtime.fence(channel_id).await.is_err() {
-            restore_authoritative_runtime(&self.pool, &*self.runtime, &stored).await;
+            restore_authoritative_runtime(&self.pool, &self.loader, &*self.runtime, &stored).await;
             return Err(unavailable("channel runtime could not be fenced"));
         }
 
         let mut transaction = match self.pool.begin().await {
             Ok(transaction) => transaction,
             Err(error) => {
-                restore_authoritative_runtime(&self.pool, &*self.runtime, &stored).await;
+                restore_authoritative_runtime(&self.pool, &self.loader, &*self.runtime, &stored)
+                    .await;
                 return Err(map_database_error(error, "begin channel deletion"));
             },
         };
@@ -494,11 +529,11 @@ impl SqliteChannelMutator {
         .await
         {
             let _ = transaction.rollback().await;
-            restore_authoritative_runtime(&self.pool, &*self.runtime, &stored).await;
+            restore_authoritative_runtime(&self.pool, &self.loader, &*self.runtime, &stored).await;
             return Err(error);
         }
         if let Err(error) = transaction.commit().await {
-            restore_authoritative_runtime(&self.pool, &*self.runtime, &stored).await;
+            restore_authoritative_runtime(&self.pool, &self.loader, &*self.runtime, &stored).await;
             return Err(map_database_error(error, "commit channel deletion"));
         }
 
@@ -514,9 +549,10 @@ impl SqliteChannelMutator {
     async fn reconcile_after_update(
         &self,
         channel_id: ChannelId,
-        config: ChannelConfig,
+        enabled: bool,
+        revision: ChannelRevision,
     ) -> ChannelRuntimeProjection {
-        if !config.core.enabled {
+        if !enabled {
             return match self.runtime.fence(channel_id).await {
                 Ok(()) => ChannelRuntimeProjection::Stopped,
                 Err(_) => ChannelRuntimeProjection::Degraded,
@@ -525,7 +561,7 @@ impl SqliteChannelMutator {
         if self.runtime.is_present(channel_id) && self.runtime.fence(channel_id).await.is_err() {
             return ChannelRuntimeProjection::Degraded;
         }
-        match self.runtime.activate(Arc::new(config)).await {
+        match self.activate_revision(channel_id, revision).await {
             Ok(()) => ChannelRuntimeProjection::Active,
             Err(_) => ChannelRuntimeProjection::Degraded,
         }
@@ -604,25 +640,158 @@ impl SqliteChannelMutator {
         Ok(ChannelId::new(candidate))
     }
 
-    async fn reconciliation_ids(&self) -> PortResult<Vec<ChannelId>> {
-        let stored_ids: Vec<i64> =
-            sqlx::query_scalar("SELECT channel_id FROM channels ORDER BY channel_id")
-                .fetch_all(&self.pool)
-                .await
-                .map_err(|error| map_database_error(error, "enumerate channel desired state"))?;
-        let mut ids = std::collections::BTreeSet::new();
-        for raw_id in stored_ids {
-            let raw_id = u32::try_from(raw_id)
-                .map_err(|_| invalid("stored channel identity is outside the u32 range"))?;
-            let channel_id = ChannelId::new(raw_id);
-            validate_channel_id(channel_id)?;
-            ids.insert(channel_id);
+    async fn reconcile_all(
+        &self,
+        topology_current: bool,
+    ) -> PortResult<Vec<ChannelReconciliationItem>> {
+        let snapshots = match self.load_runtime_snapshots().await {
+            Ok(snapshots) => snapshots,
+            Err(error) => return self.fail_closed_bulk(error).await,
+        };
+
+        let mut snapshots_by_id = BTreeMap::new();
+        for snapshot in snapshots {
+            let channel_id = ChannelId::new(snapshot.id());
+            if let Err(error) = validate_channel_id(channel_id) {
+                return self.fail_closed_bulk(error).await;
+            }
+            let Some(revision) = snapshot.persisted_revision() else {
+                return self
+                    .fail_closed_bulk(unavailable(
+                        "authoritative channel runtime snapshot revision is unavailable",
+                    ))
+                    .await;
+            };
+            if revision.get() == 0 {
+                return self
+                    .fail_closed_bulk(unavailable(
+                        "authoritative channel runtime snapshot revision is invalid",
+                    ))
+                    .await;
+            }
+            if snapshots_by_id
+                .insert(channel_id, (revision, snapshot))
+                .is_some()
+            {
+                return self
+                    .fail_closed_bulk(unavailable(
+                        "authoritative channel runtime snapshot contains duplicate identities",
+                    ))
+                    .await;
+            }
         }
+
+        let mut channel_ids: BTreeSet<_> = snapshots_by_id.keys().copied().collect();
         for channel_id in self.runtime.channel_ids() {
-            validate_channel_id(channel_id)?;
-            ids.insert(channel_id);
+            if let Err(error) = validate_channel_id(channel_id) {
+                return self.fail_closed_bulk(error).await;
+            }
+            channel_ids.insert(channel_id);
         }
-        Ok(ids.into_iter().collect())
+
+        let mut pending = BTreeMap::new();
+        for channel_id in channel_ids {
+            let lock = self.channel_lock(channel_id);
+            let _channel_guard = lock.lock().await;
+            let (expected, projection) = match snapshots_by_id.remove(&channel_id) {
+                Some((revision, snapshot)) if topology_current => {
+                    let enabled = snapshot.channel_config().core.enabled;
+                    let projection = self.project_runtime_snapshot_locked(snapshot).await;
+                    (Some((revision, enabled)), projection)
+                },
+                Some((revision, snapshot)) => {
+                    let enabled = snapshot.channel_config().core.enabled;
+                    let _ = self.runtime.fence(channel_id).await;
+                    (
+                        Some((revision, enabled)),
+                        ChannelRuntimeProjection::Degraded,
+                    )
+                },
+                None if topology_current => {
+                    let projection = match self.runtime.fence(channel_id).await {
+                        Ok(()) => ChannelRuntimeProjection::Removed,
+                        Err(_) => ChannelRuntimeProjection::Degraded,
+                    };
+                    (None, projection)
+                },
+                None => {
+                    let _ = self.runtime.fence(channel_id).await;
+                    (None, ChannelRuntimeProjection::Degraded)
+                },
+            };
+            pending.insert(channel_id, (expected, projection));
+        }
+
+        let authority = match self.loader.load_runtime_authority().await {
+            Ok(authority) => authority,
+            Err(_) => {
+                return self
+                    .fail_closed_bulk(unavailable(
+                        "authoritative channel revision snapshot is unavailable",
+                    ))
+                    .await;
+            },
+        };
+        for channel_id in authority.channels.keys().copied() {
+            let channel_id = ChannelId::new(channel_id);
+            if let Err(error) = validate_channel_id(channel_id) {
+                return self.fail_closed_bulk(error).await;
+            }
+            pending
+                .entry(channel_id)
+                .or_insert((None, ChannelRuntimeProjection::Degraded));
+        }
+
+        let mut items = Vec::with_capacity(pending.len());
+        for (channel_id, (expected, projection)) in pending {
+            let latest = authority.channels.get(&channel_id.get()).copied();
+            let stable = latest == expected;
+            let projection = if stable {
+                projection
+            } else {
+                let lock = self.channel_lock(channel_id);
+                let _channel_guard = lock.lock().await;
+                let _ = self.runtime.fence(channel_id).await;
+                ChannelRuntimeProjection::Degraded
+            };
+            let desired = match latest {
+                Some((revision, enabled)) => {
+                    ChannelDesiredStateObservation::present(revision, enabled)
+                },
+                None => ChannelDesiredStateObservation::absent(
+                    authority.tombstones.get(&channel_id.get()).copied(),
+                ),
+            };
+            items.push(ChannelReconciliationItem::new(
+                channel_id, desired, projection,
+            ));
+        }
+        Ok(items)
+    }
+
+    async fn fail_closed_bulk<T>(&self, error: PortError) -> PortResult<T> {
+        match self.fence_current_runtimes().await {
+            Ok(()) => Err(error),
+            Err(fence_error) => Err(fence_error),
+        }
+    }
+
+    async fn fence_current_runtimes(&self) -> PortResult<()> {
+        let channel_ids: BTreeSet<_> = self.runtime.channel_ids().into_iter().collect();
+        let mut first_error = None;
+        for channel_id in channel_ids {
+            let lock = self.channel_lock(channel_id);
+            let _channel_guard = lock.lock().await;
+            if let Err(error) = self.runtime.fence(channel_id).await
+                && first_error.is_none()
+            {
+                first_error = Some(error);
+            }
+        }
+        match first_error {
+            Some(error) => Err(error),
+            None => Ok(()),
+        }
     }
 
     async fn reconcile_channel_locked(
@@ -632,18 +801,62 @@ impl SqliteChannelMutator {
         match load_channel(&self.pool, channel_id).await {
             Ok(stored) => Ok(self.reconcile_present(stored).await),
             Err(error) if error.kind() == PortErrorKind::NotFound => {
-                let last_revision = optional_tombstone_revision(&self.pool, channel_id).await?;
-                let projection = match self.runtime.fence(channel_id).await {
-                    Ok(()) => ChannelRuntimeProjection::Removed,
-                    Err(_) => ChannelRuntimeProjection::Degraded,
-                };
-                Ok(ChannelReconciliationItem::new(
-                    channel_id,
-                    ChannelDesiredStateObservation::absent(last_revision),
-                    projection,
-                ))
+                self.reconcile_absent_locked(channel_id).await
             },
             Err(error) => Err(error),
+        }
+    }
+
+    async fn reconcile_absent_locked(
+        &self,
+        channel_id: ChannelId,
+    ) -> PortResult<ChannelReconciliationItem> {
+        let last_revision = optional_tombstone_revision(&self.pool, channel_id).await?;
+        let projection = match self.runtime.fence(channel_id).await {
+            Ok(()) => ChannelRuntimeProjection::Removed,
+            Err(_) => ChannelRuntimeProjection::Degraded,
+        };
+        Ok(ChannelReconciliationItem::new(
+            channel_id,
+            ChannelDesiredStateObservation::absent(last_revision),
+            projection,
+        ))
+    }
+
+    async fn project_runtime_snapshot_locked(
+        &self,
+        snapshot: RuntimeChannelConfig,
+    ) -> ChannelRuntimeProjection {
+        let channel_id = ChannelId::new(snapshot.id());
+        let enabled = snapshot.channel_config().core.enabled;
+        if enabled {
+            self.activate_runtime_snapshot(snapshot).await
+        } else {
+            match self.runtime.fence(channel_id).await {
+                Ok(()) => ChannelRuntimeProjection::Stopped,
+                Err(_) => ChannelRuntimeProjection::Degraded,
+            }
+        }
+    }
+
+    async fn activate_runtime_snapshot(
+        &self,
+        snapshot: RuntimeChannelConfig,
+    ) -> ChannelRuntimeProjection {
+        let channel_id = ChannelId::new(snapshot.id());
+        if self.runtime.validate(snapshot.channel_config()).is_err() {
+            let _ = self.runtime.fence(channel_id).await;
+            return ChannelRuntimeProjection::Degraded;
+        }
+        if self.runtime.is_present(channel_id) && self.runtime.fence(channel_id).await.is_err() {
+            return ChannelRuntimeProjection::Degraded;
+        }
+        match self.runtime.activate(snapshot).await {
+            Ok(()) => ChannelRuntimeProjection::Active,
+            Err(_) => {
+                let _ = self.runtime.fence(channel_id).await;
+                ChannelRuntimeProjection::Degraded
+            },
         }
     }
 
@@ -695,22 +908,23 @@ impl SqliteChannelMutator {
     }
 
     async fn activate_authoritative(&self, stored: &StoredChannel) -> ChannelRuntimeProjection {
-        let config = match stored
+        if stored
             .to_config()
-            .and_then(|config| self.runtime.validate(&config).map(|()| config))
+            .and_then(|config| self.runtime.validate(&config))
+            .is_err()
         {
-            Ok(config) => config,
-            Err(_) => {
-                let _ = self.runtime.fence(stored.channel_id).await;
-                return ChannelRuntimeProjection::Degraded;
-            },
-        };
+            let _ = self.runtime.fence(stored.channel_id).await;
+            return ChannelRuntimeProjection::Degraded;
+        }
         if self.runtime.is_present(stored.channel_id)
             && self.runtime.fence(stored.channel_id).await.is_err()
         {
             return ChannelRuntimeProjection::Degraded;
         }
-        match self.runtime.activate(Arc::new(config)).await {
+        match self
+            .activate_revision(stored.channel_id, stored.revision)
+            .await
+        {
             Ok(()) => ChannelRuntimeProjection::Active,
             Err(_) => {
                 let _ = self.runtime.fence(stored.channel_id).await;
@@ -775,28 +989,24 @@ impl ChannelReconciler for SqliteChannelMutator {
         scope: ChannelReconciliationScope,
     ) -> PortResult<ChannelReconciliationReceipt> {
         let _projection_guard = self.projection_gate.write().await;
-        let channel_ids = match scope {
-            ChannelReconciliationScope::All => self.reconciliation_ids().await?,
-            ChannelReconciliationScope::One(channel_id) => {
-                validate_channel_id(channel_id)?;
-                vec![channel_id]
-            },
-        };
         let topology_current = match &self.topology {
             Some(topology) => topology.project().await?.is_current(),
             None => true,
         };
-        let mut items = Vec::with_capacity(channel_ids.len());
-        for channel_id in channel_ids {
-            let lock = self.channel_lock(channel_id);
-            let _channel_guard = lock.lock().await;
-            let item = if topology_current {
-                self.reconcile_channel_locked(channel_id).await?
-            } else {
-                self.degraded_item_locked(channel_id).await?
-            };
-            items.push(item);
-        }
+        let items = match scope {
+            ChannelReconciliationScope::All => self.reconcile_all(topology_current).await?,
+            ChannelReconciliationScope::One(channel_id) => {
+                validate_channel_id(channel_id)?;
+                let lock = self.channel_lock(channel_id);
+                let _channel_guard = lock.lock().await;
+                let item = if topology_current {
+                    self.reconcile_channel_locked(channel_id).await?
+                } else {
+                    self.degraded_item_locked(channel_id).await?
+                };
+                vec![item]
+            },
+        };
         Ok(ChannelReconciliationReceipt::new(scope, items))
     }
 }
@@ -830,17 +1040,18 @@ impl StoredChannel {
     }
 
     fn to_config(&self) -> PortResult<ChannelConfig> {
-        let (description, parameters, logging) = decode_config(self.config_json.as_deref())?;
+        let stored = StoredChannelConfig::decode(self.config_json.as_deref())
+            .map_err(|error| invalid(error.to_string()))?;
         Ok(ChannelConfig {
             core: ChannelCore {
                 id: self.channel_id.get(),
                 name: self.name.clone(),
-                description,
+                description: stored.description,
                 protocol: self.protocol.clone(),
                 enabled: self.enabled,
             },
-            parameters,
-            logging,
+            parameters: stored.parameters,
+            logging: stored.logging,
         })
     }
 
@@ -921,7 +1132,7 @@ fn definition_to_config(
             id: channel_id.get(),
             name,
             description: definition.description().map(ToOwned::to_owned),
-            protocol: crate::utils::normalize_protocol_name(&protocol).into_owned(),
+            protocol: canonical_protocol(&protocol)?,
             enabled: definition.enabled(),
         },
         parameters: parameters_to_json(definition.parameters())?,
@@ -938,7 +1149,7 @@ fn apply_patch(mut config: ChannelConfig, patch: &ChannelPatch) -> PortResult<Ch
     }
     if let Some(protocol) = patch.protocol() {
         let protocol = required_text("channel protocol", protocol)?;
-        config.core.protocol = crate::utils::normalize_protocol_name(&protocol).into_owned();
+        config.core.protocol = canonical_protocol(&protocol)?;
     }
     if let Some(parameters) = patch.parameters() {
         for (key, value) in parameters_to_json(parameters)? {
@@ -949,6 +1160,18 @@ fn apply_patch(mut config: ChannelConfig, patch: &ChannelPatch) -> PortResult<Ch
         config.logging = logging_to_config(logging);
     }
     Ok(config)
+}
+
+fn canonical_protocol(protocol: &str) -> PortResult<String> {
+    crate::protocols::get_protocol_registry()
+        .resolve(protocol)
+        .map(|metadata| metadata.protocol_type.to_owned())
+        .ok_or_else(|| {
+            PortError::new(
+                PortErrorKind::InvalidData,
+                "channel protocol is unavailable in this IO runtime build",
+            )
+        })
 }
 
 fn logging_to_config(logging: &ChannelLoggingPolicy) -> ChannelLoggingConfig {
@@ -992,150 +1215,18 @@ fn parameter_to_json(value: &ChannelParameterValue) -> PortResult<serde_json::Va
     }
 }
 
-fn json_to_parameter(value: &serde_json::Value) -> PortResult<ChannelParameterValue> {
-    match value {
-        serde_json::Value::Null => Ok(ChannelParameterValue::Null),
-        serde_json::Value::Bool(value) => Ok(ChannelParameterValue::Bool(*value)),
-        serde_json::Value::Number(value) => {
-            if let Some(value) = value.as_i64() {
-                Ok(ChannelParameterValue::Integer(value))
-            } else if let Some(value) = value.as_u64() {
-                let value = i64::try_from(value).map_err(|_| {
-                    invalid("stored channel parameter integer exceeds the supported range")
-                })?;
-                Ok(ChannelParameterValue::Integer(value))
-            } else {
-                value
-                    .as_f64()
-                    .filter(|value| value.is_finite())
-                    .map(ChannelParameterValue::Float)
-                    .ok_or_else(|| invalid("stored channel parameter number is invalid"))
-            }
-        },
-        serde_json::Value::String(value) => Ok(ChannelParameterValue::String(value.clone())),
-        serde_json::Value::Array(values) => values
-            .iter()
-            .map(json_to_parameter)
-            .collect::<PortResult<Vec<_>>>()
-            .map(ChannelParameterValue::Array),
-        serde_json::Value::Object(values) => values
-            .iter()
-            .map(|(key, value)| Ok((key.clone(), json_to_parameter(value)?)))
-            .collect::<PortResult<BTreeMap<_, _>>>()
-            .map(ChannelParameterValue::Object),
-    }
-}
-
 fn encode_config(config: &ChannelConfig) -> PortResult<String> {
-    let mut root = serde_json::Map::new();
-    if let Some(description) = &config.core.description {
-        root.insert(
-            "description".to_owned(),
-            serde_json::Value::String(description.clone()),
-        );
-    }
-    let mut parameters = serde_json::Map::new();
-    let mut keys = config.parameters.keys().collect::<Vec<_>>();
-    keys.sort_unstable();
-    for key in keys {
-        if let Some(value) = config.parameters.get(key) {
-            parameters.insert(key.clone(), value.clone());
-        }
-    }
-    root.insert(
-        "parameters".to_owned(),
-        serde_json::Value::Object(parameters),
-    );
-    root.insert(
-        "logging".to_owned(),
-        serde_json::to_value(&config.logging)
-            .map_err(|_| invalid("channel logging policy cannot be persisted"))?,
-    );
-    serde_json::to_string(&serde_json::Value::Object(root))
-        .map_err(|_| invalid("channel configuration cannot be persisted"))
-}
-
-#[allow(clippy::type_complexity)]
-fn decode_config(
-    config_json: Option<&str>,
-) -> PortResult<(
-    Option<String>,
-    HashMap<String, serde_json::Value>,
-    ChannelLoggingConfig,
-)> {
-    let value = match config_json {
-        Some(config_json) => serde_json::from_str::<serde_json::Value>(config_json)
-            .map_err(|_| invalid("stored channel configuration is not valid JSON"))?,
-        None => serde_json::Value::Object(serde_json::Map::new()),
-    };
-    let object = value
-        .as_object()
-        .ok_or_else(|| invalid("stored channel configuration is not an object"))?;
-    let description = match object.get("description") {
-        None | Some(serde_json::Value::Null) => None,
-        Some(serde_json::Value::String(value)) => Some(value.clone()),
-        Some(_) => return Err(invalid("stored channel description is not a string")),
-    };
-    let parameters = match object.get("parameters") {
-        None => HashMap::new(),
-        Some(serde_json::Value::Object(values)) => {
-            let mut parameters = HashMap::with_capacity(values.len());
-            for (key, value) in values {
-                // Enforce the same numeric domain for persisted and incoming
-                // typed values without exposing any value in diagnostics.
-                let value = parameter_to_json(&json_to_parameter(value)?)?;
-                parameters.insert(key.clone(), value);
-            }
-            parameters
-        },
-        Some(_) => return Err(invalid("stored channel parameters are not an object")),
-    };
-    let logging = match object.get("logging") {
-        None => ChannelLoggingConfig::default(),
-        Some(value) => serde_json::from_value(value.clone())
-            .map_err(|_| invalid("stored channel logging policy is invalid"))?,
-    };
-    Ok((description, parameters, logging))
+    StoredChannelConfig::from(config)
+        .encode()
+        .map_err(|error| invalid(error.to_string()))
 }
 
 fn validate_runtime_config(config: &ChannelConfig) -> PortResult<()> {
     if config.id() >= MAX_CHANNEL_ID {
         return Err(invalid("channel identity must be between 0 and 9999"));
     }
-    let protocol = crate::utils::normalize_protocol_name(config.protocol());
-    let supported = match protocol.as_ref() {
-        #[cfg(feature = "modbus")]
-        "modbus_tcp" | "modbus_rtu" => true,
-        #[cfg(all(target_os = "linux", feature = "gpio"))]
-        "gpio" | "di_do" | "dido" => true,
-        #[cfg(all(target_os = "linux", feature = "can"))]
-        "can" => true,
-        #[cfg(feature = "aether_485")]
-        "aether_485" => true,
-        #[cfg(feature = "iec104")]
-        "iec104" => true,
-        #[cfg(feature = "opcua")]
-        "opcua" => true,
-        #[cfg(feature = "dl645")]
-        "dl645" => true,
-        #[cfg(feature = "iec61850")]
-        "iec61850" => true,
-        _ => false,
-    };
-    if !supported {
-        return Err(invalid(
-            "channel protocol is unavailable in this IO runtime build",
-        ));
-    }
-
-    let mut validation = common::ValidationResult::new(common::ValidationLevel::Schema);
-    config.validate(&mut validation, 0);
-    if !validation.is_valid {
-        return Err(invalid(
-            "channel parameters do not satisfy the protocol schema",
-        ));
-    }
-    Ok(())
+    crate::core::channels::validate_channel_config_for_runtime(config)
+        .map_err(|_| invalid("channel parameters do not satisfy the IO runtime schema"))
 }
 
 async fn logical_route_count(pool: &SqlitePool, channel_id: ChannelId) -> PortResult<i64> {
@@ -1261,6 +1352,7 @@ async fn table_exists(
 
 async fn restore_authoritative_runtime(
     pool: &SqlitePool,
+    loader: &IoSqliteLoader,
     runtime: &dyn ChannelRuntimeLifecycle,
     initial: &StoredChannel,
 ) {
@@ -1291,7 +1383,14 @@ async fn restore_authoritative_runtime(
     if runtime.is_present(initial.channel_id) && runtime.fence(initial.channel_id).await.is_err() {
         return;
     }
-    if runtime.activate(Arc::new(config)).await.is_err() {
+    let Ok(snapshot) = loader
+        .load_runtime_channel(initial.channel_id.get(), latest.revision.get())
+        .await
+    else {
+        let _ = runtime.fence(initial.channel_id).await;
+        return;
+    };
+    if runtime.activate(snapshot).await.is_err() {
         let _ = runtime.fence(initial.channel_id).await;
         return;
     }
@@ -1423,10 +1522,11 @@ fn unavailable(message: impl Into<String>) -> PortError {
     PortError::new(PortErrorKind::Unavailable, message)
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "modbus"))]
 mod tests {
     use super::*;
 
+    #[cfg(feature = "modbus")]
     fn runtime_config(
         id: u32,
         protocol: &str,

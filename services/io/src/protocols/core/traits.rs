@@ -11,18 +11,13 @@
 //!
 //! Layer 2: Core Operations (single responsibility)
 //! ├── ProtocolClient        // connect, disconnect, poll_once, write_*
-//! └── EventDrivenProtocol   // event_stream (broadcast)
-//!
-//! Layer 3: Optional Extensions
-//! └── ProtocolServer        // listen, stop, connected_clients
+//! └── EventDrivenProtocol   // bounded single-consumer event queue
 //! ```
 
-use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
 use std::future::Future;
-use std::sync::Arc;
-use tokio::sync::broadcast;
+use tokio::sync::mpsc;
 
 use crate::protocols::core::data::DataBatch;
 use crate::protocols::core::error::Result;
@@ -304,29 +299,6 @@ impl PointFailure {
     }
 }
 
-/// Polling configuration.
-#[derive(Debug, Clone)]
-pub struct PollingConfig {
-    /// Polling interval in milliseconds.
-    pub interval_ms: u64,
-
-    /// Point IDs to poll (None = all configured points).
-    pub point_ids: Option<Vec<u32>>,
-
-    /// Whether to continue on individual point errors.
-    pub continue_on_error: bool,
-}
-
-impl Default for PollingConfig {
-    fn default() -> Self {
-        Self {
-            interval_ms: 1000,
-            point_ids: None,
-            continue_on_error: true,
-        }
-    }
-}
-
 /// Protocol diagnostics information.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Diagnostics {
@@ -451,26 +423,14 @@ pub trait ProtocolClient: Protocol {
     ) -> impl Future<Output = Result<WriteResult>> + Send;
 }
 
-/// Server protocol trait - passive connection acceptance.
-pub trait ProtocolServer: Protocol {
-    /// Start listening on the specified address.
-    fn listen(&mut self, addr: &str) -> impl Future<Output = Result<()>> + Send;
-
-    /// Stop listening and close all connections.
-    fn stop(&mut self) -> impl Future<Output = Result<()>> + Send;
-
-    /// Get number of connected clients.
-    fn connected_clients(&self) -> usize;
-}
-
 /// Data event for event-driven protocols.
 ///
-/// Note: `DataUpdate` uses `Arc<DataBatch>` to avoid deep cloning on broadcast.
-/// This is a significant performance optimization for high-frequency data streams.
-#[derive(Debug, Clone)]
+/// Each runtime has exactly one service-layer consumer, so batches move through
+/// a bounded MPSC queue without reference-counting or deep cloning.
+#[derive(Debug)]
 pub enum DataEvent {
-    /// Data update received (Arc-wrapped to avoid clone overhead).
-    DataUpdate(Arc<DataBatch>),
+    /// Data update received.
+    DataUpdate(DataBatch),
 
     /// Connection state changed.
     ConnectionChanged(ConnectionState),
@@ -482,44 +442,54 @@ pub enum DataEvent {
     Heartbeat,
 }
 
-/// Event receiver type (broadcast supports multiple subscribers).
-pub type DataEventReceiver = broadcast::Receiver<DataEvent>;
+/// Event receiver owned by the unified channel task.
+pub type DataEventReceiver = mpsc::Receiver<DataEvent>;
 
-/// Event sender type (broadcast supports multiple subscribers).
-pub type DataEventSender = broadcast::Sender<DataEvent>;
+/// Cloneable sender used by one or more adapter background tasks.
+pub type DataEventSender = mpsc::Sender<DataEvent>;
 
-/// Event handler trait.
-///
-/// This trait uses `async_trait` because it needs to be object-safe for `dyn DataEventHandler`.
-/// Uses `Arc<DataBatch>` to enable zero-copy sharing between event_tx and handler.
-#[async_trait]
-pub trait DataEventHandler: Send + Sync {
-    /// Handle data update event (Arc for zero-copy sharing).
-    async fn on_data_update(&self, batch: Arc<DataBatch>);
+#[cfg(any(
+    test,
+    feature = "ble",
+    feature = "iec104",
+    feature = "mqtt",
+    feature = "opcua",
+    feature = "zigbee",
+    all(feature = "can", target_os = "linux")
+))]
+const DATA_EVENT_CHANNEL_CAPACITY: usize = 1024;
 
-    /// Handle connection state change.
-    async fn on_connection_changed(&self, state: ConnectionState);
-
-    /// Handle error event.
-    async fn on_error(&self, error: &str);
+/// Create the bounded, single-consumer event queue for one runtime.
+#[cfg(any(
+    test,
+    feature = "ble",
+    feature = "iec104",
+    feature = "mqtt",
+    feature = "opcua",
+    feature = "zigbee",
+    all(feature = "can", target_os = "linux")
+))]
+pub(crate) fn data_event_channel() -> (DataEventSender, DataEventReceiver) {
+    mpsc::channel(DATA_EVENT_CHANNEL_CAPACITY)
 }
 
 /// Event-driven protocol extension trait.
 ///
-/// Protocols implementing this trait can push data events to subscribers
-/// instead of (or in addition to) being polled.
+/// Protocols implementing this trait can push data events to the unified
+/// channel task instead of (or in addition to) being polled.
 pub trait EventDrivenProtocol: Protocol {
-    /// Subscribe to data events.
+    /// Take the runtime's sole data-event receiver.
     ///
-    /// Returns a broadcast receiver that will receive all events from this protocol.
-    /// Multiple subscribers can call this method and each will receive all events.
+    /// Returns `None` after the receiver has already been taken.
     ///
     /// # Example
     ///
     /// ```ignore
-    /// let mut rx = protocol.subscribe();
+    /// let Some(mut rx) = protocol.take_event_receiver() else {
+    ///     return;
+    /// };
     /// tokio::spawn(async move {
-    ///     while let Ok(event) = rx.recv().await {
+    ///     while let Some(event) = rx.recv().await {
     ///         match event {
     ///             DataEvent::DataUpdate(batch) => { /* handle data */ }
     ///             DataEvent::ConnectionChanged(state) => { /* handle state change */ }
@@ -528,13 +498,7 @@ pub trait EventDrivenProtocol: Protocol {
     ///     }
     /// });
     /// ```
-    fn subscribe(&self) -> DataEventReceiver;
-
-    /// Set event handler for callback-style event processing.
-    ///
-    /// This is an alternative to `subscribe()` for protocols that prefer
-    /// callback-based event handling.
-    fn set_event_handler(&mut self, handler: Arc<dyn DataEventHandler>);
+    fn take_event_receiver(&mut self) -> Option<DataEventReceiver>;
 
     /// Start receiving events from the device/server.
     ///
@@ -555,6 +519,22 @@ mod tests {
     fn test_connection_state() {
         assert!(!ConnectionState::Disconnected.is_connected());
         assert!(ConnectionState::Connected.is_connected());
+    }
+
+    #[test]
+    fn data_event_queue_is_bounded_and_never_blocks_producers() {
+        let (sender, _receiver) = data_event_channel();
+
+        for _ in 0..DATA_EVENT_CHANNEL_CAPACITY {
+            sender
+                .try_send(DataEvent::Heartbeat)
+                .expect("configured queue capacity");
+        }
+
+        assert!(matches!(
+            sender.try_send(DataEvent::Heartbeat),
+            Err(mpsc::error::TrySendError::Full(DataEvent::Heartbeat))
+        ));
     }
 
     #[test]

@@ -16,15 +16,42 @@ use aether_core::PointType;
 
 use crate::core::channels::traits::ChannelCommand;
 use crate::core::channels::types::ProtocolCommand;
+use crate::protocols::core::data::DataBatch;
 use crate::protocols::core::logging::{ChannelLogConfig, ChannelLogHandler};
 use crate::protocols::core::traits::{DataEvent, DataEventReceiver, PollResult};
-use crate::protocols::gateway::ChannelRuntime;
+use crate::protocols::runtime::ChannelRuntime;
 use crate::runtime::reconnect::{
     AutoRecoveryPolicy, ReconnectHelper, ReconnectPolicy, ReconnectState,
 };
 use crate::store::ShmDataStore;
 
 use super::command_guard::CommandGuard;
+
+/// Mutable task state shared with the lock-free channel query surface.
+///
+/// Keeping these atomics behind one `Arc` avoids one allocation and reference
+/// count pair per field while preserving independent lock-free updates.
+pub(super) struct ChannelSharedState {
+    pub cached_connection_state: AtomicU8,
+    pub cached_diagnostics: ArcSwapOption<crate::protocols::core::traits::Diagnostics>,
+    pub watchdog_heartbeat_ms: AtomicI64,
+    pub reconnect_total_attempts: AtomicU64,
+    pub reconnect_failed: AtomicBool,
+    pub last_successful_read_ms: AtomicI64,
+}
+
+impl ChannelSharedState {
+    pub fn new(initial_connection_state: u8) -> Self {
+        Self {
+            cached_connection_state: AtomicU8::new(initial_connection_state),
+            cached_diagnostics: ArcSwapOption::empty(),
+            watchdog_heartbeat_ms: AtomicI64::new(0),
+            reconnect_total_attempts: AtomicU64::new(0),
+            reconnect_failed: AtomicBool::new(false),
+            last_successful_read_ms: AtomicI64::new(0),
+        }
+    }
+}
 
 /// Shared immutable context for channel polling operations.
 ///
@@ -34,16 +61,8 @@ pub(super) struct ChannelPollContext {
     pub store: Arc<ShmDataStore>,
     pub channel_id: u32,
     pub poll_interval_ms: NonZeroU64,
-    pub cached_state: Arc<AtomicU8>,
-    pub cached_diagnostics: Arc<ArcSwapOption<crate::protocols::core::traits::Diagnostics>>,
+    pub shared: Arc<ChannelSharedState>,
     pub log_handler: Arc<dyn ChannelLogHandler>,
-    pub watchdog_heartbeat_ms: Arc<AtomicI64>,
-    pub reconnect_total_attempts: Arc<AtomicU64>,
-    pub reconnect_failed: Arc<AtomicBool>,
-    /// Timestamp (millis since epoch) of the most recent poll cycle that
-    /// returned at least one successful point. Drives `is_connected()` so the
-    /// UI reflects data freshness, not just TCP state.
-    pub last_successful_read_ms: Arc<AtomicI64>,
     /// Consecutive zero-data poll cycles before triggering disconnect (0 = disabled)
     pub zero_data_threshold: u32,
     /// Final fail-closed command policy for this channel.
@@ -89,16 +108,26 @@ async fn stop_events_and_disconnect(
 }
 
 /// Wait for the next event without creating a busy loop for polling protocols.
-async fn receive_protocol_event(
-    receiver: &mut Option<DataEventReceiver>,
-) -> std::result::Result<DataEvent, tokio::sync::broadcast::error::RecvError> {
+async fn receive_protocol_event(receiver: &mut Option<DataEventReceiver>) -> Option<DataEvent> {
     match receiver {
         Some(receiver) => receiver.recv().await,
         None => std::future::pending().await,
     }
 }
 
-async fn handle_protocol_event(
+fn write_batch_and_mark_fresh(
+    store: &ShmDataStore,
+    channel_id: u32,
+    batch: &DataBatch,
+    last_successful_read_ms: &AtomicI64,
+    freshness_ms: i64,
+) -> crate::protocols::core::Result<()> {
+    store.write_batch(channel_id, batch)?;
+    last_successful_read_ms.store(freshness_ms, Ordering::Relaxed);
+    Ok(())
+}
+
+fn handle_protocol_event(
     event: DataEvent,
     ctx: &ChannelPollContext,
     prev_online: &mut Option<bool>,
@@ -107,15 +136,18 @@ async fn handle_protocol_event(
         DataEvent::DataUpdate(batch) => {
             if !batch.is_empty() {
                 let now_ms = super::channel_entry::unix_timestamp_ms();
-                ctx.last_successful_read_ms.store(now_ms, Ordering::Relaxed);
-                ctx.watchdog_heartbeat_ms.store(now_ms, Ordering::Relaxed);
+                ctx.shared
+                    .watchdog_heartbeat_ms
+                    .store(now_ms, Ordering::Relaxed);
                 ctx.store
                     .refresh_channel_health_heartbeat(now_ms.max(0) as u64);
-                if let Err(error) = ctx
-                    .store
-                    .write_batch(ctx.channel_id, batch.as_ref().clone())
-                    .await
-                {
+                if let Err(error) = write_batch_and_mark_fresh(
+                    ctx.store.as_ref(),
+                    ctx.channel_id,
+                    &batch,
+                    &ctx.shared.last_successful_read_ms,
+                    now_ms,
+                ) {
                     error!(
                         "Ch{} failed to write event data to SHM: {}",
                         ctx.channel_id, error
@@ -125,14 +157,13 @@ async fn handle_protocol_event(
         },
         DataEvent::ConnectionChanged(state) => {
             let cached_state: crate::core::channels::types::ConnectionState = state.into();
-            ctx.cached_state
+            ctx.shared
+                .cached_connection_state
                 .store(cached_state.as_u8(), Ordering::Relaxed);
             let online = state.is_connected();
             if *prev_online != Some(online) {
                 *prev_online = Some(online);
-                ctx.store
-                    .publish_channel_online(ctx.channel_id, online)
-                    .await;
+                ctx.store.publish_channel_online(ctx.channel_id, online);
             }
         },
         DataEvent::Error(message) => {
@@ -140,7 +171,9 @@ async fn handle_protocol_event(
         },
         DataEvent::Heartbeat => {
             let now_ms = super::channel_entry::unix_timestamp_ms();
-            ctx.watchdog_heartbeat_ms.store(now_ms, Ordering::Relaxed);
+            ctx.shared
+                .watchdog_heartbeat_ms
+                .store(now_ms, Ordering::Relaxed);
             ctx.store
                 .refresh_channel_health_heartbeat(now_ms.max(0) as u64);
         },
@@ -150,7 +183,7 @@ async fn handle_protocol_event(
 /// Check if channel online state changed and publish it to the SHM health plane.
 ///
 /// Avoids redundant SHM writes by tracking previous state.
-async fn check_online_change(
+fn check_online_change(
     protocol: &dyn ChannelRuntime,
     prev_online: &mut Option<bool>,
     store: &ShmDataStore,
@@ -161,9 +194,7 @@ async fn check_online_change(
     let current_online = protocol.connection_state().is_connected();
     if *prev_online != Some(current_online) {
         *prev_online = Some(current_online);
-        store
-            .publish_channel_online(channel_id, current_online)
-            .await;
+        store.publish_channel_online(channel_id, current_online);
     }
 }
 
@@ -219,10 +250,10 @@ pub(super) async fn run_unified_channel_task(
     auto_recovery_policy: Option<AutoRecoveryPolicy>,
 ) {
     let event_driven = protocol.is_event_driven();
-    // Subscribe before connecting so startup events (notably IEC 104 GI data)
-    // cannot race ahead of the runtime receiver.
+    // Take the receiver before connecting so startup events (notably IEC 104
+    // GI data) cannot race ahead of the runtime consumer.
     let mut event_rx = if event_driven {
-        protocol.subscribe()
+        protocol.take_event_receiver()
     } else {
         None
     };
@@ -248,14 +279,13 @@ pub(super) async fn run_unified_channel_task(
     tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
 
     // Update initial connection state
-    update_cached_state(protocol.as_ref(), &ctx.cached_state);
+    update_cached_state(protocol.as_ref(), &ctx.shared.cached_connection_state);
     check_online_change(
         protocol.as_ref(),
         &mut prev_online,
         &ctx.store,
         ctx.channel_id,
-    )
-    .await;
+    );
 
     // Use configured poll interval
     let mut interval = tokio::time::interval(tokio::time::Duration::from_millis(
@@ -302,12 +332,9 @@ pub(super) async fn run_unified_channel_task(
             // Priority 3: Data pushed by event-driven protocols.
             event = receive_protocol_event(&mut event_rx) => {
                 match event {
-                    Ok(event) => handle_protocol_event(event, &ctx, &mut prev_online).await,
-                    Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
-                        warn!("Ch{} event receiver lagged, skipped {} events", ctx.channel_id, skipped);
-                    },
-                    Err(tokio::sync::broadcast::error::RecvError::Closed) => {
-                        warn!("Ch{} event stream closed", ctx.channel_id);
+                    Some(event) => handle_protocol_event(event, &ctx, &mut prev_online),
+                    None => {
+                        warn!("Ch{} event queue closed", ctx.channel_id);
                         event_rx = None;
                     },
                 }
@@ -334,14 +361,12 @@ pub(super) async fn run_unified_channel_task(
     let _ = stop_events_and_disconnect(protocol.as_mut()).await;
 
     // Mark as disconnected on shutdown
-    ctx.cached_state.store(
+    ctx.shared.cached_connection_state.store(
         crate::core::channels::types::ConnectionState::Disconnected.as_u8(),
         Ordering::Relaxed,
     );
     // Publish offline status to the SHM health plane on shutdown.
-    ctx.store
-        .publish_channel_online(ctx.channel_id, false)
-        .await;
+    ctx.store.publish_channel_online(ctx.channel_id, false);
     info!("Ch{} unified task stopped", ctx.channel_id);
 }
 
@@ -372,15 +397,6 @@ async fn handle_protocol_command(
         ProtocolCommand::Disconnect { response_tx } => {
             let _ = stop_events_and_disconnect(protocol.as_mut()).await;
             let _ = response_tx.send(());
-        },
-        ProtocolCommand::GetDiagnostics { response_tx } => {
-            let diag = protocol.diagnostics().await.ok();
-            let _ = response_tx.send(diag);
-        },
-        ProtocolCommand::GetConnectionState { response_tx } => {
-            let state: crate::core::channels::types::ConnectionState =
-                protocol.connection_state().into();
-            let _ = response_tx.send(state);
         },
         ProtocolCommand::SetLogLevel { level, response_tx } => {
             let result = apply_log_level(protocol.as_mut(), log_handler.as_ref(), &level);
@@ -546,7 +562,8 @@ async fn handle_poll_tick(
 ) -> TickAction {
     let event_driven = protocol.is_event_driven();
     // Update watchdog heartbeat on every tick (proves task is alive)
-    ctx.watchdog_heartbeat_ms
+    ctx.shared
+        .watchdog_heartbeat_ms
         .store(super::channel_entry::unix_timestamp_ms(), Ordering::Relaxed);
 
     // Step 1: Check connection state before polling
@@ -569,7 +586,7 @@ async fn handle_poll_tick(
         reconnect_helper.mark_connected();
         *failed_log_tick_counter = 0;
         // Sync reconnect stats
-        ctx.reconnect_failed.store(false, Ordering::Relaxed);
+        ctx.shared.reconnect_failed.store(false, Ordering::Relaxed);
     }
 
     // Step 3: Poll data using ChannelRuntime interface
@@ -595,14 +612,20 @@ async fn handle_poll_tick(
     let count = result.data.len();
     if count > 0 {
         *consecutive_zero_data = 0;
-        // Mark "data is flowing" — is_connected() requires this to stay fresh
-        // so a TCP-up-but-Modbus-dead zombie reports as disconnected after
-        // ~3 missed polls.
-        ctx.last_successful_read_ms
-            .store(super::channel_entry::unix_timestamp_ms(), Ordering::Relaxed);
-        tracing::trace!("Ch{} poll ok: {} pts", ctx.channel_id, count);
-        if let Err(e) = ctx.store.write_batch(ctx.channel_id, result.data).await {
+        let freshness_ms = super::channel_entry::unix_timestamp_ms();
+        if let Err(e) = write_batch_and_mark_fresh(
+            ctx.store.as_ref(),
+            ctx.channel_id,
+            &result.data,
+            &ctx.shared.last_successful_read_ms,
+            freshness_ms,
+        ) {
             error!("Ch{} failed to write to SHM: {}", ctx.channel_id, e);
+        } else {
+            // Mark "data is flowing" only after the authoritative commit.
+            // A decoded batch that SHM rejects must not keep a zombie channel
+            // looking fresh.
+            tracing::trace!("Ch{} poll ok: {} pts", ctx.channel_id, count);
         }
     } else if !event_driven && ctx.zero_data_threshold > 0 {
         *consecutive_zero_data += 1;
@@ -613,8 +636,8 @@ async fn handle_poll_tick(
             );
             let _ = stop_events_and_disconnect(protocol.as_mut()).await;
             *consecutive_zero_data = 0;
-            update_cached_state(protocol.as_ref(), &ctx.cached_state);
-            check_online_change(protocol.as_ref(), prev_online, &ctx.store, ctx.channel_id).await;
+            update_cached_state(protocol.as_ref(), &ctx.shared.cached_connection_state);
+            check_online_change(protocol.as_ref(), prev_online, &ctx.store, ctx.channel_id);
             return TickAction::Proceed;
         }
     }
@@ -629,12 +652,12 @@ async fn handle_poll_tick(
             );
             *prev_error_count = diag.error_count;
         }
-        ctx.cached_diagnostics.store(Some(Arc::new(diag)));
+        ctx.shared.cached_diagnostics.store(Some(Arc::new(diag)));
     }
 
     // Update cached connection state after each poll cycle
-    update_cached_state(protocol.as_ref(), &ctx.cached_state);
-    check_online_change(protocol.as_ref(), prev_online, &ctx.store, ctx.channel_id).await;
+    update_cached_state(protocol.as_ref(), &ctx.shared.cached_connection_state);
+    check_online_change(protocol.as_ref(), prev_online, &ctx.store, ctx.channel_id);
 
     TickAction::Proceed
 }
@@ -649,12 +672,13 @@ async fn handle_disconnected(
     prev_online: &mut Option<bool>,
 ) -> TickAction {
     // Sync reconnect stats to shared atomics on every disconnected tick
-    ctx.reconnect_total_attempts
+    ctx.shared
+        .reconnect_total_attempts
         .store(reconnect_helper.stats().total_attempts, Ordering::Relaxed);
 
     match reconnect_helper.connection_state() {
         ReconnectState::Failed => {
-            ctx.reconnect_failed.store(true, Ordering::Relaxed);
+            ctx.shared.reconnect_failed.store(true, Ordering::Relaxed);
 
             // Check auto-recovery before giving up
             if reconnect_helper.check_auto_recovery() {
@@ -662,11 +686,10 @@ async fn handle_disconnected(
                     "Ch{} auto-recovery triggered, returning to Disconnected state",
                     ctx.channel_id
                 );
-                ctx.reconnect_failed.store(false, Ordering::Relaxed);
+                ctx.shared.reconnect_failed.store(false, Ordering::Relaxed);
                 *failed_log_tick_counter = 0;
-                update_cached_state(protocol.as_ref(), &ctx.cached_state);
-                check_online_change(protocol.as_ref(), prev_online, &ctx.store, ctx.channel_id)
-                    .await;
+                update_cached_state(protocol.as_ref(), &ctx.shared.cached_connection_state);
+                check_online_change(protocol.as_ref(), prev_online, &ctx.store, ctx.channel_id);
                 return TickAction::Continue;
             }
 
@@ -690,8 +713,8 @@ async fn handle_disconnected(
                     );
                 }
             }
-            update_cached_state(protocol.as_ref(), &ctx.cached_state);
-            check_online_change(protocol.as_ref(), prev_online, &ctx.store, ctx.channel_id).await;
+            update_cached_state(protocol.as_ref(), &ctx.shared.cached_connection_state);
+            check_online_change(protocol.as_ref(), prev_online, &ctx.store, ctx.channel_id);
             TickAction::Continue
         },
         ReconnectState::Reconnecting => TickAction::Continue,
@@ -701,9 +724,8 @@ async fn handle_disconnected(
                 reconnect_helper.mark_disconnected();
             }
             if !reconnect_helper.record_attempt() {
-                update_cached_state(protocol.as_ref(), &ctx.cached_state);
-                check_online_change(protocol.as_ref(), prev_online, &ctx.store, ctx.channel_id)
-                    .await;
+                update_cached_state(protocol.as_ref(), &ctx.shared.cached_connection_state);
+                check_online_change(protocol.as_ref(), prev_online, &ctx.store, ctx.channel_id);
                 return TickAction::Continue;
             }
 
@@ -724,12 +746,25 @@ async fn handle_disconnected(
                             failed_log_tick_counter, &ctx.log_handler, ctx.channel_id,
                         ).await;
                         if let Some(a) = action {
-                            update_cached_state(protocol.as_ref(), &ctx.cached_state);
-                            check_online_change(protocol.as_ref(), prev_online, &ctx.store, ctx.channel_id).await;
+                            update_cached_state(
+                                protocol.as_ref(),
+                                &ctx.shared.cached_connection_state,
+                            );
+                            check_online_change(
+                                protocol.as_ref(),
+                                prev_online,
+                                &ctx.store,
+                                ctx.channel_id,
+                            );
                             return a;
                         }
-                        update_cached_state(protocol.as_ref(), &ctx.cached_state);
-                        check_online_change(protocol.as_ref(), prev_online, &ctx.store, ctx.channel_id).await;
+                        update_cached_state(protocol.as_ref(), &ctx.shared.cached_connection_state);
+                        check_online_change(
+                            protocol.as_ref(),
+                            prev_online,
+                            &ctx.store,
+                            ctx.channel_id,
+                        );
                         return TickAction::Continue;
                     }
                 }
@@ -746,7 +781,7 @@ async fn handle_disconnected(
                 Ok(Ok(())) => {
                     info!("Ch{} reconnected successfully", ctx.channel_id);
                     reconnect_helper.mark_connected();
-                    ctx.reconnect_failed.store(false, Ordering::Relaxed);
+                    ctx.shared.reconnect_failed.store(false, Ordering::Relaxed);
                     *failed_log_tick_counter = 0;
                 },
                 Ok(Err(e)) => {
@@ -758,8 +793,8 @@ async fn handle_disconnected(
                     reconnect_helper.record_failure();
                 },
             }
-            update_cached_state(protocol.as_ref(), &ctx.cached_state);
-            check_online_change(protocol.as_ref(), prev_online, &ctx.store, ctx.channel_id).await;
+            update_cached_state(protocol.as_ref(), &ctx.shared.cached_connection_state);
+            check_online_change(protocol.as_ref(), prev_online, &ctx.store, ctx.channel_id);
             TickAction::Continue
         },
     }
@@ -792,15 +827,6 @@ async fn handle_backoff_command(
             let _ = stop_events_and_disconnect(protocol.as_mut()).await;
             let _ = response_tx.send(());
         },
-        ProtocolCommand::GetConnectionState { response_tx } => {
-            let state: crate::core::channels::types::ConnectionState =
-                protocol.connection_state().into();
-            let _ = response_tx.send(state);
-        },
-        ProtocolCommand::GetDiagnostics { response_tx } => {
-            let diag = protocol.diagnostics().await.ok();
-            let _ = response_tx.send(diag);
-        },
         ProtocolCommand::SetLogLevel { level, response_tx } => {
             let result = apply_log_level(protocol.as_mut(), log_handler.as_ref(), &level);
             let _ = response_tx.send(result);
@@ -813,10 +839,13 @@ async fn handle_backoff_command(
 mod tests {
     use std::sync::{Arc, Mutex};
 
+    use aether_dataplane::SlotWriter;
+    use aether_routing::RoutingCache;
+    use aether_shm_bridge::{ChannelPointManifest, ShmAcquisitionStateWriter};
     use async_trait::async_trait;
 
     use super::*;
-    use crate::protocols::core::data::DataBatch;
+    use crate::protocols::core::data::{DataBatch, DataPoint};
     use crate::protocols::core::error::{GatewayError, Result};
     use crate::protocols::core::traits::{ConnectionState, Diagnostics, PollResult};
 
@@ -844,18 +873,6 @@ mod tests {
 
     #[async_trait]
     impl ChannelRuntime for EventLifecycleProbe {
-        fn id(&self) -> u32 {
-            104
-        }
-
-        fn name(&self) -> &str {
-            "event-lifecycle-probe"
-        }
-
-        fn protocol(&self) -> &str {
-            "event-probe"
-        }
-
         fn is_event_driven(&self) -> bool {
             true
         }
@@ -872,18 +889,6 @@ mod tests {
 
         async fn poll_once(&mut self) -> PollResult {
             PollResult::success(DataBatch::new())
-        }
-
-        async fn write_control(&mut self, _commands: &[(u32, f64)]) -> Result<usize> {
-            Ok(0)
-        }
-
-        async fn write_adjustment(&mut self, _adjustments: &[(u32, f64)]) -> Result<usize> {
-            Ok(0)
-        }
-
-        fn subscribe(&self) -> Option<crate::protocols::core::DataEventReceiver> {
-            None
         }
 
         async fn start_events(&mut self) -> Result<()> {
@@ -931,5 +936,43 @@ mod tests {
             calls.lock().expect("lifecycle probe lock").as_slice(),
             ["connect", "start_events", "disconnect"]
         );
+    }
+
+    #[tokio::test]
+    async fn unsupported_writes_fail_closed_by_default() {
+        let (mut protocol, _) = EventLifecycleProbe::new(false);
+
+        assert!(matches!(
+            protocol.write_control(&[(1, 1.0)]).await,
+            Err(GatewayError::Unsupported(_))
+        ));
+        assert!(matches!(
+            protocol.write_adjustment(&[(1, 1.0)]).await,
+            Err(GatewayError::Unsupported(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn failed_acquisition_commit_does_not_advance_freshness() {
+        let directory = tempfile::tempdir().expect("create test SHM directory");
+        let manifest = Arc::new(ChannelPointManifest::from_entries([(7, [1, 0, 0, 0])]));
+        let writer = Arc::new(
+            SlotWriter::create(
+                directory.path().join("freshness.shm"),
+                16,
+                manifest.slot_count(),
+                manifest.layout_hash(),
+            )
+            .expect("create acquisition writer"),
+        );
+        let store = ShmDataStore::from_acquisition_writer(
+            Arc::new(ShmAcquisitionStateWriter::new(writer, manifest)),
+            Arc::new(RoutingCache::default()),
+        );
+        let freshness = AtomicI64::new(123);
+        let batch = DataBatch::from_points(vec![DataPoint::telemetry(99, 42.0)]);
+
+        assert!(write_batch_and_mark_fresh(&store, 7, &batch, &freshness, 9_999).is_err());
+        assert_eq!(freshness.load(Ordering::Relaxed), 123);
     }
 }

@@ -14,16 +14,18 @@ use tokio_util::sync::CancellationToken;
 use tracing::info;
 
 mod alarm_rule_mutation;
+mod api;
 mod broadcast;
 mod config;
 mod db;
 mod live_values;
 mod models;
 mod monitor;
+mod notification;
 mod routes;
 mod state;
 
-use crate::broadcast::Broadcaster;
+use crate::broadcast::HttpAlarmNotifier;
 use crate::config::AlarmConfig;
 use crate::live_values::{AlarmValueSource, build_shm_alarm_source, run_alarm_topology_refresh};
 use crate::models::MonitorStatus;
@@ -69,7 +71,11 @@ async fn main() -> anyhow::Result<()> {
         .timeout(std::time::Duration::from_secs(5))
         .build()?;
 
-    let broadcaster = Broadcaster::new(http_client, cfg.api_url.clone(), cfg.uplink_url.clone());
+    let notifier: Arc<dyn notification::AlarmNotifier> = Arc::new(HttpAlarmNotifier::new(
+        http_client,
+        cfg.api_url.clone(),
+        cfg.uplink_url.clone(),
+    ));
 
     // ── Governed alarm command boundary ──────────────────────────────────────
     let access_authenticator = Arc::new(
@@ -83,7 +89,7 @@ async fn main() -> anyhow::Result<()> {
     );
     let alarm_store = Arc::new(alarm_rule_mutation::SqliteAlarmRuleMutator::new(
         db_pool.clone(),
-        broadcaster.clone(),
+        Arc::clone(&notifier),
     ));
     let mutator: Arc<dyn aether_ports::AlarmRuleMutator> = alarm_store.clone();
     let resolver: Arc<dyn aether_ports::AlertResolver> = alarm_store;
@@ -110,7 +116,7 @@ async fn main() -> anyhow::Result<()> {
         db: db_pool,
         live_values: state_live_values,
         config: Arc::new(cfg.clone()),
-        broadcaster,
+        notifier,
         monitor_status,
         rule_application,
         alert_resolution_application,

@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 
-use crate::models::{DataPoint, DataStats, HistoryRecord, QueryRangeParams, SeriesResult};
+use crate::models::{DataPoint, DataStats, HistoryRangeQuery, HistoryRecord, SeriesResult};
 
 /// Uniform interface for all historical-data storage backends.
 ///
@@ -22,10 +22,7 @@ pub trait StorageBackend: Send + Sync + 'static {
     /// Paginated range query. Returns `(records, total_count)`.
     async fn query_range(
         &self,
-        params: &QueryRangeParams,
-        default_page_size: i64,
-        max_page_size: i64,
-        max_time_range_days: i64,
+        query: &HistoryRangeQuery,
     ) -> anyhow::Result<(Vec<HistoryRecord>, i64)>;
 
     /// Fetch the single most-recent record for a key/point pair.

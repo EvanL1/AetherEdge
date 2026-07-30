@@ -92,7 +92,6 @@ Docker Compose runtime and fails if that composition is not present.
 | `aether channels update <id> ... --expected-revision <rev> --confirmed` | Update desired channel configuration with mandatory compare-and-set |
 | `aether channels enable\|disable <id> --expected-revision <rev> --confirmed` | Change desired runtime lifecycle with mandatory compare-and-set |
 | `aether channels delete <id> --expected-revision <rev> --confirmed` | Delete a channel with mandatory compare-and-set; `--force` only skips the prompt and action-route references fail with a conflict |
-| `aether channels write <id> --type T\|S ...` | Inject supervised simulation telemetry |
 | `aether channels reload --confirmed` | Reconcile all channel runtimes through `io.channel.reconcile`; requires `AETHER_ACCESS_TOKEN` and must not be retried automatically |
 | `aether channels health` | Service health check |
 | `aether models instances action ... --confirmed` | Submit the only supported external device command to the local command plane; requires explicit confirmation and `AETHER_ACCESS_TOKEN` from an Admin/Engineer session |
@@ -129,7 +128,8 @@ Docker Compose runtime and fails if that composition is not present.
 | `aether rules update <id> ... --confirmed` | Change rule policy; requires `AETHER_ACCESS_TOKEN` |
 | `aether rules delete <id> --confirmed` | Delete a rule; `--force` only skips the prompt |
 | `aether rules execute <id> --confirmed` | Evaluate a rule and submit selected actions to the local command plane; requires explicit confirmation and `AETHER_ACCESS_TOKEN` |
-| `aether routing action upsert/delete/enable/disable ... --confirmed` | Govern one physical C/A command route; requires `AETHER_ACCESS_TOKEN` |
+| `aether routing measurement upsert/delete/enable/disable ... --expected-revision <REV> --confirmed` | Govern one T/S measurement route; requires `AETHER_ACCESS_TOKEN` |
+| `aether routing action upsert/delete/enable/disable ... --expected-revision <REV> --confirmed` | Govern one physical C/A command route; requires `AETHER_ACCESS_TOKEN` |
 
 The production MCP catalog contains 45 tools: 23 read-only tools are always
 registered, while `aether mcp --allow-write` adds exactly 22 governed writes:

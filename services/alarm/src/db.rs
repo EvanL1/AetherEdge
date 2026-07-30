@@ -7,10 +7,7 @@ use chrono::{TimeZone, Utc};
 use sqlx::SqlitePool;
 use tracing::info;
 
-use crate::models::{
-    Alert, AlertEvent, AlertQueryParams, AlertRule, EventQueryParams, PagedData, RuleQueryParams,
-    resolve_pagination,
-};
+use crate::models::{Alert, AlertEvent, AlertFilter, AlertRule, EventFilter, Page, RuleFilter};
 
 // ============================================================================
 // Schema creation
@@ -191,10 +188,7 @@ pub async fn get_rule_by_id(pool: &SqlitePool, id: i64) -> Result<Option<AlertRu
     Ok(row)
 }
 
-pub async fn list_rules(
-    pool: &SqlitePool,
-    params: &RuleQueryParams,
-) -> Result<PagedData<AlertRule>> {
+pub async fn list_rules(pool: &SqlitePool, params: &RuleFilter) -> Result<Page<AlertRule>> {
     let mut cond_strings: Vec<String> = Vec::new();
 
     // keyword: fuzzy match across rule_name, description, channel_id, point_id
@@ -264,26 +258,23 @@ pub async fn list_rules(
         }};
     }
 
-    let (eff_limit, offset, page, page_size) =
-        resolve_pagination(params.page, params.page_size, params.skip, params.limit);
-
     let total: i64 = bind_params!(sqlx::query_scalar::<_, i64>(&count_sql))
         .fetch_one(pool)
         .await
         .context("count rules")?;
 
     let list: Vec<AlertRule> = bind_params!(sqlx::query_as::<_, AlertRule>(&data_sql))
-        .bind(eff_limit)
-        .bind(offset)
+        .bind(params.page.limit)
+        .bind(params.page.offset)
         .fetch_all(pool)
         .await
         .context("list rules")?;
 
-    Ok(PagedData {
+    Ok(Page {
         total,
         list,
-        page,
-        page_size,
+        page: params.page.page,
+        page_size: params.page.page_size,
     })
 }
 
@@ -343,7 +334,7 @@ pub async fn get_all_active_alerts(pool: &SqlitePool) -> Result<Vec<Alert>> {
     .context("get all active alerts")
 }
 
-pub async fn list_alerts(pool: &SqlitePool, params: &AlertQueryParams) -> Result<PagedData<Alert>> {
+pub async fn list_alerts(pool: &SqlitePool, params: &AlertFilter) -> Result<Page<Alert>> {
     let mut cond_strings: Vec<String> = Vec::new();
     cond_strings.push("status = 'active'".to_string());
 
@@ -395,21 +386,18 @@ pub async fn list_alerts(pool: &SqlitePool, params: &AlertQueryParams) -> Result
         .await
         .context("count alerts")?;
 
-    let (eff_limit, offset, page, page_size) =
-        resolve_pagination(params.page, params.page_size, params.skip, params.limit);
-
     let list: Vec<Alert> = bind_alert_params!(sqlx::query_as::<_, Alert>(&data_sql))
-        .bind(eff_limit)
-        .bind(offset)
+        .bind(params.page.limit)
+        .bind(params.page.offset)
         .fetch_all(pool)
         .await
         .context("list alerts")?;
 
-    Ok(PagedData {
+    Ok(Page {
         total,
         list,
-        page,
-        page_size,
+        page: params.page.page,
+        page_size: params.page.page_size,
     })
 }
 
@@ -511,10 +499,7 @@ pub async fn resolve_alert(pool: &SqlitePool, alert: &Alert, recovery_value: f64
 // AlertEvent queries
 // ============================================================================
 
-pub async fn list_events(
-    pool: &SqlitePool,
-    params: &EventQueryParams,
-) -> Result<PagedData<AlertEvent>> {
+pub async fn list_events(pool: &SqlitePool, params: &EventFilter) -> Result<Page<AlertEvent>> {
     let mut cond_strings: Vec<String> = Vec::new();
 
     // keyword: fuzzy match across rule_name, channel_id, point_id
@@ -589,27 +574,24 @@ pub async fn list_events(
         .await
         .context("count events")?;
 
-    let (eff_limit, offset, page, page_size) =
-        resolve_pagination(params.page, params.page_size, params.skip, params.limit);
-
     let list: Vec<AlertEvent> = bind_event_params!(sqlx::query_as::<_, AlertEvent>(&data_sql))
-        .bind(eff_limit)
-        .bind(offset)
+        .bind(params.page.limit)
+        .bind(params.page.offset)
         .fetch_all(pool)
         .await
         .context("list events")?;
 
-    Ok(PagedData {
+    Ok(Page {
         total,
         list,
-        page,
-        page_size,
+        page: params.page.page,
+        page_size: params.page.page_size,
     })
 }
 
 pub async fn get_all_events_for_export(
     pool: &SqlitePool,
-    params: &EventQueryParams,
+    params: &EventFilter,
 ) -> Result<Vec<AlertEvent>> {
     let mut cond_strings: Vec<String> = Vec::new();
     if params.keyword.is_some() {

@@ -8,8 +8,8 @@ use sqlx::SqlitePool;
 use tracing::error;
 
 use crate::models::{
-    DataPoint, DataStats, HistoryRecord, QueryRangeParams, SeriesPoint, SeriesResult, fmt_ts,
-    parse_time, source_from_key,
+    DataPoint, DataStats, HistoryRangeQuery, HistoryRecord, SeriesPoint, SeriesResult, fmt_ts,
+    source_from_key,
 };
 use crate::storage::StorageBackend;
 
@@ -109,41 +109,20 @@ impl StorageBackend for SqliteHistoryBackend {
 
     async fn query_range(
         &self,
-        params: &QueryRangeParams,
-        default_page_size: i64,
-        max_page_size: i64,
-        max_time_range_days: i64,
+        query: &HistoryRangeQuery,
     ) -> anyhow::Result<(Vec<HistoryRecord>, i64)> {
-        let page = params.page.unwrap_or(1).max(1);
-        let page_size = params
-            .page_size
-            .unwrap_or(default_page_size)
-            .clamp(1, max_page_size.max(1));
-        let offset = (page - 1) * page_size;
-        let end = params
-            .end_time
-            .as_deref()
-            .map(parse_time)
-            .transpose()?
-            .unwrap_or_else(Utc::now);
-        let requested_start = params
-            .start_time
-            .as_deref()
-            .map(parse_time)
-            .transpose()?
-            .unwrap_or_else(|| end - Duration::hours(24));
-        let start = requested_start.max(end - Duration::days(max_time_range_days));
+        let offset = (query.page - 1) * query.page_size;
 
         let rows: Vec<(i64, String, String, Option<f64>)> = sqlx::query_as(
             "SELECT time_ms, series_key, point_id, value FROM history \
              WHERE series_key = ? AND point_id = ? AND time_ms >= ? AND time_ms <= ? \
              ORDER BY time_ms DESC LIMIT ? OFFSET ?",
         )
-        .bind(&params.series_key)
-        .bind(&params.point_id)
-        .bind(start.timestamp_millis())
-        .bind(end.timestamp_millis())
-        .bind(page_size)
+        .bind(&query.series_key)
+        .bind(&query.point_id)
+        .bind(query.start_time.timestamp_millis())
+        .bind(query.end_time.timestamp_millis())
+        .bind(query.page_size)
         .bind(offset)
         .fetch_all(&self.pool)
         .await?;
@@ -151,10 +130,10 @@ impl StorageBackend for SqliteHistoryBackend {
             "SELECT COUNT(*) FROM history \
              WHERE series_key = ? AND point_id = ? AND time_ms >= ? AND time_ms <= ?",
         )
-        .bind(&params.series_key)
-        .bind(&params.point_id)
-        .bind(start.timestamp_millis())
-        .bind(end.timestamp_millis())
+        .bind(&query.series_key)
+        .bind(&query.point_id)
+        .bind(query.start_time.timestamp_millis())
+        .bind(query.end_time.timestamp_millis())
         .fetch_one(&self.pool)
         .await?;
         let records = rows
@@ -281,7 +260,7 @@ mod tests {
     use chrono::{TimeZone, Utc};
 
     use super::SqliteHistoryBackend;
-    use crate::models::{DataPoint, QueryRangeParams};
+    use crate::models::{DataPoint, HistoryRangeQuery};
     use crate::storage::StorageBackend;
 
     #[tokio::test]
@@ -313,19 +292,20 @@ mod tests {
             .expect("query latest")
             .expect("stored sample");
         let (range, total) = backend
-            .query_range(
-                &QueryRangeParams {
-                    series_key: "inst:1:M".to_string(),
-                    point_id: "7".to_string(),
-                    start_time: Some("2024-07-03T00:00:00Z".to_string()),
-                    end_time: Some("2024-07-04T00:00:00Z".to_string()),
-                    page: None,
-                    page_size: None,
-                },
-                100,
-                1_000,
-                365,
-            )
+            .query_range(&HistoryRangeQuery {
+                series_key: "inst:1:M".to_string(),
+                point_id: "7".to_string(),
+                start_time: Utc
+                    .with_ymd_and_hms(2024, 7, 3, 0, 0, 0)
+                    .single()
+                    .expect("valid start"),
+                end_time: Utc
+                    .with_ymd_and_hms(2024, 7, 4, 0, 0, 0)
+                    .single()
+                    .expect("valid end"),
+                page: 1,
+                page_size: 100,
+            })
             .await
             .expect("query range");
 

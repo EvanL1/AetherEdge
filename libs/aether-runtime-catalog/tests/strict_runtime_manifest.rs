@@ -293,3 +293,19 @@ fn catalog_default_features_match_aether_io_cargo_defaults() {
 
     assert_eq!(declared, default_io_features());
 }
+
+#[test]
+fn every_catalog_protocol_feature_is_an_aether_io_cargo_feature() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../services/io/Cargo.toml");
+    let source = fs::read_to_string(path).expect("aether-io Cargo manifest");
+
+    for feature in known_io_protocol_features() {
+        let declaration = format!("{feature} =");
+        assert!(
+            source
+                .lines()
+                .any(|line| line.trim_start().starts_with(&declaration)),
+            "runtime catalog feature {feature:?} is absent from aether-io/Cargo.toml"
+        );
+    }
+}

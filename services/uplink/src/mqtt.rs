@@ -23,6 +23,8 @@ use tokio::time::{self, Duration};
 use tokio_util::sync::CancellationToken;
 use tracing::{Instrument, error, info, warn};
 
+use crate::alarm_client::AlarmReplayOutcome;
+use crate::automation_client::AutomationAction;
 use crate::models::{
     CommandReply, InstSyncItem, InstSyncReply, ReadReply, ReadReplyProperty, ReadRequest,
     StatusPayload, WriteReply, WriteRequest,
@@ -34,8 +36,7 @@ use crate::trace_context::{self, TraceParent};
 
 pub async fn run_mqtt_loop(state: Arc<AppState>, shutdown: CancellationToken) {
     loop {
-        let cfg = state.config.read().await.clone();
-        let delay = Duration::from_secs(cfg.reconnect_delay_secs);
+        let delay = Duration::from_secs(state.config.read().await.reconnect_delay_secs);
 
         match connect_and_run(Arc::clone(&state), shutdown.clone()).await {
             Ok(_) => {
@@ -147,8 +148,8 @@ async fn connect_and_run(state: Arc<AppState>, shutdown: CancellationToken) -> a
                         on_connected(&state, &client).await;
                     }
                     Ok(Event::Incoming(Incoming::Publish(p))) => {
-                        let topic = p.topic.clone();
-                        let payload = p.payload.clone();
+                        let topic = p.topic;
+                        let payload = p.payload;
                         let s = Arc::clone(&state);
                         tokio::spawn(async move {
                             dispatch_message(s, &topic, payload).await;
@@ -463,20 +464,14 @@ async fn handle_call_alarm(state: Arc<AppState>, payload: Bytes) {
     let (msg_id, traceparent) = correlation_from(&payload);
 
     let alarm_url = state.config.read().await.alarm_url.clone();
-    let url = format!("{}/alarmApi/call-data", alarm_url);
-
-    // POST to alarm with msgId + timestamp in body (matches Python uplink).
-    let post_body = json!({
-        "msgId": msg_id.as_deref().unwrap_or(""),
-        "timestamp": Utc::now().timestamp()
-    });
-
-    let (result, message) = match state.http_client.post(&url).json(&post_body).send().await {
-        Ok(resp) if resp.status().is_success() => {
-            ("success".to_string(), "告警数据请求成功".to_string())
-        },
-        Ok(resp) => {
-            let msg = format!("告警API返回状态码: {}", resp.status());
+    let (result, message) = match state
+        .alarm_client
+        .request_replay(&alarm_url, msg_id.as_deref(), Utc::now().timestamp())
+        .await
+    {
+        Ok(AlarmReplayOutcome::Accepted) => ("success".to_string(), "告警数据请求成功".to_string()),
+        Ok(AlarmReplayOutcome::Rejected(status)) => {
+            let msg = format!("告警API返回状态码: {status}");
             warn!("call-alarm: {}", msg);
             ("warning".to_string(), msg)
         },
@@ -517,46 +512,17 @@ pub async fn do_inst_sync(
     traceparent: Option<TraceParent>,
 ) -> anyhow::Result<()> {
     let automation_url = state.config.read().await.automation_url.clone();
-    let url = format!("{}/api/instances?page_size=100", automation_url);
-
-    let list = match state.http_client.get(&url).send().await {
-        Ok(resp) if resp.status().is_success() => match resp.json::<serde_json::Value>().await {
-            Ok(body) => {
-                let raw_list = body
-                    .get("data")
-                    .and_then(|d| d.get("list"))
-                    .and_then(|l| l.as_array())
-                    .cloned()
-                    .unwrap_or_default();
-
-                raw_list
-                    .into_iter()
-                    .filter_map(|item| {
-                        let instance_id = item.get("instance_id")?.as_i64()?;
-                        let instance_name = item.get("instance_name")?.as_str()?.to_string();
-                        let product_name = item.get("product_name")?.as_str()?.to_string();
-                        Some(InstSyncItem {
-                            instance_id,
-                            instance_name,
-                            product_name,
-                        })
-                    })
-                    .collect::<Vec<_>>()
-            },
-            Err(e) => {
-                return Err(anyhow::anyhow!("parse automation response: {}", e));
-            },
-        },
-        Ok(resp) => {
-            return Err(anyhow::anyhow!(
-                "automation returned status {}",
-                resp.status()
-            ));
-        },
-        Err(e) => {
-            return Err(anyhow::anyhow!("HTTP request to automation: {}", e));
-        },
-    };
+    let list = state
+        .automation_client
+        .list_instances(&automation_url)
+        .await?
+        .into_iter()
+        .map(|item| InstSyncItem {
+            instance_id: i64::from(item.instance_id),
+            instance_name: item.instance_name,
+            product_name: item.product_name,
+        })
+        .collect();
 
     let reply = InstSyncReply {
         msg_id,
@@ -600,51 +566,29 @@ async fn dispatch_cloud_command(
     message_id: Option<&str>,
     traceparent: Option<&TraceParent>,
 ) -> anyhow::Result<()> {
-    let config = state.config.read().await.clone();
-    let (url, body) = command_request(&config, instance_id, field, value);
+    let automation_url = state.config.read().await.automation_url.clone();
     let control_token = state.env.control_token.as_deref().ok_or_else(|| {
         anyhow::anyhow!(
             "AETHER_UPLINK_CONTROL_TOKEN is missing or weaker than 32 bytes; cloud device control is disabled"
         )
     })?;
-    let mut request = state
-        .http_client
-        .post(url)
-        .header("authorization", format!("AetherService {control_token}"))
-        .json(&body);
-    if let Some(message_id) = message_id {
-        request = request.header("Idempotency-Key", message_id);
-    }
-    if let Some(traceparent) = traceparent {
-        // Safe as a header value only because `TraceParent` is parsed, not
-        // passed through: the grammar admits no CR/LF (see `trace_context`).
-        request = request.header("traceparent", traceparent.as_str());
-    }
-    let response = request.send().await?;
-    if !response.status().is_success() {
-        anyhow::bail!("command service returned HTTP {}", response.status());
-    }
-    Ok(())
-}
-
-fn command_request(
-    config: &crate::models::NetConfig,
-    instance_id: u32,
-    field: &str,
-    value: f64,
-) -> (String, serde_json::Value) {
-    (
-        format!(
-            "{}/api/instances/{instance_id}/action",
-            config.automation_url.trim_end_matches('/')
-        ),
-        json!({"point_id": field, "value": value, "confirmed": true}),
-    )
+    state
+        .automation_client
+        .dispatch_action(AutomationAction {
+            automation_url: &automation_url,
+            control_token,
+            instance_id,
+            point_id: field,
+            value,
+            message_id,
+            traceparent,
+        })
+        .await
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{build_tls, command_request, parse_error_reply, resolve_command_target};
+    use super::{build_tls, parse_error_reply, resolve_command_target};
     use bytes::Bytes;
 
     const TP: &str = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";
@@ -695,7 +639,6 @@ mod tests {
         assert_eq!(reply["result"], "fail");
         assert!(reply.get("traceparent").is_none());
     }
-    use crate::models::NetConfig;
 
     #[test]
     fn tls_material_is_parsed_before_a_connection_is_attempted() {
@@ -718,21 +661,5 @@ mod tests {
         );
         assert!(resolve_command_target("inst", "12", "M").is_err());
         assert!(resolve_command_target("io", "10", "T").is_err());
-    }
-
-    #[test]
-    fn cloud_commands_use_existing_safety_checked_service_apis() {
-        let config = NetConfig::default();
-        let (instance_url, instance_body) = command_request(&config, 12, "5", 42.5);
-
-        assert_eq!(
-            instance_url,
-            "http://localhost:6002/api/instances/12/action"
-        );
-        assert_eq!(
-            instance_body,
-            serde_json::json!({"point_id": "5", "value": 42.5, "confirmed": true})
-        );
-        assert!(resolve_command_target("io", "10", "C").is_err());
     }
 }

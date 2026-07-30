@@ -245,6 +245,7 @@ pub async fn login(
         Ok((tokens, token_id, token_info)) => {
             state.refresh_tokens.insert(token_id, token_info);
             let _ = db::update_user_last_login(&state.db, user.id).await;
+            let tokens = TokenResponse::from(tokens);
 
             Json(json!({
                 "success": true,
@@ -363,6 +364,7 @@ pub async fn refresh_token(
     ) {
         Ok((tokens, new_token_id, token_info)) => {
             state.refresh_tokens.insert(new_token_id, token_info);
+            let tokens = TokenResponse::from(tokens);
             Json(json!({
                 "success": true,
                 "message": "Token refreshed successfully",
@@ -432,12 +434,15 @@ pub async fn get_me(State(state): State<Arc<AppState>>, headers: HeaderMap) -> i
     };
 
     match db::get_user_with_role(&state.db, claims.user_id).await {
-        Ok(Some(user)) => Json(json!({
-            "success": true,
-            "message": "User info retrieved",
-            "data": user,
-        }))
-        .into_response(),
+        Ok(Some(user)) => {
+            let user = UserWithRole::from(user);
+            Json(json!({
+                "success": true,
+                "message": "User info retrieved",
+                "data": user,
+            }))
+            .into_response()
+        },
         Ok(None) => (
             StatusCode::NOT_FOUND,
             Json(json!({"success": false, "message": "User not found"})),
@@ -540,13 +545,19 @@ pub async fn get_roles(
     }
 
     match db::get_all_roles(&state.db).await {
-        Ok(roles) => Json(json!({
-            "success": true,
-            "message": "Roles retrieved",
-            "data": roles,
-            "total": roles.len(),
-        }))
-        .into_response(),
+        Ok(roles) => {
+            let roles = roles
+                .into_iter()
+                .map(crate::models::Role::from)
+                .collect::<Vec<_>>();
+            Json(json!({
+                "success": true,
+                "message": "Roles retrieved",
+                "data": roles,
+                "total": roles.len(),
+            }))
+            .into_response()
+        },
         Err(e) => {
             error!("Get roles error: {}", e);
             StatusCode::INTERNAL_SERVER_ERROR.into_response()
@@ -574,21 +585,10 @@ pub async fn get_all_users(
 
     match db::get_all_users_with_roles(&state.db).await {
         Ok(users) => {
-            // Strip password hashes
-            let list: Vec<Value> = users
-                .iter()
-                .map(|u| {
-                    json!({
-                        "id": u.id,
-                        "username": u.username,
-                        "is_active": u.is_active,
-                        "last_login": u.last_login,
-                        "created_at": u.created_at,
-                        "updated_at": u.updated_at,
-                        "role": u.role,
-                    })
-                })
-                .collect();
+            let list = users
+                .into_iter()
+                .map(UserWithRole::from)
+                .collect::<Vec<_>>();
 
             Json(json!({
                 "success": true,
@@ -624,12 +624,15 @@ pub async fn admin_get_user(
     }
 
     match db::get_user_with_role(&state.db, user_id).await {
-        Ok(Some(user)) => Json(json!({
-            "success": true,
-            "message": "User info retrieved",
-            "data": user,
-        }))
-        .into_response(),
+        Ok(Some(user)) => {
+            let user = UserWithRole::from(user);
+            Json(json!({
+                "success": true,
+                "message": "User info retrieved",
+                "data": user,
+            }))
+            .into_response()
+        },
         Ok(None) => (
             StatusCode::NOT_FOUND,
             Json(json!({"success": false, "message": "User not found"})),
@@ -860,12 +863,15 @@ async fn apply_user_update(
     }
 
     match db::get_user_with_role(&state.db, user_id).await {
-        Ok(Some(user)) => Json(json!({
-            "success": true,
-            "message": "User info updated",
-            "data": user,
-        }))
-        .into_response(),
+        Ok(Some(user)) => {
+            let user = UserWithRole::from(user);
+            Json(json!({
+                "success": true,
+                "message": "User info updated",
+                "data": user,
+            }))
+            .into_response()
+        },
         _ => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({"success": false, "message": "Internal server error"})),
@@ -1090,17 +1096,15 @@ mod tests {
             .expect("deletion test user exists");
         state.refresh_tokens.insert(
             "victim-token".to_string(),
-            crate::models::RefreshTokenInfo {
+            crate::read_models::RefreshTokenInfo {
                 user_id: user.id,
-                username: user.username.clone(),
                 expires_at: i64::MAX,
             },
         );
         state.refresh_tokens.insert(
             "other-token".to_string(),
-            crate::models::RefreshTokenInfo {
+            crate::read_models::RefreshTokenInfo {
                 user_id: user.id + 1,
-                username: "other-user".to_string(),
                 expires_at: i64::MAX,
             },
         );

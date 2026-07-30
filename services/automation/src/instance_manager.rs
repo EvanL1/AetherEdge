@@ -8,8 +8,8 @@
 use anyhow::{Result, anyhow};
 use sqlx::SqlitePool;
 use std::collections::HashMap;
-use std::sync::{Arc, OnceLock};
-use tracing::{debug, warn};
+use std::sync::Arc;
+use tracing::warn;
 
 use crate::config::TopologyNode;
 use crate::product_loader::{Instance, ProductLoader};
@@ -45,50 +45,41 @@ fn escape_like(s: &str) -> String {
         .replace('_', "\\_")
 }
 
+fn pagination_offset(page: u32, page_size: u32) -> Result<u64> {
+    if page == 0 || page_size == 0 {
+        return Err(anyhow!("page and page_size must be positive"));
+    }
+    Ok(u64::from(page - 1) * u64::from(page_size))
+}
+
 /// Instance Manager handles runtime instance lifecycle
 pub struct InstanceManager {
     pub(crate) pool: SqlitePool,
     pub(crate) product_loader: Arc<ProductLoader>,
-    /// Instance name → instance_id cache (for fast API lookups)
-    /// Atomically replaceable instance-name index. Readers see either the
-    /// complete previous SQLite projection or the complete replacement; a
-    /// reconciliation never exposes a partially rebuilt map.
-    pub(crate) name_cache: arc_swap::ArcSwap<HashMap<String, u32>>,
     /// Production runtime view that pins point, health, and logical routing
     /// to one service generation.
-    pub(crate) runtime_topology:
-        OnceLock<Arc<crate::infra::runtime_topology::AutomationTopologyHandle>>,
+    pub(crate) runtime_topology: Arc<crate::infra::runtime_topology::AutomationTopologyHandle>,
 }
 
 impl InstanceManager {
-    pub fn new(pool: SqlitePool, product_loader: Arc<ProductLoader>) -> Self {
+    pub fn new(
+        pool: SqlitePool,
+        product_loader: Arc<ProductLoader>,
+        runtime_topology: Arc<crate::infra::runtime_topology::AutomationTopologyHandle>,
+    ) -> Self {
         Self {
             pool,
             product_loader,
-            name_cache: arc_swap::ArcSwap::from_pointee(HashMap::new()),
-            runtime_topology: OnceLock::new(),
+            runtime_topology,
         }
     }
 
-    /// Installs the service-owned coherent runtime topology exactly once.
-    pub fn set_runtime_topology(
-        &self,
-        topology: Arc<crate::infra::runtime_topology::AutomationTopologyHandle>,
-    ) -> aether_ports::PortResult<()> {
-        self.runtime_topology.set(topology).map_err(|_| {
-            aether_ports::PortError::new(
-                aether_ports::PortErrorKind::Conflict,
-                "automation runtime topology is already configured",
-            )
-        })
-    }
-
-    /// Returns the coherent production topology when composition is complete.
+    /// Returns the mandatory coherent production topology.
     #[must_use]
     pub fn runtime_topology(
         &self,
-    ) -> Option<&Arc<crate::infra::runtime_topology::AutomationTopologyHandle>> {
-        self.runtime_topology.get()
+    ) -> &Arc<crate::infra::runtime_topology::AutomationTopologyHandle> {
+        &self.runtime_topology
     }
 
     /// Load per-instance property values from `instance_properties`, resolving
@@ -102,7 +93,7 @@ impl InstanceManager {
     ) -> Result<HashMap<String, serde_json::Value>> {
         let product = self
             .product_loader
-            .get_product(product_name)
+            .get_definition(product_name)
             .map_err(|e| anyhow!("Product '{}' not found: {}", product_name, e))?;
 
         let rows: Vec<(i64, String)> = sqlx::query_as(
@@ -117,7 +108,7 @@ impl InstanceManager {
             let Some(tpl) = product
                 .properties
                 .iter()
-                .find(|p| i64::from(p.property_id) == property_id)
+                .find(|p| i64::from(p.id) == property_id)
             else {
                 warn!(
                     "Instance {} has property_id={} not in product '{}' template, dropping from response",
@@ -143,7 +134,7 @@ impl InstanceManager {
     /// `search_instances` / `get_children` to avoid N+1.
     pub(crate) async fn fetch_properties_batch(
         &self,
-        instances: &[(u32, String)],
+        instances: &[(u32, &str)],
     ) -> Result<HashMap<u32, HashMap<String, serde_json::Value>>> {
         if instances.is_empty() {
             return Ok(HashMap::new());
@@ -161,21 +152,23 @@ impl InstanceManager {
         let rows = q.fetch_all(&self.pool).await?;
 
         // Group rows by instance_id, resolve property_id -> name per product.
-        let product_by_instance: HashMap<u32, &str> =
-            instances.iter().map(|(id, p)| (*id, p.as_str())).collect();
+        let product_by_instance: HashMap<u32, &str> = instances
+            .iter()
+            .map(|(id, product)| (*id, *product))
+            .collect();
         let mut out: HashMap<u32, HashMap<String, serde_json::Value>> = HashMap::new();
         for (instance_id, property_id, value_json) in rows {
             let instance_id = instance_id as u32;
             let Some(product_name) = product_by_instance.get(&instance_id) else {
                 continue;
             };
-            let Ok(product) = self.product_loader.get_product(product_name) else {
+            let Ok(product) = self.product_loader.get_definition(product_name) else {
                 continue;
             };
             let Some(tpl) = product
                 .properties
                 .iter()
-                .find(|p| i64::from(p.property_id) == property_id)
+                .find(|p| i64::from(p.id) == property_id)
             else {
                 continue;
             };
@@ -200,9 +193,9 @@ impl InstanceManager {
         if instances.is_empty() {
             return Ok(());
         }
-        let lookup: Vec<(u32, String)> = instances
+        let lookup: Vec<(u32, &str)> = instances
             .iter()
-            .map(|i| (i.core.instance_id, i.core.product_name.clone()))
+            .map(|i| (i.core.instance_id, i.core.product_name.as_str()))
             .collect();
         let mut grouped = self.fetch_properties_batch(&lookup).await?;
         for inst in instances {
@@ -229,7 +222,7 @@ impl InstanceManager {
         }
         let product = self
             .product_loader
-            .get_product(product_name)
+            .get_definition(product_name)
             .map_err(|e| anyhow!("Product '{}' not found: {}", product_name, e))?;
 
         for (name, value) in properties {
@@ -249,7 +242,7 @@ impl InstanceManager {
                     updated_at = CURRENT_TIMESTAMP",
             )
             .bind(instance_id as i64)
-            .bind(i64::from(tpl.property_id))
+            .bind(i64::from(tpl.id))
             .bind(value_json)
             .execute(&mut **tx)
             .await?;
@@ -265,23 +258,13 @@ impl InstanceManager {
     /// Reconcile routing from the authoritative SQLite topology.
     ///
     /// Production publishes routing together with the validated point/health
-    /// generation. A composition without that runtime may validate durable
-    /// rows, but it publishes no alternate in-memory routing owner.
+    /// generation.
     pub async fn refresh_routing(&self) -> anyhow::Result<usize> {
-        if let Some(topology) = self.runtime_topology.get() {
-            topology
-                .refresh_or_revoke_commands(&self.pool)
-                .await
-                .map_err(|error| anyhow!(error.to_string()))?;
-            return Ok(topology.load().route_count());
-        }
-        let count = sqlx::query_scalar::<_, i64>(
-            "SELECT (SELECT COUNT(*) FROM measurement_routing WHERE enabled = 1) + \
-                    (SELECT COUNT(*) FROM action_routing WHERE enabled = 1)",
-        )
-        .fetch_one(&self.pool)
-        .await?;
-        usize::try_from(count).map_err(|_| anyhow!("logical route count is outside usize range"))
+        self.runtime_topology
+            .refresh_or_revoke_commands(&self.pool)
+            .await
+            .map_err(|error| anyhow!(error.to_string()))?;
+        Ok(self.runtime_topology.load().route_count())
     }
 
     /// Get the product loader reference
@@ -289,74 +272,6 @@ impl InstanceManager {
     /// Returns a reference to the product loader for accessing product templates.
     pub fn product_loader(&self) -> &ProductLoader {
         &self.product_loader
-    }
-
-    // ============================================================================
-    // Instance name → ID translation methods
-    // ============================================================================
-
-    /// Get instance_id by instance_name (with caching)
-    ///
-    /// This method provides fast lookup of instance IDs from names using the
-    /// atomically published read-only cache snapshot.
-    ///
-    /// # Cache Strategy
-    /// - Cache hit: Returns immediately (~100ns)
-    /// - Cache miss: Queries SQLite and updates cache
-    pub async fn get_instance_id(&self, instance_name: &str) -> Result<u32> {
-        // 1. Fast path: Check cache first
-        if let Some(id) = self.name_cache.load().get(instance_name) {
-            return Ok(*id);
-        }
-
-        // 2. Slow path: Query database
-        let id: u32 =
-            sqlx::query_scalar("SELECT instance_id FROM instances WHERE instance_name = ?")
-                .bind(instance_name)
-                .fetch_optional(&self.pool)
-                .await?
-                .ok_or_else(|| anyhow!("Instance not found: {}", instance_name))?;
-
-        // 3. Update cache for next time
-        self.update_name_cache(instance_name.to_string(), id);
-
-        Ok(id)
-    }
-
-    /// Populate the name→id cache from database at startup
-    ///
-    /// This should be called once after creating the InstanceManager to pre-warm
-    /// the cache with all existing instances.
-    pub async fn populate_name_cache(&self) -> Result<()> {
-        let instances: Vec<(String, u32)> =
-            sqlx::query_as("SELECT instance_name, instance_id FROM instances")
-                .fetch_all(&self.pool)
-                .await?;
-
-        let count = instances.len();
-        self.name_cache
-            .store(Arc::new(instances.into_iter().collect()));
-
-        debug!("Name->ID cache: {} entries", count);
-        Ok(())
-    }
-
-    /// Update cache entry (called on instance create/rename)
-    pub fn update_name_cache(&self, instance_name: String, instance_id: u32) {
-        self.name_cache.rcu(|current| {
-            let mut replacement = (**current).clone();
-            replacement.insert(instance_name.clone(), instance_id);
-            Arc::new(replacement)
-        });
-    }
-
-    /// Remove entry from cache (called on instance delete)
-    pub fn remove_from_name_cache(&self, instance_name: &str) {
-        self.name_cache.rcu(|current| {
-            let mut replacement = (**current).clone();
-            replacement.remove(instance_name);
-            Arc::new(replacement)
-        });
     }
 
     /// List instances with pagination
@@ -369,7 +284,7 @@ impl InstanceManager {
         page: u32,
         page_size: u32,
     ) -> Result<(u32, Vec<Instance>)> {
-        let offset = (page - 1) * page_size;
+        let offset = pagination_offset(page, page_size)?;
 
         let (total,): (i64,) =
             sqlx::query_as("SELECT COUNT(*) FROM instances WHERE (? IS NULL OR product_name = ?)")
@@ -388,7 +303,7 @@ impl InstanceManager {
         .bind(product_name)
         .bind(product_name)
         .bind(page_size as i64)
-        .bind(offset as i64)
+        .bind(i64::try_from(offset)?)
         .fetch_all(&self.pool)
         .await?;
 
@@ -412,7 +327,7 @@ impl InstanceManager {
         page: u32,
         page_size: u32,
     ) -> Result<(u32, Vec<Instance>)> {
-        let offset = (page - 1) * page_size;
+        let offset = pagination_offset(page, page_size)?;
         let like_pattern = format!("%{}%", escape_like(keyword));
 
         let (total,): (i64,) = sqlx::query_as(
@@ -424,28 +339,74 @@ impl InstanceManager {
         .fetch_one(&self.pool)
         .await?;
 
-        let rows: Vec<InstanceRow> = sqlx::query_as(
-            r#"SELECT instance_id, instance_name, product_name, parent_id, created_at
-               FROM instances
-               WHERE instance_name LIKE ? ESCAPE '\' AND (? IS NULL OR product_name = ?)
-               ORDER BY instance_id ASC
-               LIMIT ? OFFSET ?"#,
-        )
-        .bind(&like_pattern)
-        .bind(product_name)
-        .bind(product_name)
-        .bind(page_size as i64)
-        .bind(offset as i64)
-        .fetch_all(&self.pool)
-        .await?;
+        let instances = self
+            .query_instances(keyword, product_name, &[], page_size, offset)
+            .await?;
 
+        Ok((u32::try_from(total).unwrap_or(u32::MAX), instances))
+    }
+
+    /// Find a bounded set of instances in one SQLite query.
+    pub(crate) async fn find_instances(
+        &self,
+        keyword: &str,
+        instance_ids: &[u32],
+        limit: u32,
+    ) -> Result<Vec<Instance>> {
+        self.query_instances(keyword, None, instance_ids, limit, 0)
+            .await
+    }
+
+    /// List the minimal instance identities without loading product properties.
+    pub(crate) async fn list_instance_identities(&self) -> Result<Vec<(u32, String)>> {
+        Ok(
+            sqlx::query_as("SELECT instance_id, instance_name FROM instances ORDER BY instance_id")
+                .fetch_all(&self.pool)
+                .await?,
+        )
+    }
+
+    async fn query_instances(
+        &self,
+        keyword: &str,
+        product_name: Option<&str>,
+        instance_ids: &[u32],
+        limit: u32,
+        offset: u64,
+    ) -> Result<Vec<Instance>> {
+        let like_pattern = format!("%{}%", escape_like(keyword));
+        let mut query = sqlx::QueryBuilder::<sqlx::Sqlite>::new(
+            "SELECT instance_id, instance_name, product_name, parent_id, created_at \
+             FROM instances WHERE instance_name LIKE ",
+        );
+        query.push_bind(like_pattern).push(" ESCAPE '\\'");
+        if let Some(product_name) = product_name {
+            query.push(" AND product_name = ").push_bind(product_name);
+        }
+        if !instance_ids.is_empty() {
+            query.push(" AND instance_id IN (");
+            let mut ids = query.separated(", ");
+            for instance_id in instance_ids {
+                ids.push_bind(i64::from(*instance_id));
+            }
+            ids.push_unseparated(")");
+        }
+        query
+            .push(" ORDER BY instance_id ASC LIMIT ")
+            .push_bind(i64::from(limit))
+            .push(" OFFSET ")
+            .push_bind(i64::try_from(offset)?);
+
+        let rows = query
+            .build_query_as::<InstanceRow>()
+            .fetch_all(&self.pool)
+            .await?;
         let mut instances = rows
             .into_iter()
             .map(build_instance_from_row)
             .collect::<Result<Vec<_>>>()?;
         self.attach_properties_batch(&mut instances).await?;
-
-        Ok((u32::try_from(total).unwrap_or(u32::MAX), instances))
+        Ok(instances)
     }
 
     /// Get instance by ID

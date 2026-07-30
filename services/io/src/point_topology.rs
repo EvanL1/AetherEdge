@@ -51,7 +51,16 @@ impl PointKind {
         }
     }
 
-    const fn table(self) -> &'static str {
+    const fn point_type(self) -> aether_core::PointType {
+        match self {
+            Self::Telemetry => aether_core::PointType::Telemetry,
+            Self::Signal => aether_core::PointType::Signal,
+            Self::Control => aether_core::PointType::Control,
+            Self::Adjustment => aether_core::PointType::Adjustment,
+        }
+    }
+
+    pub(crate) const fn table(self) -> &'static str {
         match self {
             Self::Telemetry => "telemetry_points",
             Self::Signal => "signal_points",
@@ -235,6 +244,25 @@ impl PointTopologyMutation {
     }
 }
 
+#[derive(Clone, Copy)]
+struct PointTopologyAudit {
+    channel_id: u32,
+    operation: &'static str,
+    point_type: &'static str,
+    point_count: usize,
+}
+
+impl From<&PointTopologyMutation> for PointTopologyAudit {
+    fn from(mutation: &PointTopologyMutation) -> Self {
+        Self {
+            channel_id: mutation.channel_id(),
+            operation: mutation.audit_operation(),
+            point_type: mutation.audit_point_type(),
+            point_count: mutation.point_count(),
+        }
+    }
+}
+
 /// Per-item receipt emitted only after an atomic batch fully succeeds.
 #[derive(Debug, Clone)]
 pub struct PointBatchMutationOutcome {
@@ -346,11 +374,12 @@ impl PointTopologyApplication {
         expected_revision: Option<ChannelRevision>,
         mutation: PointTopologyMutation,
     ) -> Result<PointTopologyAcceptance, ApplicationError> {
+        let audit = PointTopologyAudit::from(&mutation);
         if let Err(error) = self.policy.authorize(MANAGE_CHANNEL_CAPABILITY, context) {
             self.record_audit(
                 context,
                 expected_revision,
-                &mutation,
+                audit,
                 AuditOutcome::Rejected,
                 Some(error.to_string()),
             )
@@ -363,7 +392,7 @@ impl PointTopologyApplication {
                 self.record_audit(
                     context,
                     expected_revision,
-                    &mutation,
+                    audit,
                     AuditOutcome::Rejected,
                     Some(error.to_string()),
                 )
@@ -386,11 +415,12 @@ impl PointTopologyApplication {
             context,
             expected_revision,
         } = authorization;
+        let audit = PointTopologyAudit::from(&mutation);
         if let Err(error) = validate_mutation(&mutation) {
             self.record_audit(
                 &context,
                 Some(expected_revision),
-                &mutation,
+                audit,
                 AuditOutcome::Rejected,
                 Some(error.to_string()),
             )
@@ -407,10 +437,11 @@ impl PointTopologyApplication {
         expected_revision: ChannelRevision,
         mutation: PointTopologyMutation,
     ) -> Result<PointTopologyAcceptance, ApplicationError> {
+        let audit = PointTopologyAudit::from(&mutation);
         self.record_audit(
             context,
             Some(expected_revision),
-            &mutation,
+            audit,
             AuditOutcome::Attempted,
             None,
         )
@@ -420,7 +451,7 @@ impl PointTopologyApplication {
             Ok(transaction) => transaction,
             Err(error) => {
                 return self
-                    .failed(context, expected_revision, &mutation, database_error(error))
+                    .failed(context, expected_revision, audit, database_error(error))
                     .await;
             },
         };
@@ -434,33 +465,26 @@ impl PointTopologyApplication {
             Ok(revision) => revision,
             Err(error) => {
                 let _ = transaction.rollback().await;
-                return self
-                    .failed(context, expected_revision, &mutation, error)
-                    .await;
+                return self.failed(context, expected_revision, audit, error).await;
             },
         };
         let protocol = match load_channel_protocol(&mut transaction, mutation.channel_id()).await {
             Ok(protocol) => protocol,
             Err(error) => {
                 let _ = transaction.rollback().await;
-                return self
-                    .failed(context, expected_revision, &mutation, error)
-                    .await;
+                return self.failed(context, expected_revision, audit, error).await;
             },
         };
-        let result =
-            match apply_topology_mutation(&mut transaction, mutation.clone(), &protocol).await {
-                Ok(result) => result,
-                Err(error) => {
-                    let _ = transaction.rollback().await;
-                    return self
-                        .failed(context, expected_revision, &mutation, error)
-                        .await;
-                },
-            };
+        let result = match apply_topology_mutation(&mut transaction, mutation, &protocol).await {
+            Ok(result) => result,
+            Err(error) => {
+                let _ = transaction.rollback().await;
+                return self.failed(context, expected_revision, audit, error).await;
+            },
+        };
         if let Err(error) = transaction.commit().await {
             return self
-                .failed(context, expected_revision, &mutation, database_error(error))
+                .failed(context, expected_revision, audit, database_error(error))
                 .await;
         }
 
@@ -468,7 +492,7 @@ impl PointTopologyApplication {
             .record_audit(
                 context,
                 Some(expected_revision),
-                &mutation,
+                audit,
                 AuditOutcome::Succeeded,
                 Some(format!("resulting_revision={}", resulting_revision.get())),
             )
@@ -492,13 +516,13 @@ impl PointTopologyApplication {
         &self,
         context: &RequestContext,
         expected_revision: ChannelRevision,
-        mutation: &PointTopologyMutation,
+        audit: PointTopologyAudit,
         failure: PortError,
     ) -> Result<T, ApplicationError> {
         self.record_audit(
             context,
             Some(expected_revision),
-            mutation,
+            audit,
             AuditOutcome::Failed,
             Some(format!("port_error_kind={:?}", failure.kind())),
         )
@@ -510,7 +534,7 @@ impl PointTopologyApplication {
         &self,
         context: &RequestContext,
         expected_revision: Option<ChannelRevision>,
-        mutation: &PointTopologyMutation,
+        audit: PointTopologyAudit,
         outcome: AuditOutcome,
         suffix: Option<String>,
     ) -> Result<(), ApplicationError> {
@@ -518,10 +542,7 @@ impl PointTopologyApplication {
             .map_or_else(|| "none".to_string(), |revision| revision.get().to_string());
         let mut detail = format!(
             "operation={}; channel_id={}; expected_revision={expected}; point_type={}; point_count={}",
-            mutation.audit_operation(),
-            mutation.channel_id(),
-            mutation.audit_point_type(),
-            mutation.point_count()
+            audit.operation, audit.channel_id, audit.point_type, audit.point_count
         );
         if let Some(suffix) = suffix {
             detail.push_str("; ");
@@ -701,7 +722,7 @@ async fn update_mapping(
         .await
         .map_err(database_error)?
         .flatten();
-        let mut base = match existing {
+        let base = match existing {
             Some(value) => serde_json::from_str::<serde_json::Value>(&value).map_err(|error| {
                 PortError::new(
                     PortErrorKind::InvalidData,
@@ -710,19 +731,19 @@ async fn update_mapping(
             })?,
             None => serde_json::json!({}),
         };
-        match (&mut base, protocol_data) {
-            (serde_json::Value::Object(base), serde_json::Value::Object(update)) => {
+        protocol_data = match (base, protocol_data) {
+            (serde_json::Value::Object(mut base), serde_json::Value::Object(update)) => {
                 base.extend(update);
-                protocol_data = base.clone().into();
+                serde_json::Value::Object(base)
             },
-            (_, serde_json::Value::Null) => protocol_data = serde_json::Value::Null,
+            (_, serde_json::Value::Null) => serde_json::Value::Null,
             _ => {
                 return Err(PortError::new(
                     PortErrorKind::InvalidData,
                     "protocol mapping must be an object or null",
                 ));
             },
-        }
+        };
     }
     validate_protocol_mapping(protocol, mapping.kind, mapping.point_id, &protocol_data)?;
     let serialized = match &protocol_data {
@@ -812,8 +833,8 @@ async fn create_point(
         force,
     )
     .await?;
-    let mapping = definition.protocol_mapping.clone().flatten();
     let preserve_mapping = force && definition.protocol_mapping.is_none();
+    let mapping = definition.protocol_mapping.flatten();
     let conflict = if force {
         let mut fields = vec![
             "signal_name=excluded.signal_name",
@@ -962,324 +983,16 @@ pub(crate) fn validate_protocol_mapping(
     point_id: u32,
     mapping: &serde_json::Value,
 ) -> Result<(), PortError> {
-    if mapping.is_null() || mapping.as_object().is_some_and(serde_json::Map::is_empty) {
-        return Ok(());
-    }
-    let values = mapping
-        .as_object()
-        .ok_or_else(|| invalid_mapping(point_id, "protocol mapping must be an object or null"))?;
-    if crate::utils::is_modbus_family(protocol) {
-        let slave_id = required_u64(values, point_id, "slave_id")?;
-        if !(1..=247).contains(&slave_id) {
-            return Err(invalid_mapping(point_id, "slave_id must be in 1..247"));
-        }
-        let function_code = required_u64(values, point_id, "function_code")?;
-        if ![1, 2, 3, 4, 5, 6, 15, 16].contains(&function_code) {
-            return Err(invalid_mapping(
-                point_id,
-                "function_code must be one of 1,2,3,4,5,6,15,16",
-            ));
-        }
-        if required_u64(values, point_id, "register_address")? > u16::MAX.into() {
-            return Err(invalid_mapping(point_id, "register_address must be a u16"));
-        }
-        let direction_valid = match kind {
-            PointKind::Telemetry | PointKind::Signal => [1, 2, 3, 4].contains(&function_code),
-            PointKind::Control => [5, 6, 15, 16].contains(&function_code),
-            PointKind::Adjustment => [6, 16].contains(&function_code),
-        };
-        if !direction_valid {
-            return Err(invalid_mapping(
-                point_id,
-                "function_code does not match point direction",
-            ));
-        }
-        if let Some(data_type) = values.get("data_type") {
-            let data_type = data_type
-                .as_str()
-                .ok_or_else(|| invalid_mapping(point_id, "data_type must be a string"))?;
-            if ![
-                "bool", "boolean", "uint16", "int16", "uint32", "int32", "float32", "float64",
-            ]
-            .contains(&data_type)
-            {
-                return Err(invalid_mapping(point_id, "unsupported data_type"));
-            }
-        }
-        if let Some(byte_order) = values.get("byte_order") {
-            let byte_order = byte_order
-                .as_str()
-                .ok_or_else(|| invalid_mapping(point_id, "byte_order must be a string"))?;
-            if !["ABCD", "DCBA", "BADC", "CDAB", "AB", "BA"].contains(&byte_order) {
-                return Err(invalid_mapping(point_id, "unsupported byte_order"));
-            }
-        }
-        if let Some(bit_position) = values.get("bit_position")
-            && bit_position
-                .as_u64()
-                .is_none_or(|value| value > u8::MAX.into())
-        {
-            return Err(invalid_mapping(point_id, "bit_position must be a u8"));
-        }
-        return Ok(());
-    }
-
-    match crate::utils::normalize_protocol_name(protocol).as_ref() {
-        "di_do" | "gpio" | "dido" => {
-            let gpio = required_u64(values, point_id, "gpio_number")?;
-            if gpio > 1023 {
-                return Err(invalid_mapping(point_id, "gpio_number exceeds 1023"));
-            }
-            if !matches!(kind, PointKind::Signal | PointKind::Control) {
-                return Err(invalid_mapping(
-                    point_id,
-                    "GPIO only supports signal and control points",
-                ));
-            }
-            Ok(())
-        },
-        "can" => {
-            validate_can_id(values, point_id)?;
-            validate_can_layout(values, point_id)?;
-            Ok(())
-        },
-        "aether_485" => {
-            if !matches!(kind, PointKind::Telemetry | PointKind::Signal) {
-                return Err(invalid_mapping(
-                    point_id,
-                    "aether_485 inline mappings are consumed only for telemetry and signal points",
-                ));
-            }
-            if required_u64(values, point_id, "device_id")? > u8::MAX.into() {
-                return Err(invalid_mapping(point_id, "device_id must be a u8"));
-            }
-            if values
-                .get("cmd")
-                .is_some_and(|cmd| cmd.as_u64().is_none_or(|value| value > u8::MAX.into()))
-            {
-                return Err(invalid_mapping(point_id, "cmd must be a u8"));
-            }
-            Ok(())
-        },
-        "iec61850" => {
-            required_nonblank_string(values, point_id, "address")?;
-            if values
-                .get("ctrl_model")
-                .is_some_and(|model| model.as_u64().is_none_or(|value| !(1..=4).contains(&value)))
-            {
-                return Err(invalid_mapping(point_id, "ctrl_model must be in 1..4"));
-            }
-            Ok(())
-        },
-        "iec104" => validate_iec104_mapping(values, point_id),
-        "opcua" => validate_opcua_mapping(values, point_id),
-        "mqtt" | "http" => validate_json_payload_mapping(values, point_id),
-        other => Err(invalid_mapping(
-            point_id,
-            &format!("unsupported protocol {other}"),
-        )),
-    }
-}
-
-fn validate_json_payload_mapping(
-    values: &serde_json::Map<String, serde_json::Value>,
-    point_id: u32,
-) -> Result<(), PortError> {
-    for field in values.keys() {
-        if !matches!(
-            field.as_str(),
-            "json_path" | "data_type" | "scale" | "offset" | "description"
-        ) {
-            return Err(invalid_mapping(
-                point_id,
-                &format!("unsupported JSON payload mapping field {field}"),
-            ));
-        }
-    }
-
-    let json_path = required_nonblank_string(values, point_id, "json_path")?;
-    serde_json_path::JsonPath::parse(json_path)
-        .map_err(|error| invalid_mapping(point_id, &format!("json_path is invalid: {error}")))?;
-
-    if let Some(data_type) = values.get("data_type") {
-        let data_type = data_type
-            .as_str()
-            .ok_or_else(|| invalid_mapping(point_id, "data_type must be a string"))?;
-        if !matches!(
-            data_type,
-            "float" | "int" | "integer" | "bool" | "boolean" | "string" | "str"
-        ) {
-            return Err(invalid_mapping(
-                point_id,
-                "data_type must be float, int, bool, or string",
-            ));
-        }
-    }
-
-    for field in ["scale", "offset"] {
-        if let Some(value) = values.get(field)
-            && value.as_f64().is_none_or(|value| !value.is_finite())
-        {
-            return Err(invalid_mapping(
-                point_id,
-                &format!("{field} must be a finite number"),
-            ));
-        }
-    }
-
-    if values
-        .get("description")
-        .is_some_and(|description| !description.is_string())
-    {
-        return Err(invalid_mapping(point_id, "description must be a string"));
-    }
-    Ok(())
-}
-
-fn validate_can_layout(
-    values: &serde_json::Map<String, serde_json::Value>,
-    point_id: u32,
-) -> Result<(), PortError> {
-    let start_bit = if let Some(start_bit) = values.get("start_bit") {
-        let start_bit = start_bit
-            .as_u64()
-            .ok_or_else(|| invalid_mapping(point_id, "start_bit must be an unsigned integer"))?;
-        if start_bit > 63 {
-            return Err(invalid_mapping(point_id, "start_bit exceeds 63"));
-        }
-        start_bit
-    } else {
-        let byte_offset = required_u64(values, point_id, "byte_offset")?;
-        if byte_offset > 7 {
-            return Err(invalid_mapping(point_id, "byte_offset exceeds 7"));
-        }
-        let bit_position = values.get("bit_position").map_or(Ok(0), |position| {
-            position
-                .as_u64()
-                .filter(|value| *value <= 7)
-                .ok_or_else(|| invalid_mapping(point_id, "bit_position exceeds 7"))
-        })?;
-        byte_offset * 8 + bit_position
-    };
-    let bit_length = required_u64(values, point_id, "bit_length")?;
-    if !(1..=64).contains(&bit_length) || start_bit + bit_length > 64 {
-        return Err(invalid_mapping(
-            point_id,
-            "bit layout must fit in a 64-bit CAN payload",
-        ));
-    }
-    if let Some(data_type) = values.get("data_type") {
-        let data_type = data_type
-            .as_str()
-            .ok_or_else(|| invalid_mapping(point_id, "data_type must be a string"))?;
-        if ![
-            "uint8", "uint16", "int16", "uint32", "int32", "float32", "ascii",
-        ]
-        .contains(&data_type)
-        {
-            return Err(invalid_mapping(point_id, "unsupported CAN data_type"));
-        }
-    }
-    Ok(())
-}
-
-fn validate_iec104_mapping(
-    values: &serde_json::Map<String, serde_json::Value>,
-    point_id: u32,
-) -> Result<(), PortError> {
-    if let Some(address) = values.get("address") {
-        if address
-            .as_str()
-            .is_some_and(|value| !value.trim().is_empty())
-        {
-            return Ok(());
-        }
-        return Err(invalid_mapping(
-            point_id,
-            "address must be a nonblank string",
-        ));
-    }
-    if required_u64(values, point_id, "ioa")? > u32::MAX.into() {
-        return Err(invalid_mapping(point_id, "ioa must be a u32"));
-    }
-    if values
-        .get("type_id")
-        .is_some_and(|value| value.as_u64().is_none_or(|value| value > u8::MAX.into()))
-    {
-        return Err(invalid_mapping(point_id, "type_id must be a u8"));
-    }
-    Ok(())
-}
-
-fn validate_opcua_mapping(
-    values: &serde_json::Map<String, serde_json::Value>,
-    point_id: u32,
-) -> Result<(), PortError> {
-    if values.get("address").is_some() {
-        required_nonblank_string(values, point_id, "address")?;
-    } else {
-        required_nonblank_string(values, point_id, "node_id")?;
-    }
-    if values
-        .get("namespace_index")
-        .is_some_and(|value| value.as_u64().is_none_or(|value| value > u16::MAX.into()))
-    {
-        return Err(invalid_mapping(point_id, "namespace_index must be a u16"));
-    }
-    Ok(())
-}
-
-fn required_nonblank_string<'a>(
-    values: &'a serde_json::Map<String, serde_json::Value>,
-    point_id: u32,
-    field: &str,
-) -> Result<&'a str, PortError> {
-    values
-        .get(field)
-        .and_then(serde_json::Value::as_str)
-        .filter(|value| !value.trim().is_empty())
-        .ok_or_else(|| invalid_mapping(point_id, &format!("{field} must be a nonblank string")))
-}
-
-fn required_u64(
-    values: &serde_json::Map<String, serde_json::Value>,
-    point_id: u32,
-    field: &str,
-) -> Result<u64, PortError> {
-    values
-        .get(field)
-        .and_then(serde_json::Value::as_u64)
-        .ok_or_else(|| invalid_mapping(point_id, &format!("{field} must be an unsigned integer")))
-}
-
-fn validate_can_id(
-    values: &serde_json::Map<String, serde_json::Value>,
-    point_id: u32,
-) -> Result<(), PortError> {
-    let Some(can_id) = values.get("can_id") else {
-        return Err(invalid_mapping(point_id, "can_id is required"));
-    };
-    let valid = can_id
-        .as_u64()
-        .is_some_and(|value| value <= u32::MAX.into())
-        || can_id.as_str().is_some_and(|value| {
-            value
-                .strip_prefix("0x")
-                .or_else(|| value.strip_prefix("0X"))
-                .is_some_and(|hex| u32::from_str_radix(hex, 16).is_ok())
-        });
-    if valid {
-        Ok(())
-    } else {
-        Err(invalid_mapping(point_id, "can_id is invalid"))
-    }
-}
-
-fn invalid_mapping(point_id: u32, reason: &str) -> PortError {
-    PortError::new(
-        PortErrorKind::InvalidData,
-        format!("point {point_id} mapping validation failed: {reason}"),
-    )
+    crate::protocols::get_protocol_registry()
+        .factory(protocol)
+        .ok_or_else(|| {
+            PortError::new(
+                PortErrorKind::InvalidData,
+                format!("point {point_id} mapping uses unavailable protocol {protocol}"),
+            )
+        })?
+        .validate_point_mapping(kind.point_type(), point_id, mapping)
+        .map_err(|error| PortError::new(PortErrorKind::InvalidData, error.to_string()))
 }
 
 async fn ensure_point_not_routed(
@@ -1582,21 +1295,6 @@ mod tests {
                 }),
             ),
             (
-                "gpio",
-                PointKind::Signal,
-                serde_json::json!({"gpio_number": 496}),
-            ),
-            (
-                "can",
-                PointKind::Telemetry,
-                serde_json::json!({
-                    "can_id": 849,
-                    "start_bit": 0,
-                    "bit_length": 16,
-                    "data_type": "uint16"
-                }),
-            ),
-            (
                 "aether_485",
                 PointKind::Telemetry,
                 serde_json::json!({"device_id": 1, "cmd": 1}),
@@ -1619,6 +1317,232 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "modbus")]
+    #[test]
+    fn modbus_boundary_uses_the_runtime_codec_and_fails_closed() {
+        let compatible = serde_json::json!({
+            "slave_id": "1",
+            "function_code": "3",
+            "register_address": "17",
+            "data_type": "F32",
+            "byte_order": "big_endian",
+            "bit_position": "15"
+        });
+        assert!(
+            validate_protocol_mapping("modbus_tcp", PointKind::Telemetry, 1, &compatible).is_ok()
+        );
+
+        for invalid in [
+            serde_json::json!({
+                "slave_id": 1,
+                "function_code": 3,
+                "register_address": 17,
+                "bit_position": 16
+            }),
+            serde_json::json!({
+                "slave_id": 1,
+                "function_code": 3,
+                "register_address": 17,
+                "unknown": true
+            }),
+        ] {
+            assert!(
+                validate_protocol_mapping("modbus_tcp", PointKind::Telemetry, 1, &invalid).is_err()
+            );
+        }
+    }
+
+    #[cfg(feature = "iec104")]
+    #[test]
+    fn iec104_boundary_preserves_canonical_string_mappings() {
+        assert!(
+            validate_protocol_mapping(
+                "iec104",
+                PointKind::Telemetry,
+                1,
+                &serde_json::json!("100:13")
+            )
+            .is_ok()
+        );
+        assert!(
+            validate_protocol_mapping(
+                "iec104",
+                PointKind::Telemetry,
+                1,
+                &serde_json::json!({"address": "100:13", "unknown": true})
+            )
+            .is_err()
+        );
+    }
+
+    #[cfg(feature = "opcua")]
+    #[test]
+    fn opcua_boundary_preserves_canonical_string_mappings() {
+        assert!(
+            validate_protocol_mapping(
+                "opcua",
+                PointKind::Telemetry,
+                1,
+                &serde_json::json!("ns=2;s=Machine.Temperature")
+            )
+            .is_ok()
+        );
+        assert!(
+            validate_protocol_mapping(
+                "opcua",
+                PointKind::Telemetry,
+                1,
+                &serde_json::json!({
+                    "address": "ns=2;s=Machine.Temperature",
+                    "unknown": true
+                })
+            )
+            .is_err()
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn canonical_validator_accepts_linux_only_inline_mapping_consumers() {
+        for (protocol, kind, mapping) in [
+            (
+                "gpio",
+                PointKind::Signal,
+                serde_json::json!({"gpio_number": 496}),
+            ),
+            (
+                "can",
+                PointKind::Telemetry,
+                serde_json::json!({
+                    "can_id": 849,
+                    "start_bit": 0,
+                    "bit_length": 16,
+                    "data_type": "uint16"
+                }),
+            ),
+        ] {
+            assert!(
+                validate_protocol_mapping(protocol, kind, 1, &mapping).is_ok(),
+                "{protocol} mapping should be accepted"
+            );
+        }
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    #[test]
+    fn canonical_validator_rejects_linux_only_protocols_when_not_composed() {
+        for (protocol, kind, mapping) in [
+            (
+                "gpio",
+                PointKind::Signal,
+                serde_json::json!({"gpio_number": 496}),
+            ),
+            (
+                "can",
+                PointKind::Telemetry,
+                serde_json::json!({
+                    "can_id": 849,
+                    "start_bit": 0,
+                    "bit_length": 16,
+                    "data_type": "uint16"
+                }),
+            ),
+        ] {
+            assert!(
+                validate_protocol_mapping(protocol, kind, 1, &mapping).is_err(),
+                "{protocol} must be unavailable when its runtime is not composed"
+            );
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn can_mapping_validation_matches_the_numeric_read_only_runtime_schema() {
+        for valid in [
+            serde_json::json!({
+                "can_id": 854,
+                "byte_offset": 2,
+                "bit_position": 0,
+                "bit_length": 16,
+                "data_type": "int16",
+                "scale": 0.1,
+                "offset": -2.0
+            }),
+            serde_json::json!({
+                "can_id": "0x356",
+                "start_bit": 8,
+                "bit_length": 8,
+                "data_type": "uint8"
+            }),
+        ] {
+            assert!(
+                validate_protocol_mapping("can", PointKind::Telemetry, 1, &valid).is_ok(),
+                "CAN mapping should be accepted: {valid}"
+            );
+        }
+
+        for kind in [PointKind::Control, PointKind::Adjustment] {
+            assert!(
+                validate_protocol_mapping(
+                    "can",
+                    kind,
+                    1,
+                    &serde_json::json!({
+                        "can_id": 854,
+                        "start_bit": 0,
+                        "bit_length": 16
+                    })
+                )
+                .is_err()
+            );
+        }
+
+        for invalid in [
+            serde_json::json!({
+                "can_id": 854,
+                "start_bit": 0,
+                "byte_offset": 0,
+                "bit_length": 16
+            }),
+            serde_json::json!({
+                "can_id": 854,
+                "start_bit": 0,
+                "bit_position": 0,
+                "bit_length": 16
+            }),
+            serde_json::json!({
+                "can_id": 854,
+                "start_bit": 0,
+                "bit_length": 64,
+                "data_type": "ascii"
+            }),
+            serde_json::json!({
+                "can_id": 854,
+                "start_bit": 0,
+                "bit_length": 8,
+                "data_type": "uint16"
+            }),
+            serde_json::json!({
+                "can_id": 854,
+                "start_bit": 0,
+                "bit_length": 16,
+                "scale": "0.1"
+            }),
+            serde_json::json!({
+                "can_id": 854,
+                "start_bit": 0,
+                "bit_length": 16,
+                "unexpected": true
+            }),
+        ] {
+            assert!(
+                validate_protocol_mapping("can", PointKind::Telemetry, 1, &invalid).is_err(),
+                "CAN mapping should fail closed: {invalid}"
+            );
+        }
+    }
+
+    #[cfg(any(feature = "mqtt", feature = "http"))]
     #[test]
     fn mqtt_and_http_accept_only_complete_valid_inline_json_mappings() {
         for protocol in ["mqtt", "http"] {
@@ -1629,9 +1553,7 @@ mod tests {
                     1,
                     &serde_json::json!({
                         "json_path": "$.value",
-                        "data_type": "float",
-                        "scale": 0.1,
-                        "offset": -1.0
+                        "data_type": "float"
                     }),
                 )
                 .is_ok()
@@ -1645,19 +1567,233 @@ mod tests {
                 )
                 .is_ok()
             );
+            assert!(
+                validate_protocol_mapping(
+                    protocol,
+                    PointKind::Signal,
+                    2,
+                    &serde_json::json!({
+                        "json_path": "$.active",
+                        "data_type": "bool"
+                    }),
+                )
+                .is_ok()
+            );
+            assert!(
+                validate_protocol_mapping(
+                    protocol,
+                    PointKind::Telemetry,
+                    3,
+                    &serde_json::json!({
+                        "json_path": "$.active",
+                        "data_type": "bool"
+                    }),
+                )
+                .is_err()
+            );
+            assert!(
+                validate_protocol_mapping(
+                    protocol,
+                    PointKind::Signal,
+                    4,
+                    &serde_json::json!({
+                        "json_path": "$.value",
+                        "data_type": "float"
+                    }),
+                )
+                .is_err()
+            );
+
+            for kind in [PointKind::Control, PointKind::Adjustment] {
+                assert!(
+                    validate_protocol_mapping(
+                        protocol,
+                        kind,
+                        2,
+                        &serde_json::json!({"json_path": "$.write"})
+                    )
+                    .is_err(),
+                    "{protocol} unexpectedly accepted a {kind:?} mapping"
+                );
+            }
 
             for invalid in [
                 serde_json::json!({"data_type": "float"}),
                 serde_json::json!({"json_path": "invalid[[["}),
                 serde_json::json!({"json_path": "$.value", "data_type": "decimal"}),
-                serde_json::json!({"json_path": "$.value", "scale": "large"}),
-                serde_json::json!({"json_path": "$.value", "offset": "high"}),
+                serde_json::json!({"json_path": "$.value", "data_type": "string"}),
+                serde_json::json!({"json_path": "$.value", "scale": 0.1}),
+                serde_json::json!({"json_path": "$.value", "offset": -1.0}),
+                serde_json::json!({"json_path": "$.value", "description": "duplicate"}),
             ] {
                 assert!(
                     validate_protocol_mapping(protocol, PointKind::Telemetry, 1, &invalid).is_err(),
                     "{protocol} unexpectedly accepted {invalid}"
                 );
             }
+        }
+    }
+
+    #[cfg(feature = "ble")]
+    #[test]
+    fn ble_mapping_validation_delegates_to_the_adapter_schema() {
+        let valid = serde_json::json!({
+            "service_uuid": "180f",
+            "characteristic_uuid": "2a19",
+            "data_format": "uint16",
+            "notify": true
+        });
+        assert!(validate_protocol_mapping("ble", PointKind::Telemetry, 1, &valid).is_ok());
+
+        for invalid in [
+            serde_json::json!({"service_uuid": "180f"}),
+            serde_json::json!({
+                "service_uuid": "invalid",
+                "characteristic_uuid": "2a19"
+            }),
+            serde_json::json!({
+                "service_uuid": "180f",
+                "characteristic_uuid": "2a19",
+                "data_format": "string"
+            }),
+            serde_json::json!({
+                "service_uuid": "180f",
+                "characteristic_uuid": "2a19",
+                "extra": true
+            }),
+        ] {
+            assert!(
+                validate_protocol_mapping("ble", PointKind::Telemetry, 1, &invalid).is_err(),
+                "BLE unexpectedly accepted {invalid}"
+            );
+        }
+        assert!(
+            validate_protocol_mapping(
+                "ble",
+                PointKind::Control,
+                1,
+                &serde_json::json!({
+                    "service_uuid": "180f",
+                    "characteristic_uuid": "2a19",
+                    "notify": true
+                }),
+            )
+            .is_err()
+        );
+    }
+
+    #[cfg(feature = "zigbee")]
+    #[test]
+    fn zigbee_mapping_validation_delegates_to_the_adapter_schema() {
+        let valid = serde_json::json!({
+            "ieee_address": 0x0012_4B00_18ED_1234_u64,
+            "endpoint": 1,
+            "cluster_id": 0x0402,
+            "attribute_id": 0
+        });
+        assert!(validate_protocol_mapping("zigbee", PointKind::Telemetry, 1, &valid).is_ok());
+        let command_mapping = serde_json::json!({
+            "ieee_address": 0x0012_4B00_18ED_1234_u64,
+            "endpoint": 1,
+            "cluster_id": 0x0006,
+            "attribute_id": 0
+        });
+        assert!(
+            validate_protocol_mapping("zigbee", PointKind::Control, 1, &command_mapping).is_err()
+        );
+
+        for (kind, invalid) in [
+            (
+                PointKind::Telemetry,
+                serde_json::json!({
+                    "ieee_address": 0,
+                    "endpoint": 1,
+                    "cluster_id": 0x0402,
+                    "attribute_id": 0
+                }),
+            ),
+            (
+                PointKind::Telemetry,
+                serde_json::json!({
+                    "ieee_address": 1,
+                    "endpoint": 241,
+                    "cluster_id": 0x0402,
+                    "attribute_id": 0
+                }),
+            ),
+            (
+                PointKind::Control,
+                serde_json::json!({
+                    "ieee_address": 1,
+                    "endpoint": 1,
+                    "cluster_id": 0x0008
+                }),
+            ),
+            (
+                PointKind::Telemetry,
+                serde_json::json!({
+                    "ieee_address": 1,
+                    "endpoint": 1,
+                    "cluster_id": 0x0402
+                }),
+            ),
+            (
+                PointKind::Control,
+                serde_json::json!({
+                    "ieee_address": 1,
+                    "endpoint": 1,
+                    "cluster_id": 0x0006,
+                    "attribute_id": 0
+                }),
+            ),
+            (PointKind::Adjustment, command_mapping),
+        ] {
+            assert!(
+                validate_protocol_mapping("zigbee", kind, 1, &invalid).is_err(),
+                "Zigbee unexpectedly accepted {invalid} for {kind:?}"
+            );
+        }
+    }
+
+    #[cfg(all(feature = "j1939", target_os = "linux"))]
+    #[test]
+    fn j1939_mapping_validation_delegates_to_the_adapter_schema() {
+        assert!(
+            validate_protocol_mapping(
+                "j1939",
+                PointKind::Telemetry,
+                1,
+                &serde_json::json!({"spn": 190}),
+            )
+            .is_ok()
+        );
+        assert!(
+            validate_protocol_mapping(
+                "j1939",
+                PointKind::Signal,
+                2,
+                &serde_json::json!({"spn": 110, "active_raw_value": 130}),
+            )
+            .is_ok()
+        );
+
+        for (kind, invalid) in [
+            (PointKind::Telemetry, serde_json::json!({"spn": 999_999})),
+            (PointKind::Signal, serde_json::json!({"spn": 110})),
+            (
+                PointKind::Signal,
+                serde_json::json!({"spn": 110, "active_raw_value": 254}),
+            ),
+            (PointKind::Control, serde_json::json!({"spn": 190})),
+            (
+                PointKind::Telemetry,
+                serde_json::json!({"spn": 190, "pgn": 61_444}),
+            ),
+        ] {
+            assert!(
+                validate_protocol_mapping("j1939", kind, 1, &invalid).is_err(),
+                "J1939 unexpectedly accepted {invalid} for {kind:?}"
+            );
         }
     }
 }

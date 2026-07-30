@@ -3,7 +3,6 @@
 //! This module provides shared types for service configuration including:
 //! - Base configuration structs (ApiConfig, LoggingConfig)
 //! - Validation framework (ConfigValidator, ValidationResult)
-//! - Hot reload infrastructure (ReloadableService, ReloadResult)
 //! - Shared enums (PointRole, InstanceStatus, ResponseStatus, ComparisonOperator)
 
 use aether_schema_macro::Schema;
@@ -20,7 +19,7 @@ pub use aether_core::PointType;
 #[cfg(feature = "schema")]
 use schemars::JsonSchema;
 
-// Required for ReloadableService trait and GenericValidator
+// Required for GenericValidator
 use anyhow::{Context, Result};
 
 // ============================================================================
@@ -568,115 +567,6 @@ impl<T: DeserializeOwned + ConfigValidator> ConfigValidator for GenericValidator
     fn validate_runtime(&self) -> Result<ValidationResult> {
         self.delegate_or_error(ValidationLevel::Runtime, |c| c.validate_runtime())
     }
-}
-
-// ============================================================================
-// Hot Reload Infrastructure
-// ============================================================================
-
-/// Generic reload result for all services
-///
-/// Provides unified response format for hot reload operations across
-/// io, automation, and rules services.
-///
-/// # Type Parameters
-/// - `I`: Item identifier type (e.g., `u16` for channel/instance ID, `String` for rule ID)
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
-pub struct ReloadResult<I> {
-    /// Total number of configuration items in database
-    pub total_count: usize,
-
-    /// IDs of newly added items
-    pub added: Vec<I>,
-
-    /// IDs of updated items (hot-reloaded)
-    pub updated: Vec<I>,
-
-    /// IDs of removed items
-    pub removed: Vec<I>,
-
-    /// Error messages (one per failed operation)
-    /// Format: "{item_id}: {error_message}"
-    pub errors: Vec<String>,
-
-    /// Total reload operation duration in milliseconds
-    pub duration_ms: u64,
-}
-
-impl<I> ReloadResult<I> {
-    /// Check if reload completed without errors
-    pub fn is_success(&self) -> bool {
-        self.errors.is_empty()
-    }
-
-    /// Get total number of successful operations
-    pub fn success_count(&self) -> usize {
-        self.added.len() + self.updated.len() + self.removed.len()
-    }
-
-    /// Get total number of failed operations
-    pub fn error_count(&self) -> usize {
-        self.errors.len()
-    }
-}
-
-impl<I> Default for ReloadResult<I> {
-    fn default() -> Self {
-        Self {
-            total_count: 0,
-            added: Vec::new(),
-            updated: Vec::new(),
-            removed: Vec::new(),
-            errors: Vec::new(),
-            duration_ms: 0,
-        }
-    }
-}
-
-/// Type alias for channel reload result (io)
-pub type ChannelReloadResult = ReloadResult<u32>;
-
-/// Type alias for instance reload result (automation)
-pub type InstanceReloadResult = ReloadResult<u32>;
-
-/// Type alias for rule reload result (rules)
-pub type RuleReloadResult = ReloadResult<String>;
-
-/// Unified hot reload interface for all services
-///
-/// This trait provides a consistent API for reloading service configurations
-/// from SQLite database without restarting the service.
-#[allow(async_fn_in_trait)]
-pub trait ReloadableService {
-    /// Change severity type (e.g., MetadataOnly < NonCritical < Critical)
-    type ChangeType: PartialOrd + Eq + Copy;
-
-    /// Configuration item type
-    type Config: Clone + Serialize + for<'de> Deserialize<'de>;
-
-    /// Reload operation result type
-    type ReloadResult: Serialize + for<'de> Deserialize<'de>;
-
-    /// Reload all configurations from SQLite database
-    async fn reload_from_database(
-        &self,
-        pool: &sqlx::SqlitePool,
-    ) -> anyhow::Result<Self::ReloadResult>;
-
-    /// Analyze configuration change severity
-    fn analyze_changes(
-        &self,
-        old_config: &Self::Config,
-        new_config: &Self::Config,
-    ) -> Self::ChangeType;
-
-    /// Perform hot reload with automatic rollback on failure
-    async fn perform_hot_reload(&self, config: Self::Config) -> anyhow::Result<String>;
-
-    /// Rollback to previous configuration
-    async fn rollback(&self, previous_config: Self::Config) -> anyhow::Result<String>;
 }
 
 /// Helper validation functions

@@ -18,9 +18,9 @@
 
 pub mod adapters;
 pub mod codec;
-pub mod config;
 pub mod core;
-pub mod gateway;
+pub(crate) mod factory;
+pub mod runtime;
 
 /// Prelude module for convenient imports
 pub mod prelude {
@@ -29,7 +29,6 @@ pub mod prelude {
         error::{GatewayError, Result},
         logging::*,
         point::*,
-        quality::*,
         traits::*,
     };
 }
@@ -43,18 +42,10 @@ pub use self::core::logging::{
 };
 pub use self::core::metadata::{
     DriverMetadata, HasMetadata, ParameterMetadata, ParameterType, ProtocolMetadata,
-    ProtocolRegistry, get_protocol_registry,
 };
-pub use self::core::quality::Quality;
 pub use self::core::traits::{
     CommunicationMode, ConnectionState, Protocol, ProtocolCapabilities, ProtocolClient,
 };
 
-// Re-export config types
-pub use self::config::ChannelBuildResult;
-
-// Re-export gateway types
-pub use self::gateway::{
-    ChannelConfig, ChannelMode, ChannelModeConfig, ChannelRuntime, ConfigError, GatewayConfig,
-    GatewayGlobalConfig, PointDef, parse_address,
-};
+pub use self::runtime::ChannelRuntime;
+pub use factory::{ProtocolRegistry, get_protocol_registry};

@@ -7,15 +7,16 @@ use tracing::debug;
 use voltage_modbus::DeviceLimits;
 
 use crate::protocols::core::data::{DataPoint, Value};
-use crate::protocols::core::point::{PointConfig, ProtocolAddress};
+use crate::protocols::core::point::PointConfig;
 
 use super::modbus_client::ModbusClientWrapper;
+use super::modbus_config::ModbusAddress;
 
 /// A segment of consecutive registers to be read in one batch.
 pub(crate) struct RegisterSegment<'a> {
     pub start_address: u16,
     pub end_address: u16,
-    pub points: Vec<(u16, u16, &'a PointConfig)>, // (address, count, point)
+    pub points: Vec<(u16, u16, &'a PointConfig<ModbusAddress>)>, // (address, count, point)
 }
 
 /// Read a group of points with the same slave_id and function_code.
@@ -23,27 +24,29 @@ pub(crate) struct RegisterSegment<'a> {
 /// Uses batch reading optimization: consecutive registers are read in single requests.
 pub(crate) async fn read_point_group(
     client: &mut ModbusClientWrapper,
-    points: &[PointConfig],
+    point_indices: &[usize],
+    points: &[PointConfig<ModbusAddress>],
     max_batch_size: u16,
     max_gap: u16,
 ) -> Vec<(u32, DataPoint)> {
-    if points.is_empty() {
+    let Some(first_index) = point_indices.first() else {
         return Vec::new();
-    }
-
-    let (slave_id, function_code) = match &points[0].address {
-        ProtocolAddress::Modbus(addr) => (addr.slave_id, addr.function_code),
-        _ => return Vec::new(),
     };
+
+    let first = &points[*first_index];
+    let slave_id = first.address.slave_id;
+    let function_code = first.address.function_code;
 
     // For coils/discrete inputs (FC01/FC02), read individually
     if function_code == 1 || function_code == 2 {
-        return read_coils_individually(client, points, slave_id, function_code).await;
+        return read_coils_individually(client, point_indices, points, slave_id, function_code)
+            .await;
     }
 
     // For registers (FC03/FC04), use batch optimization
     read_registers_batched(
         client,
+        point_indices,
         points,
         slave_id,
         function_code,
@@ -56,17 +59,16 @@ pub(crate) async fn read_point_group(
 /// Read coils or discrete inputs individually (FC01/FC02).
 async fn read_coils_individually(
     client: &mut ModbusClientWrapper,
-    points: &[PointConfig],
+    point_indices: &[usize],
+    points: &[PointConfig<ModbusAddress>],
     slave_id: u8,
     function_code: u8,
 ) -> Vec<(u32, DataPoint)> {
-    let mut results = Vec::with_capacity(points.len());
+    let mut results = Vec::with_capacity(point_indices.len());
 
-    for point in points {
-        let modbus_addr = match &point.address {
-            ProtocolAddress::Modbus(addr) => addr,
-            _ => continue,
-        };
+    for index in point_indices {
+        let point = &points[*index];
+        let modbus_addr = &point.address;
 
         let value_result = match function_code {
             1 => client
@@ -97,20 +99,22 @@ async fn read_coils_individually(
 /// Groups consecutive registers (within max_gap) and reads them in single requests.
 async fn read_registers_batched(
     client: &mut ModbusClientWrapper,
-    points: &[PointConfig],
+    point_indices: &[usize],
+    points: &[PointConfig<ModbusAddress>],
     slave_id: u8,
     function_code: u8,
     max_batch_size: u16,
     max_gap: u16,
 ) -> Vec<(u32, DataPoint)> {
-    let sorted_points: Vec<_> = points
+    let sorted_points: Vec<_> = point_indices
         .iter()
-        .filter_map(|p| {
-            if let ProtocolAddress::Modbus(addr) = &p.address {
-                Some((addr.register, addr.format.register_count(), p))
-            } else {
-                None
-            }
+        .map(|index| {
+            let point = &points[*index];
+            (
+                point.address.register,
+                point.address.format.register_count(),
+                point,
+            )
         })
         .collect();
 
@@ -119,7 +123,7 @@ async fn read_registers_batched(
     }
 
     let segments = build_register_segments(&sorted_points, max_gap, max_batch_size);
-    let mut results = Vec::with_capacity(points.len());
+    let mut results = Vec::with_capacity(point_indices.len());
 
     for segment in segments {
         match read_register_segment(client, slave_id, function_code, &segment, max_batch_size).await
@@ -144,7 +148,7 @@ async fn read_registers_batched(
 /// Build segments of consecutive registers for batch reading.
 #[allow(clippy::disallowed_methods)]
 fn build_register_segments<'a>(
-    sorted_points: &[(u16, u16, &'a PointConfig)],
+    sorted_points: &[(u16, u16, &'a PointConfig<ModbusAddress>)],
     max_gap: u16,
     max_batch_size: u16,
 ) -> Vec<RegisterSegment<'a>> {
@@ -221,14 +225,13 @@ async fn read_register_segment<'a>(
         if end <= registers.len() {
             let point_regs = &registers[offset..end];
 
-            if let ProtocolAddress::Modbus(modbus_addr) = &point.address
-                && let Ok(value) = decode_registers(
-                    point_regs,
-                    modbus_addr.format,
-                    modbus_addr.byte_order,
-                    modbus_addr.bit_position,
-                )
-            {
+            let modbus_addr = &point.address;
+            if let Ok(value) = decode_registers(
+                point_regs,
+                modbus_addr.format,
+                modbus_addr.byte_order,
+                modbus_addr.bit_position,
+            ) {
                 let transformed = apply_transform(value, &point.transform);
                 results.push((
                     point.id,
@@ -265,6 +268,5 @@ fn apply_transform(
         Value::Float(v) => Value::Float(transform.apply(v)),
         Value::Integer(v) => Value::Float(transform.apply(v as f64)),
         Value::Bool(v) => Value::Bool(transform.apply_bool(v)),
-        other => other,
     }
 }

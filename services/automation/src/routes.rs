@@ -21,7 +21,7 @@ use crate::api::product_handlers::{get_product_points, list_products};
 
 use crate::api::instance_management_handlers::{
     create_instance, delete_instance, execute_instance_action, get_instance_configuration_revision,
-    reload_instances_from_db, update_instance,
+    update_instance,
 };
 use crate::api::instance_query_handlers::{
     get_instance, get_instance_children, get_instance_data, get_instance_points, get_topology_tree,
@@ -30,15 +30,9 @@ use crate::api::instance_query_handlers::{
 
 // New global routing handlers (work with unified database)
 use crate::api::global_routing_handlers::{
-    delete_all_routing_handler, delete_channel_routing_handler,
-    delete_instance_routing_handler as global_delete_instance_routing, get_all_routing_handler,
-    get_routing_by_channel_handler,
+    get_all_routing_handler, get_routing_by_channel_handler,
 };
 // Refactored routing handlers (work with unified database)
-use crate::api::routing_management_handlers::{
-    create_instance_routing, delete_instance_routing, update_instance_routing,
-    validate_instance_routing,
-};
 use crate::api::routing_query_handlers::get_instance_routing_handler;
 
 use crate::api::single_point_handlers::{
@@ -68,14 +62,9 @@ use common::admin_api::{get_log_level, list_log_files, set_log_level, view_log_f
         crate::api::instance_query_handlers::get_instance_points,
         crate::api::instance_query_handlers::get_instance_children,
         crate::api::instance_query_handlers::get_topology_tree,
-        crate::api::instance_management_handlers::reload_instances_from_db,
         crate::api::instance_management_handlers::execute_instance_action,
-        // Instance-level routing handlers (refactored for unified database)
+        // Instance-level routing query and validation
         crate::api::routing_query_handlers::get_instance_routing_handler,
-        crate::api::routing_management_handlers::create_instance_routing,
-        crate::api::routing_management_handlers::update_instance_routing,
-        crate::api::routing_management_handlers::delete_instance_routing,
-        crate::api::routing_management_handlers::validate_instance_routing,
         // Single point routing handlers
         crate::api::single_point_handlers::get_measurement_point,
         crate::api::single_point_handlers::upsert_measurement_routing,
@@ -90,10 +79,7 @@ use common::admin_api::{get_log_level, list_log_files, set_log_level, view_log_f
         crate::api::property_handlers::delete_property,
         // Global routing handlers (unified database)
         crate::api::global_routing_handlers::get_all_routing_handler,
-        crate::api::global_routing_handlers::delete_all_routing_handler,
         crate::api::global_routing_handlers::get_routing_by_channel_handler,
-        crate::api::global_routing_handlers::delete_instance_routing_handler,
-        crate::api::global_routing_handlers::delete_channel_routing_handler,
         crate::api::product_handlers::list_products,
         crate::api::product_handlers::get_product_points,
         // Cloud sync endpoints
@@ -106,17 +92,30 @@ use common::admin_api::{get_log_level, list_log_files, set_log_level, view_log_f
     ),
     components(
         schemas(
-            crate::dto::CreateInstanceDto,
-            crate::dto::UpdateInstanceDto,
-            crate::dto::ActionRequest,
-            crate::dto::RoutingRequest,
-            crate::dto::SinglePointRoutingRequest,
-            crate::dto::ToggleRoutingRequest,
-            crate::dto::MeasurementRoutingUpsertRequest,
-            crate::dto::MeasurementRoutingToggleRequest,
-            crate::dto::MeasurementRoutingDeleteRequest,
-            crate::dto::RoutingUpdate,
-            crate::dto::RoutingType,
+            crate::api::dto::CreateInstanceDto,
+            crate::api::dto::UpdateInstanceDto,
+            crate::api::dto::ActionRequest,
+            crate::api::dto::MeasurementRoutingUpsertRequest,
+            crate::api::dto::MeasurementRoutingToggleRequest,
+            crate::api::dto::MeasurementRoutingDeleteRequest,
+            crate::api::dto::RoutingChannelDto,
+            crate::api::dto::InstanceRoutingEntryDto,
+            crate::api::dto::InstanceRoutingResponseDto,
+            crate::api::dto::RoutingListEntryDto,
+            crate::api::dto::RoutingTotalsDto,
+            crate::api::dto::AllRoutingResponseDto,
+            crate::api::dto::ChannelRoutingResponseDto,
+            crate::api::dto::InstanceSummaryDto,
+            crate::api::dto::InstanceSearchResponseDto,
+            crate::api::dto::InstanceListResponseDto,
+            crate::api::dto::InstancePickerItemDto,
+            crate::api::dto::InstancePickerResponseDto,
+            crate::api::dto::InstanceDataType,
+            crate::api::dto::DataTypeQuery,
+            crate::api::dto::InstanceDetailResponseDto,
+            crate::api::dto::InstanceLiveSampleDto,
+            crate::api::dto::InstanceLiveDataDto,
+            crate::api::dto::InstanceDataResponseDto,
             crate::config::Product,
             crate::config::MeasurementPoint,
             crate::config::ActionPoint,
@@ -176,7 +175,7 @@ impl utoipa::Modify for SecurityAddon {
 /// Returns the complete automation and rule-engine OpenAPI document.
 #[cfg(feature = "openapi")]
 pub fn openapi_document() -> utoipa::openapi::OpenApi {
-    AutomationApiDoc::openapi().nest("", crate::rule_routes::RuleApiDoc::openapi())
+    AutomationApiDoc::openapi().nest("", crate::api::rule_routes::RuleApiDoc::openapi())
 }
 
 /// Create all API routes for the Model Service
@@ -204,19 +203,10 @@ pub fn create_routes(state: Arc<AppState>) -> Router {
         .route("/api/instances/{id}/children", get(get_instance_children))
         // Topology tree endpoint
         .route("/api/topology", get(get_topology_tree))
-        .route("/api/instances/reload", post(reload_instances_from_db))
-
-        // Instance-level routing endpoints (refactored for unified database)
+        // Instance-level routing query
         .route(
             "/api/instances/{id}/routing",
-            get(get_instance_routing_handler)
-                .post(create_instance_routing)
-                .put(update_instance_routing)
-                .delete(delete_instance_routing),
-        )
-        .route(
-            "/api/instances/{id}/routing/validate",
-            post(validate_instance_routing),
+            get(get_instance_routing_handler),
         )
         // Single point routing endpoints
         .route(
@@ -246,14 +236,9 @@ pub fn create_routes(state: Arc<AppState>) -> Router {
             axum::routing::put(upsert_property).delete(delete_property),
         )
 
-        // Global routing management endpoints (new unified database APIs)
-        .route("/api/routing", get(get_all_routing_handler).delete(delete_all_routing_handler))
+        // Global routing queries
+        .route("/api/routing", get(get_all_routing_handler))
         .route("/api/routing/by-channel/{channel_id}", get(get_routing_by_channel_handler))
-        .route(
-            "/api/routing/instances/{instance_name}",
-            axum::routing::delete(global_delete_instance_routing),
-        )
-        .route("/api/routing/channels/{channel_id}", axum::routing::delete(delete_channel_routing_handler))
 
         // Product management endpoints (read-only)
         .route("/api/products", get(list_products))
@@ -276,7 +261,7 @@ pub fn create_routes(state: Arc<AppState>) -> Router {
 #[cfg(all(test, feature = "openapi"))]
 mod openapi_tests {
     use super::*;
-    use crate::rule_routes::RuleApiDoc;
+    use crate::api::rule_routes::RuleApiDoc;
 
     fn document() -> serde_json::Value {
         let openapi = AutomationApiDoc::openapi().nest("", RuleApiDoc::openapi());
@@ -374,14 +359,44 @@ mod openapi_tests {
             "/health",
             "/api/instances/{id}/children",
             "/api/topology",
-            "/api/instances/reload",
             "/api/admin/logs/files",
             "/api/admin/logs/view",
-            "/api/routing/instances/{instance_name}",
             "/api/rules/{id}/variables",
         ] {
             assert!(paths.contains_key(path), "missing OpenAPI path: {path}");
         }
+
+        for retired_path in [
+            "/api/instances/reload",
+            "/api/instances/{id}/routing/validate",
+            "/api/routing/instances/{instance_name}",
+            "/api/routing/channels/{channel_id}",
+        ] {
+            assert!(
+                !paths.contains_key(retired_path),
+                "retired mutation path must stay absent: {retired_path}"
+            );
+        }
+
+        let instance_routing = paths
+            .get("/api/instances/{id}/routing")
+            .and_then(serde_json::Value::as_object)
+            .expect("instance routing query path");
+        assert_eq!(
+            instance_routing.keys().collect::<Vec<_>>(),
+            vec!["get"],
+            "generic instance routing must remain read-only"
+        );
+
+        let global_routing = paths
+            .get("/api/routing")
+            .and_then(serde_json::Value::as_object)
+            .expect("global routing query path");
+        assert_eq!(
+            global_routing.keys().collect::<Vec<_>>(),
+            vec!["get"],
+            "global routing must remain read-only"
+        );
 
         assert!(!paths.contains_key("/api/instances/{id}/sync"));
         assert!(!paths.contains_key("/api/instances/sync/all"));
@@ -399,7 +414,7 @@ mod openapi_tests {
             })
             .count();
         assert_eq!(
-            operation_count, 52,
+            operation_count, 44,
             "OpenAPI operation count changed; re-audit Router parity before updating this contract"
         );
     }
@@ -626,6 +641,39 @@ mod openapi_tests {
                         description.contains("non-retryable")
                             && description.contains("scheduler-refresh")
                     })
+            );
+        }
+    }
+
+    #[test]
+    fn routing_query_openapi_is_typed_and_revisioned() {
+        let document = document();
+
+        for (pointer, schema) in [
+            ("/paths/~1api~1routing/get", "AllRoutingResponseDto"),
+            (
+                "/paths/~1api~1instances~1{id}~1routing/get",
+                "InstanceRoutingResponseDto",
+            ),
+            (
+                "/paths/~1api~1routing~1by-channel~1{channel_id}/get",
+                "ChannelRoutingResponseDto",
+            ),
+        ] {
+            let operation = document
+                .pointer(pointer)
+                .unwrap_or_else(|| panic!("missing routing query {pointer}"));
+            assert!(
+                operation["responses"]["200"].to_string().contains(schema),
+                "{pointer} must publish typed response {schema}"
+            );
+            assert!(
+                document
+                    .pointer(&format!(
+                        "/components/schemas/{schema}/properties/logical_routing_revision"
+                    ))
+                    .is_some(),
+                "{schema} must expose the shared CAS head"
             );
         }
     }

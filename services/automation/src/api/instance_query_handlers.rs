@@ -5,21 +5,26 @@
 #![allow(clippy::disallowed_methods)] // json! macro used in multiple functions
 
 use axum::{
-    extract::{Path, Query, RawQuery, State},
+    extract::{Path, Query, State, rejection::QueryRejection},
     response::Json,
 };
 use common::SuccessResponse;
 use serde::Deserialize;
 use serde_json::json;
-use std::collections::HashMap;
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
+use crate::api::dto::{
+    DataTypeQuery, InstanceDataResponseDto, InstanceDetailResponseDto, InstanceListResponseDto,
+    InstancePickerItemDto, InstancePickerResponseDto, InstancePointsResponse,
+    InstanceSearchResponseDto, InstanceSummaryDto,
+};
 use crate::app_state::AppState;
-use crate::dto::{DataTypeQuery, InstancePointsResponse};
 use crate::error::AutomationError;
 
 /// Pagination query parameters for listing instances
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PaginationQuery {
     /// Optional product filter
     pub product_name: Option<String>,
@@ -53,229 +58,190 @@ fn default_page_size() -> u32 {
         ("page_size" = Option<u32>, Query, description = "Items per page (default: 20, max: 100)")
     ),
     responses(
-        (status = 200, description = "List instances with pagination", body = serde_json::Value,
+        (status = 200, description = "List instances with pagination", body = common::SuccessResponse<InstanceListResponseDto>,
             example = json!({
-                "total": 10,
-                "page": 1,
-                "page_size": 20,
-                "list": [
-                    {
-                        "instance_id": 1,
-                        "instance_name": "pump_01",
-                        "product_name": "pump",
-                        "properties": {
-                            "max_flow_lpm": 500.0,
-                            "manufacturer": "Example Corp"
+                "success": true,
+                "data": {
+                    "total": 10,
+                    "page": 1,
+                    "page_size": 20,
+                    "list": [
+                        {
+                            "instance_id": 1,
+                            "instance_name": "pump_01",
+                            "product_name": "pump",
+                            "properties": {
+                                "max_flow_lpm": 500.0,
+                                "manufacturer": "Example Corp"
+                            }
                         }
-                    },
-                    {
-                        "instance_id": 2,
-                        "instance_name": "conveyor_01",
-                        "product_name": "conveyor",
-                        "properties": {
-                            "max_speed_mps": 2.5,
-                            "length_m": 12.0
-                        }
-                    }
-                ]
+                    ]
+                }
             })
-        )
+        ),
+        (status = 400, description = "Malformed query"),
+        (status = 422, description = "Invalid pagination or product filter")
     ),
     tag = "automation"
 )]
 pub async fn list_instances(
     State(state): State<Arc<AppState>>,
-    Query(query): Query<PaginationQuery>,
-) -> Result<Json<SuccessResponse<serde_json::Value>>, AutomationError> {
-    let product_name = query.product_name.as_deref();
-    let page = query.page.max(1); // Ensure page is at least 1
-    let page_size = query.page_size.clamp(1, 100); // Limit to reasonable range
-
-    let result = state
-        .instance_manager
-        .list_instances_paginated(product_name, page, page_size)
-        .await;
-
-    match result {
-        Ok((total, instances)) => Ok(Json(SuccessResponse::new(json!({
-            "total": total,
-            "page": page,
-            "page_size": page_size,
-            "list": instances
-        })))),
-        Err(e) => Err(AutomationError::InternalError(format!(
-            "Failed to list instances: {}",
-            e
-        ))),
+    query: Result<Query<PaginationQuery>, QueryRejection>,
+) -> Result<Json<SuccessResponse<InstanceListResponseDto>>, AutomationError> {
+    let Query(query) = query
+        .map_err(|_| AutomationError::InvalidData("malformed instance list query".to_string()))?;
+    if query.page == 0 {
+        return Err(AutomationError::InvalidData(
+            "page must be at least 1".to_string(),
+        ));
     }
+    if !(1..=100).contains(&query.page_size) {
+        return Err(AutomationError::InvalidData(
+            "page_size must be between 1 and 100".to_string(),
+        ));
+    }
+    if let Some(product_name) = query.product_name.as_deref()
+        && (product_name.is_empty() || product_name.chars().count() > 128)
+    {
+        return Err(AutomationError::InvalidData(
+            "product_name must contain between 1 and 128 characters".to_string(),
+        ));
+    }
+
+    let product_name = query.product_name.as_deref();
+    let (total, instances) = state
+        .instance_manager
+        .list_instances_paginated(product_name, query.page, query.page_size)
+        .await
+        .map_err(|error| {
+            AutomationError::InternalError(format!("Failed to list instances: {error}"))
+        })?;
+    Ok(Json(SuccessResponse::new(InstanceListResponseDto {
+        total,
+        page: query.page,
+        page_size: query.page_size,
+        list: instances
+            .into_iter()
+            .map(InstanceSummaryDto::from)
+            .collect(),
+    })))
 }
 
-/// Search instances by name with fuzzy matching (no pagination)
-///
-/// Returns all instances matching the search keyword. Use this for autocomplete
-/// or quick lookup scenarios where you need all matches without pagination.
-///
-/// URL format: `/api/instances/search?{keyword}`
-/// - The keyword is passed directly as the raw query string (no parameter name needed)
-/// - Empty keyword returns all instances
+const DEFAULT_SEARCH_LIMIT: u32 = 100;
+const MAX_SEARCH_LIMIT: u32 = 200;
+const MAX_SEARCH_IDS: usize = 256;
+const MAX_SEARCH_KEYWORD_CHARS: usize = 128;
+
+const fn default_search_limit() -> u32 {
+    DEFAULT_SEARCH_LIMIT
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct InstanceSearchQuery {
+    #[serde(default)]
+    keyword: String,
+    ids: Option<String>,
+    #[serde(default = "default_search_limit")]
+    limit: u32,
+}
+
+fn parse_search_ids(raw: Option<&str>) -> Result<Vec<u32>, AutomationError> {
+    let Some(raw) = raw else {
+        return Ok(Vec::new());
+    };
+    if raw.is_empty() {
+        return Err(AutomationError::InvalidData(
+            "ids must contain at least one instance ID".to_string(),
+        ));
+    }
+
+    let mut ids = BTreeSet::new();
+    for value in raw.split(',') {
+        if value.is_empty() || value.trim() != value {
+            return Err(AutomationError::InvalidData(
+                "ids must be comma-separated unsigned integers".to_string(),
+            ));
+        }
+        let instance_id = value.parse::<u32>().map_err(|_| {
+            AutomationError::InvalidData(
+                "ids must be comma-separated unsigned integers".to_string(),
+            )
+        })?;
+        ids.insert(instance_id);
+        if ids.len() > MAX_SEARCH_IDS {
+            return Err(AutomationError::InvalidData(format!(
+                "ids supports at most {MAX_SEARCH_IDS} unique values"
+            )));
+        }
+    }
+    Ok(ids.into_iter().collect())
+}
+
+/// Search commissioned instances with a bounded typed query.
 #[utoipa::path(
     get,
     path = "/api/instances/search",
     params(
-        ("keyword" = Option<String>, Query, description = "Optional fuzzy keyword (legacy raw query also supported)"),
-        ("ids" = Option<String>, Query, description = "Optional instance id filter, comma-separated (e.g., ids=1,2,3)")
+        ("keyword" = Option<String>, Query, description = "Optional case-insensitive name substring"),
+        ("ids" = Option<String>, Query, description = "Optional comma-separated instance IDs"),
+        ("limit" = Option<u32>, Query, description = "Maximum results (default 100, max 200)")
     ),
     responses(
-        (status = 200, description = "Matching instances", body = serde_json::Value,
+        (status = 200, description = "Matching instances", body = common::SuccessResponse<InstanceSearchResponseDto>,
             example = json!({
-                "list": [
-                    {
+                "success": true,
+                "data": {
+                    "count": 1,
+                    "limit": 100,
+                    "list": [{
                         "instance_id": 1,
                         "instance_name": "pump_01",
                         "product_name": "pump",
+                        "parent_id": null,
                         "properties": {}
-                    },
-                    {
-                        "instance_id": 2,
-                        "instance_name": "pump_02",
-                        "product_name": "pump",
-                        "properties": {}
-                    }
-                ]
+                    }]
+                }
             })
-        )
+        ),
+        (status = 400, description = "Malformed query"),
+        (status = 422, description = "Invalid IDs, keyword, or limit")
     ),
     tag = "automation"
 )]
 pub async fn search_instances(
     State(state): State<Arc<AppState>>,
-    RawQuery(raw_query): RawQuery,
-) -> Result<Json<SuccessResponse<serde_json::Value>>, AutomationError> {
-    // raw_query is Option<String>:
-    // /search?pump                  => Some("pump")                (legacy keyword-only)
-    // /search?ids=1,2,3             => Some("ids=1,2,3")           (filter by ids)
-    // /search?keyword=pump&ids=1,2  => Some("keyword=pump&ids=1,2") (named params)
-    // /search?pump&ids=1,2          => Some("pump&ids=1,2")         (mixed legacy + ids)
-    // /search?                      => Some("")
-    // /search                       => None
-
-    fn parse_ids_param(value: &str) -> Vec<u32> {
-        value
-            .split(',')
-            .filter_map(|s| s.trim().parse::<u32>().ok())
-            .collect()
+    query: Result<Query<InstanceSearchQuery>, QueryRejection>,
+) -> Result<Json<SuccessResponse<InstanceSearchResponseDto>>, AutomationError> {
+    let Query(query) = query
+        .map_err(|_| AutomationError::InvalidData("malformed instance search query".to_string()))?;
+    if query.keyword.chars().count() > MAX_SEARCH_KEYWORD_CHARS {
+        return Err(AutomationError::InvalidData(format!(
+            "keyword supports at most {MAX_SEARCH_KEYWORD_CHARS} characters"
+        )));
     }
-
-    let raw = raw_query.unwrap_or_default();
-    let mut keyword = String::new();
-    let mut ids: Vec<u32> = Vec::new();
-
-    if raw.contains('=') || raw.contains('&') {
-        for part in raw.split('&') {
-            if let Some((k, v)) = part.split_once('=') {
-                match k {
-                    "ids" | "id" => ids.extend(parse_ids_param(v)),
-                    "keyword" | "q" => {
-                        if keyword.is_empty() {
-                            keyword = v.to_string();
-                        }
-                    },
-                    _ => {},
-                }
-            } else if keyword.is_empty() && !part.trim().is_empty() {
-                keyword = part.to_string();
-            }
-        }
-    } else {
-        keyword = raw;
+    if !(1..=MAX_SEARCH_LIMIT).contains(&query.limit) {
+        return Err(AutomationError::InvalidData(format!(
+            "limit must be between 1 and {MAX_SEARCH_LIMIT}"
+        )));
     }
-
-    // Load base instances (by keyword and optional ids filter)
-    let instances: Vec<crate::product_loader::Instance> = if ids.is_empty() {
-        // Search all instances without pagination (use large page_size)
-        // Empty keyword returns all instances
-        match state
-            .instance_manager
-            .search_instances(&keyword, None, 1, 1000)
-            .await
-        {
-            Ok((_total, instances)) => instances,
-            Err(e) => {
-                return Err(AutomationError::InternalError(format!(
-                    "Failed to search instances: {}",
-                    e
-                )));
-            },
-        }
-    } else {
-        let mut selected = Vec::new();
-        for id in &ids {
-            match state.instance_manager.get_instance(*id).await {
-                Ok(inst) => {
-                    if !keyword.is_empty() && !inst.instance_name().contains(&keyword) {
-                        continue;
-                    }
-                    selected.push(inst);
-                },
-                Err(e) if e.to_string().contains("not found") => {
-                    // Search semantics: missing ids are ignored
-                    continue;
-                },
-                Err(e) => {
-                    return Err(AutomationError::InternalError(format!(
-                        "Failed to load instance {}: {}",
-                        id, e
-                    )));
-                },
-            }
-        }
-        selected.sort_by_key(|i| i.instance_id());
-        selected
-    };
-
-    // Cache product templates by product_name to avoid repeated queries
-    // Use Arc<Product> to avoid deep cloning Product structs
-    let mut product_cache: HashMap<String, Arc<crate::product_loader::Product>> = HashMap::new();
-
-    let mut list: Vec<serde_json::Value> = Vec::with_capacity(instances.len());
-    for inst in instances {
-        let product_name = inst.product_name().to_string();
-
-        // Load product template (cached) - includes properties, measurements, actions
-        // The validated Pack-backed product library is process-local and synchronous.
-        let product = if let Some(cached) = product_cache.get(&product_name) {
-            Arc::clone(cached) // O(1) ref count increment
-        } else {
-            let p = Arc::new(
-                state
-                    .instance_manager
-                    .product_loader()
-                    .get_product(&product_name)
-                    .map_err(|e| {
-                        AutomationError::InternalError(format!(
-                            "Failed to load product {}: {}",
-                            product_name, e
-                        ))
-                    })?,
-            );
-            product_cache.insert(product_name.clone(), Arc::clone(&p));
-            p
-        };
-
-        list.push(json!({
-            "instance_id": inst.core.instance_id,
-            "instance_name": inst.core.instance_name,
-            "product_name": inst.core.product_name,
-            "properties": inst.core.properties,
-            "points": {
-                "properties": product.properties,
-                "measurements": product.measurements,
-                "actions": product.actions
-            }
-        }));
-    }
-
-    Ok(Json(SuccessResponse::new(json!({ "list": list }))))
+    let ids = parse_search_ids(query.ids.as_deref())?;
+    let instances = state
+        .instance_manager
+        .find_instances(&query.keyword, &ids, query.limit)
+        .await
+        .map_err(|error| {
+            AutomationError::InternalError(format!("Failed to search instances: {error}"))
+        })?;
+    let list: Vec<_> = instances
+        .into_iter()
+        .map(InstanceSummaryDto::from)
+        .collect();
+    Ok(Json(SuccessResponse::new(InstanceSearchResponseDto {
+        count: list.len(),
+        limit: query.limit,
+        list,
+    })))
 }
 
 /// Minimal instance list (id + name only, no pagination).
@@ -287,12 +253,15 @@ pub async fn search_instances(
     get,
     path = "/api/instances/list",
     responses(
-        (status = 200, description = "Instance list", body = serde_json::Value,
+        (status = 200, description = "Instance list", body = common::SuccessResponse<InstancePickerResponseDto>,
             example = json!({
-                "list": [
-                    {"id": 1, "name": "pump_01"},
-                    {"id": 2, "name": "conveyor_01"}
-                ]
+                "success": true,
+                "data": {
+                    "list": [
+                        {"id": 1, "name": "pump_01"},
+                        {"id": 2, "name": "conveyor_01"}
+                    ]
+                }
             })
         )
     ),
@@ -300,21 +269,21 @@ pub async fn search_instances(
 )]
 pub async fn list_instances_slim(
     State(state): State<Arc<AppState>>,
-) -> Result<Json<SuccessResponse<serde_json::Value>>, AutomationError> {
-    let instances: Vec<(u32, String)> =
-        sqlx::query_as("SELECT instance_id, instance_name FROM instances ORDER BY instance_id")
-            .fetch_all(&state.instance_manager.pool)
-            .await
-            .map_err(|e| {
-                AutomationError::InternalError(format!("Failed to list instances: {}", e))
-            })?;
-
-    let list: Vec<serde_json::Value> = instances
+) -> Result<Json<SuccessResponse<InstancePickerResponseDto>>, AutomationError> {
+    let list = state
+        .instance_manager
+        .list_instance_identities()
+        .await
+        .map_err(|error| {
+            AutomationError::InternalError(format!("Failed to list instances: {error}"))
+        })?
         .into_iter()
-        .map(|(id, name)| json!({"id": id, "name": name}))
+        .map(|(id, name)| InstancePickerItemDto { id, name })
         .collect();
 
-    Ok(Json(SuccessResponse::new(json!({ "list": list }))))
+    Ok(Json(SuccessResponse::new(InstancePickerResponseDto {
+        list,
+    })))
 }
 
 /// Get product-model details for a single instance.
@@ -330,34 +299,34 @@ pub async fn list_instances_slim(
         ("id" = u32, Path, description = "Instance ID")
     ),
     responses(
-        (status = 200, description = "Instance details", body = serde_json::Value,
+        (status = 200, description = "Instance details", body = common::SuccessResponse<InstanceDetailResponseDto>,
             example = json!({
-                "instance": {
-                    "instance_id": 1,
-                    "instance_name": "pump_01",
-                    "product_name": "pump",
-                    "properties": {
-                        "max_flow_lpm": 500.0,
-                        "manufacturer": "Example Corp",
-                        "model": "P-500",
-                        "process_zone": "line_a"
-                    },
-                    "created_at": "2025-10-15T10:30:00Z",
-                    "updated_at": "2025-10-15T14:25:00Z"
+                "success": true,
+                "data": {
+                    "instance": {
+                        "instance_id": 1,
+                        "instance_name": "pump_01",
+                        "product_name": "pump",
+                        "properties": {
+                            "max_flow_lpm": 500.0,
+                            "manufacturer": "Example Corp"
+                        }
+                    }
                 }
             })
-        )
+        ),
+        (status = 404, description = "Instance not found")
     ),
     tag = "automation"
 )]
 pub async fn get_instance(
     State(state): State<Arc<AppState>>,
     Path(id): Path<u32>,
-) -> Result<Json<SuccessResponse<serde_json::Value>>, AutomationError> {
+) -> Result<Json<SuccessResponse<InstanceDetailResponseDto>>, AutomationError> {
     match state.instance_manager.get_instance(id).await {
-        Ok(instance) => Ok(Json(SuccessResponse::new(json!({
-            "instance": instance
-        })))),
+        Ok(instance) => Ok(Json(SuccessResponse::new(InstanceDetailResponseDto {
+            instance: InstanceSummaryDto::from(instance),
+        }))),
         Err(e) => {
             if e.to_string().contains("not found") {
                 Err(AutomationError::InstanceNotFound(id.to_string()))
@@ -373,8 +342,8 @@ pub async fn get_instance(
 
 /// Get real-time data for an instance
 ///
-/// Returns current measurement and action values from SHM plus properties
-/// from SQLite.
+/// Returns current measurement and action values from the authoritative SHM
+/// generation. A plane filter returns only that plane's point-value map.
 #[utoipa::path(
     get,
     path = "/api/instances/{id}/data",
@@ -383,36 +352,40 @@ pub async fn get_instance(
         ("type" = Option<String>, Query, description = "Optional data type filter (measurement/action)")
     ),
     responses(
-        (status = 200, description = "Instance data", body = serde_json::Value,
+        (status = 200, description = "Instance data", body = common::SuccessResponse<InstanceDataResponseDto>,
             example = json!({
-                "measurements": {
-                    "101": "650.5",
-                    "102": "12.3",
-                    "103": "4500.0"
-                },
-                "actions": {
-                    "201": "4500.0"
-                },
-                "properties": {
-                    "max_flow_lpm": 500.0,
-                    "manufacturer": "Example Corp"
+                "success": true,
+                "data": {
+                    "measurements": {
+                        "101": {"value": 650.5, "timestamp_ms": 1720000000000_u64}
+                    },
+                    "actions": {
+                        "201": {"value": 4500.0, "timestamp_ms": 1720000000000_u64}
+                    }
                 }
             })
-        )
+        ),
+        (status = 400, description = "Malformed query"),
+        (status = 404, description = "Instance not found"),
+        (status = 422, description = "Unknown data plane")
     ),
     tag = "automation"
 )]
 pub async fn get_instance_data(
     State(state): State<Arc<AppState>>,
     Path(id): Path<u32>,
-    Query(query): Query<DataTypeQuery>,
-) -> Result<Json<SuccessResponse<serde_json::Value>>, AutomationError> {
+    query: Result<Query<DataTypeQuery>, QueryRejection>,
+) -> Result<Json<SuccessResponse<InstanceDataResponseDto>>, AutomationError> {
+    let Query(query) = query
+        .map_err(|_| AutomationError::InvalidData("malformed instance data query".to_string()))?;
     match state
         .instance_manager
-        .get_instance_data(id, query.data_type.as_deref())
+        .get_instance_data(id, query.data_type.map(Into::into))
         .await
     {
-        Ok(data) => Ok(Json(SuccessResponse::new(data))),
+        Ok(data) => Ok(Json(SuccessResponse::new(InstanceDataResponseDto::from(
+            data,
+        )))),
         Err(e) => {
             let error_msg = e.to_string();
             if error_msg.contains("not found") {
@@ -442,6 +415,7 @@ pub async fn get_instance_data(
             body = InstancePointsResponse,
             example = json!({
                 "instance_name": "pump_01",
+                "logical_routing_revision": 7,
                 "measurements": [
                     {
                         "measurement_id": 1,
@@ -501,25 +475,10 @@ pub async fn get_instance_points(
     State(state): State<Arc<AppState>>,
     Path(id): Path<u32>,
 ) -> Result<Json<SuccessResponse<InstancePointsResponse>>, AutomationError> {
-    // Query instance_name for response (InstancePointsResponse still needs it for now)
-    let instance = state.instance_manager.get_instance(id).await.map_err(|e| {
-        if e.to_string().contains("not found") {
-            AutomationError::InstanceNotFound(id.to_string())
-        } else {
-            AutomationError::InternalError(format!("Failed to get instance: {}", e))
-        }
-    })?;
-
     match state.instance_manager.load_instance_points(id).await {
-        Ok((measurements, actions, properties)) => {
-            let response = InstancePointsResponse {
-                instance_name: instance.instance_name().to_string(),
-                measurements,
-                actions,
-                properties,
-            };
-            Ok(Json(SuccessResponse::new(response)))
-        },
+        Ok(response) => Ok(Json(SuccessResponse::new(InstancePointsResponse::from(
+            response,
+        )))),
         Err(e) => {
             let error_msg = e.to_string();
             if error_msg.contains("not found") {

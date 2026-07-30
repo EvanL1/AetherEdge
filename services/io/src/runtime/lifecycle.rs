@@ -6,18 +6,13 @@
 use std::time::Duration;
 
 use crate::core::channels::ChannelManager;
-use crate::core::config::ConfigManager;
-use crate::error::Result;
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info};
 
 // ============================================================================
 // Lifecycle timing constants
 // ============================================================================
-
-/// Brief wait after channel initialization to ensure all channels are ready
-const INIT_WAIT: Duration = Duration::from_millis(500);
 
 /// Per-channel timeout during graceful shutdown
 const CHANNEL_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
@@ -31,142 +26,6 @@ const WATCHDOG_HEARTBEAT_TIMEOUT_SECS: i64 = 120;
 
 /// Overall timeout for the service shutdown sequence
 const SERVICE_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(30);
-
-/// Start the communication service: create and connect all configured channels concurrently.
-///
-/// Individual channel failures don't stop service startup (graceful degradation).
-/// Returns the total number of configured channels.
-/// # Lock-free channel_manager
-pub async fn start_communication_service(
-    config_manager: Arc<ConfigManager>,
-    channel_manager: Arc<ChannelManager>,
-) -> Result<usize> {
-    debug!("start_communication_service called");
-
-    // Get channel configurations
-    let configs = config_manager.channels();
-
-    if configs.is_empty() {
-        warn!("No channels configured");
-        return Ok(0);
-    }
-
-    let total_configured = configs.len();
-    let enabled_count = configs.iter().filter(|c| c.is_enabled()).count();
-    let disabled_count = total_configured - enabled_count;
-
-    info!(
-        "Found {} channels: {} enabled, {} disabled",
-        configs.len(),
-        enabled_count,
-        disabled_count
-    );
-
-    // Record disabled channels.
-    for channel in configs.iter().filter(|c| !c.is_enabled()) {
-        info!(
-            "Channel {} ({}) is disabled, skipping",
-            channel.id(),
-            channel.name()
-        );
-    }
-
-    // Create all channels concurrently to improve startup performance.
-    use futures::future::join_all;
-
-    // First create all channel instances concurrently without holding the lock.
-    let channel_futures: Vec<_> = configs
-        .iter()
-        .filter(|c| c.is_enabled()) // Only create enabled channels.
-        .map(|channel_config| {
-            let channel_manager = Arc::clone(&channel_manager);
-            // Clone the Arc (cheap reference count increment), not the inner ChannelConfig
-            let channel_config = Arc::clone(channel_config);
-            async move {
-                let channel_id = channel_config.id();
-                let channel_name = channel_config.name().to_string();
-
-                info!("Creating channel: {} - {}", channel_id, channel_name);
-
-                // Debug: Verify points are available before creating channel
-                debug!(
-                    "Channel {} points will be loaded from SQLite at runtime",
-                    channel_id
-                );
-
-                // Direct access without RwLock (lock-free)
-                let result = channel_manager.create_channel(channel_config).await;
-                match result {
-                    Ok(_) => {
-                        info!("Channel created successfully: {}", channel_id);
-                        Ok((channel_id, channel_name))
-                    },
-                    Err(e) => {
-                        error!("Failed to create channel {}: {}", channel_id, e);
-                        Err((channel_id, channel_name, e))
-                    },
-                }
-            }
-        })
-        .collect();
-
-    // Wait for all channels to be created.
-    let results = join_all(channel_futures).await;
-
-    // Summarize successful and failed channel creations.
-    let mut successful_channels = 0;
-    let mut failed_channels = 0;
-    let mut failed_details = Vec::new();
-
-    for result in results {
-        match result {
-            Ok((id, name)) => {
-                successful_channels += 1;
-                debug!("Channel {} ({}) added to successful list", id, name);
-            },
-            Err((id, name, err)) => {
-                failed_channels += 1;
-                failed_details.push(format!("Channel {} ({}): {}", id, name, err));
-            },
-        }
-    }
-
-    // If any channel failed, log the details.
-    if !failed_details.is_empty() {
-        error!("Failed channels details:");
-        for detail in &failed_details {
-            error!("  - {}", detail);
-        }
-    }
-
-    info!(
-        "Channel initialization completed: {} successful, {} failed",
-        successful_channels, failed_channels
-    );
-
-    // Wait briefly to ensure all channels are initialized
-    tokio::time::sleep(INIT_WAIT).await;
-
-    // Phase 2: Establish connections for all channels in batch
-    info!("Starting connection phase for all initialized channels...");
-    // Direct access without RwLock (lock-free)
-    match channel_manager.connect_all_channels().await {
-        Ok(()) => {
-            info!("All channel connections completed successfully");
-        },
-        Err(e) => {
-            error!("Some channel connections failed: {}", e);
-            // Connection failure should not prevent service startup, continue running
-        },
-    }
-
-    info!(
-        "Communication service started with {} channels successfully initialized",
-        successful_channels
-    );
-
-    Ok(total_configured)
-}
 
 /// Gracefully shutdown all communication channels concurrently with per-channel timeout.
 /// # Lock-free channel_manager
@@ -247,7 +106,6 @@ pub async fn shutdown_handler(channel_manager: Arc<ChannelManager>) {
 /// # Lock-free channel_manager
 pub fn start_cleanup_task(
     channel_manager: Arc<ChannelManager>,
-    configured_count: usize,
     channel_reconciler: Option<Arc<dyn aether_ports::ChannelReconciler>>,
 ) -> (tokio::task::JoinHandle<()>, CancellationToken) {
     let token = CancellationToken::new();
@@ -263,7 +121,7 @@ pub fn start_cleanup_task(
                     // Direct access without RwLock (lock-free)
 
                     // Log statistics
-                    let all_stats = channel_manager.get_all_channel_stats().await;
+                    let all_stats = channel_manager.get_all_channel_stats();
                     let now_ms = crate::core::channels::channel_entry::unix_timestamp_ms();
                     let timeout_ms = WATCHDOG_HEARTBEAT_TIMEOUT_SECS * 1000;
 
@@ -277,10 +135,14 @@ pub fn start_cleanup_task(
                         }
                         let age_ms = now_ms - stat.watchdog_heartbeat_ms;
                         if age_ms > timeout_ms {
+                            let channel = channel_manager.get_channel(stat.channel_id);
+                            let channel_name = channel
+                                .as_ref()
+                                .map_or("<removed>", |entry| entry.metadata.name.as_str());
                             error!(
                                 "Ch{} ({}) watchdog: heartbeat stale for {}s, respawning task",
                                 stat.channel_id,
-                                stat.name,
+                                channel_name,
                                 age_ms / 1000
                             );
                             match &channel_reconciler {
@@ -293,46 +155,29 @@ pub fn start_cleanup_task(
                                     {
                                         error!(
                                             "Ch{} ({}) watchdog reconciliation failed: {}",
-                                            stat.channel_id, stat.name, error
+                                            stat.channel_id, channel_name, error
                                         );
                                     }
                                 },
                                 None => {
                                     error!(
                                         "Ch{} ({}) watchdog repair deferred: reconciler unavailable",
-                                        stat.channel_id, stat.name
+                                        stat.channel_id, channel_name
                                     );
                                 },
                             }
                         }
                     }
 
-                    // Collect active channels for display
-                    let active_channels: Vec<String> = all_stats
-                        .iter()
-                        .filter(|s| s.is_connected)
-                        .map(|s| format!("{}({})", s.name, s.channel_id))
-                        .collect();
-
+                    let active_count = all_stats.iter().filter(|s| s.is_connected).count();
                     let failed_count = all_stats.iter().filter(|s| s.reconnect_failed).count();
 
-                    if active_channels.is_empty() {
-                        info!(
-                            "Channel stats: configured={}, initialized={}, active=0, failed={}",
-                            configured_count,
-                            all_stats.len(),
-                            failed_count,
-                        );
-                    } else {
-                        info!(
-                            "Channel stats: configured={}, initialized={}, active={}, failed={} [{}]",
-                            configured_count,
-                            all_stats.len(),
-                            active_channels.len(),
-                            failed_count,
-                            active_channels.join(", ")
-                        );
-                    }
+                    info!(
+                        "Channel stats: initialized={}, active={}, failed={}",
+                        all_stats.len(),
+                        active_count,
+                        failed_count,
+                    );
                 }
                 () = task_token.cancelled() => {
                     info!("Cleanup task received cancellation signal, shutting down");
@@ -391,418 +236,74 @@ pub async fn shutdown_services(
 #[cfg(test)]
 #[allow(clippy::disallowed_methods)] // Test code - unwrap is acceptable
 mod tests {
-    use super::*;
-    use crate::core::config::ConfigManager;
-    use sqlx::SqlitePool;
+    use std::collections::HashMap;
     use std::sync::Arc;
-    use tempfile::TempDir;
 
-    /// Helper: Create a test database with minimal configuration
-    async fn create_test_database() -> (TempDir, String) {
-        let temp_dir = TempDir::new().unwrap();
-        let db_path = temp_dir.path().join("test_lifecycle.db");
-        let db_url = format!("sqlite://{}?mode=rwc", db_path.display());
+    use serde_json::json;
 
-        let pool = SqlitePool::connect(&db_url).await.unwrap();
+    use super::*;
+    use crate::core::channels::RuntimeChannelConfig;
+    use crate::core::config::{ChannelConfig, ChannelCore, ChannelLoggingConfig};
 
-        // Create service_config table (with service_name column and composite primary key)
-        sqlx::query(
-            "CREATE TABLE service_config (
-                service_name TEXT NOT NULL,
-                key TEXT NOT NULL,
-                value TEXT NOT NULL,
-                type TEXT DEFAULT 'string',
-                description TEXT,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                PRIMARY KEY (service_name, key)
-            )",
+    fn channel_manager() -> Arc<ChannelManager> {
+        Arc::new(
+            ChannelManager::new(
+                crate::test_utils::create_test_shm_handle(),
+                crate::test_utils::create_test_routing_cache(),
+            )
+            .unwrap(),
         )
-        .execute(&pool)
-        .await
-        .unwrap();
+    }
 
-        // Insert basic service config (with service_name column)
-        sqlx::query("INSERT INTO service_config (service_name, key, value) VALUES ('aether-io', 'service_name', 'aether-io')")
-            .execute(&pool)
-            .await
+    async fn channel_manager_with_runtime() -> Arc<ChannelManager> {
+        let manager = channel_manager();
+        let config = ChannelConfig {
+            core: ChannelCore {
+                id: 1001,
+                name: "Test Channel".to_string(),
+                description: None,
+                protocol: "modbus_tcp".to_string(),
+                enabled: true,
+            },
+            parameters: HashMap::from([
+                ("host".to_string(), json!("127.0.0.1")),
+                ("port".to_string(), json!(502)),
+            ]),
+            logging: ChannelLoggingConfig::default(),
+        };
+        manager
+            .create_channel(RuntimeChannelConfig::from_base(config))
             .unwrap();
+        manager
+    }
 
-        // Create channels table
-        sqlx::query(
-            "CREATE TABLE channels (
-                channel_id INTEGER PRIMARY KEY,
-                name TEXT NOT NULL,
-                protocol TEXT NOT NULL,
-                enabled BOOLEAN DEFAULT TRUE,
-                config TEXT DEFAULT '{}'
-            )",
-        )
-        .execute(&pool)
-        .await
-        .unwrap();
+    #[tokio::test]
+    async fn shutdown_removes_active_channels() {
+        let manager = channel_manager_with_runtime().await;
 
-        // Create point tables
-        for table_name in &[
-            "telemetry_points",
-            "signal_points",
-            "control_points",
-            "adjustment_points",
-        ] {
-            sqlx::query(&format!(
-                "CREATE TABLE {} (
-                    point_id INTEGER PRIMARY KEY,
-                    signal_name TEXT NOT NULL,
-                    scale REAL DEFAULT 1.0,
-                    offset REAL DEFAULT 0.0,
-                    unit TEXT DEFAULT '',
-                    reverse BOOLEAN DEFAULT FALSE,
-                    data_type TEXT DEFAULT 'float32',
-                    description TEXT DEFAULT ''
-                )",
-                table_name
-            ))
-            .execute(&pool)
+        shutdown_handler(Arc::clone(&manager)).await;
+
+        assert_eq!(manager.channel_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn shutdown_is_safe_without_channels_and_is_idempotent() {
+        let manager = channel_manager();
+
+        shutdown_handler(Arc::clone(&manager)).await;
+        shutdown_handler(manager).await;
+    }
+
+    #[tokio::test]
+    async fn cleanup_task_stops_on_cancellation() {
+        let (handle, token) = start_cleanup_task(channel_manager(), None);
+
+        assert!(!handle.is_finished());
+        token.cancel();
+
+        tokio::time::timeout(Duration::from_secs(2), handle)
             .await
+            .unwrap()
             .unwrap();
-        }
-
-        pool.close().await;
-        (temp_dir, db_path.to_string_lossy().to_string())
-    }
-
-    /// Helper: Add test channels to database
-    async fn add_test_channels(db_path: &str, enabled: bool) {
-        let pool = SqlitePool::connect(&format!("sqlite://{}", db_path))
-            .await
-            .unwrap();
-
-        sqlx::query("INSERT INTO channels (channel_id, name, protocol, enabled) VALUES (1001, 'Test Channel 1', 'modbus_tcp', ?)")
-            .bind(enabled)
-            .execute(&pool)
-            .await
-            .unwrap();
-
-        sqlx::query("INSERT INTO channels (channel_id, name, protocol, enabled) VALUES (1002, 'Test Channel 2', 'modbus_tcp', ?)")
-            .bind(enabled)
-            .execute(&pool)
-            .await
-            .unwrap();
-
-        pool.close().await;
-    }
-
-    // ========================================================================
-    // Phase 1: Service Startup Tests
-    // ========================================================================
-
-    #[tokio::test]
-    async fn test_start_service_success_with_enabled_channels() {
-        let (_temp_dir, db_path) = create_test_database().await;
-        add_test_channels(&db_path, true).await;
-
-        let config_manager = Arc::new(ConfigManager::from_sqlite(&db_path).await.unwrap());
-        let channel_manager = Arc::new(
-            ChannelManager::new(
-                crate::test_utils::create_test_shm_handle(),
-                crate::test_utils::create_test_routing_cache(),
-            )
-            .unwrap(),
-        );
-
-        let result = start_communication_service(config_manager, channel_manager).await;
-
-        assert!(result.is_ok(), "Service startup should succeed");
-        let configured_count = result.unwrap();
-        assert_eq!(
-            configured_count, 2,
-            "Should return count of configured channels"
-        );
-    }
-
-    #[tokio::test]
-    async fn test_start_service_with_no_channels() {
-        let (_temp_dir, db_path) = create_test_database().await;
-        // Don't add any channels
-
-        let config_manager = Arc::new(ConfigManager::from_sqlite(&db_path).await.unwrap());
-        let channel_manager = Arc::new(
-            ChannelManager::new(
-                crate::test_utils::create_test_shm_handle(),
-                crate::test_utils::create_test_routing_cache(),
-            )
-            .unwrap(),
-        );
-
-        let result = start_communication_service(config_manager, channel_manager).await;
-
-        assert!(
-            result.is_ok(),
-            "Service startup should succeed with no channels"
-        );
-        let configured_count = result.unwrap();
-        assert_eq!(configured_count, 0, "Should return 0 for no channels");
-    }
-
-    #[tokio::test]
-    async fn test_start_service_with_disabled_channels() {
-        let (_temp_dir, db_path) = create_test_database().await;
-        add_test_channels(&db_path, false).await; // disabled channels
-
-        let config_manager = Arc::new(ConfigManager::from_sqlite(&db_path).await.unwrap());
-        let channel_manager = Arc::new(
-            ChannelManager::new(
-                crate::test_utils::create_test_shm_handle(),
-                crate::test_utils::create_test_routing_cache(),
-            )
-            .unwrap(),
-        );
-
-        let result = start_communication_service(config_manager, channel_manager).await;
-
-        assert!(
-            result.is_ok(),
-            "Service startup should succeed with disabled channels"
-        );
-        let configured_count = result.unwrap();
-        assert_eq!(
-            configured_count, 2,
-            "Should return configured count even if disabled"
-        );
-    }
-
-    // ========================================================================
-    // Phase 2: Service Shutdown Tests
-    // ========================================================================
-
-    #[tokio::test]
-    async fn test_shutdown_with_active_channels() {
-        let (_temp_dir, db_path) = create_test_database().await;
-        add_test_channels(&db_path, true).await;
-
-        let config_manager = Arc::new(ConfigManager::from_sqlite(&db_path).await.unwrap());
-        let channel_manager = Arc::new(
-            ChannelManager::new(
-                crate::test_utils::create_test_shm_handle(),
-                crate::test_utils::create_test_routing_cache(),
-            )
-            .unwrap(),
-        );
-
-        // Start service first
-        let _ = start_communication_service(config_manager, channel_manager.clone()).await;
-
-        // Now shutdown
-        shutdown_handler(channel_manager.clone()).await;
-
-        // Verify all channels are stopped (direct access without RwLock)
-        assert_eq!(
-            channel_manager.channel_count(),
-            0,
-            "All channels should be removed after shutdown"
-        );
-    }
-
-    #[tokio::test]
-    async fn test_shutdown_with_no_channels() {
-        let channel_manager = Arc::new(
-            ChannelManager::new(
-                crate::test_utils::create_test_shm_handle(),
-                crate::test_utils::create_test_routing_cache(),
-            )
-            .unwrap(),
-        );
-
-        // Shutdown without starting any channels
-        shutdown_handler(channel_manager).await;
-
-        // Test passes if no panic occurs
-    }
-
-    #[tokio::test]
-    async fn test_shutdown_idempotency() {
-        let (_temp_dir, db_path) = create_test_database().await;
-        add_test_channels(&db_path, true).await;
-
-        let config_manager = Arc::new(ConfigManager::from_sqlite(&db_path).await.unwrap());
-        let channel_manager = Arc::new(
-            ChannelManager::new(
-                crate::test_utils::create_test_shm_handle(),
-                crate::test_utils::create_test_routing_cache(),
-            )
-            .unwrap(),
-        );
-
-        // Start service
-        let _ = start_communication_service(config_manager, channel_manager.clone()).await;
-
-        // Shutdown twice
-        shutdown_handler(channel_manager.clone()).await;
-        shutdown_handler(channel_manager).await;
-
-        // Test passes if no panic occurs on second shutdown
-    }
-
-    // ========================================================================
-    // Phase 3: Cleanup Task Tests
-    // ========================================================================
-
-    #[tokio::test]
-    async fn test_cleanup_task_starts() {
-        let channel_manager = Arc::new(
-            ChannelManager::new(
-                crate::test_utils::create_test_shm_handle(),
-                crate::test_utils::create_test_routing_cache(),
-            )
-            .unwrap(),
-        );
-
-        let (handle, cancel_token) = start_cleanup_task(channel_manager, 0, None);
-
-        // Verify handle is valid
-        assert!(!handle.is_finished(), "Cleanup task should be running");
-
-        // Cancel and wait for completion
-        cancel_token.cancel();
-        let _ = tokio::time::timeout(tokio::time::Duration::from_secs(2), handle).await;
-    }
-
-    #[tokio::test]
-    async fn test_cleanup_task_cancellation() {
-        let channel_manager = Arc::new(
-            ChannelManager::new(
-                crate::test_utils::create_test_shm_handle(),
-                crate::test_utils::create_test_routing_cache(),
-            )
-            .unwrap(),
-        );
-
-        let (handle, cancel_token) = start_cleanup_task(channel_manager, 0, None);
-
-        // Cancel immediately
-        cancel_token.cancel();
-
-        // Wait for task to complete
-        let result = tokio::time::timeout(tokio::time::Duration::from_secs(2), handle).await;
-        assert!(result.is_ok(), "Task should complete after cancellation");
-    }
-
-    #[tokio::test]
-    async fn test_cleanup_task_with_channels() {
-        let (_temp_dir, db_path) = create_test_database().await;
-        add_test_channels(&db_path, true).await;
-
-        let config_manager = Arc::new(ConfigManager::from_sqlite(&db_path).await.unwrap());
-        let channel_manager = Arc::new(
-            ChannelManager::new(
-                crate::test_utils::create_test_shm_handle(),
-                crate::test_utils::create_test_routing_cache(),
-            )
-            .unwrap(),
-        );
-
-        // Start service
-        let configured_count = start_communication_service(config_manager, channel_manager.clone())
-            .await
-            .unwrap();
-
-        // Start cleanup task
-        let (handle, cancel_token) =
-            start_cleanup_task(channel_manager.clone(), configured_count, None);
-
-        // Let it run briefly
-        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-
-        // Cancel and cleanup
-        cancel_token.cancel();
-        let _ = tokio::time::timeout(tokio::time::Duration::from_secs(2), handle).await;
-    }
-
-    // ========================================================================
-    // Phase 4: Connection Phase Tests
-    // ========================================================================
-
-    #[tokio::test]
-    async fn test_service_connection_phase_completes() {
-        let (_temp_dir, db_path) = create_test_database().await;
-        add_test_channels(&db_path, true).await;
-
-        let config_manager = Arc::new(ConfigManager::from_sqlite(&db_path).await.unwrap());
-        let channel_manager = Arc::new(
-            ChannelManager::new(
-                crate::test_utils::create_test_shm_handle(),
-                crate::test_utils::create_test_routing_cache(),
-            )
-            .unwrap(),
-        );
-
-        // Start service includes connection phase
-        let result = start_communication_service(config_manager, channel_manager).await;
-
-        assert!(
-            result.is_ok(),
-            "Service startup with connection phase should succeed"
-        );
-    }
-
-    #[tokio::test]
-    async fn test_connection_phase_does_not_block_startup() {
-        let (_temp_dir, db_path) = create_test_database().await;
-        add_test_channels(&db_path, true).await;
-
-        let config_manager = Arc::new(ConfigManager::from_sqlite(&db_path).await.unwrap());
-        let channel_manager = Arc::new(
-            ChannelManager::new(
-                crate::test_utils::create_test_shm_handle(),
-                crate::test_utils::create_test_routing_cache(),
-            )
-            .unwrap(),
-        );
-
-        // Even if connections fail, startup should succeed
-        let result = start_communication_service(config_manager, channel_manager).await;
-
-        assert!(
-            result.is_ok(),
-            "Service startup should succeed even if connections fail"
-        );
-    }
-
-    #[tokio::test]
-    async fn test_parallel_channel_creation() {
-        let (_temp_dir, db_path) = create_test_database().await;
-
-        // Add multiple channels
-        let pool = SqlitePool::connect(&format!("sqlite://{}", db_path))
-            .await
-            .unwrap();
-        for i in 1001..1006 {
-            sqlx::query("INSERT INTO channels (channel_id, name, protocol, enabled) VALUES (?, ?, 'modbus_tcp', true)")
-                .bind(i)
-                .bind(format!("Channel {}", i))
-                .execute(&pool)
-                .await
-                .unwrap();
-        }
-        pool.close().await;
-
-        let config_manager = Arc::new(ConfigManager::from_sqlite(&db_path).await.unwrap());
-        let channel_manager = Arc::new(
-            ChannelManager::new(
-                crate::test_utils::create_test_shm_handle(),
-                crate::test_utils::create_test_routing_cache(),
-            )
-            .unwrap(),
-        );
-
-        let start_time = std::time::Instant::now();
-        let result = start_communication_service(config_manager, channel_manager).await;
-        let elapsed = start_time.elapsed();
-
-        assert!(result.is_ok(), "Parallel channel creation should succeed");
-        // Parallel creation should be faster than sequential (< 5s for 5 channels)
-        assert!(
-            elapsed < tokio::time::Duration::from_secs(5),
-            "Parallel creation should complete quickly"
-        );
     }
 }

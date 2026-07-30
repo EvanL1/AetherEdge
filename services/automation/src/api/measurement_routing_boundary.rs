@@ -9,8 +9,8 @@ use axum::http::HeaderMap;
 use common::FourRemote;
 use serde_json::{Value, json};
 
+use crate::api::dto::MeasurementRoutingUpsertRequest;
 use crate::app_state::AppState;
-use crate::dto::{MeasurementRoutingUpsertRequest, RoutingRequest};
 use crate::error::AutomationError;
 
 /// Converts a single-point payload into a typed acquisition-owned route.
@@ -44,41 +44,6 @@ pub fn upsert_mutation(
     ))
 }
 
-/// Converts the legacy generic measurement payload without bypassing governance.
-pub fn generic_mutation(
-    instance_id: u32,
-    request: &RoutingRequest,
-) -> Result<MeasurementRoutingMutation, AutomationError> {
-    let key =
-        MeasurementRouteKey::new(InstanceId::new(instance_id), PointId::new(request.point_id));
-    match (
-        request.channel_id,
-        request.four_remote,
-        request.channel_point_id,
-    ) {
-        (None, None, None) => Ok(MeasurementRoutingMutation::delete(
-            key,
-            revision(request.expected_revision)?,
-        )),
-        (Some(channel_id), Some(four_remote), Some(channel_point_id)) => upsert_mutation(
-            instance_id,
-            request.point_id,
-            &MeasurementRoutingUpsertRequest {
-                channel_id,
-                four_remote,
-                channel_point_id,
-                enabled: true,
-                expected_revision: request.expected_revision,
-                confirmed: request.confirmed,
-            },
-        ),
-        _ => Err(AutomationError::InvalidRouting(
-            "channel_id, four_remote, and channel_point_id must be supplied together or all omitted"
-                .to_string(),
-        )),
-    }
-}
-
 /// Converts a wire revision to the mandatory positive CAS head.
 pub fn revision(value: u64) -> Result<LogicalRoutingRevision, AutomationError> {
     if value == 0 || value >= i64::MAX as u64 {
@@ -97,7 +62,7 @@ pub async fn apply(
     mutation: MeasurementRoutingMutation,
 ) -> Result<MeasurementRoutingMutationAcceptance, AutomationError> {
     let timestamp = TimestampMs::new(chrono::Utc::now().timestamp_millis().max(0) as u64);
-    let invocation = crate::infra::application_control::command_invocation_from_headers(
+    let invocation = crate::api::http_boundary::command_invocation_from_headers(
         &state.control_authenticator,
         headers,
         confirmed,
@@ -136,7 +101,7 @@ pub fn response_data(
         "operation": acceptance.kind().as_str(),
         "affected_routes": acceptance.affected_routes(),
         "resulting_revision": acceptance.resulting_revision().get(),
-        "audit": crate::infra::application_control::completion_audit_response(
+        "audit": crate::api::http_boundary::completion_audit_response(
             acceptance.completion_audit()
         ),
         "runtime": {

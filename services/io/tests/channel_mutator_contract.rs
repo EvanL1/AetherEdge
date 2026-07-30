@@ -3,7 +3,10 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use aether_domain::ChannelId;
-use aether_io::{ChannelRuntimeLifecycle, SqliteChannelMutator, core::config::ChannelConfig};
+use aether_io::{
+    ChannelRuntimeLifecycle, RuntimeChannelConfig, SqliteChannelMutator,
+    core::config::ChannelConfig,
+};
 use aether_ports::{
     ChannelDefinition, ChannelDesiredStateObservation, ChannelLoggingPolicy, ChannelMutation,
     ChannelMutator, ChannelParameterValue, ChannelPatch, ChannelReconciler,
@@ -24,6 +27,7 @@ struct ActivationPause {
 struct FakeRuntime {
     active: Mutex<HashSet<u32>>,
     configs: Mutex<HashMap<u32, ChannelConfig>>,
+    point_counts: Mutex<HashMap<u32, usize>>,
     calls: Mutex<Vec<String>>,
     fail_ensure: Mutex<bool>,
     fail_fence: Mutex<bool>,
@@ -54,6 +58,14 @@ impl FakeRuntime {
             .expect("config lock")
             .get(&channel_id)
             .cloned()
+    }
+
+    fn point_count(&self, channel_id: u32) -> Option<usize> {
+        self.point_counts
+            .lock()
+            .expect("point count lock")
+            .get(&channel_id)
+            .copied()
     }
 
     fn set_runtime_name(&self, channel_id: u32, name: &str) {
@@ -127,7 +139,7 @@ impl ChannelRuntimeLifecycle for FakeRuntime {
             .collect()
     }
 
-    async fn activate(&self, config: Arc<ChannelConfig>) -> PortResult<()> {
+    async fn activate(&self, config: RuntimeChannelConfig) -> PortResult<()> {
         self.calls
             .lock()
             .expect("calls lock")
@@ -150,7 +162,11 @@ impl ChannelRuntimeLifecycle for FakeRuntime {
         self.configs
             .lock()
             .expect("config lock")
-            .insert(config.id(), (*config).clone());
+            .insert(config.id(), config.channel_config().clone());
+        self.point_counts
+            .lock()
+            .expect("point count lock")
+            .insert(config.id(), config.point_count());
         self.set_active(config.id(), true);
         Ok(())
     }
@@ -290,73 +306,41 @@ async fn create_defaults_to_stopped_and_persists_typed_config_at_revision_one() 
 }
 
 #[tokio::test]
-async fn governed_modbus_create_rejects_fallback_and_truncation_inputs_before_commit() {
+async fn reconcile_activates_complete_point_snapshot_at_committed_revision() {
     let pool = test_pool().await;
     let runtime = Arc::new(FakeRuntime::default());
     let mutator = adapter(pool.clone(), Arc::clone(&runtime));
-    let invalid = [
-        protocol_definition(
-            30,
-            "modbus_tcp",
-            BTreeMap::from([
-                ("host".to_owned(), ChannelParameterValue::Integer(123)),
-                ("port".to_owned(), ChannelParameterValue::Integer(502)),
-            ]),
-            true,
-        ),
-        protocol_definition(
-            31,
-            "modbus_tcp",
-            BTreeMap::from([
-                (
-                    "host".to_owned(),
-                    ChannelParameterValue::String("edge".to_owned()),
-                ),
-                ("port".to_owned(), ChannelParameterValue::Integer(-1)),
-            ]),
-            true,
-        ),
-        protocol_definition(
-            33,
-            "modbus_rtu",
-            BTreeMap::from([
-                ("device".to_owned(), ChannelParameterValue::Bool(false)),
-                (
-                    "baud_rate".to_owned(),
-                    ChannelParameterValue::Integer(9_600),
-                ),
-            ]),
-            true,
-        ),
-        protocol_definition(
-            34,
-            "modbus_rtu",
-            BTreeMap::from([
-                (
-                    "device".to_owned(),
-                    ChannelParameterValue::String("/dev/ttyUSB0".to_owned()),
-                ),
-                ("baud_rate".to_owned(), ChannelParameterValue::Integer(-1)),
-            ]),
-            true,
-        ),
-    ];
 
-    for definition in invalid {
-        let error = mutator
-            .mutate(ChannelMutation::create(definition))
-            .await
-            .expect_err("invalid endpoint must fail before desired-state commit");
-        assert_eq!(error.kind(), PortErrorKind::InvalidData);
-    }
+    let receipt = mutator
+        .mutate(ChannelMutation::create(definition(7, true)))
+        .await
+        .expect("create enabled channel");
     assert_eq!(
-        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM channels WHERE channel_id >= 30")
-            .fetch_one(&pool)
-            .await
-            .expect("channel count"),
-        0
+        receipt.runtime_projection(),
+        ChannelRuntimeProjection::Active
     );
-    assert!(runtime.calls().is_empty());
+    assert_eq!(runtime.point_count(7), Some(0));
+
+    sqlx::query(
+        "INSERT INTO telemetry_points \
+         (channel_id, point_id, signal_name, protocol_mappings) \
+         VALUES (7, 1, 'temperature', \
+                 '{\"slave_id\":1,\"function_code\":3,\"register_address\":1}')",
+    )
+    .execute(&pool)
+    .await
+    .expect("insert authoritative point");
+    sqlx::query("UPDATE channels SET revision = 2 WHERE channel_id = 7 AND revision = 1")
+        .execute(&pool)
+        .await
+        .expect("advance desired revision");
+
+    let receipt = mutator
+        .reconcile(ChannelReconciliationScope::One(ChannelId::new(7)))
+        .await
+        .expect("reconcile point topology");
+    assert!(!receipt.reconciliation_required());
+    assert_eq!(runtime.point_count(7), Some(1));
 }
 
 #[tokio::test]
@@ -1760,6 +1744,104 @@ async fn bulk_reconciliation_converges_desired_channels_and_orphan_runtime() {
     assert!(runtime.is_active(7));
     assert!(!runtime.is_active(8));
     assert!(!runtime.is_active(9));
+}
+
+#[tokio::test]
+async fn bulk_reconciliation_uses_one_snapshot_generation_and_fences_revision_drift() {
+    let pool = test_pool().await;
+    let runtime = Arc::new(FakeRuntime::default());
+    let adapter = Arc::new(adapter(pool.clone(), Arc::clone(&runtime)));
+    for channel_id in [7, 8] {
+        adapter
+            .mutate(ChannelMutation::create(definition(channel_id, true)))
+            .await
+            .expect("enabled channel");
+    }
+
+    let pause = runtime.pause_next_activation();
+    let reconcile = {
+        let adapter = Arc::clone(&adapter);
+        tokio::spawn(async move { adapter.reconcile(ChannelReconciliationScope::All).await })
+    };
+    pause.entered.notified().await;
+
+    sqlx::query("UPDATE channels SET name = 'latest-channel-8' WHERE channel_id = 8")
+        .execute(&pool)
+        .await
+        .expect("legacy desired-state update");
+    pause.release.notify_one();
+
+    let receipt = reconcile
+        .await
+        .expect("bulk reconciliation task")
+        .expect("bulk reconciliation receipt");
+    let drifted = receipt
+        .items()
+        .iter()
+        .find(|item| item.channel_id() == ChannelId::new(8))
+        .expect("channel 8 receipt");
+
+    assert_eq!(
+        drifted.desired(),
+        ChannelDesiredStateObservation::present(ChannelRevision::new(2), true)
+    );
+    assert_eq!(
+        drifted.runtime_projection(),
+        ChannelRuntimeProjection::Degraded
+    );
+    assert!(
+        !runtime.is_active(8),
+        "a runtime compiled from the stale batch must be fenced"
+    );
+    assert_eq!(
+        runtime
+            .config(8)
+            .expect("stale batch was activated")
+            .core
+            .name,
+        "channel-8",
+        "channel 8 must use the batch loaded before channel 7 activation paused"
+    );
+}
+
+#[tokio::test]
+async fn malformed_bulk_snapshot_fails_closed_before_any_new_activation() {
+    let pool = test_pool().await;
+    let runtime = Arc::new(FakeRuntime::default());
+    let adapter = adapter(pool.clone(), Arc::clone(&runtime));
+    adapter
+        .mutate(ChannelMutation::create(definition(7, true)))
+        .await
+        .expect("enabled channel");
+    adapter
+        .mutate(ChannelMutation::create(definition(8, false)))
+        .await
+        .expect("disabled channel");
+    sqlx::query(
+        "INSERT INTO telemetry_points \
+         (channel_id, point_id, signal_name, protocol_mappings) \
+         VALUES (8, 1, 'corrupt', '{not-json')",
+    )
+    .execute(&pool)
+    .await
+    .expect("persist malformed point mapping");
+
+    let prior_call_count = runtime.calls().len();
+    let error = adapter
+        .reconcile(ChannelReconciliationScope::All)
+        .await
+        .expect_err("a malformed batch snapshot must fail closed");
+
+    assert_eq!(error.kind(), PortErrorKind::Unavailable);
+    assert!(!runtime.is_active(7), "existing runtime must be fenced");
+    let reconcile_calls = &runtime.calls()[prior_call_count..];
+    assert_eq!(reconcile_calls, ["fence:7"]);
+    assert!(
+        reconcile_calls
+            .iter()
+            .all(|call| !call.starts_with("activate:")),
+        "batch decoding must finish before any runtime activation"
+    );
 }
 
 #[tokio::test]

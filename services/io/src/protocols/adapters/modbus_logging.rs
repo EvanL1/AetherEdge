@@ -75,6 +75,10 @@ pub(crate) fn create_packet_callback(
     group_id: Arc<std::sync::atomic::AtomicU32>,
 ) -> VoltagePacketCallback {
     Arc::new(move |direction, data| {
+        if !log_context.raw_packet_logging_enabled() {
+            return;
+        }
+
         let dir = match direction {
             VoltagePacketDirection::Send => PacketDirection::Send,
             VoltagePacketDirection::Receive => PacketDirection::Receive,

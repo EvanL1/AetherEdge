@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 use std::hash::{Hash, Hasher};
 
-use aether_domain::PointKind;
+use aether_domain::{ChannelCommandAddress, CommandConstraints, PointKind};
 use aether_ports::{PortError, PortErrorKind, PortResult};
 use aether_shm_bridge::{ChannelHealthManifest, ChannelPointManifest, PhysicalPointAddress};
 use rustc_hash::FxHasher;
@@ -51,13 +51,54 @@ pub struct SqliteShmTopologySnapshot {
 /// Deterministically ordered logical instance route map.
 pub type LogicalPointRoutes = BTreeMap<(u32, u32), PhysicalPointAddress>;
 
+/// Validated physical target and limits for one logical command route.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RoutedCommandTarget {
+    target: ChannelCommandAddress,
+    constraints: CommandConstraints,
+}
+
+impl RoutedCommandTarget {
+    const fn new(target: ChannelCommandAddress, constraints: CommandConstraints) -> Self {
+        Self {
+            target,
+            constraints,
+        }
+    }
+
+    /// Returns the command-owned physical target.
+    #[must_use]
+    pub const fn target(self) -> ChannelCommandAddress {
+        self.target
+    }
+
+    /// Returns the limits loaded in the same SQLite transaction as the route.
+    #[must_use]
+    pub const fn constraints(self) -> CommandConstraints {
+        self.constraints
+    }
+
+    /// Projects the command target into the shared physical topology address.
+    #[must_use]
+    pub const fn physical_target(self) -> PhysicalPointAddress {
+        PhysicalPointAddress::new(
+            self.target.channel_id(),
+            self.target.kind(),
+            self.target.point_id(),
+        )
+    }
+}
+
+/// Deterministically ordered logical command route map.
+pub type LogicalCommandRoutes = BTreeMap<(u32, u32), RoutedCommandTarget>;
+
 /// Point, health, and logical routing observed from one SQLite transaction.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct SqliteLiveTopologySnapshot {
     shm: SqliteShmTopologySnapshot,
     configured_physical_points: Vec<PhysicalPointAddress>,
     measurement_routes: LogicalPointRoutes,
-    action_routes: LogicalPointRoutes,
+    action_routes: LogicalCommandRoutes,
     digest: u64,
 }
 
@@ -98,6 +139,13 @@ impl SqliteLiveTopologySnapshot {
     /// Resolves one logical action point.
     #[must_use]
     pub fn action_route(&self, instance_id: u32, point_id: u32) -> Option<PhysicalPointAddress> {
+        self.command_route(instance_id, point_id)
+            .map(RoutedCommandTarget::physical_target)
+    }
+
+    /// Resolves one logical command with the constraints from the same snapshot.
+    #[must_use]
+    pub fn command_route(&self, instance_id: u32, point_id: u32) -> Option<RoutedCommandTarget> {
         self.action_routes.get(&(instance_id, point_id)).copied()
     }
 
@@ -114,7 +162,9 @@ impl SqliteLiveTopologySnapshot {
     pub fn action_routes(&self) -> impl Iterator<Item = (u32, u32, PhysicalPointAddress)> + '_ {
         self.action_routes
             .iter()
-            .map(|(&(instance_id, point_id), &target)| (instance_id, point_id, target))
+            .map(|(&(instance_id, point_id), &target)| {
+                (instance_id, point_id, target.physical_target())
+            })
     }
 
     /// Returns the deterministic physical/logical topology digest.
@@ -131,7 +181,7 @@ impl SqliteLiveTopologySnapshot {
         ChannelPointManifest,
         ChannelHealthManifest,
         LogicalPointRoutes,
-        LogicalPointRoutes,
+        LogicalCommandRoutes,
     ) {
         let (points, health) = self.shm.into_manifests();
         (points, health, self.measurement_routes, self.action_routes)
@@ -196,6 +246,7 @@ pub async fn load_sqlite_live_topology(
         &configured_physical_points,
     )
     .await?;
+    let action_routes = load_command_routes(&mut transaction, action_routes).await?;
     transaction.commit().await.map_err(topology_unavailable)?;
     let digest = live_topology_digest(
         &shm,
@@ -316,55 +367,171 @@ async fn load_routes(
         .await
         .map_err(topology_unavailable)?;
     let mut routes = BTreeMap::new();
-    for (raw_instance_id, raw_channel_id, raw_kind, raw_point_id, raw_logical_point_id) in rows {
-        let instance_id = stored_u32(raw_instance_id, "instance_id", table)?;
-        let (raw_channel_id, raw_kind, raw_point_id) = match (
-            raw_channel_id,
-            raw_kind,
-            raw_point_id,
-        ) {
-            (None, None, None) => continue,
-            (Some(channel_id), Some(kind), Some(point_id)) => (channel_id, kind, point_id),
-            _ => {
-                return Err(invalid_topology(format!(
-                    "{table} logical route {instance_id}:{raw_logical_point_id} has a partial physical binding"
-                )));
-            },
+    for row in rows {
+        let Some((logical, target)) = validate_route(
+            row,
+            table,
+            logical_point_column,
+            writable,
+            manifest,
+            configured_physical_points,
+        )?
+        else {
+            continue;
         };
-        let channel_id = stored_u32(raw_channel_id, "channel_id", table)?;
-        let point_id = stored_u32(raw_point_id, "channel_point_id", table)?;
-        let logical_point_id = stored_u32(raw_logical_point_id, logical_point_column, table)?;
-        let kind = parse_point_kind(&raw_kind).ok_or_else(|| {
-            invalid_topology(format!(
-                "stored channel_type in {table} is not one of T/S/C/A"
-            ))
-        })?;
-        if kind.is_writable() != writable {
+        if routes.insert(logical, target).is_some() {
             return Err(invalid_topology(format!(
-                "{table} route kind {raw_kind} violates its read/write ownership"
-            )));
-        }
-        let target = PhysicalPointAddress::from_legacy_raw(channel_id, kind, point_id);
-        if manifest.slot_for(target).is_none() {
-            return Err(invalid_topology(format!(
-                "{table} route target {channel_id}:{raw_kind}:{point_id} is absent from the point manifest"
-            )));
-        }
-        if !configured_physical_points.contains(&target) {
-            return Err(invalid_topology(format!(
-                "{table} route target {channel_id}:{raw_kind}:{point_id} is not a configured physical point"
-            )));
-        }
-        if routes
-            .insert((instance_id, logical_point_id), target)
-            .is_some()
-        {
-            return Err(invalid_topology(format!(
-                "{table} contains duplicate logical route {instance_id}:{logical_point_id}"
+                "{table} contains duplicate logical route {}:{}",
+                logical.0, logical.1
             )));
         }
     }
     Ok(routes)
+}
+
+async fn load_command_routes(
+    connection: &mut SqliteConnection,
+    physical_routes: LogicalPointRoutes,
+) -> PortResult<LogicalCommandRoutes> {
+    let has_adjustment_route = physical_routes
+        .values()
+        .any(|target| target.kind() == PointKind::Action);
+    let mut adjustment_constraints = BTreeMap::new();
+    if has_adjustment_route {
+        let rows = sqlx::query_as::<_, (i64, i64, Option<f64>, Option<f64>, Option<f64>)>(
+            "SELECT DISTINCT adjustment.channel_id, adjustment.point_id, \
+                    adjustment.min_value, adjustment.max_value, adjustment.step \
+             FROM adjustment_points AS adjustment \
+             INNER JOIN action_routing AS routing \
+               ON routing.enabled = TRUE \
+              AND routing.channel_type = 'A' \
+              AND routing.channel_id = adjustment.channel_id \
+              AND routing.channel_point_id = adjustment.point_id \
+             ORDER BY adjustment.channel_id, adjustment.point_id",
+        )
+        .fetch_all(&mut *connection)
+        .await
+        .map_err(topology_unavailable)?;
+        for (raw_channel_id, raw_point_id, minimum, maximum, step) in rows {
+            let channel_id = stored_u32(
+                raw_channel_id,
+                "channel_id",
+                "adjustment command constraints",
+            )?;
+            let point_id = stored_u32(raw_point_id, "point_id", "adjustment command constraints")?;
+            let constraints = CommandConstraints::new(minimum, maximum, Some(step.unwrap_or(1.0)))
+                .map_err(|_| {
+                    invalid_topology(format!(
+                        "adjustment point {channel_id}:{point_id} has invalid command constraints"
+                    ))
+                })?;
+            adjustment_constraints.insert((channel_id, point_id), constraints);
+        }
+    }
+    let binary_constraints = CommandConstraints::new(Some(0.0), Some(1.0), Some(1.0))
+        .map_err(|_| invalid_topology("binary command constraints are invalid"))?;
+
+    physical_routes
+        .into_iter()
+        .map(|(logical @ (instance_id, action_id), physical_target)| {
+            let constraints = match physical_target.kind() {
+                PointKind::Command => binary_constraints,
+                PointKind::Action => adjustment_constraints
+                    .get(&(
+                        physical_target.channel_id().get(),
+                        physical_target.point_id().get(),
+                    ))
+                    .copied()
+                    .ok_or_else(|| {
+                        invalid_topology(format!(
+                            "action_routing logical route {instance_id}:{action_id} has no command constraints"
+                        ))
+                    })?,
+                PointKind::Telemetry | PointKind::Status => {
+                    return Err(invalid_topology(format!(
+                        "action_routing logical route {instance_id}:{action_id} is not command-owned"
+                    )));
+                },
+            };
+            let command_target = ChannelCommandAddress::new(
+                physical_target.channel_id(),
+                physical_target.kind(),
+                physical_target.point_id(),
+            )
+            .map_err(|_| {
+                invalid_topology(format!(
+                    "action_routing logical route {instance_id}:{action_id} is not command-owned"
+                ))
+            })?;
+            Ok((
+                logical,
+                RoutedCommandTarget::new(command_target, constraints),
+            ))
+        })
+        .collect()
+}
+
+type StoredRouteRow = (i64, Option<i64>, Option<String>, Option<i64>, i64);
+
+fn validate_route(
+    row: StoredRouteRow,
+    table: &str,
+    logical_point_column: &str,
+    writable: bool,
+    manifest: &ChannelPointManifest,
+    configured_physical_points: &[PhysicalPointAddress],
+) -> PortResult<Option<((u32, u32), PhysicalPointAddress)>> {
+    let (raw_instance_id, raw_channel_id, raw_kind, raw_point_id, raw_logical_point_id) = row;
+    let instance_id = stored_u32(raw_instance_id, "instance_id", table)?;
+    let (raw_channel_id, raw_kind, raw_point_id) = match (raw_channel_id, raw_kind, raw_point_id) {
+        (None, None, None) => return Ok(None),
+        (Some(channel_id), Some(kind), Some(point_id)) => (channel_id, kind, point_id),
+        _ => {
+            return Err(invalid_topology(format!(
+                "{table} logical route {instance_id}:{raw_logical_point_id} has a partial physical binding"
+            )));
+        },
+    };
+    let channel_id = stored_u32(raw_channel_id, "channel_id", table)?;
+    let point_id = stored_u32(raw_point_id, "channel_point_id", table)?;
+    let logical_point_id = stored_u32(raw_logical_point_id, logical_point_column, table)?;
+    let kind = parse_point_kind(&raw_kind).ok_or_else(|| {
+        invalid_topology(format!(
+            "stored channel_type in {table} is not one of T/S/C/A"
+        ))
+    })?;
+    if kind.is_writable() != writable {
+        return Err(invalid_topology(format!(
+            "{table} route kind {raw_kind} violates its read/write ownership"
+        )));
+    }
+    let target = PhysicalPointAddress::from_legacy_raw(channel_id, kind, point_id);
+    if manifest.slot_for(target).is_none() {
+        return Err(invalid_topology(format!(
+            "{table} route target {channel_id}:{raw_kind}:{point_id} is absent from the point manifest"
+        )));
+    }
+    if configured_physical_points
+        .binary_search_by_key(&physical_address_key(target), |candidate| {
+            physical_address_key(*candidate)
+        })
+        .is_err()
+    {
+        return Err(invalid_topology(format!(
+            "{table} route target {channel_id}:{raw_kind}:{point_id} is not a configured physical point"
+        )));
+    }
+    Ok(Some(((instance_id, logical_point_id), target)))
+}
+
+fn physical_address_key(address: PhysicalPointAddress) -> (u32, u8, u32) {
+    let kind = match address.kind() {
+        PointKind::Telemetry => 0,
+        PointKind::Status => 1,
+        PointKind::Command => 2,
+        PointKind::Action => 3,
+    };
+    (address.channel_id().get(), kind, address.point_id().get())
 }
 
 fn parse_point_kind(value: &str) -> Option<PointKind> {
@@ -381,18 +548,41 @@ fn live_topology_digest(
     shm: &SqliteShmTopologySnapshot,
     configured_physical_points: &[PhysicalPointAddress],
     measurements: &LogicalPointRoutes,
-    actions: &LogicalPointRoutes,
+    actions: &LogicalCommandRoutes,
 ) -> u64 {
     let mut hasher = FxHasher::default();
-    "aether.sqlite-live-topology.v2".hash(&mut hasher);
+    "aether.sqlite-live-topology.v3".hash(&mut hasher);
     shm.point_manifest().layout_hash().hash(&mut hasher);
     shm.point_manifest().slot_count().hash(&mut hasher);
     shm.health_manifest().layout_hash().hash(&mut hasher);
     shm.health_manifest().slot_count().hash(&mut hasher);
     configured_physical_points.hash(&mut hasher);
     hash_routes(0, measurements, &mut hasher);
-    hash_routes(1, actions, &mut hasher);
+    hash_command_routes(1, actions, &mut hasher);
     hasher.finish()
+}
+
+fn hash_command_routes(role: u8, routes: &LogicalCommandRoutes, hasher: &mut FxHasher) {
+    role.hash(hasher);
+    for (&(instance_id, point_id), &route) in routes {
+        instance_id.hash(hasher);
+        point_id.hash(hasher);
+        route.physical_target().hash(hasher);
+        hash_optional_f64(route.constraints().minimum(), hasher);
+        hash_optional_f64(route.constraints().maximum(), hasher);
+        hash_optional_f64(route.constraints().step(), hasher);
+    }
+}
+
+fn hash_optional_f64(value: Option<f64>, hasher: &mut FxHasher) {
+    value.is_some().hash(hasher);
+    if let Some(value) = value {
+        if value == 0.0 {
+            0.0_f64.to_bits().hash(hasher);
+        } else {
+            value.to_bits().hash(hasher);
+        }
+    }
 }
 
 fn hash_routes(role: u8, routes: &LogicalPointRoutes, hasher: &mut FxHasher) {

@@ -1,25 +1,10 @@
-//! Data models for the alarm service
-
-use serde::{Deserialize, Serialize, Serializer};
-use utoipa::{IntoParams, ToSchema};
-
-/// Serialize a stored JSON string as a parsed JSON value.
-/// If the string is not valid JSON, it falls back to the raw string.
-fn serialize_json_str<S>(s: &String, ser: S) -> Result<S::Ok, S::Error>
-where
-    S: Serializer,
-{
-    match serde_json::from_str::<serde_json::Value>(s) {
-        Ok(v) => v.serialize(ser),
-        Err(_) => s.serialize(ser),
-    }
-}
+//! Internal storage, query, and runtime models for the alarm service.
 
 // ============================================================================
 // Core domain models (map 1:1 to database tables)
 // ============================================================================
 
-#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow, ToSchema)]
+#[derive(Debug, Clone, sqlx::FromRow)]
 pub struct AlertRule {
     pub id: i64,
     pub service_type: String,
@@ -88,11 +73,10 @@ impl AlertRule {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow, ToSchema)]
+#[derive(Debug, Clone, sqlx::FromRow)]
 pub struct Alert {
     pub id: i64,
     pub rule_id: i64,
-    #[serde(serialize_with = "serialize_json_str")]
     pub rule_snapshot: String,
     pub service_type: String,
     pub channel_id: i64,
@@ -108,11 +92,10 @@ pub struct Alert {
     pub triggered_at: i64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow, ToSchema)]
+#[derive(Debug, Clone, sqlx::FromRow)]
 pub struct AlertEvent {
     pub id: i64,
     pub rule_id: i64,
-    #[serde(serialize_with = "serialize_json_str")]
     pub rule_snapshot: String,
     pub service_type: String,
     pub channel_id: i64,
@@ -132,252 +115,86 @@ pub struct AlertEvent {
     pub duration: Option<i64>,
 }
 
-// ============================================================================
-// Request DTOs
-// ============================================================================
-
-#[derive(Debug, Deserialize, ToSchema)]
-#[schema(example = json!({
-    "service_type": "io",
-    "channel_id": 1001,
-    "data_type": "M",
-    "point_id": 1,
-    "rule_name": "Overvoltage Alarm",
-    "warning_level": 2,
-    "operator": ">",
-    "value": 260.0,
-    "enabled": true,
-    "description": "Trigger alarm when voltage exceeds 260V"
-}))]
-pub struct CreateRuleRequest {
-    pub service_type: String,
-    pub channel_id: i64,
-    pub data_type: String,
-    pub point_id: i64,
-    pub rule_name: String,
-    /// Warning level (default: 2)
-    #[serde(default = "default_warning_level")]
-    pub warning_level: i64,
-    /// Operator: >, <, >=, <=, ==, !=
-    pub operator: String,
-    pub value: f64,
-    /// Whether enabled (default: true)
-    #[serde(default = "default_true")]
-    pub enabled: bool,
-    pub description: Option<String>,
-}
-
-#[derive(Debug, Deserialize, ToSchema)]
-pub struct UpdateRuleRequest {
-    pub service_type: Option<String>,
-    pub channel_id: Option<i64>,
-    pub data_type: Option<String>,
-    pub point_id: Option<i64>,
-    pub rule_name: Option<String>,
-    pub warning_level: Option<i64>,
-    pub operator: Option<String>,
-    pub value: Option<f64>,
-    pub enabled: Option<bool>,
-    pub description: Option<String>,
-}
-
-// ============================================================================
-// Query parameter structs
-// ============================================================================
-
-#[derive(Debug, Deserialize, Default, IntoParams)]
-pub struct RuleQueryParams {
-    /// Fuzzy keyword: matches rule_name, description, channel_id, point_id
-    pub keyword: Option<String>,
-    pub service_type: Option<String>,
-    pub channel_id: Option<i64>,
-    pub data_type: Option<String>,
-    pub enabled: Option<bool>,
-    pub warning_level: Option<i64>,
-    /// Page number (1-based; takes priority over skip when set)
-    pub page: Option<i64>,
-    /// Page size (used with page; takes priority over limit when set)
-    pub page_size: Option<i64>,
-    /// Offset rows (legacy; ignored when page is present)
-    #[serde(default)]
-    pub skip: i64,
-    /// Max rows to return (legacy; ignored when page_size is present)
-    #[serde(default = "default_limit")]
+#[derive(Debug, Clone, Copy)]
+pub struct PageRequest {
     pub limit: i64,
+    pub offset: i64,
+    pub page: i64,
+    pub page_size: i64,
 }
 
-#[derive(Debug, Deserialize, Default, IntoParams)]
-pub struct AlertQueryParams {
-    pub warning_level: Option<i64>,
-    pub service_type: Option<String>,
-    pub channel_id: Option<i64>,
-    pub keyword: Option<String>,
-    /// Page number (1-based; takes priority over skip when set)
-    pub page: Option<i64>,
-    /// Page size (used with page; takes priority over limit when set)
-    pub page_size: Option<i64>,
-    /// Offset rows (legacy)
-    #[serde(default)]
-    pub skip: i64,
-    /// Max rows to return (legacy)
-    #[serde(default = "default_limit")]
-    pub limit: i64,
-}
-
-#[derive(Debug, Deserialize, Default, IntoParams)]
-pub struct EventQueryParams {
-    /// Fuzzy keyword: matches rule_name, channel_id, point_id
-    pub keyword: Option<String>,
-    pub rule_id: Option<i64>,
-    /// "trigger" or "recovery"
-    pub event_type: Option<String>,
-    pub service_type: Option<String>,
-    pub warning_level: Option<i64>,
-    /// Unix timestamp (seconds)
-    pub start_time: Option<i64>,
-    pub end_time: Option<i64>,
-    /// Page number (1-based; takes priority over skip when set)
-    pub page: Option<i64>,
-    /// Page size (used with page; takes priority over limit when set)
-    pub page_size: Option<i64>,
-    /// Offset rows (legacy)
-    #[serde(default)]
-    pub skip: i64,
-    /// Max rows to return (legacy)
-    #[serde(default = "default_limit")]
-    pub limit: i64,
-}
-
-/// Resolve pagination parameters; returns `(effective_limit, offset, resolved_page, resolved_page_size)`.
-///
-/// Prefers `page`/`page_size`; falls back to `skip`/`limit` when neither page param is present.
-pub fn resolve_pagination(
-    page: Option<i64>,
-    page_size: Option<i64>,
-    skip: i64,
-    limit: i64,
-) -> (i64, i64, i64, i64) {
-    const MAX_PAGE_SIZE: i64 = 200;
-    match page {
-        Some(p) => {
-            let p = p.max(1);
-            let ps = page_size.unwrap_or(limit).clamp(1, MAX_PAGE_SIZE);
-            let offset = (p - 1) * ps;
-            (ps, offset, p, ps)
-        },
-        None => {
-            let ps = page_size.unwrap_or(limit).clamp(1, MAX_PAGE_SIZE);
-            let offset = skip.max(0);
-            // Convert skip/limit back to a logical page number (best-effort)
-            let p = if ps > 0 { offset / ps + 1 } else { 1 };
-            (ps, offset, p, ps)
-        },
-    }
-}
-
-// ============================================================================
-// Response wrappers
-// ============================================================================
-
-#[derive(Debug, Serialize, ToSchema)]
-pub struct ApiResponse<T: Serialize> {
-    pub success: bool,
-    pub message: String,
-    pub data: T,
-}
-
-/// Success payload returned after creating a rule.
-#[derive(Debug, Serialize, ToSchema)]
-pub struct CreateRuleData {
-    pub rule_id: u64,
-    pub rule_name: String,
-    pub logical_key: Option<String>,
-    pub point_id: i64,
-    pub monitoring: bool,
-    pub rule: Option<AlertRule>,
-    pub request_id: String,
-    pub audit: CompletionAuditData,
-}
-
-/// Compatibility payload used by legacy single-item endpoints.
-#[derive(Debug, Serialize, ToSchema)]
-pub struct SingleItemData<T: Serialize> {
-    pub total: i64,
-    pub list: Vec<T>,
-}
-
-/// Success payload returned after updating a rule.
-#[derive(Debug, Serialize, ToSchema)]
-pub struct RuleIdData {
-    pub rule_id: u64,
-    pub request_id: String,
-    pub audit: CompletionAuditData,
-}
-
-/// Success payload returned after an active alert is manually resolved.
-#[derive(Debug, Serialize, ToSchema)]
-pub struct AlertResolutionData {
-    pub alert_id: u64,
-    pub rule_id: u64,
-    pub resolved_at_ms: u64,
-    pub request_id: String,
-    pub audit: CompletionAuditData,
-}
-
-/// Public terminal-audit state for an already accepted non-idempotent command.
-#[derive(Debug, Serialize, ToSchema)]
-pub struct CompletionAuditData {
-    pub status: String,
-    pub retryable: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub message: Option<String>,
-}
-
-impl<T: Serialize> ApiResponse<T> {
-    pub fn ok(message: impl Into<String>, data: T) -> Self {
-        Self {
-            success: true,
-            message: message.into(),
-            data,
+impl PageRequest {
+    pub fn resolve(page: Option<i64>, page_size: Option<i64>, skip: i64, limit: i64) -> Self {
+        const MAX_PAGE_SIZE: i64 = 200;
+        let page_size = page_size.unwrap_or(limit).clamp(1, MAX_PAGE_SIZE);
+        match page {
+            Some(page) => {
+                let page = page.max(1);
+                Self {
+                    limit: page_size,
+                    offset: (page - 1) * page_size,
+                    page,
+                    page_size,
+                }
+            },
+            None => {
+                let offset = skip.max(0);
+                Self {
+                    limit: page_size,
+                    offset,
+                    page: offset / page_size + 1,
+                    page_size,
+                }
+            },
         }
     }
 }
 
-#[derive(Debug, Serialize)]
-pub struct PagedData<T: Serialize> {
+#[derive(Debug)]
+pub struct RuleFilter {
+    pub keyword: Option<String>,
+    pub service_type: Option<String>,
+    pub channel_id: Option<i64>,
+    pub data_type: Option<String>,
+    pub enabled: Option<bool>,
+    pub warning_level: Option<i64>,
+    pub page: PageRequest,
+}
+
+#[derive(Debug)]
+pub struct AlertFilter {
+    pub warning_level: Option<i64>,
+    pub service_type: Option<String>,
+    pub channel_id: Option<i64>,
+    pub keyword: Option<String>,
+    pub page: PageRequest,
+}
+
+#[derive(Debug)]
+pub struct EventFilter {
+    pub keyword: Option<String>,
+    pub rule_id: Option<i64>,
+    pub event_type: Option<String>,
+    pub service_type: Option<String>,
+    pub warning_level: Option<i64>,
+    pub start_time: Option<i64>,
+    pub end_time: Option<i64>,
+    pub page: PageRequest,
+}
+
+#[derive(Debug)]
+pub struct Page<T> {
     pub total: i64,
     pub list: Vec<T>,
-    /// Current page number (1-based)
     pub page: i64,
-    /// Page size used for this query
     pub page_size: i64,
 }
 
-// ============================================================================
-// Monitor state
-// ============================================================================
-
-#[derive(Debug, Clone, Serialize, ToSchema)]
+#[derive(Debug, Clone)]
 pub struct MonitorStatus {
     pub running: bool,
     pub last_check_time: Option<i64>,
     pub check_interval: u64,
-}
-
-// ============================================================================
-// Helpers
-// ============================================================================
-
-fn default_warning_level() -> i64 {
-    2
-}
-
-fn default_true() -> bool {
-    true
-}
-
-fn default_limit() -> i64 {
-    20
 }
 
 #[cfg(test)]

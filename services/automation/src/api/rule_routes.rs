@@ -1,4 +1,4 @@
-//! Rule Engine API Routes
+//! Rule Engine HTTP API Routes
 //!
 //! Provides Vue Flow-based rule management and execution endpoints.
 //! These routes are integrated into automation and served on port 6002.
@@ -117,14 +117,7 @@ pub fn create_rule_routes<S: StateStore + 'static>(state: Arc<RuleEngineState<S>
             UpdateRuleRequest,
             RuleMutationRequest,
             RuleListQuery,
-            ExecuteRuleRequest,
-            // PeriodDelta Swagger Schemas
-            RuleVariableSchema,
-            PeriodType,
-            PeriodDeltaNodeSchema,
-            VueFlowPeriodDeltaNode,
-            VueFlowPeriodDeltaNodeData,
-            PeriodDeltaConfigSchema
+            ExecuteRuleRequest
         )
     ),
     tags(
@@ -132,156 +125,6 @@ pub fn create_rule_routes<S: StateStore + 'static>(state: Arc<RuleEngineState<S>
     )
 )]
 pub struct RuleApiDoc;
-
-// ============================================================================
-// PeriodDelta Swagger Schema Types (for API documentation only)
-// ============================================================================
-
-/// Rule variable definition for Swagger documentation
-///
-/// Represents a data point reference within a rule, identifying an instance and point.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
-pub struct RuleVariableSchema {
-    /// Variable name (e.g., "X1", "Y1")
-    #[cfg_attr(feature = "openapi", schema(example = "X1"))]
-    pub name: String,
-
-    /// Device instance ID
-    #[cfg_attr(feature = "openapi", schema(example = 1))]
-    pub instance: u32,
-
-    /// Point type: "measurement" or "action"
-    #[serde(rename = "pointType")]
-    #[cfg_attr(feature = "openapi", schema(example = "measurement"))]
-    pub point_type: String,
-
-    /// Point ID within the device
-    #[cfg_attr(feature = "openapi", schema(example = 9))]
-    pub point: u32,
-}
-
-/// Period type for PeriodDelta node
-///
-/// Defines the time window for delta calculation.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
-pub enum PeriodType {
-    /// Daily period (resets at midnight local time)
-    #[serde(rename = "daily")]
-    Daily,
-    /// Weekly period (resets on Monday midnight)
-    #[serde(rename = "weekly")]
-    Weekly,
-    /// Monthly period (resets on 1st of month)
-    #[serde(rename = "monthly")]
-    Monthly,
-    /// Quarterly period (resets on Q1/Q2/Q3/Q4 start)
-    #[serde(rename = "quarterly")]
-    Quarterly,
-}
-
-/// PeriodDelta node configuration for Swagger documentation
-///
-/// This node calculates the delta (change) of a cumulative value within a specified period.
-/// Common use case: Calculate daily/weekly/monthly production from a cumulative counter.
-///
-/// # Example Use Cases
-/// - **Daily Production**: Input from a total unit counter (ID 9), output to a daily counter (ID 101)
-/// - **Monthly Runtime**: Track accumulated machine runtime for maintenance
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
-pub struct PeriodDeltaNodeSchema {
-    /// Node type identifier (always "action-periodDelta")
-    #[serde(rename = "type")]
-    #[cfg_attr(feature = "openapi", schema(example = "action-periodDelta"))]
-    pub node_type: String,
-
-    /// Input variable - source cumulative value (e.g., total unit count)
-    pub input: RuleVariableSchema,
-
-    /// Output variable - period delta result (e.g., daily unit count)
-    pub output: RuleVariableSchema,
-
-    /// Period type: daily, weekly, monthly, or quarterly
-    #[cfg_attr(feature = "openapi", schema(example = "daily"))]
-    pub period: String,
-
-    /// Output wires to next node(s)
-    #[cfg_attr(feature = "openapi", schema(value_type = Object, example = json!({"default": ["next-node-id"]})))]
-    pub wires: serde_json::Value,
-}
-
-/// Vue Flow node wrapper for PeriodDelta
-///
-/// This is the full structure as stored in flow_json for the Vue Flow editor.
-/// Contains position, display properties, and the nested config.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
-pub struct VueFlowPeriodDeltaNode {
-    /// Unique node ID
-    #[cfg_attr(feature = "openapi", schema(example = "period-delta-1"))]
-    pub id: String,
-
-    /// Node type (use "custom" for custom nodes)
-    #[serde(rename = "type")]
-    #[cfg_attr(feature = "openapi", schema(example = "custom"))]
-    pub node_type: String,
-
-    /// Node position on canvas
-    #[cfg_attr(feature = "openapi", schema(value_type = Object, example = json!({"x": 150, "y": 100})))]
-    pub position: serde_json::Value,
-
-    /// Node data containing the PeriodDelta configuration
-    pub data: VueFlowPeriodDeltaNodeData,
-}
-
-/// Vue Flow node data for PeriodDelta
-///
-/// Contains the internal type identifier and configuration.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
-pub struct VueFlowPeriodDeltaNodeData {
-    /// Internal node type (must be "action-periodDelta")
-    #[serde(rename = "type")]
-    #[cfg_attr(feature = "openapi", schema(example = "action-periodDelta"))]
-    pub data_type: String,
-
-    /// Display label for the node
-    #[cfg_attr(feature = "openapi", schema(example = "Daily Production"))]
-    pub label: Option<String>,
-
-    /// Node configuration
-    pub config: PeriodDeltaConfigSchema,
-}
-
-/// PeriodDelta config within Vue Flow node data
-///
-/// The actual configuration parameters for the PeriodDelta calculation.
-///
-/// # Point Mapping Table
-/// | Input Point (Cumulative) | Output Point (Period Delta) | Period |
-/// |--------------------------|----------------------------|--------|
-/// | 9 (Total Units) | 101 (Daily Units) | daily |
-/// | 9 (Total Units) | 103 (Weekly Units) | weekly |
-/// | 10 (Runtime Hours) | 102 (Daily Runtime) | daily |
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
-pub struct PeriodDeltaConfigSchema {
-    /// Input variable (cumulative source, e.g., total production counter)
-    pub input: RuleVariableSchema,
-
-    /// Output variable (period delta destination, e.g., daily production)
-    pub output: RuleVariableSchema,
-
-    /// Period: "daily" | "weekly" | "monthly" | "quarterly"
-    #[cfg_attr(feature = "openapi", schema(example = "daily"))]
-    pub period: String,
-
-    /// Wires to next nodes
-    #[cfg_attr(feature = "openapi", schema(value_type = Object, example = json!({"default": ["next-node-id"]})))]
-    pub wires: serde_json::Value,
-}
 
 // ============================================================================
 // Handlers
@@ -520,7 +363,7 @@ pub async fn create_rule<S: StateStore + 'static>(
         "status": "created",
         "resulting_revision": acceptance.resulting_revision().get(),
         "request_id": acceptance.request_id(),
-        "audit": crate::infra::application_control::completion_audit_response(
+        "audit": crate::api::http_boundary::completion_audit_response(
             acceptance.completion_audit()
         ),
         "scheduler_refresh": scheduler_refresh_response(acceptance.runtime_status())
@@ -624,7 +467,7 @@ pub async fn update_rule<S: StateStore + 'static>(
         "status": "updated",
         "resulting_revision": acceptance.resulting_revision().get(),
         "request_id": acceptance.request_id(),
-        "audit": crate::infra::application_control::completion_audit_response(
+        "audit": crate::api::http_boundary::completion_audit_response(
             acceptance.completion_audit()
         ),
         "scheduler_refresh": scheduler_refresh_response(acceptance.runtime_status())
@@ -684,7 +527,7 @@ pub async fn delete_rule<S: StateStore + 'static>(
         "status": "OK",
         "resulting_revision": acceptance.resulting_revision().get(),
         "request_id": acceptance.request_id(),
-        "audit": crate::infra::application_control::completion_audit_response(
+        "audit": crate::api::http_boundary::completion_audit_response(
             acceptance.completion_audit()
         ),
         "scheduler_refresh": scheduler_refresh_response(acceptance.runtime_status())
@@ -746,7 +589,7 @@ pub async fn enable_rule<S: StateStore + 'static>(
         "status": "OK",
         "resulting_revision": acceptance.resulting_revision().get(),
         "request_id": acceptance.request_id(),
-        "audit": crate::infra::application_control::completion_audit_response(
+        "audit": crate::api::http_boundary::completion_audit_response(
             acceptance.completion_audit()
         ),
         "scheduler_refresh": scheduler_refresh_response(acceptance.runtime_status())
@@ -808,7 +651,7 @@ pub async fn disable_rule<S: StateStore + 'static>(
         "status": "OK",
         "resulting_revision": acceptance.resulting_revision().get(),
         "request_id": acceptance.request_id(),
-        "audit": crate::infra::application_control::completion_audit_response(
+        "audit": crate::api::http_boundary::completion_audit_response(
             acceptance.completion_audit()
         ),
         "scheduler_refresh": scheduler_refresh_response(acceptance.runtime_status())
@@ -893,7 +736,7 @@ async fn apply_rule_mutation<S: StateStore + 'static>(
         )
     })?;
     let timestamp_ms = chrono::Utc::now().timestamp_millis().max(0) as u64;
-    let invocation = crate::infra::application_control::command_invocation_from_headers(
+    let invocation = crate::api::http_boundary::command_invocation_from_headers(
         authenticator,
         headers,
         confirmed,
@@ -1024,7 +867,7 @@ pub async fn execute_rule_now<S: StateStore + 'static>(
         .map(aether_domain::RuleId::new)
         .map_err(|_| AutomationError::InvalidData("rule id must be non-negative".to_string()))?;
     let timestamp_ms = chrono::Utc::now().timestamp_millis().max(0) as u64;
-    let invocation = crate::infra::application_control::command_invocation_from_headers(
+    let invocation = crate::api::http_boundary::command_invocation_from_headers(
         authenticator,
         &headers,
         request.confirmed,
@@ -1049,7 +892,7 @@ pub async fn execute_rule_now<S: StateStore + 'static>(
         "request_id": acceptance.request_id(),
         "actions_attempted": acceptance.actions_attempted(),
         "actions_succeeded": acceptance.actions_succeeded(),
-        "audit": crate::infra::application_control::completion_audit_response(
+        "audit": crate::api::http_boundary::completion_audit_response(
             acceptance.completion_audit()
         ),
         "completed_at_ms": acceptance.completed_at().get()
@@ -1132,7 +975,7 @@ pub async fn scheduler_reload<S: StateStore + 'static>(
         "rules_loaded": count,
         "resulting_revision": acceptance.resulting_revision().get(),
         "request_id": acceptance.request_id(),
-        "audit": crate::infra::application_control::completion_audit_response(
+        "audit": crate::api::http_boundary::completion_audit_response(
             acceptance.completion_audit()
         ),
         "scheduler_refresh": scheduler_refresh_response(acceptance.runtime_status())

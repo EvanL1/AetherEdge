@@ -32,7 +32,7 @@ pub async fn get_service_status(
     // Direct access without RwLock (lock-free)
     let manager = &state.channel_manager;
     let total_channels = manager.channel_count();
-    let active_channels = manager.running_channel_count().await;
+    let active_channels = manager.running_channel_count();
 
     // Get actual service start time and calculate uptime
     let start_time = get_service_start_time();
@@ -110,7 +110,7 @@ pub async fn health_check(
     // Direct access without RwLock (lock-free)
     let manager = &state.channel_manager;
     let total_channels = manager.channel_count();
-    let running_channels = manager.running_channel_count().await;
+    let running_channels = manager.running_channel_count();
 
     // Fix: channels check should report Unhealthy when < 50% are running
     let channels_healthy = total_channels == 0 || running_channels * 2 >= total_channels;
@@ -132,7 +132,7 @@ pub async fn health_check(
     );
 
     // Watchdog check: report failed and stuck channel counts
-    let all_stats = manager.get_all_channel_stats().await;
+    let all_stats = manager.get_all_channel_stats();
     let now_ms = crate::core::channels::channel_entry::unix_timestamp_ms();
     let stuck_timeout_ms: i64 = 120 * 1000;
 

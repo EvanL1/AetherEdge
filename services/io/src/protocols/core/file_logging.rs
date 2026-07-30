@@ -154,11 +154,6 @@ impl ChannelFileLogHandler {
         self
     }
 
-    /// Register a channel (mutable variant).
-    pub fn add_channel(&mut self, channel_id: u32, channel_name: impl Into<String>) {
-        self.channel_names.insert(channel_id, channel_name.into());
-    }
-
     /// Sanitize channel name for use as directory name.
     /// Replaces invalid filesystem characters with underscore.
     fn sanitize_name(name: &str) -> String {
@@ -502,7 +497,11 @@ impl ChannelFileLogHandler {
                         line.push_str(", ");
                     }
                     // Format: id:value (quality bad = !)
-                    let quality_mark = if v.quality.is_good() { "" } else { "!" };
+                    let quality_mark = if matches!(v.quality, aether_domain::PointQuality::Good) {
+                        ""
+                    } else {
+                        "!"
+                    };
                     let _ = write!(line, "{}:{}{}", v.id, v.value, quality_mark);
                 }
                 lines.push(line);
@@ -515,13 +514,13 @@ impl ChannelFileLogHandler {
 
 #[async_trait]
 impl ChannelLogHandler for ChannelFileLogHandler {
-    async fn on_log(&self, channel_id: u32, event: ChannelLogEvent) {
+    async fn on_log(&self, channel_id: u32, event: &ChannelLogEvent) {
         // Level filter
-        if !self.should_log(&event) {
+        if !self.should_log(event) {
             return;
         }
 
-        let line = match &event {
+        let line = match event {
             ChannelLogEvent::RawPacket {
                 direction,
                 data,
@@ -701,7 +700,7 @@ mod tests {
             group_id: None,
         };
 
-        handler.on_log(1, event).await;
+        handler.on_log(1, &event).await;
 
         // Verify file was created
         let channel_dir = temp_dir.path().join("TestChannel#1");

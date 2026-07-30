@@ -9,7 +9,6 @@ use aether_application::{
 };
 
 use crate::config::AutomationConfig;
-use crate::error::AutomationError;
 use crate::infra::application_control::ControlAuthenticator;
 use crate::instance_configuration::InstanceConfigurationApplication;
 use crate::instance_manager::InstanceManager;
@@ -64,35 +63,5 @@ impl AppState {
             control_authenticator,
             shm_dispatch,
         }
-    }
-
-    // ============================================================================
-    // Instance name → ID translation methods (delegates to InstanceManager)
-    // ============================================================================
-
-    /// Get instance_id by instance_name (with caching)
-    ///
-    /// Delegates to InstanceManager for the actual lookup.
-    pub async fn get_instance_id(&self, instance_name: &str) -> Result<u32, AutomationError> {
-        self.instance_manager
-            .get_instance_id(instance_name)
-            .await
-            .map_err(|e| AutomationError::InstanceNotFound(e.to_string()))
-    }
-
-    /// Populate the name→id cache from database at startup
-    ///
-    /// Delegates to InstanceManager.
-    pub async fn populate_name_cache(&self) -> Result<(), AutomationError> {
-        self.instance_manager
-            .populate_name_cache()
-            .await
-            .map_err(|e| AutomationError::InternalError(format!("Failed to populate cache: {}", e)))
-    }
-
-    /// Update cache entry (called on instance create/rename)
-    pub fn update_name_cache(&self, instance_name: String, instance_id: u32) {
-        self.instance_manager
-            .update_name_cache(instance_name, instance_id);
     }
 }
