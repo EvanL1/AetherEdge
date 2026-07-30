@@ -103,6 +103,7 @@ impl Fixture {
                 .expect("audit schema"),
         );
         let application = Arc::new(InstanceConfigurationApplication::new(
+            pool.clone(),
             Arc::clone(&manager),
             Arc::clone(&audit),
         ));
@@ -157,14 +158,20 @@ impl Fixture {
                 SafetyPolicy,
             )),
             Arc::new(ActionRoutingApplication::new(
-                Arc::new(SqliteActionRoutingMutator::new(Arc::clone(&self.manager))),
+                Arc::new(SqliteActionRoutingMutator::new(
+                    self.pool.clone(),
+                    Arc::clone(self.manager.product_loader()),
+                    Arc::clone(self.manager.runtime_topology()),
+                )),
                 Arc::clone(&self.audit),
                 SafetyPolicy,
             )),
             Arc::new(MeasurementRoutingApplication::new(
-                Arc::new(SqliteMeasurementRoutingMutator::new(Arc::clone(
-                    &self.manager,
-                ))),
+                Arc::new(SqliteMeasurementRoutingMutator::new(
+                    self.pool.clone(),
+                    Arc::clone(self.manager.product_loader()),
+                    Arc::clone(self.manager.runtime_topology()),
+                )),
                 Arc::clone(&self.audit),
                 SafetyPolicy,
             )),
@@ -696,8 +703,11 @@ async fn authentication_confirmation_and_attempt_audit_fail_closed_before_mutati
             .unwrap();
     assert_eq!(outcomes, ["rejected", "rejected"]);
 
-    let failing =
-        InstanceConfigurationApplication::new(Arc::clone(&fixture.manager), Arc::new(FailingAudit));
+    let failing = InstanceConfigurationApplication::new(
+        fixture.pool.clone(),
+        Arc::clone(&fixture.manager),
+        Arc::new(FailingAudit),
+    );
     assert!(matches!(
         failing
             .mutate(&confirmed_context("audit-down"), mutation())

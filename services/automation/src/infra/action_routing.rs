@@ -8,22 +8,33 @@ use aether_ports::{
     LogicalRoutingRevision, PortError, PortErrorKind, PortResult, RevisionedActionRoutingMutation,
 };
 use async_trait::async_trait;
+use sqlx::SqlitePool;
 
-use crate::infra::runtime_topology::RoutingMutationLease;
-use crate::instance_manager::InstanceManager;
+use crate::infra::runtime_topology::{AutomationTopologyHandle, RoutingMutationLease};
+use crate::product_loader::ProductLoader;
 
 /// Applies governed action-routing changes to SQLite and publishes the exact
 /// committed view to the in-process command dispatcher.
 pub struct SqliteActionRoutingMutator {
-    manager: Arc<InstanceManager>,
+    pool: SqlitePool,
+    product_loader: Arc<ProductLoader>,
+    runtime_topology: Arc<AutomationTopologyHandle>,
 }
 
 impl SqliteActionRoutingMutator {
     /// Creates an adapter over automation's authoritative configuration and
     /// atomically swappable service topology.
     #[must_use]
-    pub fn new(manager: Arc<InstanceManager>) -> Self {
-        Self { manager }
+    pub fn new(
+        pool: SqlitePool,
+        product_loader: Arc<ProductLoader>,
+        runtime_topology: Arc<AutomationTopologyHandle>,
+    ) -> Self {
+        Self {
+            pool,
+            product_loader,
+            runtime_topology,
+        }
     }
 
     async fn validate_upsert(
@@ -63,8 +74,7 @@ impl SqliteActionRoutingMutator {
         })?;
 
         let product = self
-            .manager
-            .product_loader()
+            .product_loader
             .get_definition(&product_name)
             .map_err(|error| {
                 tracing::error!(
@@ -111,7 +121,7 @@ impl SqliteActionRoutingMutator {
         &self,
         topology_lease: RoutingMutationLease,
     ) -> PortResult<()> {
-        match topology_lease.publish(self.manager.pool()).await {
+        match topology_lease.publish(&self.pool).await {
             Ok(_) => Ok(()),
             Err(error) => {
                 // Commands were revoked before the SQLite transaction and
@@ -137,7 +147,7 @@ impl AutomationActionRoutingMutator for SqliteActionRoutingMutator {
         let revision = sqlx::query_scalar::<_, i64>(
             "SELECT revision FROM configuration_revisions WHERE scope = 'logical_routing'",
         )
-        .fetch_one(self.manager.pool())
+        .fetch_one(&self.pool)
         .await
         .map_err(|error| storage_error("read logical-routing revision", error))?;
         let revision = LogicalRoutingRevision::new(u64::try_from(revision).map_err(|_| {
@@ -170,14 +180,13 @@ impl AutomationActionRoutingMutator for SqliteActionRoutingMutator {
         // command can observe either the old generation before revocation or
         // the complete committed generation after publication, never an old
         // route during the commit-to-publish window.
-        let mut topology_lease = Arc::clone(self.manager.runtime_topology())
+        let mut topology_lease = Arc::clone(&self.runtime_topology)
             .begin_action_routing_mutation()
             .await;
 
         let staged_mutation: PortResult<_> = async {
             let mut transaction = self
-                .manager
-                .pool()
+                .pool
                 .begin()
                 .await
                 .map_err(|error| storage_error("begin action-routing mutation", error))?;

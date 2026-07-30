@@ -1,15 +1,11 @@
-//! Rule Engine HTTP API Routes
-//!
-//! Provides Vue Flow-based rule management and execution endpoints.
-//! These routes are integrated into automation and served on port 6002.
+//! HTTP adapter for persisted rules and deterministic execution.
 
 #![allow(clippy::disallowed_methods)] // json! macro used in multiple functions
 
 use crate::error::AutomationError;
-use aether_calc::StateStore;
+use crate::infra::rule_queries::RuleQueries;
 use aether_domain::RuleId;
 use aether_ports::{RevisionedRuleMutation, RuleMutation};
-use aether_rules::{self as rule_repository, RuleNode, RuleScheduler, RuleVariable};
 use axum::{
     Router,
     extract::{Path, Query, State},
@@ -19,93 +15,54 @@ use axum::{
 };
 use common::{PaginatedResponse, SuccessResponse};
 use serde_json::json;
-use sqlx::SqlitePool;
 use std::sync::Arc;
 use tracing::{debug, error, info};
 #[cfg(feature = "openapi")]
 use utoipa::OpenApi;
 
-/// Rule Engine state shared across handlers
-///
-/// Generic over `S: StateStore` to support different state backends:
-/// - `MemoryStateStore`: In-memory (default, lost on restart)
-pub struct RuleEngineState<S: StateStore = aether_calc::MemoryStateStore> {
-    /// SQLite pool for rule persistence
-    pub pool: SqlitePool,
-    /// Rule scheduler (owns the executor)
-    pub scheduler: Arc<RuleScheduler<S>>,
-    /// Governed manual rule-execution use case. `None` is allowed only in
-    /// tests that never mount a usable execution boundary.
-    execution_application: Option<Arc<aether_application::RuleExecutionApplication>>,
-    /// Governed rule-management use case. Production composition must install
-    /// this before mounting mutating rule or scheduler routes.
-    mutation_application: Option<Arc<aether_application::RuleMutationApplication>>,
-    /// Authenticator shared with external device control.
-    execution_authenticator: Option<Arc<crate::infra::application_control::ControlAuthenticator>>,
+/// Rule API state shared across handlers.
+pub struct RuleEngineState {
+    queries: Arc<RuleQueries>,
+    execution_application: Arc<aether_application::RuleExecutionApplication>,
+    mutation_application: Arc<aether_application::RuleMutationApplication>,
+    authenticator: Arc<crate::infra::application_control::ControlAuthenticator>,
 }
 
-impl<S: StateStore + 'static> RuleEngineState<S> {
-    pub fn new(pool: SqlitePool, scheduler: Arc<RuleScheduler<S>>) -> Self {
+impl RuleEngineState {
+    pub fn new(
+        queries: Arc<RuleQueries>,
+        execution_application: Arc<aether_application::RuleExecutionApplication>,
+        mutation_application: Arc<aether_application::RuleMutationApplication>,
+        authenticator: Arc<crate::infra::application_control::ControlAuthenticator>,
+    ) -> Self {
         Self {
-            pool,
-            scheduler,
-            execution_application: None,
-            mutation_application: None,
-            execution_authenticator: None,
+            queries,
+            execution_application,
+            mutation_application,
+            authenticator,
         }
-    }
-
-    /// Installs the mandatory production boundary for manual rule execution.
-    #[must_use]
-    pub fn with_execution_boundary(
-        mut self,
-        application: Arc<aether_application::RuleExecutionApplication>,
-        authenticator: Arc<crate::infra::application_control::ControlAuthenticator>,
-    ) -> Self {
-        self.execution_application = Some(application);
-        self.execution_authenticator = Some(authenticator);
-        self
-    }
-
-    /// Installs the mandatory production boundary for rule mutations/reload.
-    #[must_use]
-    pub fn with_mutation_boundary(
-        mut self,
-        application: Arc<aether_application::RuleMutationApplication>,
-        authenticator: Arc<crate::infra::application_control::ControlAuthenticator>,
-    ) -> Self {
-        self.mutation_application = Some(application);
-        self.execution_authenticator = Some(authenticator);
-        self
     }
 }
 
 /// Create rule engine API routes
-pub fn create_rule_routes<S: StateStore + 'static>(state: Arc<RuleEngineState<S>>) -> Router {
+pub fn create_rule_routes(state: Arc<RuleEngineState>) -> Router {
     Router::new()
-        // Rule management (Vue Flow-based)
-        .route("/api/rules", get(list_rules::<S>).post(create_rule::<S>))
+        .route("/api/rules", get(list_rules).post(create_rule))
         .route(
             "/api/rules/{id}",
-            get(get_rule::<S>)
-                .put(update_rule::<S>)
-                .delete(delete_rule::<S>),
+            get(get_rule).put(update_rule).delete(delete_rule),
         )
-        .route("/api/rules/{id}/enable", post(enable_rule::<S>))
-        .route("/api/rules/{id}/disable", post(disable_rule::<S>))
-        .route("/api/rules/{id}/execute", post(execute_rule_now::<S>))
-        .route("/api/rules/{id}/variables", get(get_rule_variables::<S>))
-        // Scheduler control
-        .route("/api/scheduler/status", get(scheduler_status::<S>))
-        .route("/api/scheduler/reload", post(scheduler_reload::<S>))
-        // Apply HTTP request logging middleware
-        .layer(axum::middleware::from_fn(common::logging::http_request_logger))
+        .route("/api/rules/{id}/enable", post(enable_rule))
+        .route("/api/rules/{id}/disable", post(disable_rule))
+        .route("/api/rules/{id}/execute", post(execute_rule_now))
+        .route("/api/rules/{id}/variables", get(get_rule_variables))
+        .route("/api/scheduler/status", get(scheduler_status))
+        .route("/api/scheduler/reload", post(scheduler_reload))
+        .layer(axum::middleware::from_fn(
+            common::logging::http_request_logger,
+        ))
         .with_state(state)
 }
-
-// ============================================================================
-// OpenAPI Documentation
-// ============================================================================
 
 #[cfg(feature = "openapi")]
 #[derive(OpenApi)]
@@ -125,10 +82,6 @@ pub fn create_rule_routes<S: StateStore + 'static>(state: Arc<RuleEngineState<S>
     )
 )]
 pub struct RuleApiDoc;
-
-// ============================================================================
-// Handlers
-// ============================================================================
 
 /// Rule list query parameters (pagination)
 #[derive(Debug, serde::Deserialize)]
@@ -246,12 +199,7 @@ pub struct ExecuteRuleRequest {
     pub confirmed: bool,
 }
 
-/// List all rules.
-///
-/// Returns the full rule definitions including both `nodes_json` (compact
-/// execution topology used by the scheduler) and `flow_json` (Vue Flow
-/// layout used by the frontend editor). No pagination — rule count is
-/// typically small. Use `/api/rules/{id}` for a single rule.
+/// List paginated rule summaries.
 #[cfg_attr(feature = "openapi", utoipa::path(
     get,
     path = "/api/rules",
@@ -279,16 +227,15 @@ pub struct ExecuteRuleRequest {
     ),
     tag = "rules"
 ))]
-pub async fn list_rules<S: StateStore + 'static>(
-    State(state): State<Arc<RuleEngineState<S>>>,
+pub async fn list_rules(
+    State(state): State<Arc<RuleEngineState>>,
     Query(query): Query<RuleListQuery>,
 ) -> Result<Response, AutomationError> {
     let page = query.page.max(1);
     let page_size = query.page_size.clamp(1, 100);
 
-    match rule_repository::list_rules_paginated(&state.pool, page, page_size).await {
+    match state.queries.list_rules_paginated(page, page_size).await {
         Ok((rules, total)) => {
-            // Only expose summary fields for list view
             let summaries: Vec<serde_json::Value> = rules
                 .into_iter()
                 .map(|rule| {
@@ -302,7 +249,7 @@ pub async fn list_rules<S: StateStore + 'static>(
                 .collect();
 
             let paginated = PaginatedResponse::new(summaries, total, page, page_size);
-            rules_query_response(&state.pool, paginated).await
+            rules_query_response(&state.queries, paginated).await
         },
         Err(e) => {
             error!("List rules err: {}", e);
@@ -313,10 +260,7 @@ pub async fn list_rules<S: StateStore + 'static>(
     }
 }
 
-/// Create a new rule (metadata only)
-///
-/// Creates rule metadata. ID is auto-generated (sequential: 1, 2, 3...).
-/// The execution topology (flow_json) is updated later via PUT endpoint.
+/// Create rule metadata with an automatically assigned identifier.
 #[cfg_attr(feature = "openapi", utoipa::path(
     post,
     path = "/api/rules",
@@ -336,8 +280,8 @@ pub async fn list_rules<S: StateStore + 'static>(
     security(("bearer_auth" = [])),
     tag = "rules"
 ))]
-pub async fn create_rule<S: StateStore + 'static>(
-    State(state): State<Arc<RuleEngineState<S>>>,
+pub async fn create_rule(
+    State(state): State<Arc<RuleEngineState>>,
     headers: HeaderMap,
     Json(req): Json<CreateRuleRequest>,
 ) -> Result<Json<SuccessResponse<serde_json::Value>>, AutomationError> {
@@ -348,7 +292,8 @@ pub async fn create_rule<S: StateStore + 'static>(
         RevisionedRuleMutation::create(
             req.name.clone(),
             req.description,
-            resolve_rules_revision(&state.pool, req.expected_revision, "POST /api/rules").await?,
+            resolve_rules_revision(&state.queries, req.expected_revision, "POST /api/rules")
+                .await?,
         ),
     )
     .await?;
@@ -370,11 +315,7 @@ pub async fn create_rule<S: StateStore + 'static>(
     }))))
 }
 
-/// Get one rule by ID.
-///
-/// Same shape as the entries in `GET /api/rules` but a single object.
-/// Returns 404 when the id doesn't exist. Frontend rule-editor opens
-/// this to populate the canvas before edit.
+/// Get one complete rule definition.
 #[cfg_attr(feature = "openapi", utoipa::path(
     get,
     path = "/api/rules/{id}",
@@ -384,12 +325,12 @@ pub async fn create_rule<S: StateStore + 'static>(
     ),
     tag = "rules"
 ))]
-pub async fn get_rule<S: StateStore + 'static>(
-    State(state): State<Arc<RuleEngineState<S>>>,
+pub async fn get_rule(
+    State(state): State<Arc<RuleEngineState>>,
     Path(id): Path<i64>,
 ) -> Result<Response, AutomationError> {
-    match rule_repository::get_rule(&state.pool, id).await {
-        Ok(rule) => rules_query_response(&state.pool, rule).await,
+    match state.queries.get_rule(id).await {
+        Ok(rule) => rules_query_response(&state.queries, rule).await,
         Err(e) => {
             error!("Get rule {}: {}", id, e);
             Err(AutomationError::RuleNotFound(id.to_string()))
@@ -397,9 +338,7 @@ pub async fn get_rule<S: StateStore + 'static>(
     }
 }
 
-/// Update rule metadata
-///
-/// Updates rule metadata. Only provided fields are updated (partial update).
+/// Partially update a rule definition.
 #[cfg_attr(feature = "openapi", utoipa::path(
     put,
     path = "/api/rules/{id}",
@@ -423,8 +362,8 @@ pub async fn get_rule<S: StateStore + 'static>(
     security(("bearer_auth" = [])),
     tag = "rules"
 ))]
-pub async fn update_rule<S: StateStore + 'static>(
-    State(state): State<Arc<RuleEngineState<S>>>,
+pub async fn update_rule(
+    State(state): State<Arc<RuleEngineState>>,
     Path(id): Path<i64>,
     headers: HeaderMap,
     Json(req): Json<UpdateRuleRequest>,
@@ -455,7 +394,7 @@ pub async fn update_rule<S: StateStore + 'static>(
                 flow_json,
                 trigger_config,
             },
-            resolve_rules_revision(&state.pool, req.expected_revision, "PUT /api/rules/{id}")
+            resolve_rules_revision(&state.queries, req.expected_revision, "PUT /api/rules/{id}")
                 .await?,
         ),
     )
@@ -474,10 +413,7 @@ pub async fn update_rule<S: StateStore + 'static>(
     }))))
 }
 
-/// Delete a rule and remove it from the scheduler.
-///
-/// Stops the scheduler from invoking this rule on the next tick, then removes
-/// the row from the local `rules` table.
+/// Delete a rule and refresh the runtime.
 #[cfg_attr(feature = "openapi", utoipa::path(
     delete,
     path = "/api/rules/{id}",
@@ -500,15 +436,15 @@ pub async fn update_rule<S: StateStore + 'static>(
     security(("bearer_auth" = [])),
     tag = "rules"
 ))]
-pub async fn delete_rule<S: StateStore + 'static>(
-    State(state): State<Arc<RuleEngineState<S>>>,
+pub async fn delete_rule(
+    State(state): State<Arc<RuleEngineState>>,
     Path(id): Path<i64>,
     headers: HeaderMap,
     Json(request): Json<RuleMutationRequest>,
 ) -> Result<Json<SuccessResponse<serde_json::Value>>, AutomationError> {
     let rule_id = parse_rule_id(id)?;
     let expected_revision = resolve_rules_revision(
-        &state.pool,
+        &state.queries,
         request.expected_revision,
         "DELETE /api/rules/{id}",
     )
@@ -534,12 +470,7 @@ pub async fn delete_rule<S: StateStore + 'static>(
     }))))
 }
 
-/// Enable a rule (joins the scheduler on the next tick).
-///
-/// Sets `enabled=true` in the `rules` table and refreshes the scheduler's
-/// in-memory enabled set. The rule's next evaluation lands within
-/// `tick_ms` (default 100ms). Convenience over PUT with `{"enabled":
-/// true}`. Returns 404 if the rule id doesn't exist.
+/// Enable a rule and refresh the runtime.
 #[cfg_attr(feature = "openapi", utoipa::path(
     post,
     path = "/api/rules/{id}/enable",
@@ -562,15 +493,15 @@ pub async fn delete_rule<S: StateStore + 'static>(
     security(("bearer_auth" = [])),
     tag = "rules"
 ))]
-pub async fn enable_rule<S: StateStore + 'static>(
-    State(state): State<Arc<RuleEngineState<S>>>,
+pub async fn enable_rule(
+    State(state): State<Arc<RuleEngineState>>,
     Path(id): Path<i64>,
     headers: HeaderMap,
     Json(request): Json<RuleMutationRequest>,
 ) -> Result<Json<SuccessResponse<serde_json::Value>>, AutomationError> {
     let rule_id = parse_rule_id(id)?;
     let expected_revision = resolve_rules_revision(
-        &state.pool,
+        &state.queries,
         request.expected_revision,
         "POST /api/rules/{id}/enable",
     )
@@ -596,12 +527,7 @@ pub async fn enable_rule<S: StateStore + 'static>(
     }))))
 }
 
-/// Disable a rule (skipped by the scheduler from the next tick on).
-///
-/// Sets `enabled=false`. The rule definition stays in the table — re-
-/// enabling later picks up the same flow. Currently-running invocations
-/// finish; subsequent ticks skip it. Use this to safely pause control
-/// rules during maintenance without losing their definition.
+/// Disable a rule and refresh the runtime.
 #[cfg_attr(feature = "openapi", utoipa::path(
     post,
     path = "/api/rules/{id}/disable",
@@ -624,15 +550,15 @@ pub async fn enable_rule<S: StateStore + 'static>(
     security(("bearer_auth" = [])),
     tag = "rules"
 ))]
-pub async fn disable_rule<S: StateStore + 'static>(
-    State(state): State<Arc<RuleEngineState<S>>>,
+pub async fn disable_rule(
+    State(state): State<Arc<RuleEngineState>>,
     Path(id): Path<i64>,
     headers: HeaderMap,
     Json(request): Json<RuleMutationRequest>,
 ) -> Result<Json<SuccessResponse<serde_json::Value>>, AutomationError> {
     let rule_id = parse_rule_id(id)?;
     let expected_revision = resolve_rules_revision(
-        &state.pool,
+        &state.queries,
         request.expected_revision,
         "POST /api/rules/{id}/disable",
     )
@@ -665,14 +591,14 @@ fn parse_rule_id(id: i64) -> Result<RuleId, AutomationError> {
 }
 
 async fn resolve_rules_revision(
-    pool: &SqlitePool,
+    queries: &RuleQueries,
     requested: Option<u64>,
     endpoint: &'static str,
 ) -> Result<aether_ports::AutomationRulesRevision, AutomationError> {
     let value = match requested {
         Some(value) => value,
         None => {
-            let current = current_rules_revision(pool).await?;
+            let current = queries.current_revision().await?;
             tracing::warn!(
                 endpoint,
                 revision = current,
@@ -689,25 +615,11 @@ async fn resolve_rules_revision(
     Ok(aether_ports::AutomationRulesRevision::new(value))
 }
 
-async fn current_rules_revision(pool: &SqlitePool) -> Result<u64, AutomationError> {
-    let revision = sqlx::query_scalar::<_, i64>(
-        "SELECT revision FROM configuration_revisions WHERE scope = 'automation_rules'",
-    )
-    .fetch_one(pool)
-    .await
-    .map_err(|error| {
-        AutomationError::DatabaseError(format!("failed to read automation-rules revision: {error}"))
-    })?;
-    u64::try_from(revision).map_err(|_| {
-        AutomationError::InternalError("automation-rules revision became negative".to_string())
-    })
-}
-
 async fn rules_query_response<T: serde::Serialize>(
-    pool: &SqlitePool,
+    queries: &RuleQueries,
     data: T,
 ) -> Result<Response, AutomationError> {
-    let revision = current_rules_revision(pool).await?;
+    let revision = queries.current_revision().await?;
     let mut response = Json(SuccessResponse::new(data)).into_response();
     let revision_text = revision.to_string();
     let revision = HeaderValue::from_str(&revision_text)
@@ -721,28 +633,21 @@ async fn rules_query_response<T: serde::Serialize>(
     Ok(response)
 }
 
-async fn apply_rule_mutation<S: StateStore + 'static>(
-    state: &RuleEngineState<S>,
+async fn apply_rule_mutation(
+    state: &RuleEngineState,
     headers: &HeaderMap,
     confirmed: bool,
     mutation: RevisionedRuleMutation,
 ) -> Result<aether_application::RuleMutationAcceptance, AutomationError> {
-    let application = state.mutation_application.as_ref().ok_or_else(|| {
-        AutomationError::DispatchDegraded("rule mutation application is not configured".to_string())
-    })?;
-    let authenticator = state.execution_authenticator.as_ref().ok_or_else(|| {
-        AutomationError::DispatchDegraded(
-            "rule mutation authentication is not configured".to_string(),
-        )
-    })?;
     let timestamp_ms = chrono::Utc::now().timestamp_millis().max(0) as u64;
     let invocation = crate::api::http_boundary::command_invocation_from_headers(
-        authenticator,
+        &state.authenticator,
         headers,
         confirmed,
         aether_domain::TimestampMs::new(timestamp_ms),
     );
-    let acceptance = application
+    let acceptance = state
+        .mutation_application
         .mutate_revisioned(invocation.context(), mutation)
         .await
         .map_err(rule_mutation_error)?;
@@ -815,9 +720,7 @@ fn rule_mutation_error(error: aether_application::ApplicationError) -> Automatio
     AutomationError::from(error)
 }
 
-/// Execute rule immediately (manual trigger)
-///
-/// Manually triggers a commissioned rule through the shared application API.
+/// Execute a commissioned rule through the shared application API.
 #[cfg_attr(feature = "openapi", utoipa::path(
     post,
     path = "/api/rules/{id}/execute",
@@ -847,33 +750,24 @@ fn rule_mutation_error(error: aether_application::ApplicationError) -> Automatio
     security(("bearer_auth" = [])),
     tag = "rules"
 ))]
-pub async fn execute_rule_now<S: StateStore + 'static>(
+pub async fn execute_rule_now(
     Path(id): Path<i64>,
-    State(state): State<Arc<RuleEngineState<S>>>,
+    State(state): State<Arc<RuleEngineState>>,
     headers: HeaderMap,
     Json(request): Json<ExecuteRuleRequest>,
 ) -> Result<Json<SuccessResponse<serde_json::Value>>, AutomationError> {
-    let application = state.execution_application.as_ref().ok_or_else(|| {
-        AutomationError::DispatchDegraded(
-            "manual rule execution application is not configured".to_string(),
-        )
-    })?;
-    let authenticator = state.execution_authenticator.as_ref().ok_or_else(|| {
-        AutomationError::DispatchDegraded(
-            "manual rule execution authentication is not configured".to_string(),
-        )
-    })?;
     let rule_id = u64::try_from(id)
         .map(aether_domain::RuleId::new)
         .map_err(|_| AutomationError::InvalidData("rule id must be non-negative".to_string()))?;
     let timestamp_ms = chrono::Utc::now().timestamp_millis().max(0) as u64;
     let invocation = crate::api::http_boundary::command_invocation_from_headers(
-        authenticator,
+        &state.authenticator,
         &headers,
         request.confirmed,
         aether_domain::TimestampMs::new(timestamp_ms),
     );
-    let acceptance = application
+    let acceptance = state
+        .execution_application
         .execute(invocation.context(), rule_id)
         .await
         .map_err(AutomationError::from)?;
@@ -899,12 +793,7 @@ pub async fn execute_rule_now<S: StateStore + 'static>(
     }))))
 }
 
-/// Rule scheduler runtime status.
-///
-/// Returns `running` flag, number of enabled / total rules, tick interval
-/// (ms), last tick timestamp, max concurrency. Used by the operations
-/// console to diagnose "rules aren't firing" — `running=false` or
-/// `last_tick` stale by N×interval flags a hung scheduler.
+/// Return scheduler liveness and commissioned-rule counts.
 #[cfg_attr(feature = "openapi", utoipa::path(
     get,
     path = "/api/scheduler/status",
@@ -913,10 +802,10 @@ pub async fn execute_rule_now<S: StateStore + 'static>(
     ),
     tag = "rules"
 ))]
-pub async fn scheduler_status<S: StateStore + 'static>(
-    State(state): State<Arc<RuleEngineState<S>>>,
+pub async fn scheduler_status(
+    State(state): State<Arc<RuleEngineState>>,
 ) -> Result<Json<SuccessResponse<serde_json::Value>>, AutomationError> {
-    let status = state.scheduler.status().await;
+    let status = state.queries.scheduler_status().await;
 
     Ok(Json(SuccessResponse::new(json!({
         "running": status.running,
@@ -926,12 +815,7 @@ pub async fn scheduler_status<S: StateStore + 'static>(
     }))))
 }
 
-/// Force the scheduler to re-read rules from SQLite right now.
-///
-/// Normally the scheduler picks up rule changes after the next tick;
-/// this endpoint forces an immediate reload, useful after bulk import
-/// or `aether sync` so admins don't wait. Doesn't restart in-flight
-/// invocations, just refreshes the enabled set the next tick will use.
+/// Reconcile the scheduler with committed rule configuration.
 #[cfg_attr(feature = "openapi", utoipa::path(
     post,
     path = "/api/scheduler/reload",
@@ -950,13 +834,13 @@ pub async fn scheduler_status<S: StateStore + 'static>(
     security(("bearer_auth" = [])),
     tag = "rules"
 ))]
-pub async fn scheduler_reload<S: StateStore + 'static>(
-    State(state): State<Arc<RuleEngineState<S>>>,
+pub async fn scheduler_reload(
+    State(state): State<Arc<RuleEngineState>>,
     headers: HeaderMap,
     Json(request): Json<RuleMutationRequest>,
 ) -> Result<Json<SuccessResponse<serde_json::Value>>, AutomationError> {
     let expected_revision = resolve_rules_revision(
-        &state.pool,
+        &state.queries,
         request.expected_revision,
         "POST /api/scheduler/reload",
     )
@@ -968,7 +852,7 @@ pub async fn scheduler_reload<S: StateStore + 'static>(
         RevisionedRuleMutation::reload(expected_revision),
     )
     .await?;
-    let count = state.scheduler.status().await.enabled_rules;
+    let count = state.queries.scheduler_status().await.enabled_rules;
     info!("Scheduler reloaded {} rules", count);
     Ok(Json(SuccessResponse::new(json!({
         "status": "OK",
@@ -982,10 +866,7 @@ pub async fn scheduler_reload<S: StateStore + 'static>(
     }))))
 }
 
-/// Get rule variables for monitoring
-///
-/// Returns all variable definitions from a rule's nodes, which can be used
-/// for WebSocket monitoring to display real-time variable values.
+/// Return the unique variables declared by a rule.
 #[cfg_attr(feature = "openapi", utoipa::path(
     get,
     path = "/api/rules/{id}/variables",
@@ -995,35 +876,11 @@ pub async fn scheduler_reload<S: StateStore + 'static>(
     ),
     tag = "rules"
 ))]
-pub async fn get_rule_variables<S: StateStore + 'static>(
-    State(state): State<Arc<RuleEngineState<S>>>,
+pub async fn get_rule_variables(
+    State(state): State<Arc<RuleEngineState>>,
     Path(id): Path<i64>,
 ) -> Result<Json<SuccessResponse<serde_json::Value>>, AutomationError> {
-    // Get the rule from database
-    let rule = rule_repository::get_rule_for_execution(&state.pool, id).await?;
-
-    // Extract all variables from nodes
-    let mut variables: Vec<RuleVariable> = Vec::new();
-
-    for node in rule.flow.nodes.values() {
-        match node {
-            RuleNode::Switch {
-                variables: vars, ..
-            } => {
-                variables.extend(vars.iter().cloned());
-            },
-            RuleNode::ChangeValue {
-                variables: vars, ..
-            } => {
-                variables.extend(vars.iter().cloned());
-            },
-            _ => {},
-        }
-    }
-
-    // Deduplicate by variable name (sort + dedup to avoid clone)
-    variables.sort_by(|a, b| a.name.cmp(&b.name));
-    variables.dedup_by(|a, b| a.name == b.name);
+    let variables = state.queries.rule_variables(id).await?;
 
     debug!(
         "Rule {} has {} unique variables: {:?}",

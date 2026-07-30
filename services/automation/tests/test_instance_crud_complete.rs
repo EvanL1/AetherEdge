@@ -264,8 +264,8 @@ async fn test_list_instances_all() {
     }
 
     // List all instances (5 Battery + 2 hierarchy = 7)
-    let (_, instances) = manager
-        .list_instances_paginated(None, 1, 10_000)
+    let instances = manager
+        .list_instances()
         .await
         .expect("Failed to list instances");
     assert_eq!(instances.len(), 7);

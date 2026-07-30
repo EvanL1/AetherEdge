@@ -250,11 +250,6 @@ impl InstanceManager {
         Ok(())
     }
 
-    /// Get the SQLite pool reference
-    pub fn pool(&self) -> &SqlitePool {
-        &self.pool
-    }
-
     /// Reconcile routing from the authoritative SQLite topology.
     ///
     /// Production publishes routing together with the validated point/health
@@ -270,7 +265,7 @@ impl InstanceManager {
     /// Get the product loader reference
     ///
     /// Returns a reference to the product loader for accessing product templates.
-    pub fn product_loader(&self) -> &ProductLoader {
+    pub fn product_loader(&self) -> &Arc<ProductLoader> {
         &self.product_loader
     }
 
@@ -314,6 +309,22 @@ impl InstanceManager {
         self.attach_properties_batch(&mut instances).await?;
 
         Ok((u32::try_from(total).unwrap_or(u32::MAX), instances))
+    }
+
+    /// List every commissioned instance in stable identifier order.
+    pub async fn list_instances(&self) -> Result<Vec<Instance>> {
+        let rows: Vec<InstanceRow> = sqlx::query_as(
+            "SELECT instance_id, instance_name, product_name, parent_id, created_at \
+             FROM instances ORDER BY instance_id ASC",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        let mut instances = rows
+            .into_iter()
+            .map(build_instance_from_row)
+            .collect::<Result<Vec<_>>>()?;
+        self.attach_properties_batch(&mut instances).await?;
+        Ok(instances)
     }
 
     /// Search instances by name with fuzzy matching

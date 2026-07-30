@@ -42,13 +42,10 @@ pub mod infra {
     pub mod measurement_routing;
     pub mod rule_live_state;
     pub mod rule_mutation;
+    pub mod rule_queries;
     pub mod rule_runtime;
     pub mod runtime_topology;
 }
-pub mod runtime {
-    //! Runtime layer — in-memory caches and SHM slot management
-}
-
 pub mod app_state;
 pub mod bootstrap;
 pub mod error;
@@ -61,16 +58,6 @@ mod instance_routing;
 pub mod product_loader;
 pub mod routes;
 pub mod routing_loader;
-
-// Re-export Rule Engine types from aether-rules library
-pub use aether_rules::{
-    ActionResult, DEFAULT_TICK_MS, Result as RuleResult, RuleError, RuleExecutionResult,
-    RuleExecutor, RuleScheduler, SchedulerStatus, TriggerConfig, delete_rule, extract_rule_flow,
-    get_rule, get_rule_for_execution, list_rules, load_all_rules, load_enabled_rules,
-    set_rule_enabled, upsert_rule,
-};
-
-// Re-export routing primitives from the shared library.
 
 // Re-export commonly used types
 pub use error::{AutomationError, Result};

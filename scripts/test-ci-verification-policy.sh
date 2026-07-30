@@ -79,6 +79,22 @@ assert_contains "$CODE_CHECK_WORKFLOW" \
     'cargo nextest run --workspace --lib --bins --tests'
 assert_contains "$CODE_CHECK_WORKFLOW" \
     'cargo check --manifest-path firmware/Cargo.toml --target thumbv7em-none-eabihf'
+assert_contains "$CODE_CHECK_WORKFLOW" 'required-checks:'
+assert_contains "$CODE_CHECK_WORKFLOW" 'name: Required Checks'
+assert_contains "$CODE_CHECK_WORKFLOW" 'if: ${{ always() }}'
+for required_job in \
+    policy-check \
+    submodule-check \
+    ignored-tests \
+    quality-check \
+    firmware-check \
+    unit-tests \
+    coverage-report \
+    config-validation \
+    integration-tests \
+    e2e-tests; do
+    assert_contains "$CODE_CHECK_WORKFLOW" "- $required_job"
+done
 for retired_package in \
     aether-redis-bridge \
     aether-postgres-history \

@@ -63,12 +63,12 @@ impl GovernedInstanceManager {
         .expect("current instances revision");
         let runtime_topology = lazy_runtime_topology(&pool).await;
         let manager = Arc::new(InstanceManager::new(
-            pool,
+            pool.clone(),
             Arc::new(product_loader),
             runtime_topology,
         ));
         let audit: Arc<dyn AuditSink> = Arc::new(aether_store_local::MemoryAuditSink::new());
-        let application = InstanceConfigurationApplication::new(Arc::clone(&manager), audit);
+        let application = InstanceConfigurationApplication::new(pool, Arc::clone(&manager), audit);
         Self {
             manager,
             application,

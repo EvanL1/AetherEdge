@@ -110,17 +110,26 @@ impl Fixture {
                 SafetyPolicy,
             )),
             Arc::new(ActionRoutingApplication::new(
-                Arc::new(SqliteActionRoutingMutator::new(Arc::clone(&manager))),
+                Arc::new(SqliteActionRoutingMutator::new(
+                    pool.clone(),
+                    Arc::clone(manager.product_loader()),
+                    Arc::clone(manager.runtime_topology()),
+                )),
                 Arc::clone(&audit),
                 SafetyPolicy,
             )),
             Arc::new(MeasurementRoutingApplication::new(
-                Arc::new(SqliteMeasurementRoutingMutator::new(Arc::clone(&manager))),
+                Arc::new(SqliteMeasurementRoutingMutator::new(
+                    pool.clone(),
+                    Arc::clone(manager.product_loader()),
+                    Arc::clone(manager.runtime_topology()),
+                )),
                 Arc::clone(&audit),
                 SafetyPolicy,
             )),
             Arc::new(
                 aether_automation::instance_configuration::InstanceConfigurationApplication::new(
+                    pool.clone(),
                     Arc::clone(&manager),
                     audit,
                 ),
