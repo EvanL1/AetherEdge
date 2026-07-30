@@ -23,10 +23,12 @@ use aether_domain::{
     InstanceId, PointAddress, PointId, PointKind, PointQuality, PointSample, TimestampMs,
 };
 use aether_ports::{
-    CloudLinkMessageKind, CloudLinkSpool, CloudLinkTransport, CloudLinkTransportEvent,
-    CloudLinkTransportMessage, CloudLinkTransportRoute,
+    ClaimedGatewayIdentitySource, CloudLinkMessageKind, CloudLinkSpool, CloudLinkTransport,
+    CloudLinkTransportEvent, CloudLinkTransportMessage, CloudLinkTransportRoute,
 };
-use aether_store_local::{FileCloudLinkSpool, MemoryCloudLinkSpool};
+use aether_store_local::{
+    FileClaimedGatewayIdentitySource, FileCloudLinkSpool, MemoryCloudLinkSpool,
+};
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use ed25519_dalek::{Signer as _, SigningKey};
@@ -60,6 +62,42 @@ fn test_session_authenticator() -> GatewaySessionAuthenticator {
 
 fn test_uplink_authentication() -> UplinkAuthentication {
     test_session_authenticator().uplink_authentication()
+}
+
+async fn commissioned_session_authenticator() -> GatewaySessionAuthenticator {
+    let Ok(identity_directory) = env::var("AETHER_CLOUDLINK_IDENTITY_DIRECTORY") else {
+        return test_session_authenticator();
+    };
+    let source = FileClaimedGatewayIdentitySource::new(identity_directory)
+        .expect("commissioned Gateway identity source");
+    let identity = source
+        .load_claimed_identity()
+        .await
+        .expect("load commissioned Gateway identity")
+        .expect("CloudLink requires a claimed Gateway identity");
+    let expected_gateway_id =
+        env::var("AETHER_CLOUDLINK_GATEWAY_ID").expect("CloudLink Gateway identity configuration");
+    assert_eq!(
+        identity.target().gateway_id().to_string(),
+        expected_gateway_id,
+        "commissioned Gateway identity scope drifted",
+    );
+    let gateway_key_id = format!("ed25519:{}", identity.fingerprint().as_str());
+    GatewaySessionAuthenticator::new(
+        TEST_CLOUD_KEY_ID,
+        SigningKey::from_bytes(&[7_u8; 32])
+            .verifying_key()
+            .to_bytes(),
+        gateway_key_id,
+        *identity.private_seed().expose(),
+    )
+    .expect("commissioned session authenticator")
+}
+
+async fn commissioned_uplink_authentication() -> UplinkAuthentication {
+    commissioned_session_authenticator()
+        .await
+        .uplink_authentication()
 }
 
 fn runtime_manifest_fixture() -> Vec<u8> {
@@ -458,7 +496,8 @@ async fn external_cloud_dual_harness() {
         replayed.identity(),
         "batch-conflict",
         None,
-    );
+    )
+    .await;
     send_raw_delivery(
         &resumed_transport,
         CloudLinkTransportRoute::TelemetryUp,
@@ -484,7 +523,8 @@ async fn external_cloud_dual_harness() {
         replayed.identity(),
         "batch-expired",
         Some(("2", "1721000000400")),
-    );
+    )
+    .await;
     send_raw_delivery(
         &resumed_transport,
         CloudLinkTransportRoute::TelemetryUp,
@@ -510,7 +550,8 @@ async fn external_cloud_dual_harness() {
         replayed.identity(),
         "batch-out-of-order",
         Some(("3", "1721003600000")),
-    );
+    )
+    .await;
     send_raw_delivery(
         &resumed_transport,
         CloudLinkTransportRoute::TelemetryUp,
@@ -674,7 +715,7 @@ async fn external_cloud_dual_phase1_before_edge_restart() {
             &session,
             TimestampMs::new(1_721_000_000_500),
             Vec::new(),
-            &test_uplink_authentication(),
+            &commissioned_uplink_authentication().await,
         )
         .expect("heartbeat"),
     )
@@ -878,7 +919,8 @@ async fn external_cloud_dual_phase2_after_edge_restart() {
         replayed.identity(),
         "batch-conflict",
         None,
-    );
+    )
+    .await;
     send_raw_delivery(
         &transport,
         CloudLinkTransportRoute::TelemetryUp,
@@ -898,7 +940,8 @@ async fn external_cloud_dual_phase2_after_edge_restart() {
         replayed.identity(),
         "batch-expired",
         Some(("2", "1721000000400")),
-    );
+    )
+    .await;
     send_raw_delivery(
         &transport,
         CloudLinkTransportRoute::TelemetryUp,
@@ -918,7 +961,8 @@ async fn external_cloud_dual_phase2_after_edge_restart() {
         replayed.identity(),
         "batch-out-of-order",
         Some(("3", "1721003600000")),
-    );
+    )
+    .await;
     send_raw_delivery(
         &transport,
         CloudLinkTransportRoute::TelemetryUp,
@@ -1106,7 +1150,7 @@ async fn wait_session_allowing_cloud_state_loss(
     }
 }
 
-fn contextual_fixture(
+async fn contextual_fixture(
     name: &str,
     gateway_id: &str,
     session: &SessionBinding,
@@ -1158,7 +1202,8 @@ fn contextual_fixture(
     )
     .expect("contextual fixture signing projection");
     value["message_authentication"] = serde_json::to_value(
-        test_uplink_authentication()
+        commissioned_uplink_authentication()
+            .await
             .authenticate(&signing_projection)
             .expect("contextual fixture authentication")
             .expect("Gateway-signed fixture authentication"),
@@ -1189,9 +1234,13 @@ async fn send_record_without_spool_transition(
     record: &aether_ports::CloudLinkRecord,
     route: CloudLinkTransportRoute,
 ) {
-    let envelope =
-        CloudLinkCodec::delivery_envelope(session, record, None, &test_uplink_authentication())
-            .expect("direct delivery envelope");
+    let envelope = CloudLinkCodec::delivery_envelope(
+        session,
+        record,
+        None,
+        &commissioned_uplink_authentication().await,
+    )
+    .expect("direct delivery envelope");
     transport
         .send(CloudLinkTransportMessage::new(
             route,
@@ -1749,7 +1798,7 @@ async fn send_hello_with_nonce(
             }
         }
     };
-    let authenticator = test_session_authenticator();
+    let authenticator = commissioned_session_authenticator().await;
     let verified = authenticator
         .verify_challenge(&challenge, gateway_id, CHALLENGE_EVALUATION_AT_MS)
         .expect("verified Cloud challenge");
@@ -1837,9 +1886,13 @@ async fn offer(
         .mark_offered(record.identity(), &spool_session)
         .await
         .expect("mark offered");
-    let envelope =
-        CloudLinkCodec::delivery_envelope(session, record, None, &test_uplink_authentication())
-            .expect("delivery envelope");
+    let envelope = CloudLinkCodec::delivery_envelope(
+        session,
+        record,
+        None,
+        &commissioned_uplink_authentication().await,
+    )
+    .expect("delivery envelope");
     transport
         .send(CloudLinkTransportMessage::new(
             route,
