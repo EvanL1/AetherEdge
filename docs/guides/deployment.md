@@ -23,8 +23,8 @@ docker compose ps
 ```
 
 The default Compose application starts only the six Rust services, all with
-`network_mode: host`. Redis and TimescaleDB start only when their explicit
-`redis` and `postgres-storage` profiles are selected. The base file does not
+`network_mode: host`. TimescaleDB starts only when its explicit
+`postgres-storage` profile is selected. The base file does not
 define or start a domain-specific data processor.
 
 AetherEdge is a headless Kernel distribution. It does not build or install a
@@ -34,7 +34,6 @@ processor belong to the independent
 
 | Container | Image | Role |
 |-----------|-------|------|
-| aether-redis | redis:8-alpine | Optional non-authoritative state mirror infrastructure (`redis` profile) |
 | aether-timescaledb | timescale/timescaledb:2.25.2-pg17 | Optional PostgreSQL history backend (`postgres-storage` profile) |
 | aether-io | aetherems:latest | Communication service (privileged, mounts `/dev` for field buses) |
 | aether-automation | aetherems:latest | Model service and rule engine |
@@ -90,7 +89,7 @@ product or Console.
 Host networking does not make the unauthenticated process APIs public: IO,
 automation, history, uplink, and alarm bind only to `127.0.0.1`. Remote clients
 must enter through `aether-api` on port 6005, where JWT and role checks apply.
-The optional Redis and TimescaleDB listeners are also loopback-only.
+The optional TimescaleDB listener is also loopback-only.
 
 Two mount classes matter for the runtime:
 
@@ -100,10 +99,9 @@ Two mount classes matter for the runtime:
   consumers create their own subscription bitmaps and UDS endpoints beside
   the segment. Mounting the directory also avoids Docker auto-creating a
   stale file entry.
-- **Optional external stores** — no core service mounts a Redis socket, exports
-  `REDIS_URL`, or waits for Redis. `docker compose --profile redis up -d`
-  starts compatibility infrastructure only; AetherEdge ships no Redis mirror
-  adapter, so any consumer belongs to a downstream composition. PostgreSQL
+- **Optional external stores** — AetherEdge ships no Redis mirror adapter and
+  the Compose file defines no Redis service; a downstream composition that
+  wants one owns both the adapter and its infrastructure. PostgreSQL
   history remains opt-in through `--profile postgres-storage` and a
   PostgreSQL-enabled history build. Set a unique non-empty
   `TIMESCALEDB_PASSWORD` before selecting that profile; the packaged installer
@@ -136,11 +134,11 @@ install script:
   for arm64 and `x86_64-unknown-linux-musl` for amd64
 - `--services` / `-s` — comma-separated subset to include (service names:
   `aether-io`, `aether-automation`, `aether-history`, `aether-api`, `aether-uplink`, `aether-alarm`,
-  `redis`, `timescaledb`; group shortcut `rust` expands to all six Rust
+  `timescaledb`; group shortcut `rust` expands to all six Rust
   services). Every fresh-install package must include the Rust core; select
-  external-service variants as `-s rust,redis`, `-s rust,timescaledb`, or
-  `-s rust,redis,timescaledb`. The default package contains only the Rust
-  edge-runtime image; external-store images must be selected explicitly.
+  the external-store variant as `-s rust,timescaledb`. The default package
+  contains only the Rust edge-runtime image; the external-store image must be
+  selected explicitly.
 - `--enable-swagger` — compile the single `aether-api` gateway Swagger UI;
   it presents the service-owned OpenAPI documents through fixed gateway paths
 - `--io-features` — replace the default `aether-io` feature set with one
@@ -158,8 +156,8 @@ install script:
 
 The script cross-compiles the six services and the `aether` CLI with
 `cargo zigbuild` for the target triple, builds the `aetherems` Docker image
-from those binaries, saves the images with `docker save` (plus the Redis and
-TimescaleDB images when selected), and packages the result
+from those binaries, saves the images with `docker save` (plus the
+TimescaleDB image when selected), and packages the result
 with `makeself` into `release/AetherEdge-<arch>-<version>.run` (subset
 builds via `--services` append a service-list suffix to the file name, and
 `--enable-swagger` appends `-swagger`). The build host needs Docker,
@@ -203,10 +201,9 @@ roots, symlinked paths, the installation root, and any destination containing
 an Aether site before any recursive permission operation. Paths are also
 limited to characters that round-trip safely through Docker Compose `.env`.
 
-An `AETHER_TIMESCALE_DATA_PATH` outside the site root and Docker's optional
-`redis-data` named volume are external-service storage. They must also be empty
-for a fresh deployment. Reusing or migrating an external store is outside the
-installer's supported workflow.
+An `AETHER_TIMESCALE_DATA_PATH` outside the site root is external-service
+storage. It must also be empty for a fresh deployment. Reusing or migrating an
+external store is outside the installer's supported workflow.
 
 The installer generates
 `AETHER_BOOTSTRAP_ADMIN_PASSWORD`, persists it only in the mode-0600 `.env`,
@@ -265,14 +262,8 @@ For edge devices that cannot or should not run Docker,
 `scripts/build-installer.sh --bare-metal` produces a second kind of `.run`
 package: a self-contained bundle of statically linked binaries and systemd
 units, with zero container runtime dependency on the target machine. It
-contains the six Rust services, the `aether` CLI, and the core systemd units.
-Static `redis-server`/`redis-cli` and their unit are included only when Redis
-is selected. `scripts/build-static-deps.sh` uses `INCLUDE_REDIS=1` for that
-optional infrastructure bundle. The core services are grouped by `aether.target`. The pinned
-Redis release also pins its source-archive SHA-256 value. Overriding the version
-requires its matching `REDIS_SHA256`; a cached binary is reused only with a
-matching provenance marker and after its static ELF linkage and target
-architecture are checked.
+contains the six Rust services, the `aether` CLI, and the core systemd units,
+grouped by `aether.target`. The bundle carries no external-store binaries.
 
 The bare-metal runtime root is likewise fixed at `/opt/aether`, matching the
 packaged systemd units. `AETHER_INSTALL_DIR` overrides are rejected. Its
@@ -282,21 +273,16 @@ bootstrap administrator credential is stored in `/etc/aether/aether.env`
 Build:
 
 ```bash
-# Core-only package (default)
 ./scripts/build-installer.sh --bare-metal [VERSION] [ARCH]
-
-# Core plus optional Redis mirror infrastructure
-./scripts/build-installer.sh --bare-metal [VERSION] [ARCH] -s rust,redis
 ```
 
 This follows the same `[VERSION] [ARCH] [TARGET]` positional convention as
 the Docker build — `--bare-metal` is an added flag, order of the other
 arguments is unchanged. It cross-compiles the same six services plus the
 `aether` CLI and packages them with `makeself` into
-`release/AetherEdge-baremetal-<arch>-<version>.run`. Selecting Redis adds
-`-redis` to the file name. A bare-metal package must include the Rust core.
-TimescaleDB is an external bare-metal service and is not bundled by this
-builder.
+`release/AetherEdge-baremetal-<arch>-<version>.run`. A bare-metal package must
+include the Rust core. TimescaleDB is an external bare-metal service and is not
+bundled by this builder.
 
 Ship and run as root — the installer refuses to proceed without
 `systemctl` on PATH:
@@ -311,11 +297,11 @@ runs) lays out the install as:
 
 | Path | Contents |
 |------|----------|
-| `/opt/aether/bin/` | Service binaries and `aether` CLI; Redis tools only in an explicitly selected infrastructure bundle |
+| `/opt/aether/bin/` | Service binaries and `aether` CLI |
 | `/etc/aether/config/` | The activated configuration (from `config.template/` on first install) |
 | `/etc/aether/aether.env` | Explicit config/data/database paths, `AETHER_LOG_DIR`, `RUST_LOG`, and freshly generated secrets (mode 600) |
 | `/etc/aether/install.yaml` | Non-secret installed layout used by the CLI (`config_dir`, `data_dir`, runtime mode, release channel, and enabled packs) |
-| `/var/lib/aether/` | Service logs (`logs/`) and optional Redis data (`redis/`) |
+| `/var/lib/aether/` | Service logs (`logs/`) |
 
 It also symlinks `aether` onto `/usr/local/bin` and drops a
 `/etc/profile.d/aether.sh` PATH entry, installs the systemd units,
@@ -341,12 +327,10 @@ as `aether-io` directly to `systemctl <verb>` (or use `aether.target` when no se
 error in this mode — there are no container images in a bare-metal install,
 and the `.run` package is not an in-place upgrader. `aether services refresh
 --smart` degrades to a plain `systemctl restart`, printing a note that
-`--smart` has no effect, since there's no image to diff against. Redis is not
-part of the default health contract; operators who enable Redis can inspect its unit or profile independently.
+`--smart` has no effect, since there's no image to diff against.
 
-None of the six Rust service units declares `Requires=aether-redis.service`.
-The default target starts and keeps its SHM/SQLite work independently; an
-enabled Redis mirror cannot become a service-availability dependency.
+No Rust service unit declares a dependency on an external store. The default
+target starts and keeps its SHM/SQLite work independently.
 
 The bare-metal installer has the same fresh-only contract as the Docker
 installer. Re-running a `.run` package on a host with `/opt/aether`,

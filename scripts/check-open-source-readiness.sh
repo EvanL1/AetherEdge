@@ -275,16 +275,8 @@ else
         fi
     done
 
-    redis_services=""
-    if ! redis_services=$(
-        JWT_SECRET_KEY="$COMPOSE_VALIDATION_JWT_SECRET" \
-            AETHER_UPLINK_CONTROL_TOKEN="$COMPOSE_VALIDATION_UPLINK_TOKEN" \
-            docker compose -f docker-compose.yml --profile redis config --services
-    ); then
-        fail "the optional Redis infrastructure profile is invalid"
-    fi
-    if ! rg -q '^aether-redis$' <<<"$redis_services"; then
-        fail "the optional Redis infrastructure profile is missing"
+    if rg -qi 'redis' docker-compose.yml; then
+        fail "docker-compose.yml reintroduced a Redis service; the kernel ships no Redis adapter"
     fi
 
     postgres_services=""

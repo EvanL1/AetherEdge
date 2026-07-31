@@ -21,8 +21,6 @@ pub struct ServiceConfig {
     pub service_name: String,
     /// Service port
     pub port: u16,
-    /// Redis URL
-    pub redis_url: String,
     /// Additional configuration as JSON
     pub extra_config: serde_json::Value,
 }
@@ -144,20 +142,12 @@ impl ServiceConfigLoader {
             .and_then(|v| v.as_i64())
             .unwrap_or(self.default_port as i64) as u16;
 
-        let redis_url = config_map
-            .get("redis.url")  // Standard dotted format from Aether
-            .and_then(|v| v.as_str())
-            .unwrap_or("redis://localhost:6379")
-            .to_string();
-
         // Remove standard fields from map
         config_map.remove("service.port");
-        config_map.remove("redis.url");
 
         Ok(ServiceConfig {
             service_name: self.service_name.clone(),
             port,
-            redis_url,
             extra_config: serde_json::Value::Object(config_map.into_iter().collect()),
         })
     }

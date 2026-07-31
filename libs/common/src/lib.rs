@@ -1,15 +1,11 @@
 //! `AetherEdge` basic library (basic library)
 //!
 //! Provides basic functions shared by all services, including:
-//! - Redis client
 //! - monitoring and health checking
 //! - logging functions
 //! - service configuration types
 
 // Re-export from aether-infra for backward compatibility
-#[cfg(feature = "redis")]
-pub use aether_infra::redis;
-
 #[cfg(feature = "sqlite")]
 pub use aether_infra::sqlite;
 
@@ -27,8 +23,6 @@ pub mod service_bootstrap;
 pub mod shutdown;
 pub mod system_metrics;
 pub mod validation;
-#[cfg(feature = "redis")]
-pub mod warning_monitor;
 
 // Re-export commonly used csv types (previously in csv.rs module)
 pub use csv::{Reader, ReaderBuilder, StringRecord, Writer, WriterBuilder};
@@ -69,11 +63,6 @@ pub use service_config::{
     helpers,
     // URL resolver functions
     io_url,
-};
-
-#[cfg(feature = "redis")]
-pub use service_config::{
-    DEFAULT_REDIS_HOST, DEFAULT_REDIS_PORT, DEFAULT_REDIS_URL, RedisConfig, RedisRoutingKeys,
 };
 
 // Re-export commonly used API types
@@ -125,7 +114,3 @@ pub use clap::{Args, Parser, Subcommand, ValueEnum};
 pub use reqwest;
 
 // Pre-import common types
-pub mod prelude {
-    #[cfg(feature = "redis")]
-    pub use crate::redis::RedisClient;
-}

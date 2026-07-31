@@ -93,7 +93,6 @@ for required_job in \
     unit-tests \
     coverage-report \
     config-validation \
-    integration-tests \
     e2e-tests; do
     assert_contains "$CODE_CHECK_WORKFLOW" "- $required_job"
 done

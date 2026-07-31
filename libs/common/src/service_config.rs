@@ -26,18 +26,6 @@ use anyhow::{Context, Result};
 // Default configuration constants
 // ============================================================================
 
-/// Default Redis host address
-#[cfg(feature = "redis")]
-pub const DEFAULT_REDIS_HOST: &str = "127.0.0.1";
-
-/// Default Redis port
-#[cfg(feature = "redis")]
-pub const DEFAULT_REDIS_PORT: u16 = 6379;
-
-/// Default Redis connection URL
-#[cfg(feature = "redis")]
-pub const DEFAULT_REDIS_URL: &str = "redis://127.0.0.1:6379";
-
 /// Default API bind host (listen on all interfaces)
 /// Internal service APIs are host-local by default. The authenticated API
 /// gateway opts into a public bind independently.
@@ -76,30 +64,6 @@ pub fn io_url() -> String {
 /// Resolve the aether-automation base URL, preferring `AETHER_AUTOMATION_URL`.
 pub fn automation_url() -> String {
     env::var(ENV_AUTOMATION_URL).unwrap_or_else(|_| DEFAULT_AUTOMATION_URL.to_string())
-}
-
-// ============================================================================
-// Redis routing keys (for cross-service data routing)
-// ============================================================================
-
-/// Redis routing keys for data flow between services
-///
-/// These keys are used for routing data between communication service (io)
-/// and model calculation service (automation). They enable bidirectional data flow:
-/// - Forward: measurements from devices → model calculations (c2m)
-/// - Reverse: control actions from models → devices (m2c)
-#[cfg(feature = "redis")]
-pub struct RedisRoutingKeys;
-
-#[cfg(feature = "redis")]
-impl RedisRoutingKeys {
-    /// Channel to Model routing table: "route:c2m"
-    /// Maps io channel keys to automation instance keys for measurements/signals
-    pub const CHANNEL_TO_MODEL: &'static str = "route:c2m";
-
-    /// Model to Channel routing table: "route:m2c"
-    /// Maps automation action keys to io channel keys for control/adjustment commands
-    pub const MODEL_TO_CHANNEL: &'static str = "route:m2c";
 }
 
 // ============================================================================
@@ -147,24 +111,6 @@ pub struct ApiConfig {
 
     /// Listen port (no default - set by service-specific config)
     pub port: u16,
-}
-
-// ============================================================================
-// Redis configuration
-// ============================================================================
-
-/// Redis connection configuration
-#[cfg(feature = "redis")]
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(JsonSchema))]
-pub struct RedisConfig {
-    /// Redis connection URL
-    #[serde(default = "default_redis_url")]
-    pub url: String,
-
-    /// Whether Redis is enabled
-    #[serde(default = "crate::serde_helpers::bool_true")]
-    pub enabled: bool,
 }
 
 // ============================================================================
@@ -220,11 +166,6 @@ fn default_api_host() -> String {
     DEFAULT_API_HOST.to_string()
 }
 
-#[cfg(feature = "redis")]
-fn default_redis_url() -> String {
-    env::var("REDIS_URL").unwrap_or_else(|_| DEFAULT_REDIS_URL.to_string())
-}
-
 fn default_log_level() -> String {
     env::var("RUST_LOG").unwrap_or_else(|_| "info".to_string())
 }
@@ -250,16 +191,6 @@ fn default_max_files() -> u32 {
 // ============================================================================
 // Default implementations
 // ============================================================================
-
-#[cfg(feature = "redis")]
-impl Default for RedisConfig {
-    fn default() -> Self {
-        Self {
-            url: default_redis_url(),
-            enabled: true,
-        }
-    }
-}
 
 impl Default for LoggingConfig {
     fn default() -> Self {
@@ -603,28 +534,6 @@ pub mod helpers {
         }
     }
 
-    /// Test Redis connection
-    #[cfg(feature = "redis")]
-    pub async fn test_redis_connection(url: &str) -> Result<()> {
-        use redis::aio::MultiplexedConnection;
-        use redis::cmd;
-
-        let client =
-            redis::Client::open(url).map_err(|e| anyhow::anyhow!("Invalid Redis URL: {}", e))?;
-
-        let mut con: MultiplexedConnection = client
-            .get_multiplexed_tokio_connection()
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to connect to Redis: {}", e))?;
-
-        let _: String = cmd("PING")
-            .query_async(&mut con)
-            .await
-            .map_err(|e| anyhow::anyhow!("Redis ping failed: {}", e))?;
-
-        Ok(())
-    }
-
     /// Check database file accessibility
     pub fn check_database_access(db_path: &std::path::Path) -> Result<()> {
         if !db_path.exists() {
@@ -682,35 +591,6 @@ impl ApiConfig {
     pub fn validate_runtime(&self, result: &mut ValidationResult) {
         if let Err(e) = helpers::check_port_available(self.port) {
             result.add_error(format!("Port {} not available: {}", self.port, e));
-        }
-    }
-}
-
-#[cfg(feature = "redis")]
-impl RedisConfig {
-    /// Validate Redis configuration
-    pub fn validate(&self, result: &mut ValidationResult) {
-        if self.url.is_empty() {
-            result.add_error("Redis URL cannot be empty".to_string());
-        } else if !self.url.starts_with("redis://")
-            && !self.url.starts_with("rediss://")
-            && !self.url.starts_with("unix://")
-            && !self.url.starts_with("redis+unix://")
-        {
-            result.add_warning(
-                "Redis URL should start with redis://, rediss://, unix://, or redis+unix://"
-                    .to_string(),
-            );
-        }
-    }
-
-    /// Validate Redis connectivity (runtime check)
-    #[cfg(feature = "redis")]
-    pub async fn validate_runtime(&self, result: &mut ValidationResult) {
-        if self.enabled
-            && let Err(e) = helpers::test_redis_connection(&self.url).await
-        {
-            result.add_error(format!("Redis connection failed: {}", e));
         }
     }
 }

@@ -22,12 +22,8 @@ async fn create_test_db() -> (TempDir, SqlitePool) {
     let db_path = tmp.path().join("test.db");
     let url = format!("sqlite://{}?mode=rwc", db_path.display());
     let pool = SqlitePool::connect(&url).await.unwrap();
-    common::test_utils::schema::init_automation_schema(&pool)
-        .await
-        .unwrap();
-    common::test_utils::schema::init_io_schema(&pool)
-        .await
-        .unwrap();
+    common::test_utils::schema::init_automation_schema(&pool).await.unwrap();
+    common::test_utils::schema::init_io_schema(&pool).await.unwrap();
     (tmp, pool)
 }
 

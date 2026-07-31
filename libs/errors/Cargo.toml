@@ -18,7 +18,6 @@ serde_yml = { workspace = true }
 
 # Database (for From implementations)
 sqlx = { workspace = true }
-redis = { workspace = true, optional = true }
 
 # HTTP client (for From implementations)
 reqwest = { workspace = true }
@@ -31,7 +30,6 @@ schemars = { version = "0.8", optional = true }
 
 [features]
 default = []
-redis = ["dep:redis"]
 schema = ["schemars"]
 
 [lints]

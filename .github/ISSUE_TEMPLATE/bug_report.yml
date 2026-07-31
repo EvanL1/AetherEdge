@@ -36,7 +36,6 @@ body:
       description: Select the composition in which the problem occurs.
       options:
         - Default SHM-only runtime (no external database)
-        - SHM runtime with optional Redis mirror
         - SHM runtime with optional PostgreSQL history
         - SDK/library integration
         - Unknown or not applicable

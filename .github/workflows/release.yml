@@ -510,9 +510,8 @@ jobs:
           - **CLI Tool**: aether
 
           The AetherEMS Console is owned and released by the downstream AetherEMS
-          repository. Redis compatibility infrastructure and PostgreSQL/TimescaleDB
-          history artifacts remain explicit optional services; none is included in
-          the default release package.
+          repository. PostgreSQL/TimescaleDB history artifacts remain an explicit
+          optional service and are not included in the default release package.
 
           EOF
 

@@ -102,13 +102,12 @@ for arg in "$@"; do
     esac
 done
 
-# Run integration tests (optional - requires Redis)
+# Run integration tests (optional)
 if [ "$RUN_INTEGRATION" = true ]; then
     echo -e "${YELLOW}Running integration tests...${NC}"
     "${TEST_RUNNER[@]}" --workspace "${INT_TEST_SELECTOR[@]}"
 else
     echo -e "${YELLOW}Skipping integration tests (use --with-integration to run)${NC}"
-    echo -e "${YELLOW}Integration tests require Redis${NC}"
 fi
 
 # Run coverage analysis (optional)

@@ -168,7 +168,6 @@ check_local_gates() {
     cargo run --quiet -p aether-example-minimal-gateway >/dev/null
     cargo run --quiet -p aether-example-energy-gateway >/dev/null
 
-    assert_profiled_service aether-redis redis
     assert_profiled_service timescaledb postgres-storage
     if rg -q '^default[[:space:]]*=.*postgres-storage' services/history/Cargo.toml; then
         fail "PostgreSQL history storage must not be a default service feature"
