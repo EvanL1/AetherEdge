@@ -15,7 +15,6 @@ common = { path = "../../libs/common", default-features = false, features = ["sq
 aether-domain = { path = "../../crates/aether-domain" }
 aether-ports = { path = "../../crates/aether-ports" }
 aether-shm-bridge = { path = "../../libs/aether-shm-bridge" }
-aether-store-local = { path = "../../libs/aether-store-local" }
 aether-sqlite-topology = { path = "../../libs/aether-sqlite-topology" }
 
 # Async runtime

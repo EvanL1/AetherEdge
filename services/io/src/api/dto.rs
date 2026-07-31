@@ -521,19 +521,6 @@ pub struct GroupedPoints {
     pub adjustment: Vec<PointDefinition>,
 }
 
-/// Point list response
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct PointListResponse {
-    #[schema(example = 1)]
-    pub channel_id: u32,
-    #[schema(example = "T")]
-    pub point_type: String, // "T", "S", "C", "A"
-    pub total_points: usize,
-    pub mapped_points: usize,   // Points with mapping
-    pub unmapped_points: usize, // Reserve points without mapping
-    pub points: Vec<PointDefinition>,
-}
-
 /// Single point mapping detail (for GET response)
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct PointMappingDetail {
@@ -553,18 +540,6 @@ pub struct GroupedMappings {
     pub signal: Vec<PointMappingDetail>,
     pub control: Vec<PointMappingDetail>,
     pub adjustment: Vec<PointMappingDetail>,
-}
-
-/// Grouped mappings update request
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct GroupedMappingsUpdateRequest {
-    /// Mappings grouped by point type
-    #[serde(flatten)]
-    pub mappings: GroupedMappings,
-    /// Validate only without writing to database
-    #[serde(default)]
-    #[schema(example = false)]
-    pub validate_only: bool,
 }
 
 /// Single point mapping item (for PUT request)
@@ -621,19 +596,6 @@ pub enum MappingUpdateMode {
     Replace,
     #[default]
     Merge,
-}
-
-/// Mapping list response (for batch read)
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct MappingListResponse {
-    #[schema(example = 1)]
-    pub channel_id: u32,
-    #[schema(example = "modbus_tcp")]
-    pub protocol: String,
-    #[schema(example = "T")]
-    pub point_type: String, // "T", "S", "C", "A"
-    pub total_mappings: usize,
-    pub mappings: Vec<PointMappingDetail>,
 }
 
 // ============================================================================

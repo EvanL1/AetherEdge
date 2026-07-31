@@ -401,7 +401,6 @@ dependencies = [
  "aether-ports",
  "aether-shm-bridge",
  "aether-sqlite-topology",
- "aether-store-local",
  "anyhow",
  "arc-swap",
  "async-trait",
@@ -443,10 +442,8 @@ name = "aether-infra"
 version = "0.0.1"
 dependencies = [
  "anyhow",
- "bytes",
  "serde",
  "serde_json",
- "serde_yaml_ng",
  "sqlx",
  "tokio",
  "tracing",
@@ -564,7 +561,6 @@ name = "aether-rules"
 version = "0.0.1"
 dependencies = [
  "aether-calc",
- "aether-dataplane",
  "aether-domain",
  "aether-ports",
  "anyhow",
@@ -1440,7 +1436,6 @@ dependencies = [
  "csv",
  "errors",
  "flate2",
- "futures",
  "schemars 0.8.22",
  "serde",
  "serde_json",

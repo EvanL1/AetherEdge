@@ -33,7 +33,6 @@ chrono = { workspace = true, features = ["serde"] }
 anyhow = { workspace = true }
 flate2 = { workspace = true }
 csv = { workspace = true }
-futures = { workspace = true }
 axum = { workspace = true, optional = true }
 utoipa = { workspace = true, optional = true }
 sysinfo = "0.32"

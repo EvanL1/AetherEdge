@@ -736,16 +736,6 @@ pub fn load_runtime_manifest_for_current_process(
     Ok(manifest)
 }
 
-/// Loads one explicit artifact and requires its target to match this process.
-pub fn load_runtime_manifest_file_for_current_process(
-    path: impl AsRef<Path>,
-    expected_aether_version: &str,
-) -> Result<KernelRuntimeManifest, RuntimeManifestError> {
-    let manifest = load_runtime_manifest_file(path, expected_aether_version)?;
-    validate_current_process_target(&manifest)?;
-    Ok(manifest)
-}
-
 fn validate_current_process_target(
     manifest: &KernelRuntimeManifest,
 ) -> Result<(), RuntimeManifestError> {

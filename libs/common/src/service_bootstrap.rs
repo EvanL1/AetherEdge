@@ -4,7 +4,7 @@
 //! including startup banners, logging initialization, and environment setup.
 
 use crate::logging::{self, LogConfig};
-use tracing::{Level, debug, info};
+use tracing::{Level, info};
 
 /// Service metadata for startup
 pub struct ServiceInfo {
@@ -134,34 +134,6 @@ pub fn get_config_path(service: &ServiceInfo) -> String {
 
     // Default path
     format!("data/{}.db", service.name)
-}
-
-/// Standard service startup sequence
-pub async fn bootstrap_service(service: ServiceInfo) -> anyhow::Result<String> {
-    // Load development environment
-    load_development_env();
-
-    // Initialize logging (config not loaded yet, use env/default)
-    init_logging(&service, None)?;
-
-    // Print startup banner
-    print_startup_banner(&service);
-
-    // Get configuration path
-    let config_path = get_config_path(&service);
-
-    // Check if database exists
-    if !std::path::Path::new(&config_path).exists() {
-        anyhow::bail!(
-            "Configuration database not found at: {}\nPlease run: aether sync {}",
-            config_path,
-            service.name
-        );
-    }
-
-    debug!("Config: {}", config_path);
-
-    Ok(config_path)
 }
 
 /// Helper to get service port from configuration or environment

@@ -15,8 +15,6 @@
 
 pub mod generators;
 
-use std::sync::Arc;
-
 /// Core trait for waveform generation.
 ///
 /// All generators implement this trait to produce time-varying values.
@@ -37,9 +35,6 @@ pub trait WaveformGenerator: Send + Sync {
 
 /// Boxed generator for dynamic dispatch.
 pub type BoxedGenerator = Box<dyn WaveformGenerator>;
-
-/// Arc-wrapped generator for shared ownership.
-pub type SharedGenerator = Arc<dyn WaveformGenerator>;
 
 // Re-export commonly used generators
 pub use generators::{
