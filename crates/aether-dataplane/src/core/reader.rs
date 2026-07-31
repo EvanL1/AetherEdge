@@ -5,9 +5,9 @@
 //! `SlotWriter`, it has no knowledge of channels, point types,
 //! instances, or routing.
 //!
-//! `UnifiedReader` (in `unified_shm.rs`) composes this struct and adds
-//! the channel-aware iterators; consumers that only need slot reads
-//! should program against `&SlotReader` or `&dyn SlotIo`.
+//! Consumers that only need slot reads take a [`SlotIo`]
+//! bound rather than this concrete type; the trait carries no write
+//! capability, so such code provably cannot mutate the segment.
 
 use std::fs::File;
 use std::path::Path;

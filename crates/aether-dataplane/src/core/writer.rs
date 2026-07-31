@@ -2,13 +2,12 @@
 //!
 //! `SlotWriter` owns the mmap region, tracks dirty slots, and exposes
 //! slot-indexed I/O. It has no knowledge of channels, point types,
-//! instances, or routing — that lives in `UnifiedWriter` (in
-//! `unified_shm.rs`) which composes a `SlotWriter` and adds the
-//! channel-aware adapters.
+//! instances, or routing; that mapping belongs to the callers in
+//! `aether-shm-bridge`.
 //!
-//! Consumers that only need slot-level I/O should program against
-//! `&SlotWriter` or `&dyn SlotIo`; the channel adapters are not
-//! reachable that way by design.
+//! Write access is reached through [`SlotIoWrite`],
+//! a sub-trait of [`SlotIo`]. Code that holds only a
+//! `SlotIo` bound therefore cannot write.
 
 use std::fs::{File, Metadata, OpenOptions};
 use std::path::{Path, PathBuf};
@@ -85,7 +84,7 @@ pub struct SlotWriter {
     pub(crate) max_slots: u32,
     pub(crate) slot_count: usize,
     backing_identity: BackingFileIdentity,
-    /// Process-local dirty slot bitmap for fast SHM→Redis sync.
+    /// Process-local dirty slot bitmap for fast downstream mirror sync.
     ///
     /// PointSlot.dirty is shared across processes, but scanning it still
     /// costs O(slots). This bitmap is set by this writer's `set_direct`
@@ -573,8 +572,8 @@ impl SlotWriter {
     /// Flushes the mmap first so OS-buffered dirty pages are stable in the
     /// backing file before the snapshot's tear-resistant per-slot read,
     /// then delegates to `core::snapshot_save`. This makes the public
-    /// `SlotWriter::save_snapshot` self-contained — callers outside
-    /// `UnifiedWriter` do not need to remember to flush.
+    /// `SlotWriter::save_snapshot` self-contained — callers do not need
+    /// to remember to flush.
     pub fn save_snapshot(&self, path: &Path) -> DataplaneResult<()> {
         self.flush()?;
         let current_slot_count = self.header().slot_count.load(Ordering::Acquire) as usize;

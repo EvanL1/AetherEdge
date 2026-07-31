@@ -97,7 +97,7 @@ async fn main() -> AetherResult<()> {
     };
 
     // Shutdown token — created here so the SHM block can capture it for the
-    // PointWatch drain task spawned during UnifiedWriter initialization.
+    // PointWatch drain task spawned during SHM writer initialization.
     let shutdown_token = CancellationToken::new();
 
     let (initial_point_manifest, initial_health_manifest) =
