@@ -24,6 +24,7 @@ mod rtu_server;
 mod scenarios;
 mod server;
 mod state_machine;
+mod waveform;
 mod writable;
 
 use anyhow::Result;

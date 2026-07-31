@@ -609,16 +609,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "aether-sim"
-version = "0.0.1"
-dependencies = [
- "chrono",
- "rand 0.8.7",
- "serde",
- "workspace-hack",
-]
-
-[[package]]
 name = "aether-sqlite-history-query"
 version = "0.0.1"
 dependencies = [
@@ -4536,7 +4526,6 @@ dependencies = [
 name = "simulator"
 version = "0.0.1"
 dependencies = [
- "aether-sim",
  "anyhow",
  "axum",
  "chrono",

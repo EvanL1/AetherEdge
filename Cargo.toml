@@ -53,7 +53,6 @@ members = [
     "libs/aether-runtime-catalog",
     "libs/aether-rules",
     "libs/aether-schema-macro",
-    "libs/aether-sim",
     "services/alarm",
     "services/api",
     "services/history",

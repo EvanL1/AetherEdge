@@ -168,7 +168,6 @@ AetherEdge/
 │   ├── aether-routing/    # 数据流路由
 │   ├── aether-calc/       # 表达式求值引擎
 │   ├── aether-rules/      # 规则引擎
-│   ├── aether-sim/        # 波形生成器
 │   ├── aether-schema-macro/ # SQL DDL 过程宏
 │   ├── common/             # 服务引导与共享工具
 │   └── errors/             # 统一错误类型
