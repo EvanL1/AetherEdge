@@ -305,7 +305,6 @@ dependencies = [
 name = "aether-config"
 version = "0.0.1"
 dependencies = [
- "aether-schema-macro",
  "anyhow",
  "chrono",
  "common",
