@@ -512,7 +512,7 @@ async fn main() -> anyhow::Result<()> {
     // ── SQLite ────────────────────────────────────────────────────────────────
     let db_dir = std::path::Path::new(&cfg.db_path)
         .parent()
-        .unwrap_or(std::path::Path::new("."));
+        .unwrap_or_else(|| std::path::Path::new("."));
     std::fs::create_dir_all(db_dir)?;
 
     let db_pool = sqlx::sqlite::SqlitePoolOptions::new()

@@ -17,7 +17,48 @@
 //! another — it is plain `&self` so it composes with `Arc<dyn SlotIo>` if
 //! callers want dynamic dispatch.
 
-use crate::core::header::HeaderSnapshot;
+use crate::core::header::{HeaderSnapshot, slot_offset};
+use crate::core::slot::PointSlot;
+
+/// Addresses a slot inside a validated SHM mapping.
+///
+/// `SlotWriter` and `SlotReader` map the same layout through `MmapMut` and
+/// `Mmap` respectively, so both delegate here. Keeping one implementation
+/// keeps the alignment argument below in a single place: two copies of this
+/// `unsafe` block could drift apart without the compiler noticing.
+pub(crate) fn slot_at(mmap: &[u8], slot_count: usize, index: usize) -> &PointSlot {
+    assert!(
+        index < slot_count,
+        "slot_at: index {} out of bounds (slot_count={})",
+        index,
+        slot_count
+    );
+    // SAFETY: alignment chain — mmap base is page-aligned (≥4096),
+    // slot_offset() == size_of::<UnifiedHeader>() == 64 (asserted at
+    // const time in core::header), and 64 is divisible by 32. So the
+    // base pointer for the slot array is 32-byte aligned, matching
+    // PointSlot's `#[repr(C, align(32))]` requirement. `index` is
+    // bounds-checked above against `slot_count`, and the constructor
+    // verified the mmap covers at least `max_slots` slots.
+    unsafe {
+        let ptr = mmap.as_ptr().add(slot_offset()) as *const PointSlot;
+        &*ptr.add(index)
+    }
+}
+
+/// Reads a slot consistently, returning `None` for an out-of-range index or
+/// an exhausted seqlock retry budget.
+pub(crate) fn read_slot(mmap: &[u8], slot_count: usize, index: usize) -> Option<SlotRead> {
+    if index >= slot_count {
+        return None;
+    }
+    let (value, raw, timestamp_ms) = slot_at(mmap, slot_count, index).try_load_consistent()?;
+    Some(SlotRead {
+        value,
+        raw,
+        timestamp_ms,
+    })
+}
 
 /// A consistent read of a slot's measurement state.
 #[derive(Debug, Clone, Copy)]

@@ -62,7 +62,7 @@ mod tests {
     use super::*;
 
     fn make_vars(pairs: &[(&str, f64)]) -> HashMap<String, f64> {
-        pairs.iter().map(|(k, v)| (k.to_string(), *v)).collect()
+        pairs.iter().map(|(k, v)| ((*k).to_string(), *v)).collect()
     }
 
     #[test]

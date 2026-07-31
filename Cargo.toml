@@ -81,6 +81,16 @@ cast-possible-truncation = "allow"
 cast-possible-wrap = "allow"
 cast-sign-loss = "allow"
 
+# Wasted work. These caught a per-request `Utc::now()` and per-row `json!({})`
+# allocation; keeping them denied stops the pattern from returning.
+or-fun-call = "deny"
+redundant-clone = "deny"
+unnecessary-to-owned = "deny"
+clone-on-copy = "deny"
+inefficient-to-string = "deny"
+redundant-allocation = "deny"
+useless-conversion = "deny"
+
 [workspace.dependencies]
 # no_std compatible
 heapless = "0.8"

@@ -37,7 +37,7 @@ pub fn set_service_start_time(start_time: DateTime<Utc>) {
 
 /// Get the service start time
 pub fn get_service_start_time() -> DateTime<Utc> {
-    *SERVICE_START_TIME.get().unwrap_or(&Utc::now())
+    SERVICE_START_TIME.get().copied().unwrap_or_else(Utc::now)
 }
 
 /// Application state containing the channel manager

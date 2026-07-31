@@ -182,7 +182,7 @@ impl ChannelMutator for RecordingChannelMutator {
             ChannelMutation::Update { .. } => false,
             ChannelMutation::Delete { .. } => false,
         };
-        let projection = self.projection.unwrap_or(match mutation.kind() {
+        let projection = self.projection.unwrap_or_else(|| match mutation.kind() {
             ChannelMutationKind::Delete => ChannelRuntimeProjection::Removed,
             ChannelMutationKind::Enable => ChannelRuntimeProjection::Active,
             ChannelMutationKind::Create

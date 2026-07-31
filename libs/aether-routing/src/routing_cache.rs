@@ -219,14 +219,10 @@ pub type StructuredM2CKey = (u32, PointKind, u32);
 /// Parse route key string "id:type:point_id" into structured key
 #[inline]
 fn parse_route_key(s: &str) -> Option<StructuredRouteKey> {
-    let parts: Vec<&str> = s.split(':').collect();
-    if parts.len() != 3 {
-        return None;
-    }
-    let id = parts[0].parse().ok()?;
-    let point_type = parse_point_type(parts[1])?;
-    let point_id = parts[2].parse().ok()?;
-    Some((id, point_type, point_id))
+    // A route key and a channel:point target share the `"ch:type:point"` wire
+    // format. The two names stay distinct because they denote different sides
+    // of a route; the parsing lives in one place so they cannot drift.
+    parse_channel_point(s)
 }
 
 // ============================================================================

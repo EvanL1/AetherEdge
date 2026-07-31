@@ -215,7 +215,9 @@ fn mutation_audit_detail(mutation: &RuleMutation, expected_revision: Option<u64>
         } => format!(
             "expected_revision={expected}; name_sha256={}; description_sha256={}",
             digest(name),
-            description.as_deref().map_or("none".to_string(), digest)
+            description
+                .as_deref()
+                .map_or_else(|| "none".to_string(), digest)
         ),
         RuleMutation::Update {
             name,

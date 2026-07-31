@@ -289,7 +289,7 @@ async fn snapshot_channel_mappings(
             .map(|(point_id, signal_name, pm_json)| {
                 let protocol_data = pm_json
                     .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
-                    .unwrap_or(json!({}));
+                    .unwrap_or_else(|| json!({}));
                 json!({
                     "point_id": point_id,
                     "signal_name": signal_name,
@@ -498,7 +498,7 @@ pub async fn list_templates(
         .map(
             |(template_id, name, description, protocol, points_json, created_at)| {
                 let snapshot: serde_json::Value =
-                    serde_json::from_str(&points_json).unwrap_or(json!({}));
+                    serde_json::from_str(&points_json).unwrap_or_else(|_| json!({}));
                 let point_counts = count_points_from_snapshot(&snapshot);
                 TemplateListItem {
                     template_id,

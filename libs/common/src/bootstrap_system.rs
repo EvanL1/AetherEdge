@@ -231,7 +231,7 @@ pub fn check_disk_space(path: &str, _required_mb: usize) -> AetherResult<bool> {
     let check_path = if path.exists() {
         path
     } else {
-        path.parent().unwrap_or(Path::new("/"))
+        path.parent().unwrap_or_else(|| Path::new("/"))
     };
 
     // For now, we'll use a simplified check based on filesystem metadata

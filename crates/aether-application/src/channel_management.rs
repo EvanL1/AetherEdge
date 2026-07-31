@@ -181,7 +181,9 @@ fn mutation_audit_detail(mutation: &ChannelMutation) -> String {
         ChannelMutation::Create { definition } => format!(
             "changed_fields=name,description,protocol,parameters,logging,enabled; name_sha256={}; description_sha256={}; protocol_sha256={}; protocol_bytes={}; enabled={}",
             digest(definition.name()),
-            definition.description().map_or("none".to_string(), digest),
+            definition
+                .description()
+                .map_or_else(|| "none".to_string(), digest),
             digest(definition.protocol()),
             definition.protocol().len(),
             definition.enabled()

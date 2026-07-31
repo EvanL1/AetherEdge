@@ -80,7 +80,7 @@ fn normalize_protocol_mapping(
             // Ensure bit_position exists and is an integer (convert 0.0 → 0)
             let bp = normalized
                 .entry("bit_position".to_string())
-                .or_insert(JsonValue::Number(Number::from(0)));
+                .or_insert_with(|| JsonValue::Number(Number::from(0)));
             if let Some(f) = bp.as_f64() {
                 *bp = JsonValue::Number(Number::from(f.round() as i64));
             }
@@ -93,13 +93,13 @@ fn normalize_protocol_mapping(
             );
             normalized
                 .entry("signed".to_string())
-                .or_insert(JsonValue::Bool(false));
+                .or_insert_with(|| JsonValue::Bool(false));
             normalized
                 .entry("scale".to_string())
-                .or_insert(JsonValue::Number(Number::from(1)));
+                .or_insert_with(|| JsonValue::Number(Number::from(1)));
             normalized
                 .entry("offset".to_string())
-                .or_insert(JsonValue::Number(Number::from(0)));
+                .or_insert_with(|| JsonValue::Number(Number::from(0)));
             normalized
         },
         "di_do" | "gpio" | "dido" => convert_fields(mapping, &["gpio_number"]),

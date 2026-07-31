@@ -19,11 +19,11 @@ use memmap2::{MmapMut, MmapOptions};
 use crate::core::authority::{AuthorityReadGuard, AuthorityWriteGuard};
 use crate::core::header::{
     HeaderSnapshot, UNIFIED_MAGIC, UNIFIED_VERSION, UnifiedHeader, calculate_file_size,
-    slot_offset, validate_mapping_layout,
+    validate_mapping_layout,
 };
 use crate::core::reader::SlotReader;
 use crate::core::slot::PointSlot;
-use crate::core::slot_io::{SlotIo, SlotIoWrite, SlotRead};
+use crate::core::slot_io::{self, SlotIo, SlotIoWrite, SlotRead};
 use crate::{DataplaneError, DataplaneResult};
 
 #[cfg(unix)]
@@ -407,23 +407,7 @@ impl SlotWriter {
     #[inline]
     #[doc(hidden)]
     pub fn slot_at(&self, index: usize) -> &PointSlot {
-        assert!(
-            index < self.slot_count,
-            "slot_at: index {} out of bounds (slot_count={})",
-            index,
-            self.slot_count
-        );
-        // SAFETY: alignment chain — mmap base is page-aligned (≥4096),
-        // slot_offset() == size_of::<UnifiedHeader>() == 64 (asserted at
-        // const time in core::header), and 64 is divisible by 32. So the
-        // base pointer for the slot array is 32-byte aligned, matching
-        // PointSlot's `#[repr(C, align(32))]` requirement. `index` is
-        // bounds-checked above against `slot_count`, and the constructor
-        // verified the mmap covers at least `max_slots` slots.
-        unsafe {
-            let ptr = self.mmap.as_ptr().add(slot_offset()) as *const PointSlot;
-            &*ptr.add(index)
-        }
+        slot_io::slot_at(&self.mmap, self.slot_count, index)
     }
 
     #[inline]
@@ -622,15 +606,7 @@ impl SlotIo for SlotWriter {
     }
 
     fn read_slot(&self, index: usize) -> Option<SlotRead> {
-        if index >= self.slot_count {
-            return None;
-        }
-        let (value, raw, timestamp_ms) = self.slot_at(index).try_load_consistent()?;
-        Some(SlotRead {
-            value,
-            raw,
-            timestamp_ms,
-        })
+        slot_io::read_slot(&self.mmap, self.slot_count, index)
     }
 
     fn generation(&self) -> u64 {

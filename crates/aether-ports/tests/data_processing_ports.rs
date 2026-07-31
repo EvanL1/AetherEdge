@@ -188,7 +188,7 @@ fn sourced_segments_require_exact_role_aware_provenance() {
     for invalid in [
         Vec::new(),
         vec![
-            source.clone(),
+            source,
             SourceProvenance::new(
                 SegmentKind::History,
                 "load",

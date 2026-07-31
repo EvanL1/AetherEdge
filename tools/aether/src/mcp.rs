@@ -2135,7 +2135,7 @@ mod tests {
             assert!(!names.contains(&write_tool.to_string()), "{names:?}");
         }
         for unexposed_tool in UNEXPOSED_WRITE_TOOL_NAMES {
-            assert!(!names.contains(&unexposed_tool.to_string()), "{names:?}");
+            assert!(!names.contains(&(*unexposed_tool).to_string()), "{names:?}");
         }
         // Route-count safety net catches a future write tool landing in the
         // wrong impl block or a name collision overwriting a read-only route.
@@ -2157,7 +2157,7 @@ mod tests {
             assert!(names.contains(&write_tool.to_string()), "{names:?}");
         }
         for unexposed_tool in UNEXPOSED_WRITE_TOOL_NAMES {
-            assert!(!names.contains(&unexposed_tool.to_string()), "{names:?}");
+            assert!(!names.contains(&(*unexposed_tool).to_string()), "{names:?}");
         }
         // Read-only tools are still present too -- --allow-write ADDS, doesn't replace.
         assert!(names.contains(&"channels_list".to_string()), "{names:?}");
