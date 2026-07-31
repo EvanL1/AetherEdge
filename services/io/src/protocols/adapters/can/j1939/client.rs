@@ -21,8 +21,7 @@ use crate::protocols::core::metadata::{
 use crate::protocols::core::point::TransformConfig;
 use crate::protocols::core::traits::{
     AdjustmentCommand, CommunicationMode, ConnectionState, ControlCommand, DataEvent,
-    DataEventReceiver, DataEventSender, Diagnostics, EventDrivenProtocol, PollResult, Protocol,
-    ProtocolCapabilities, ProtocolClient, WriteResult, data_event_channel,
+    DataEventReceiver, DataEventSender, Diagnostics, PollResult, WriteResult, data_event_channel,
 };
 use crate::protocols::runtime::ChannelRuntime;
 
@@ -395,7 +394,7 @@ impl HasMetadata for J1939Client {
     }
 }
 
-impl ProtocolCapabilities for J1939Client {
+impl J1939Client {
     fn name(&self) -> &'static str {
         "J1939"
     }
@@ -414,108 +413,6 @@ impl ProtocolCapabilities for J1939Client {
 
     fn version(&self) -> &'static str {
         "SAE J1939-21"
-    }
-}
-
-impl Protocol for J1939Client {
-    fn connection_state(&self) -> ConnectionState {
-        ConnectionState::from(self.connection_state.load(Ordering::Acquire))
-    }
-
-    async fn diagnostics(&self) -> Result<Diagnostics> {
-        let (spn_count, pgn_count) = database_stats();
-
-        Ok(Diagnostics {
-            protocol: "J1939".to_string(),
-            connection_state: ConnectionState::from(self.connection_state.load(Ordering::Acquire)),
-            read_count: self.read_count.load(Ordering::Relaxed),
-            write_count: 0,
-            error_count: self.error_count.load(Ordering::Relaxed),
-            last_error: self.last_error.load().as_ref().map(|s| (**s).clone()),
-            extra: serde_json::json!({
-                "device": self.config.device,
-                "source_address": format!("0x{:02X}", self.config.source_address),
-                "spn_count": spn_count,
-                "pgn_count": pgn_count,
-            }),
-        })
-    }
-}
-
-impl ProtocolClient for J1939Client {
-    async fn connect(&mut self) -> Result<()> {
-        let state = ConnectionState::from(self.connection_state.load(Ordering::Acquire));
-        let has_transport = self.socket.is_some()
-            || self
-                .receive_handle
-                .as_ref()
-                .is_some_and(|handle| !handle.is_finished());
-        if state == ConnectionState::Connected && has_transport {
-            return Ok(());
-        }
-        if let Some(handle) = self.receive_handle.take() {
-            handle.abort();
-        }
-        self.socket = None;
-        self.connection_state
-            .store(ConnectionState::Connecting.into(), Ordering::Release);
-
-        let can_interface = self.config.device.clone();
-        let socket = CanSocket::open(&can_interface).map_err(|error| {
-            self.connection_state
-                .store(ConnectionState::Error.into(), Ordering::Release);
-            GatewayError::Connection(format!(
-                "Failed to open CAN interface {can_interface}: {error}"
-            ))
-        })?;
-        self.socket = Some(socket);
-        self.connection_state
-            .store(ConnectionState::Connected.into(), Ordering::Release);
-
-        // Notify the runtime without blocking the receive path.
-        let _ = self
-            .event_tx
-            .try_send(DataEvent::ConnectionChanged(ConnectionState::Connected));
-
-        Ok(())
-    }
-
-    async fn disconnect(&mut self) -> Result<()> {
-        if let Some(handle) = self.receive_handle.take() {
-            handle.abort();
-        }
-        self.socket = None;
-
-        self.connection_state
-            .store(ConnectionState::Disconnected.into(), Ordering::Release);
-
-        // Notify the runtime without blocking the receive path.
-        let _ = self
-            .event_tx
-            .try_send(DataEvent::ConnectionChanged(ConnectionState::Disconnected));
-
-        Ok(())
-    }
-
-    async fn write_control(&mut self, _commands: &[ControlCommand]) -> Result<WriteResult> {
-        // J1939 control requires proprietary PGN support
-        Err(GatewayError::Unsupported(
-            "J1939 control commands require proprietary PGN implementation".to_string(),
-        ))
-    }
-
-    async fn poll_once(&mut self) -> PollResult {
-        PollResult::success(DataBatch::new())
-    }
-
-    async fn write_adjustment(
-        &mut self,
-        _adjustments: &[AdjustmentCommand],
-    ) -> Result<WriteResult> {
-        // J1939 adjustment requires proprietary PGN support
-        Err(GatewayError::Unsupported(
-            "J1939 adjustment commands require proprietary PGN implementation".to_string(),
-        ))
     }
 }
 
@@ -555,36 +452,6 @@ impl ChannelRuntime for J1939Client {
 
     fn connection_state(&self) -> ConnectionState {
         Protocol::connection_state(self)
-    }
-}
-
-impl EventDrivenProtocol for J1939Client {
-    fn take_event_receiver(&mut self) -> Option<DataEventReceiver> {
-        self.event_rx.take()
-    }
-
-    async fn start(&mut self) -> Result<()> {
-        if self
-            .receive_handle
-            .as_ref()
-            .is_some_and(|handle| !handle.is_finished())
-        {
-            return Ok(());
-        }
-        if let Some(handle) = self.receive_handle.take() {
-            handle.abort();
-        }
-        let socket = self.socket.take().ok_or(GatewayError::NotConnected)?;
-        self.start_receive_task(socket);
-        Ok(())
-    }
-
-    async fn stop(&mut self) -> Result<()> {
-        // Stop the receive task
-        if let Some(handle) = self.receive_handle.take() {
-            handle.abort();
-        }
-        Ok(())
     }
 }
 

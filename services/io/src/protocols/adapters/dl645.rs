@@ -34,13 +34,10 @@ use crate::protocols::core::data::{DataBatch, DataPoint};
 use crate::protocols::core::diagnostics::AtomicDiagnostics;
 use crate::protocols::core::error::{GatewayError, Result};
 use crate::protocols::core::logging::{
-    ChannelLogConfig, ChannelLogHandler, ErrorContext, LogContext, LoggableProtocol,
+    ChannelLogConfig, ChannelLogHandler, ErrorContext, LogContext,
 };
 use crate::protocols::core::metadata::{DriverMetadata, HasMetadata};
-use crate::protocols::core::{
-    AdjustmentCommand, CommunicationMode, ConnectionState, ControlCommand, Diagnostics,
-    PointFailure, PollResult, Protocol, ProtocolCapabilities, ProtocolClient, WriteResult,
-};
+use crate::protocols::core::{ConnectionState, Diagnostics, PointFailure, PollResult};
 
 // ============================================================================
 // Constants
@@ -1254,54 +1251,8 @@ impl HasMetadata for Dl645Channel {
     }
 }
 
-impl ProtocolCapabilities for Dl645Channel {
-    fn name(&self) -> &'static str {
-        "dl645"
-    }
-
-    fn supported_modes(&self) -> &[CommunicationMode] {
-        &[CommunicationMode::Polling]
-    }
-
-    fn version(&self) -> &'static str {
-        "2007"
-    }
-}
-
-impl LoggableProtocol for Dl645Channel {
-    fn set_log_handler(&mut self, handler: Arc<dyn ChannelLogHandler>) {
-        self.log_context.set_handler(handler);
-    }
-
-    fn set_log_config(&mut self, config: ChannelLogConfig) {
-        self.log_context.set_config(config);
-    }
-
-    fn log_config(&self) -> &ChannelLogConfig {
-        self.log_context.config()
-    }
-}
-
-impl Protocol for Dl645Channel {
-    fn connection_state(&self) -> ConnectionState {
-        self.state
-    }
-
-    async fn diagnostics(&self) -> Result<Diagnostics> {
-        let snapshot = self.diagnostics.snapshot();
-        Ok(Diagnostics {
-            protocol: "dl645".to_string(),
-            connection_state: self.state,
-            read_count: snapshot.read_count,
-            write_count: snapshot.write_count,
-            error_count: snapshot.error_count,
-            last_error: None,
-            extra: serde_json::Value::Null,
-        })
-    }
-}
-
-impl ProtocolClient for Dl645Channel {
+#[async_trait]
+impl ChannelRuntime for Dl645Channel {
     async fn connect(&mut self) -> Result<()> {
         let start_time = std::time::Instant::now();
         let old_state = self.state;
@@ -1422,56 +1373,29 @@ impl ProtocolClient for Dl645Channel {
         }
     }
 
-    async fn write_control(&mut self, _commands: &[ControlCommand]) -> Result<WriteResult> {
-        // DL/T 645 is read-only for data collection
-        warn!("DL/T 645 protocol does not support control commands");
-        Ok(WriteResult {
-            success_count: 0,
-            failures: vec![(0, "Control commands not supported by DL/T 645".into())],
-        })
-    }
-
-    async fn write_adjustment(
-        &mut self,
-        _adjustments: &[AdjustmentCommand],
-    ) -> Result<WriteResult> {
-        // DL/T 645 is read-only for data collection
-        warn!("DL/T 645 protocol does not support adjustment commands");
-        Ok(WriteResult {
-            success_count: 0,
-            failures: vec![(0, "Adjustment commands not supported by DL/T 645".into())],
-        })
-    }
-}
-
-#[async_trait]
-impl ChannelRuntime for Dl645Channel {
-    async fn connect(&mut self) -> Result<()> {
-        <Self as ProtocolClient>::connect(self).await
-    }
-
-    async fn disconnect(&mut self) -> Result<()> {
-        <Self as ProtocolClient>::disconnect(self).await
-    }
-
-    async fn poll_once(&mut self) -> PollResult {
-        <Self as ProtocolClient>::poll_once(self).await
-    }
-
     async fn diagnostics(&self) -> Result<Diagnostics> {
-        <Self as Protocol>::diagnostics(self).await
+        let snapshot = self.diagnostics.snapshot();
+        Ok(Diagnostics {
+            protocol: "dl645".to_string(),
+            connection_state: self.state,
+            read_count: snapshot.read_count,
+            write_count: snapshot.write_count,
+            error_count: snapshot.error_count,
+            last_error: None,
+            extra: serde_json::Value::Null,
+        })
     }
 
     fn connection_state(&self) -> ConnectionState {
-        <Self as Protocol>::connection_state(self)
+        self.state
     }
 
     fn set_log_handler(&mut self, handler: Arc<dyn ChannelLogHandler>) {
-        <Self as LoggableProtocol>::set_log_handler(self, handler);
+        self.log_context.set_handler(handler);
     }
 
     fn set_log_config(&mut self, config: ChannelLogConfig) {
-        <Self as LoggableProtocol>::set_log_config(self, config);
+        self.log_context.set_config(config);
     }
 }
 
@@ -1501,10 +1425,7 @@ mod tests {
         };
         let channel = Dl645Channel::new(params.into_channel_config(), 645);
 
-        assert_eq!(
-            <Dl645Channel as Protocol>::connection_state(&channel),
-            ConnectionState::Disconnected
-        );
+        assert_eq!(channel.connection_state(), ConnectionState::Disconnected);
     }
 
     #[test]
