@@ -9,7 +9,7 @@
   "gate_evidence": {
     "shared-broker-authentication": {
       "status": "proposal",
-      "evidence": ["session-authentication.schema.json", "ADR-0017"]
+      "evidence": ["session-authentication.schema.json"]
     },
     "single-wire-contract": {
       "status": "implemented-alpha3",

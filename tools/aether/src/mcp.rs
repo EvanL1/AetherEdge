@@ -104,8 +104,8 @@ pub(crate) struct BaseUrls {
 
 impl BaseUrls {
     /// Derives every domain base from the single API gateway base URL.
-    /// The gateway proxies each capability domain under `/api/v1/{domain}`
-    /// (ADR-0021); internal service ports are never addressed directly.
+    /// The gateway proxies each capability domain under `/api/v1/{domain}`;
+    /// internal service ports are never addressed directly.
     pub(crate) fn from_api_base(api_base: &str) -> Self {
         let api = api_base.trim_end_matches('/');
         Self {

@@ -167,7 +167,7 @@ and explicit confirmation. Rejected, attempted, succeeded, and failed outcomes
 are written to `command_audit_events` in automation's local SQLite database.
 If the mandatory pre-dispatch audit cannot be stored, the command is not sent.
 Redis and PostgreSQL are not involved. See
-[ADR-0008](../../../docs/adr/0008-application-control-boundary.md) for the trust boundary.
+`ai/safety-policy.yaml` for the trust boundary.
 
 ## Reading state correctly
 

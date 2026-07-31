@@ -38,9 +38,7 @@ generated application as an untrusted client of the application boundary.
 - For SDK embedding, read `crates/aether-sdk.md`, the minimal gateway example, and the local
   `AGENTS.md` files governing the target directory.
 - For CloudLink or MQTT uplink work, read
-  `docs/adr/0017-experimental-cloudlink-mqtt-edge-foundation.md`,
-  `docs/adr/0018-pinned-aethercontracts-consumption.md`,
-  `docs/reference/cloudlink-mqtt-v1.md`, and `contracts/cloudlink/README.md`.
+  `docs/reference/cloudlink-mqtt-v1.md` and `contracts/cloudlink/README.md`.
   Treat the digest-pinned AetherContracts release as shared authority and the
   current product subset as distribution-only. Alpha.3 has 53 exact imports,
   no pending imports, and 25 fixture outcomes in both codecs; never equate MQTT

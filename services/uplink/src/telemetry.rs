@@ -1,7 +1,7 @@
 //! Ops-telemetry egress for the channel-connectivity dataset.
 //!
 //! The channel-health SHM segment is the only one of the four runtime datasets
-//! with no way off the gateway (ADR-0016). This module gives it one: it samples
+//! with no way off the gateway. This module gives it one: it samples
 //! the health plane that uplink already reads, encodes it in a JSON shape that
 //! mirrors the OpenTelemetry metrics model, and hands it to the durable outbox.
 //!
@@ -63,7 +63,7 @@ pub struct Metric {
 }
 
 /// Only gauges exist today. Cumulative sums arrive with the acquisition
-/// counters (ADR-0016) and carry a process start time for reset detection;
+/// counters and carry a process start time for reset detection;
 /// adding that variant is a backward-compatible addition to this enum.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]

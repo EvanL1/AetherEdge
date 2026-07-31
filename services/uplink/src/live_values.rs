@@ -123,7 +123,7 @@ impl UplinkTopologyGeneration {
     /// Reads channel connectivity from the health plane pinned to this generation.
     ///
     /// `None` means unconfigured or never observed — deliberately not the same
-    /// claim as offline (ADR-0016).
+    /// claim as offline.
     pub fn channel_health(&self, channel_id: u32) -> PortResult<Option<ChannelHealthObservation>> {
         self.read.channel_health().read_channel(channel_id)
     }

@@ -568,7 +568,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   # ============================================================================
-  # Job 5: Publish the ADR-0022 registry release set to crates.io
+  # Job 5: Publish the registry release set to crates.io
   # ============================================================================
   crates-io:
     name: Publish crates.io
@@ -601,7 +601,7 @@ jobs:
           fi
 
       # Cargo orders the publishable members by their normal dependency edges.
-      # Local dev-dependencies are declared path-only under ADR-0022 clause 4,
+      # Local dev-dependencies are declared path-only,
       # so they neither reach the registry nor constrain that order.
       - name: Publish the registry release set
         env:

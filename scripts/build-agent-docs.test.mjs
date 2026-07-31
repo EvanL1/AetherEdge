@@ -46,9 +46,6 @@ describe('Edge agent document metadata', () => {
     expect(classifyDocument('docs/recovery/configuration-rollback.md').section).toBe('recovery');
     expect(classifyDocument('docs/reference/cli.md').section).toBe('reference');
     expect(classifyDocument('docs/compatibility/version-matrix.md').section).toBe('status');
-    expect(classifyDocument('docs/adr/0012-agent-first-application-surface.md').section).toBe(
-      'optional'
-    );
     expect(classifyDocument('crates/aether-cloudlink/README.md').section).toBe('optional');
   });
 
@@ -106,11 +103,6 @@ describe('Edge agent document metadata', () => {
     expect(canonicalUrlFor('crates/aether-cloudlink/README.md', { published: true })).toBe(
       'https://docs.aetheriot.dev/crates/aether-cloudlink.md'
     );
-    expect(
-      canonicalUrlFor('docs/adr/0001-ai-native-edge-kernel.md', { published: true })
-    ).toBe(
-      'https://github.com/EvanL1/AetherEdge/blob/main/docs/adr/0001-ai-native-edge-kernel.md'
-    );
     expect(canonicalUrlFor('AGENTS.md', { published: true })).toBe(
       'https://github.com/EvanL1/AetherEdge/blob/main/AGENTS.md'
     );
@@ -151,8 +143,8 @@ describe('Edge llms.txt generation', () => {
           published: true,
         }),
         buildDocumentRecord({
-          path: 'docs/adr/0012-agent-first-application-surface.md',
-          content: '# Agent-first application surface\n\nRecord the application boundary.\n',
+          path: 'crates/aether-cloudlink/README.md',
+          content: '# aether-cloudlink\n\nCloudLink protocol semantics.\n',
           updated: '2026-07-18',
         }),
       ],

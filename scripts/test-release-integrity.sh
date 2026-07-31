@@ -266,7 +266,7 @@ assert_file_not_contains "$RELEASE_WORKFLOW" '--list | grep'
 assert_file_not_contains "$RELEASE_WORKFLOW" '| grep -Fxq'
 
 echo "Testing the registry release rides alongside the source release..."
-# ADR-0022 replaced the blanket ban on publishing with a single ordered
+# The blanket ban on publishing was replaced with a single ordered
 # workspace publish. A hand-rolled per-crate loop would reintroduce the
 # ordering bug the workspace publish exists to avoid.
 assert_file_not_contains "$RELEASE_WORKFLOW" 'publish-crates'
@@ -297,7 +297,7 @@ assert_file_contains "$RELEASE_WORKFLOW" 'id-token: write'
 assert_file_contains "$RELEASE_WORKFLOW" 'subject-path: release/${{ steps.version.outputs.artifact_name }}'
 assert_file_contains "$RELEASE_WORKFLOW" 'subject-path: release/aether-linux-${{ matrix.zig_arch }}.tar.gz'
 
-echo "Testing the ADR-0022 registry release set is publishable..."
+echo "Testing the registry release set is publishable..."
 registry_manifests=(
     crates/aether-application/Cargo.toml
     crates/aether-cloudlink/Cargo.toml

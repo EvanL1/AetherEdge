@@ -10,7 +10,7 @@ PCS register mapping and SOC control rule belong to an energy Pack.
 
 Official distributions may package one or more packs over a compatible Aether
 release. AetherEMS is the reference energy distribution; see
-[ADR-0007](../docs/adr/0007-aether-core-and-ems-distribution.md).
+the Pack manifests.
 
 Pack v1 manifests are loaded by the industry-neutral `aether-pack` crate and
 the `aether_sdk::pack` facade. The machine-readable contract is
@@ -70,5 +70,5 @@ gh attestation verify aetherems-energy-pack-<target>-<version>.tar.gz \
 ```
 
 This documents the downstream release contract, not proof that a particular
-AetherEMS tag has been published. ADR-0007 requires real release digests and
+AetherEMS tag has been published. Real release digests are required and
 successful downstream CI evidence before extraction.

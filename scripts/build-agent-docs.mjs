@@ -49,7 +49,6 @@ const allowedDocumentRoles = new Set([
   'safety',
   'recovery',
   'reference',
-  'decision',
   'status',
 ]);
 const allowedAgentProfiles = new Set(['coding-agent', 'operator-agent', 'runtime-agent']);
@@ -105,11 +104,6 @@ const englishMetadataOverrides = {
     title: 'Repository documentation map',
     description:
       'Navigation for repository documentation, current authority records, compatibility notes, and historical material.',
-  },
-  'docs/adr/0020-home-assistant-edge-bridge.md': {
-    title: 'ADR-0020: Integrate Home Assistant through an Edge bridge',
-    description:
-      'Accepted staged decision for delegated topology, observations, governed actions, resynchronization, backpressure, and authority.',
   },
   'docs/architecture/openclaw-comparison.md': {
     title: 'Historical AetherEMS and OpenClaw comparison',
@@ -439,7 +433,6 @@ function isOptionalPath(relativePath) {
     relativePath.startsWith('libs/') ||
     /^services\/[^/]+\/adapters\//.test(relativePath) ||
     relativePath.startsWith('contracts/') ||
-    relativePath.startsWith('docs/adr/') ||
     relativePath.startsWith('docs/domain/') ||
     relativePath === 'docs/operations-log.md'
   );
@@ -452,7 +445,7 @@ export function classifyDocument(relativePath) {
   if (optional) {
     return {
       section: 'optional',
-      documentRole: lower.startsWith('docs/adr/') ? 'decision' : 'reference',
+      documentRole: 'reference',
       intent: 'inspect-edge-implementation',
     };
   }
@@ -540,7 +533,6 @@ function implementationStatusFor(relativePath, classification) {
 
 function productionReadinessFor(classification, implementationStatus) {
   if (
-    classification.documentRole === 'decision' ||
     classification.documentRole === 'reference' ||
     classification.documentRole === 'status' ||
     classification.documentRole === 'safety'
@@ -555,8 +547,7 @@ function contextSensitivityFor(relativePath) {
   if (
     relativePath === 'AGENTS.md' ||
     relativePath.startsWith('ai/') ||
-    relativePath.startsWith('skills/') ||
-    relativePath.startsWith('docs/adr/')
+    relativePath.startsWith('skills/')
   ) {
     return 'internal';
   }

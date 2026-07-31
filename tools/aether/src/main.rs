@@ -289,8 +289,8 @@ enum Commands {
 }
 
 /// Resolve the API gateway base URL: `--host` wins, then `AETHER_API_URL`,
-/// then loopback. The gateway is the only remote application boundary
-/// (ADR-0021); the CLI data plane never addresses internal service ports.
+/// then loopback. The gateway is the only remote application boundary; the
+/// CLI data plane never addresses internal service ports.
 pub(crate) fn api_base_url(host: Option<&str>) -> String {
     if let Some(h) = host {
         return format!("http://{h}:{}", common::service_ports::API_PORT);
@@ -459,7 +459,7 @@ async fn run(cli: Cli) -> Result<()> {
             export_command(output, detailed, &config_path, &db_path, json).await?;
         },
 
-        // Service management commands (all use the API gateway, ADR-0021)
+        // Service management commands (all use the API gateway)
         Commands::Channels { command } => {
             let urls = mcp::BaseUrls::from_api_base(&api_base_url(host));
             channels::handle_command(command, &urls.io, json).await?;

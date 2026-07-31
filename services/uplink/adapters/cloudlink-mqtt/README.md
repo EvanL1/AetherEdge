@@ -25,7 +25,7 @@ provides physical control.
 
 This package is private implementation below `services/uplink`; it is not a
 kernel extension or an IO dependency. Production session composition remains
-gated by ADR-0017.
+gated as experimental.
 
 Default tests need no broker. See `docs/reference/cloudlink-mqtt-v1.md` for the
 opt-in shared-broker harness and environment variables.

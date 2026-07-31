@@ -18,7 +18,7 @@ By participating in this project, you agree to follow the
   [SECURITY.md](SECURITY.md) instead.
 - For a large change, open an issue before implementation so its boundaries
   can be reviewed. Changes to dependency direction, live-state authority,
-  process isolation, or AI command safety require an ADR under `docs/adr/`.
+  process isolation, or AI command safety must update `AGENTS.md`.
 
 ## Architecture contract
 
@@ -45,7 +45,7 @@ domain <- ports <- application <- services/interfaces
   genuinely industry-neutral.
 
 The complete rules are in [AGENTS.md](AGENTS.md),
-[ARCHITECTURE.md](ARCHITECTURE.md), and the accepted ADRs in `docs/adr/`.
+and [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ## Development workflow
 
