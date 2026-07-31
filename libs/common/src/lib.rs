@@ -5,9 +5,8 @@
 //! - logging functions
 //! - service configuration types
 
-// Re-export from aether-infra for backward compatibility
 #[cfg(feature = "sqlite")]
-pub use aether_infra::sqlite;
+pub mod sqlite;
 
 pub mod service_config;
 pub mod service_ports;

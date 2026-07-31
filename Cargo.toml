@@ -48,7 +48,6 @@ members = [
     "libs/aether-config",
     "libs/aether-core",
     # libs/aether-comlink removed - types moved to io
-    "libs/aether-infra",
     # libs/aether-protocols removed - protocols are now in io
     "libs/aether-routing",
     "libs/aether-runtime-catalog",

@@ -1,3 +1,9 @@
+//! Per-service configuration stored in the local SQLite database.
+//!
+//! Reads the service's port and any extra keys the composition root wrote, so
+//! a service does not need a YAML file beside its binary. Live point state
+//! never comes from here — SHM remains the authority for that.
+
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use sqlx::{Row, SqlitePool};
