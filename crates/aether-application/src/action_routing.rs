@@ -194,6 +194,18 @@ impl ActionRoutingApplication {
     }
 }
 
+/// Carries an action-routing mutation that either arrived with a
+/// caller-supplied revision or came through the revisionless compatibility
+/// surface.
+///
+/// # Removal criteria
+///
+/// Same staged migration as [`PendingRuleMutation`]: `Legacy` backs the
+/// published `AutomationActionRoutingMutator::mutate`, no first-party route
+/// constructs it, and the adapter upgrades such a call to the CAS path by
+/// reading the current head. Remove this variant,
+/// `ActionRoutingApplication::mutate`, and the port's `mutate` method
+/// together with the rule-side shim, under the same three conditions.
 enum PendingActionRoutingMutation {
     Legacy(ActionRoutingMutation),
     Revisioned(RevisionedActionRoutingMutation),

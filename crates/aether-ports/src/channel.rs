@@ -434,6 +434,13 @@ impl ChannelMutation {
     /// referencing boundary. Implementations must serialize revisionless
     /// mutations by channel identity; they must not perform a blind concurrent
     /// overwrite.
+    ///
+    /// Removal criteria: this is the HTTP/application compatibility exception
+    /// for channels. The first-party Rust CLI and MCP catalog already require
+    /// explicit revisions and cannot reach it. New online configuration
+    /// aggregates must expose typed revisions and CAS through the application
+    /// boundary instead of adding direct handler writes; this constructor and
+    /// its delete/enable siblings go away once no client omits the revision.
     #[must_use]
     pub const fn update(channel_id: ChannelId, patch: ChannelPatch) -> Self {
         Self::Update {

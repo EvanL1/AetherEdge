@@ -185,6 +185,28 @@ impl RuleMutationApplication {
     }
 }
 
+/// Carries a rule mutation that either arrived with a caller-supplied
+/// revision or came through the revisionless compatibility surface.
+///
+/// # Removal criteria
+///
+/// `Legacy` exists only for the published `AutomationRuleMutator::mutate`
+/// entry point, which third-party implementations may still call. No
+/// first-party route constructs it: `rule_routes` submits
+/// `RevisionedRuleMutation`, and the SQLite adapter services an old `mutate`
+/// by reading the current head and submitting the same CAS path. That
+/// prevents two simultaneous commits from sharing a head, but cannot detect
+/// an edit made since the caller's earlier read, so it is not strict
+/// optimistic concurrency.
+///
+/// Drop this variant, `RuleMutationApplication::mutate`, and the
+/// `AutomationRuleMutator::mutate` port method together, once:
+///
+/// 1. every browser client sends the revision exposed by rule `GET` ETags;
+/// 2. distribution telemetry reports no use of the revisionless shim for one
+///    stability window (the shim warns on every call in `rule_routes`); and
+/// 3. the compatibility contract tests are replaced by mandatory-revision
+///    tests.
 enum PendingRuleMutation {
     Legacy(RuleMutation),
     Revisioned(RevisionedRuleMutation),

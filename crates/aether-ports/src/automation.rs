@@ -550,6 +550,18 @@ impl RuleRuntimeStatus {
 #[async_trait]
 pub trait AutomationRuleMutator: Send + Sync + 'static {
     /// Applies one mutation and refreshes the active scheduler view.
+    ///
+    /// This is the revisionless compatibility entry point. Implementations
+    /// must not perform a blind overwrite: service such a call by reading the
+    /// current head and submitting the same compare-and-set path used by
+    /// [`mutate_revisioned`](Self::mutate_revisioned). That prevents two
+    /// simultaneous commits from sharing a head, but cannot detect an edit
+    /// made since the caller's earlier read.
+    ///
+    /// Removal criteria: drop this method once every client sends the
+    /// revision exposed by rule `GET` ETags, telemetry reports no use of the
+    /// revisionless shim for one stability window, and the compatibility
+    /// contract tests are replaced by mandatory-revision tests.
     async fn mutate(&self, mutation: RuleMutation) -> PortResult<RuleMutationReceipt>;
 
     /// Applies one revision-fenced mutation.
@@ -1606,6 +1618,11 @@ impl ActionRoutingMutationReceipt {
 #[async_trait]
 pub trait AutomationActionRoutingMutator: Send + Sync + 'static {
     /// Applies one typed action-routing mutation.
+    ///
+    /// Revisionless compatibility entry point with the same contract and the
+    /// same removal criteria as
+    /// [`AutomationRuleMutator::mutate`]: read the current head and submit
+    /// the compare-and-set path rather than overwriting blindly.
     async fn mutate(
         &self,
         mutation: ActionRoutingMutation,
