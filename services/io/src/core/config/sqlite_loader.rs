@@ -1210,7 +1210,7 @@ mod tests {
 
         // Create an empty, complete IO schema.
         let pool = SqlitePool::connect(&db_url).await.unwrap();
-        common::test_utils::schema::init_io_schema(&pool).await.unwrap();
+        common::schema::init_io_schema(&pool).await.unwrap();
 
         sqlx::query(
             "INSERT INTO service_config (service_name, key, value) VALUES

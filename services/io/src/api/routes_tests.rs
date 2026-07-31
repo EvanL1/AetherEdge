@@ -33,7 +33,7 @@ async fn create_test_sqlite_pool() -> sqlx::SqlitePool {
         .unwrap();
 
     // Use standard io schema from common test utils
-    common::test_utils::schema::init_io_schema(&pool).await.unwrap();
+    common::schema::init_io_schema(&pool).await.unwrap();
 
     pool
 }
@@ -47,7 +47,7 @@ async fn create_test_sqlite_pool_with_points() -> sqlx::SqlitePool {
         .unwrap();
 
     // Use standard io schema from common test utils
-    common::test_utils::schema::init_io_schema(&pool).await.unwrap();
+    common::schema::init_io_schema(&pool).await.unwrap();
 
     pool
 }
@@ -66,7 +66,7 @@ async fn create_test_api_with_pool(
     // Channel deletion owns cross-service routing rows in the unified
     // edge database. Mirror the complete production topology so HTTP tests do
     // not exercise the governed adapter against a partial schema.
-    common::test_utils::schema::init_automation_schema(&sqlite_pool)
+    common::schema::init_automation_schema(&sqlite_pool)
         .await
         .unwrap();
     let adapter = Arc::new(crate::SqliteChannelMutator::new(
@@ -702,7 +702,7 @@ async fn test_get_all_channels_with_filters() {
         .unwrap();
 
     // Use standard io schema from common test utils
-    common::test_utils::schema::init_io_schema(&pool).await.unwrap();
+    common::schema::init_io_schema(&pool).await.unwrap();
     sqlx::query("INSERT INTO channels (channel_id, name, protocol, enabled, config) VALUES (100, 'Ch100', 'modbus_tcp', 1, '{}')")
         .execute(&pool)
         .await
@@ -871,7 +871,7 @@ async fn test_update_channel_returns_description() {
         .unwrap();
 
     // Use standard io schema from common test utils
-    common::test_utils::schema::init_io_schema(&pool).await.unwrap();
+    common::schema::init_io_schema(&pool).await.unwrap();
 
     let config = serde_json::json!({
         "description": "old-desc",
@@ -927,7 +927,7 @@ async fn test_enable_disable_preserves_description() {
         .unwrap();
 
     // Use standard io schema from common test utils
-    common::test_utils::schema::init_io_schema(&pool).await.unwrap();
+    common::schema::init_io_schema(&pool).await.unwrap();
     let config = serde_json::json!({
         "description": "keep-me",
         "parameters": {"host": "127.0.0.1", "port": 502}
@@ -1112,7 +1112,7 @@ async fn test_channel_detail_returns_description() {
         .unwrap();
 
     // Use standard io schema from common test utils
-    common::test_utils::schema::init_io_schema(&pool).await.unwrap();
+    common::schema::init_io_schema(&pool).await.unwrap();
 
     let config = serde_json::json!({"description": "detail-desc", "host": "127.0.0.1"}).to_string();
     sqlx::query("INSERT INTO channels (channel_id, name, protocol, enabled, config) VALUES (500, 'Ch500', 'modbus_tcp', 1, ?)")
@@ -1207,7 +1207,7 @@ async fn test_delete_channel_ok() {
         .unwrap();
 
     // Use standard io schema from common test utils
-    common::test_utils::schema::init_io_schema(&pool).await.unwrap();
+    common::schema::init_io_schema(&pool).await.unwrap();
     sqlx::query("INSERT INTO channels (channel_id, name, protocol, enabled, config) VALUES (600, 'Ch600', 'modbus_tcp', 0, '{}')")
         .execute(&pool)
         .await
@@ -1489,7 +1489,7 @@ async fn test_reload_compatibility_reconciles_disabled_channel_without_runtime()
         .unwrap();
 
     // Use standard io schema from common test utils
-    common::test_utils::schema::init_io_schema(&pool).await.unwrap();
+    common::schema::init_io_schema(&pool).await.unwrap();
     sqlx::query("INSERT INTO channels (channel_id, name, protocol, enabled, config) VALUES (9009, 'Ch9009', 'modbus_tcp', 0, '{\"description\": \"d\"}')")
         .execute(&pool)
         .await

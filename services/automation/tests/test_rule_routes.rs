@@ -92,7 +92,7 @@ async fn create_test_database() -> Result<sqlx::SqlitePool> {
     )
     .execute(&pool)
     .await?;
-    common::test_utils::schema::initialize_configuration_revisions(&pool).await?;
+    common::schema::initialize_configuration_revisions(&pool).await?;
 
     Ok(pool)
 }

@@ -84,33 +84,18 @@ pub use api_types::{
 #[cfg(feature = "axum")]
 pub use api_types::{AppError, status_for_error_category};
 
-// Startup dependency checker
-#[cfg(feature = "dependency")]
-pub mod dependency;
-
 // Bootstrap modules
 pub mod bootstrap_args;
 pub mod bootstrap_database;
 pub mod bootstrap_system;
 
-// Test utilities (for use in test code only)
-pub mod test_utils;
+// Canonical SQLite schema (DDL constants, triggers and bootstrap helpers).
+// Production startup paths depend on this; it is not test-only.
+#[cfg(feature = "sqlite")]
+pub mod schema;
 
 // Re-export common dependencies
 pub use anyhow;
 pub use serde;
 pub use serde_json;
 pub use tokio;
-
-// Re-export CLI dependencies when cli feature is enabled
-#[cfg(feature = "cli")]
-pub use clap;
-
-// Re-export clap derive macros separately for proper macro resolution
-#[cfg(feature = "cli")]
-pub use clap::{Args, Parser, Subcommand, ValueEnum};
-
-#[cfg(feature = "cli")]
-pub use reqwest;
-
-// Pre-import common types

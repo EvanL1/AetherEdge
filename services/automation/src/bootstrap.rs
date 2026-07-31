@@ -362,7 +362,7 @@ pub async fn load_products(
     )
     .execute(sqlite_pool)
     .await?;
-    common::test_utils::schema::initialize_configuration_revisions(sqlite_pool).await?;
+    common::schema::initialize_configuration_revisions(sqlite_pool).await?;
     crate::instance_configuration::initialize_instance_configuration_revision(sqlite_pool).await?;
 
     info!(

@@ -37,7 +37,7 @@ async fn create_test_database() -> Result<sqlx::SqlitePool> {
         .max_connections(1)
         .connect("sqlite::memory:")
         .await?;
-    common::test_utils::schema::init_io_schema(&pool).await?;
+    common::schema::init_io_schema(&pool).await?;
     sqlx::query(
         "INSERT INTO channels (channel_id, name, protocol, enabled, config) \
          VALUES (1001, 'Test Channel', 'modbus_tcp', 0, '{}')",

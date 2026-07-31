@@ -177,7 +177,7 @@ pub const CHANNELS_TABLE: &str = ChannelRecord::CREATE_TABLE_SQL;
 ///
 /// The generated table DDL cannot carry sibling trigger statements, so schema
 /// setup paths must install these immediately after creating the table.
-pub use common::test_utils::schema::{
+pub use common::schema::{
     CHANNEL_REVISION_BUMP_TRIGGER, CHANNEL_REVISION_EXHAUSTED_TRIGGER,
     install_channel_revision_triggers,
 };

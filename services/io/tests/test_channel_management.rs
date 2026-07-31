@@ -38,8 +38,8 @@ async fn create_test_database() -> Result<sqlx::SqlitePool> {
         .max_connections(1)
         .connect("sqlite::memory:")
         .await?;
-    common::test_utils::schema::init_io_schema(&pool).await?;
-    common::test_utils::schema::init_automation_schema(&pool).await?;
+    common::schema::init_io_schema(&pool).await?;
+    common::schema::init_automation_schema(&pool).await?;
     sqlx::query(
         "CREATE TABLE IF NOT EXISTS json_point_mappings (\
              id INTEGER PRIMARY KEY AUTOINCREMENT,\

@@ -1,21 +1,19 @@
-//! Test database schema utilities
+//! Canonical SQLite schema for AetherEdge.
 //!
-//! Provides helper functions to initialize test databases with standard schemas.
-//! This eliminates the need for duplicate CREATE TABLE statements across test files.
+//! Owns the DDL constants, revision/integrity triggers and bootstrap helpers
+//! that define the on-disk schema. This is the single source of truth: service
+//! startup paths, `aether-config` re-exports and the `aether` CLI all read
+//! these definitions, and tests use the same `init_*_schema` helpers so that
+//! fixtures cannot drift from production DDL.
 //!
 //! # Usage
 //!
 //! ```rust,ignore
-//! use common::test_utils::schema;
+//! use common::schema;
 //! use sqlx::SqlitePool;
 //!
-//! #[tokio::test]
-//! async fn test_something() {
-//!     let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
-//!     schema::init_io_schema(&pool).await.unwrap();
-//!
-//!     // Now use the pool with standard io tables
-//! }
+//! let pool = SqlitePool::connect("sqlite::memory:").await?;
+//! schema::init_io_schema(&pool).await?;
 //! ```
 
 use anyhow::Result;

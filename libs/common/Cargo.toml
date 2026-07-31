@@ -8,8 +8,6 @@ license.workspace = true
 [features]
 default = ["sqlite", "axum", "openapi"]
 sqlite = ["aether-infra/sqlite", "dep:sqlx"]
-cli = ["dep:clap", "dep:reqwest"]
-dependency = ["dep:reqwest"]
 axum = ["dep:axum"]
 openapi = ["dep:utoipa"]
 schema = ["dep:schemars", "aether-core/schema"]
@@ -40,11 +38,7 @@ axum = { workspace = true, optional = true }
 utoipa = { workspace = true, optional = true }
 sysinfo = "0.32"
 
-# CLI dependencies  
-clap = { workspace = true, features = ["derive", "env", "cargo"], optional = true }
-reqwest = { workspace = true, features = ["json"], optional = true }
-
-# SQLite - kept for direct usage in test_utils and service_config
+# SQLite - kept for direct usage in schema and service_config
 sqlx = { workspace = true, optional = true }
 
 # Schema generation

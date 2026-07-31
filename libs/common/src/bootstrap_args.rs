@@ -2,46 +2,31 @@
 //!
 //! Provides a unified argument structure that can be extended by individual services
 
-#[cfg(feature = "cli")]
-use clap::Parser;
-
 /// Common service startup arguments
 ///
 /// These arguments are shared by all AetherEdge services and provide
 /// standard configuration options for logging, debugging, and validation.
 #[derive(Debug, Clone)]
-#[cfg_attr(feature = "cli", derive(Parser))]
-#[cfg_attr(feature = "cli", clap(author, version, about))]
 pub struct ServiceArgs {
     /// Log level (trace, debug, info, warn, error)
-    #[cfg_attr(
-        feature = "cli",
-        clap(short = 'l', long, default_value = "info", env = "RUST_LOG")
-    )]
     pub log_level: String,
 
     /// Optional bind address override (e.g., 127.0.0.1:6001)
-    #[cfg_attr(feature = "cli", clap(short = 'b', long, env = "BIND_ADDRESS"))]
     pub bind_address: Option<String>,
 
     /// Enable debug mode with verbose output
-    #[cfg_attr(feature = "cli", clap(long, env = "DEBUG"))]
     pub debug: bool,
 
     /// Disable colored output (useful for log files)
-    #[cfg_attr(feature = "cli", clap(long))]
     pub no_color: bool,
 
     /// Only validate configuration without starting service
-    #[cfg_attr(feature = "cli", clap(long))]
     pub validate: bool,
 
     /// Watch configuration for changes and reload automatically
-    #[cfg_attr(feature = "cli", clap(long))]
     pub watch: bool,
 
     /// Custom database path override
-    #[cfg_attr(feature = "cli", clap(long, env = "DB_PATH"))]
     pub db_path: Option<String>,
 }
 

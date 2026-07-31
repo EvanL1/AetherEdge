@@ -55,10 +55,10 @@ async fn application(
         .connect("sqlite::memory:")
         .await
         .expect("open automation database");
-    common::test_utils::schema::init_automation_schema(&pool)
+    common::schema::init_automation_schema(&pool)
         .await
         .expect("automation schema");
-    common::test_utils::schema::init_io_schema(&pool)
+    common::schema::init_io_schema(&pool)
         .await
         .expect("IO schema");
     sqlx::query(

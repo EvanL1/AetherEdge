@@ -9,7 +9,7 @@ use std::path::Path;
 use tracing::{info, warn};
 
 // Import DDL constants from common (shared schema definitions)
-use common::test_utils::schema::{
+use common::schema::{
     ACTION_ROUTING_TABLE, ADJUSTMENT_POINTS_TABLE, CHANNEL_REVISION_BUMP_TRIGGER,
     CHANNEL_REVISION_DELETE_EXHAUSTED_TRIGGER, CHANNEL_REVISION_DELETE_TOMBSTONE_TRIGGER,
     CHANNEL_REVISION_EXHAUSTED_TRIGGER, CHANNEL_REVISION_INSERT_ADVANCE_TRIGGER,
@@ -26,7 +26,7 @@ use super::file_utils;
 // Rules DDL (defined locally since rules are managed by aether)
 // ============================================================================
 
-/// Rules table SQL — mirrors `libs/common::test_utils::schema::RULE_CHAINS_TABLE`.
+/// Rules table SQL — mirrors `libs/common::schema::RULE_CHAINS_TABLE`.
 ///
 /// `id` uses AUTOINCREMENT so deleted rowids are never reused, which prevents
 /// `rule_history` rows from silently being re-bound to a new rule with the

@@ -16,10 +16,10 @@ async fn configured_pool() -> SqlitePool {
     let pool = SqlitePool::connect("sqlite::memory:")
         .await
         .expect("in-memory SQLite");
-    common::test_utils::schema::init_io_schema(&pool)
+    common::schema::init_io_schema(&pool)
         .await
         .expect("I/O schema");
-    common::test_utils::schema::init_automation_schema(&pool)
+    common::schema::init_automation_schema(&pool)
         .await
         .expect("logical routing schema");
     sqlx::query(
