@@ -7,11 +7,10 @@ use aether_ports::{
     AuditOutcome, AuditRecord, AuditSink, ChannelMutation, ChannelMutator, ChannelParameterValue,
     ChannelParameters, ChannelPatch,
 };
-use sha2::{Digest, Sha256};
 
 use crate::{
     ApplicationError, ChannelMutationAcceptance, MANAGE_CHANNEL_CAPABILITY, RequestContext,
-    SafetyPolicy,
+    SafetyPolicy, context::digest,
 };
 
 /// Channel-management facade shared by every application transport.
@@ -226,10 +225,6 @@ fn patch_audit_detail(patch: &ChannelPatch) -> String {
     } else {
         format!("{changed_fields}; {}", values.join("; "))
     }
-}
-
-fn digest(value: &str) -> String {
-    format!("{:x}", Sha256::digest(value.as_bytes()))
 }
 
 fn validate_mutation(mutation: &ChannelMutation) -> Result<(), ApplicationError> {

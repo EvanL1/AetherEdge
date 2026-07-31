@@ -3,11 +3,10 @@
 use std::sync::Arc;
 
 use aether_ports::{AlarmRuleMutation, AlarmRuleMutator, AuditOutcome, AuditRecord, AuditSink};
-use sha2::{Digest, Sha256};
 
 use crate::{
     AlarmRuleMutationAcceptance, ApplicationError, MANAGE_ALARM_RULE_CAPABILITY, RequestContext,
-    SafetyPolicy,
+    SafetyPolicy, context::digest,
 };
 
 /// Alarm rule facade shared by HTTP, CLI, MCP, and embedded transports.
@@ -193,8 +192,4 @@ fn mutation_audit_detail(mutation: &AlarmRuleMutation) -> String {
         AlarmRuleMutation::SetEnabled { enabled, .. } => format!("enabled={enabled}"),
         AlarmRuleMutation::Delete { .. } => "delete=true".to_string(),
     }
-}
-
-fn digest(value: &str) -> String {
-    format!("{:x}", Sha256::digest(value.as_bytes()))
 }

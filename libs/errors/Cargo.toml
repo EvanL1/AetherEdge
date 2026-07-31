@@ -11,8 +11,7 @@ description = "Unified error handling for AetherEdge services"
 thiserror = { workspace = true }
 anyhow = { workspace = true }
 
-# Serialization (for ErrorInfo)
-serde = { workspace = true }
+# Serialization (for From implementations)
 serde_json = { workspace = true }
 serde_yml = { workspace = true }
 
@@ -21,16 +20,6 @@ sqlx = { workspace = true }
 
 # HTTP client (for From implementations)
 reqwest = { workspace = true }
-
-# Logging
-tracing = { workspace = true }
-
-# Schema generation (optional)
-schemars = { version = "0.8", optional = true }
-
-[features]
-default = []
-schema = ["schemars"]
 
 [lints]
 workspace = true

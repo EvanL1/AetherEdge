@@ -247,16 +247,15 @@ fn extract_period_delta_rule_node(data: Option<&Value>) -> Result<RuleNode> {
     })
 }
 
-/// Extract a single RuleVariable from JSON value
-fn extract_single_rule_variable(value: Option<&Value>, field_name: &str) -> Result<RuleVariable> {
-    let var = value.ok_or_else(|| {
-        RuleError::ParseError(format!("PeriodDelta node missing '{}'", field_name))
-    })?;
-
+/// Build a RuleVariable from a JSON object
+///
+/// `missing_name` is the error message used when the `name` field is absent,
+/// so callers keep their own wording.
+fn parse_rule_variable(var: &Value, missing_name: String) -> Result<RuleVariable> {
     let name = var
         .get("name")
         .and_then(|v| v.as_str())
-        .ok_or_else(|| RuleError::ParseError(format!("{} variable missing 'name'", field_name)))?
+        .ok_or(RuleError::ParseError(missing_name))?
         .to_string();
 
     // Support both "instance" and "instance_id" as numeric ID
@@ -271,7 +270,7 @@ fn extract_single_rule_variable(value: Option<&Value>, field_name: &str) -> Resu
         .and_then(|v| v.as_str())
         .map(String::from);
 
-    // Accept both "point_id" and "point"
+    // Accept both "point_id" (parser tests) and "point" (frontend/executor tests)
     let point = var
         .get("point_id")
         .or_else(|| var.get("point"))
@@ -293,6 +292,15 @@ fn extract_single_rule_variable(value: Option<&Value>, field_name: &str) -> Resu
     })
 }
 
+/// Extract a single RuleVariable from JSON value
+fn extract_single_rule_variable(value: Option<&Value>, field_name: &str) -> Result<RuleVariable> {
+    let var = value.ok_or_else(|| {
+        RuleError::ParseError(format!("PeriodDelta node missing '{}'", field_name))
+    })?;
+
+    parse_rule_variable(var, format!("{} variable missing 'name'", field_name))
+}
+
 /// Extract compact variables from config
 fn extract_rule_variables(config: &Value) -> Result<Vec<RuleVariable>> {
     let vars_arr = match config.get("variables").and_then(|v| v.as_array()) {
@@ -300,49 +308,10 @@ fn extract_rule_variables(config: &Value) -> Result<Vec<RuleVariable>> {
         None => return Ok(vec![]),
     };
 
-    let mut variables = Vec::new();
-    for var in vars_arr {
-        let name = var
-            .get("name")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| RuleError::ParseError("Variable missing 'name'".to_string()))?
-            .to_string();
-
-        // Support both "instance" and "instance_id" as numeric ID
-        let instance = var
-            .get("instance")
-            .or_else(|| var.get("instance_id"))
-            .and_then(|v| v.as_u64())
-            .and_then(|n| u32::try_from(n).ok());
-
-        let point_type = var
-            .get("pointType")
-            .and_then(|v| v.as_str())
-            .map(String::from);
-
-        // Accept both "point_id" (parser tests) and "point" (frontend/executor tests)
-        let point = var
-            .get("point_id")
-            .or_else(|| var.get("point"))
-            .and_then(|v| v.as_u64())
-            .and_then(|n| u32::try_from(n).ok());
-
-        let formula = var
-            .get("formula")
-            .and_then(|v| v.as_array())
-            .cloned()
-            .unwrap_or_default();
-
-        variables.push(RuleVariable {
-            name,
-            instance,
-            point_type,
-            point,
-            formula,
-        });
-    }
-
-    Ok(variables)
+    vars_arr
+        .iter()
+        .map(|var| parse_rule_variable(var, "Variable missing 'name'".to_string()))
+        .collect()
 }
 
 /// Extract compact switch rules from config

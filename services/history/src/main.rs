@@ -19,7 +19,6 @@ use tower_http::cors::{Any, CorsLayer};
 use tracing::info;
 
 mod api;
-mod backend_influx;
 mod backend_null;
 #[cfg(feature = "postgres-storage")]
 mod backend_pg;

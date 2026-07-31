@@ -6,10 +6,10 @@ use aether_ports::{
     AuditOutcome, AuditRecord, AuditSink, AutomationRuleMutator, RevisionedRuleMutation,
     RuleMutation,
 };
-use sha2::{Digest, Sha256};
 
 use crate::{
     ApplicationError, MANAGE_RULE_CAPABILITY, RequestContext, RuleMutationAcceptance, SafetyPolicy,
+    context::digest,
 };
 
 /// Rule-management facade shared by HTTP, CLI, MCP, and embedded transports.
@@ -297,8 +297,4 @@ fn mutation_audit_detail(mutation: &RuleMutation, expected_revision: Option<u64>
             format!("expected_revision={expected}; reload=true")
         },
     }
-}
-
-fn digest(value: &str) -> String {
-    format!("{:x}", Sha256::digest(value.as_bytes()))
 }

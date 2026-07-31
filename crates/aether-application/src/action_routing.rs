@@ -2,7 +2,6 @@
 
 use std::sync::Arc;
 
-use aether_domain::PointKind;
 use aether_ports::{
     ActionRoutingMutation, ActionRoutingTarget, AuditOutcome, AuditRecord, AuditSink,
     AutomationActionRoutingMutator, RevisionedActionRoutingMutation,
@@ -10,7 +9,7 @@ use aether_ports::{
 
 use crate::{
     ActionRoutingMutationAcceptance, ApplicationError, MANAGE_ROUTING_CAPABILITY, RequestContext,
-    SafetyPolicy,
+    SafetyPolicy, context::point_kind_name,
 };
 
 /// Action-routing management facade shared by every application transport.
@@ -276,14 +275,5 @@ fn mutation_audit_detail(
         ActionRoutingMutation::DeleteAllActions => {
             format!("expected_revision={expected}; delete_scope=all_actions")
         },
-    }
-}
-
-const fn point_kind_name(kind: PointKind) -> &'static str {
-    match kind {
-        PointKind::Telemetry => "telemetry",
-        PointKind::Status => "status",
-        PointKind::Command => "command",
-        PointKind::Action => "action",
     }
 }

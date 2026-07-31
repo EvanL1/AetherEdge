@@ -2000,13 +2000,10 @@ version = "0.0.1"
 dependencies = [
  "anyhow",
  "reqwest",
- "schemars 0.8.22",
- "serde",
  "serde_json",
  "serde_yaml_ng",
  "sqlx",
  "thiserror 2.0.18",
- "tracing",
 ]
 
 [[package]]
@@ -6215,7 +6212,6 @@ dependencies = [
  "digest",
  "ed25519-dalek",
  "either",
- "fastrand",
  "form_urlencoded",
  "futures-channel",
  "futures-core",
@@ -6231,8 +6227,6 @@ dependencies = [
  "log",
  "memchr",
  "mio",
- "num-bigint",
- "num-integer",
  "num-traits",
  "once_cell",
  "percent-encoding",

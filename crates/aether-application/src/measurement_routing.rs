@@ -2,7 +2,6 @@
 
 use std::sync::Arc;
 
-use aether_domain::PointKind;
 use aether_ports::{
     AuditOutcome, AuditRecord, AuditSink, AutomationMeasurementRoutingMutator,
     MeasurementRoutingMutation, MeasurementRoutingTarget,
@@ -10,7 +9,7 @@ use aether_ports::{
 
 use crate::{
     ApplicationError, MANAGE_ROUTING_CAPABILITY, MeasurementRoutingMutationAcceptance,
-    RequestContext, SafetyPolicy,
+    RequestContext, SafetyPolicy, context::point_kind_name,
 };
 
 /// Authenticated, audited application boundary for logical measurement routes.
@@ -206,14 +205,5 @@ fn target_audit_detail(target: MeasurementRoutingTarget) -> String {
             )
         },
         MeasurementRoutingTarget::AllMeasurements => "scope=all_measurements".to_string(),
-    }
-}
-
-const fn point_kind_name(kind: PointKind) -> &'static str {
-    match kind {
-        PointKind::Telemetry => "telemetry",
-        PointKind::Status => "status",
-        PointKind::Command => "command",
-        PointKind::Action => "action",
     }
 }
