@@ -93,21 +93,6 @@ where
     }
 }
 
-/// Custom deserializer for u8 fields that treats empty strings as 0
-pub fn deserialize_u8_default_zero<'de, D>(deserializer: D) -> Result<u8, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    use serde::de::Error;
-    let s = String::deserialize(deserializer)?;
-    let trimmed = s.trim();
-    if trimmed.is_empty() {
-        Ok(0)
-    } else {
-        trimmed.parse::<u8>().map_err(D::Error::custom)
-    }
-}
-
 /// Custom deserializer for f64 that treats empty strings as default value (0.0)
 pub fn deserialize_f64_or_default<'de, D>(deserializer: D) -> Result<f64, D::Error>
 where

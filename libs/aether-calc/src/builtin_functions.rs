@@ -204,13 +204,6 @@ impl<S: StateStore> BuiltinFunctions<S> {
         Ok(rate)
     }
 
-    /// Reset all states for this context
-    pub async fn reset_states(&self) -> Result<()> {
-        // This is a simplified implementation
-        // In production, you'd want to iterate and delete all keys with the context prefix
-        Ok(())
-    }
-
     /// Execute period delta function
     ///
     /// Calculates the change (delta) of a cumulative value within a time period.

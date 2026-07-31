@@ -146,11 +146,6 @@ impl WsHub {
         (count, ids)
     }
 
-    #[allow(dead_code)]
-    pub fn connection_count(&self) -> usize {
-        self.clients.len()
-    }
-
     pub fn get_status(&self) -> Value {
         let mut connections = serde_json::Map::new();
         let mut subscriptions_map = serde_json::Map::new();

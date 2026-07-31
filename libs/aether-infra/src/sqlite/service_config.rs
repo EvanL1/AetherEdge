@@ -191,13 +191,6 @@ impl ServiceConfigLoader {
         Ok(result)
     }
 
-    /// Load service-specific tables (override in service-specific implementations)
-    pub async fn load_custom_tables(&self) -> Result<serde_json::Value> {
-        // Base implementation returns empty object
-        // Services can override this to load their specific tables
-        Ok(serde_json::json!({}))
-    }
-
     /// Get the database pool for custom queries
     pub fn pool(&self) -> &SqlitePool {
         &self.pool

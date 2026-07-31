@@ -69,12 +69,6 @@ impl C2CTarget {
     pub fn transform(&self, value: f64) -> f64 {
         self.scale * value + self.offset
     }
-
-    /// Returns true if the transform is the identity (no value change).
-    #[inline]
-    pub fn is_identity_transform(&self) -> bool {
-        self.scale == 1.0 && self.offset == 0.0
-    }
 }
 
 impl fmt::Display for C2CTarget {

@@ -505,10 +505,6 @@ async fn main() -> anyhow::Result<()> {
     info!("PointWatch: {}", cfg.point_watch_socket);
     info!("DB:    {}", cfg.db_path);
 
-    // Reconcile upgrade status: if a previous upgrade was interrupted by a
-    // container restart, fix the stale "running" status in the status file.
-    routes_config::reconcile_upgrade_status_on_startup();
-
     // ── SQLite ────────────────────────────────────────────────────────────────
     let db_dir = std::path::Path::new(&cfg.db_path)
         .parent()

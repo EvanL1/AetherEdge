@@ -6,7 +6,7 @@ use sqlx::{
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
-use tracing::{info, warn};
+use tracing::info;
 
 pub type SqlitePool = SqlxSqlitePool;
 
@@ -61,38 +61,6 @@ impl SqliteClient {
         })
     }
 
-    /// Create a read-only connection pool for services
-    pub async fn new_readonly(db_path: impl AsRef<Path>) -> Result<Self> {
-        let db_path_str = db_path.as_ref().to_string_lossy().to_string();
-
-        if !db_path.as_ref().exists() {
-            warn!("SQLite not found: {}", db_path_str);
-            return Err(anyhow::anyhow!("Database file not found"));
-        }
-
-        let options = SqliteConnectOptions::new()
-            .filename(&db_path_str)
-            .journal_mode(SqliteJournalMode::Wal)
-            .read_only(true);
-
-        let pool = SqlitePoolOptions::new()
-            .max_connections(5) // Fewer connections for read-only
-            .connect_with(options)
-            .await?;
-
-        // Enable foreign key constraints (even for read-only to ensure consistency)
-        sqlx::query("PRAGMA foreign_keys = ON")
-            .execute(&pool)
-            .await?;
-
-        info!("SQLite: {} (RO,FK=ON)", db_path_str);
-
-        Ok(Self {
-            pool: Arc::new(pool),
-            db_path: db_path_str,
-        })
-    }
-
     /// Create from an existing pool
     pub fn from_pool(pool: SqlitePool) -> Self {
         Self {
@@ -121,12 +89,5 @@ impl SqliteClient {
     pub fn size(&self) -> Result<u64> {
         let metadata = std::fs::metadata(&self.db_path)?;
         Ok(metadata.len())
-    }
-
-    /// Vacuum database to reclaim space
-    pub async fn vacuum(&self) -> Result<()> {
-        sqlx::query("VACUUM").execute(&*self.pool).await?;
-        info!("SQLite vacuumed: {}", self.db_path);
-        Ok(())
     }
 }

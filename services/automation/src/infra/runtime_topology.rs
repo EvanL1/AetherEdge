@@ -523,23 +523,6 @@ impl AutomationTopologyHandle {
         Ok(changed)
     }
 
-    /// Revokes all logical command routes after a committed mutation that
-    /// could not be published from a complete SQLite snapshot.
-    ///
-    /// The physical readers and measurement routes remain available. A later
-    /// successful refresh replaces this fail-closed generation and restores
-    /// the commissioned commands.
-    pub async fn revoke_action_routes(&self) {
-        let _refresh = self.refresh_gate.lock().await;
-        self.revoke_action_routes_locked().await;
-    }
-
-    /// Revokes all logical measurement routes after committed publication fails.
-    pub async fn revoke_measurement_routes(&self) {
-        let _refresh = self.refresh_gate.lock().await;
-        self.revoke_measurement_routes_locked().await;
-    }
-
     async fn revoke_measurement_routes_locked(&self) -> Arc<AutomationTopologyGeneration> {
         let _commands = self.command_gate.write().await;
         let current = self.current.load_full();

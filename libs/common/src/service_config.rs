@@ -500,61 +500,6 @@ impl<T: DeserializeOwned + ConfigValidator> ConfigValidator for GenericValidator
     }
 }
 
-/// Helper validation functions
-pub mod helpers {
-    use super::*;
-
-    /// Validate port number range
-    pub fn validate_port(port: u16, service: &str) -> Result<()> {
-        if port < 1024 {
-            return Err(anyhow::anyhow!(
-                "{} port {} is in privileged range (< 1024)",
-                service,
-                port
-            ));
-        }
-        Ok(())
-    }
-
-    /// Validate IP address format
-    pub fn validate_ip(ip: &str) -> Result<()> {
-        use std::net::IpAddr;
-        ip.parse::<IpAddr>()
-            .map_err(|_| anyhow::anyhow!("Invalid IP address: {}", ip))?;
-        Ok(())
-    }
-
-    /// Check if a port is available for binding
-    pub fn check_port_available(port: u16) -> Result<()> {
-        use std::net::TcpListener;
-
-        match TcpListener::bind(("127.0.0.1", port)) {
-            Ok(_) => Ok(()),
-            Err(e) => Err(anyhow::anyhow!("Port {} is not available: {}", port, e)),
-        }
-    }
-
-    /// Check database file accessibility
-    pub fn check_database_access(db_path: &std::path::Path) -> Result<()> {
-        if !db_path.exists() {
-            return Err(anyhow::anyhow!(
-                "Database file not found: {}",
-                db_path.display()
-            ));
-        }
-
-        let metadata = std::fs::metadata(db_path)?;
-        if metadata.permissions().readonly() {
-            return Err(anyhow::anyhow!(
-                "Database file is read-only: {}",
-                db_path.display()
-            ));
-        }
-
-        Ok(())
-    }
-}
-
 // ============================================================================
 // Validation implementations for common configs
 // ============================================================================
@@ -589,9 +534,17 @@ impl ApiConfig {
 
     /// Validate port availability (runtime check)
     pub fn validate_runtime(&self, result: &mut ValidationResult) {
-        if let Err(e) = helpers::check_port_available(self.port) {
+        if let Err(e) = check_port_available(self.port) {
             result.add_error(format!("Port {} not available: {}", self.port, e));
         }
+    }
+}
+
+/// Reports whether the port can still be bound on loopback.
+fn check_port_available(port: u16) -> Result<()> {
+    match std::net::TcpListener::bind(("127.0.0.1", port)) {
+        Ok(_) => Ok(()),
+        Err(e) => Err(anyhow::anyhow!("Port {} is not available: {}", port, e)),
     }
 }
 

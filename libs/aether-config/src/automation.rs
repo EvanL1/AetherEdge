@@ -247,9 +247,6 @@ pub struct CreateInstanceRequest {
     pub properties: HashMap<String, serde_json::Value>,
 }
 
-/// Product hierarchy using tuples (following CLAUDE.md)
-pub type ProductHierarchy = Vec<(String, Option<String>)>;
-
 /// Topology tree node for hierarchical instance display
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct TopologyNode {

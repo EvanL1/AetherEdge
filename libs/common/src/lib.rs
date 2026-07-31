@@ -59,8 +59,6 @@ pub use service_config::{
     ValidationLevel,
     ValidationResult,
     automation_url,
-    // Helpers
-    helpers,
     // URL resolver functions
     io_url,
 };

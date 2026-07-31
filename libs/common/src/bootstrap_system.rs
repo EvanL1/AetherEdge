@@ -4,7 +4,7 @@
 //! before starting AetherEdge services
 
 use errors::AetherResult;
-use tracing::{debug, info, warn};
+use tracing::{debug, warn};
 
 /// System requirements for AetherEdge services
 #[derive(Debug, Clone)]
@@ -119,31 +119,6 @@ impl SystemInfo {
             warnings: Vec::new(),
         }
     }
-
-    /// Check if system has any warnings
-    pub fn has_warnings(&self) -> bool {
-        !self.warnings.is_empty()
-    }
-
-    /// Print system information summary
-    pub fn print_summary(&self) {
-        // Build memory info string
-        let mem_info = match (self.available_memory_mb, self.total_memory_mb) {
-            (Some(avail), Some(total)) => format!(", Mem:{}/{}MB", avail, total),
-            (Some(avail), None) => format!(", Mem:{}MB", avail),
-            (None, Some(total)) => format!(", Mem:{}MB total", total),
-            (None, None) => String::new(),
-        };
-
-        info!(
-            "System: {} ({}) CPU:{}{}",
-            self.os_name, self.arch, self.cpu_cores, mem_info
-        );
-
-        for warning in &self.warnings {
-            warn!("{}", warning);
-        }
-    }
 }
 
 /// Get memory information based on platform
@@ -221,33 +196,6 @@ fn get_windows_memory_info() -> (Option<usize>, Option<usize>) {
     // Windows memory info would require winapi calls
     // For now, return None
     (None, None)
-}
-
-/// Check disk space availability for a given path
-pub fn check_disk_space(path: &str, _required_mb: usize) -> AetherResult<bool> {
-    use std::path::Path;
-
-    let path = Path::new(path);
-    let check_path = if path.exists() {
-        path
-    } else {
-        path.parent().unwrap_or_else(|| Path::new("/"))
-    };
-
-    // For now, we'll use a simplified check based on filesystem metadata
-    // Real disk space checking would require platform-specific system calls
-    if let Ok(metadata) = std::fs::metadata(check_path)
-        && (metadata.is_dir() || metadata.is_file())
-    {
-        debug!("Path {} exists and is accessible", check_path.display());
-        // Since we can't easily get disk space without external dependencies,
-        // we'll just check if the path is accessible
-        return Ok(true);
-    }
-
-    warn!("Cannot verify disk space at {}", path.display());
-    // Default to true if we can't check
-    Ok(true)
 }
 
 #[cfg(test)]

@@ -90,20 +90,22 @@ pub async fn init_calculated_points(_pool: &SqlitePool) -> Result<()> {
 // ── User Queries ──────────────────────────────────────────────────────────────
 
 pub async fn get_user_by_username(pool: &SqlitePool, username: &str) -> Result<Option<UserRecord>> {
-    Ok(
-        sqlx::query_as::<_, UserRecord>("SELECT * FROM users WHERE username = ?")
-            .bind(username)
-            .fetch_optional(pool)
-            .await?,
+    Ok(sqlx::query_as::<_, UserRecord>(
+        "SELECT id, password_hash, role_id FROM users WHERE username = ?",
     )
+    .bind(username)
+    .fetch_optional(pool)
+    .await?)
 }
 
 pub async fn get_user_by_id(pool: &SqlitePool, user_id: i64) -> Result<Option<UserRecord>> {
     Ok(
-        sqlx::query_as::<_, UserRecord>("SELECT * FROM users WHERE id = ?")
-            .bind(user_id)
-            .fetch_optional(pool)
-            .await?,
+        sqlx::query_as::<_, UserRecord>(
+            "SELECT id, password_hash, role_id FROM users WHERE id = ?",
+        )
+        .bind(user_id)
+        .fetch_optional(pool)
+        .await?,
     )
 }
 
