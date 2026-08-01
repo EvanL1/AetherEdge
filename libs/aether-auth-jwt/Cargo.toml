@@ -6,7 +6,7 @@ rust-version = "1.90"
 description = "JWT authentication adapter for Aether application interfaces"
 license.workspace = true
 repository.workspace = true
-documentation = "https://docs.aetheriot.dev/libs/aether-auth-jwt"
+documentation = "https://docs.aetheriot.ai/libs/aether-auth-jwt"
 readme = "README.md"
 publish = false
 

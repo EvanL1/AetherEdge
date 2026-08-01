@@ -600,7 +600,7 @@
     {
       "id": "edge-crates-aether-acquisition-port-readme",
       "path": "crates/aether-acquisition-port/README.md",
-      "canonical_url": "https://docs.aetheriot.dev/crates/aether-acquisition-port.md",
+      "canonical_url": "https://docs.aetheriot.ai/crates/aether-acquisition-port.md",
       "title": "aether-acquisition-port",
       "description": "Owner-only write capability for physical telemetry and status acquisition.",
       "locale": "en",
@@ -628,7 +628,7 @@
     {
       "id": "edge-crates-aether-application-readme",
       "path": "crates/aether-application/README.md",
-      "canonical_url": "https://docs.aetheriot.dev/crates/aether-application.md",
+      "canonical_url": "https://docs.aetheriot.ai/crates/aether-application.md",
       "title": "aether-application",
       "description": "Transport-neutral command and query use cases for the Aether edge kernel.",
       "locale": "en",
@@ -656,7 +656,7 @@
     {
       "id": "edge-crates-aether-cloudlink-readme",
       "path": "crates/aether-cloudlink/README.md",
-      "canonical_url": "https://docs.aetheriot.dev/crates/aether-cloudlink.md",
+      "canonical_url": "https://docs.aetheriot.ai/crates/aether-cloudlink.md",
       "title": "aether-cloudlink",
       "description": "Transport-neutral implementation of the experimental, digest-pinned public AetherContracts CloudLink subset. It provides strict closed JSON decoding, RFC 8785 business digests, session/version/epoch validation, stable delivery envelopes,…",
       "locale": "en",
@@ -684,7 +684,7 @@
     {
       "id": "edge-crates-aether-data-processing-readme",
       "path": "crates/aether-data-processing/README.md",
-      "canonical_url": "https://docs.aetheriot.dev/crates/aether-data-processing.md",
+      "canonical_url": "https://docs.aetheriot.ai/crates/aether-data-processing.md",
       "title": "aether-data-processing crate",
       "description": "Strict, transport-neutral JSON codec for the Aether Data Processing v1 processor boundary. It converts validated domain values to and from the versioned RFC 3339/JSON DTOs, encodes Aether-accepted DerivedData, and computes RFC 8785 input…",
       "locale": "en",
@@ -712,7 +712,7 @@
     {
       "id": "edge-crates-aether-dataplane-readme",
       "path": "crates/aether-dataplane/README.md",
-      "canonical_url": "https://docs.aetheriot.dev/crates/aether-dataplane.md",
+      "canonical_url": "https://docs.aetheriot.ai/crates/aether-dataplane.md",
       "title": "aether-dataplane",
       "description": "aether-dataplane is Aether's business-neutral shared-memory core. It can be used by an embedded gateway without Redis, PostgreSQL, SQLx, routing models, or any HTTP stack.",
       "locale": "en",
@@ -740,7 +740,7 @@
     {
       "id": "edge-crates-aether-domain-readme",
       "path": "crates/aether-domain/README.md",
-      "canonical_url": "https://docs.aetheriot.dev/crates/aether-domain.md",
+      "canonical_url": "https://docs.aetheriot.ai/crates/aether-domain.md",
       "title": "aether-domain",
       "description": "Industry-neutral, nostd domain types for the Aether edge kernel.",
       "locale": "en",
@@ -768,7 +768,7 @@
     {
       "id": "edge-crates-aether-integration-contract-readme",
       "path": "crates/aether-integration-contract/README.md",
-      "canonical_url": "https://docs.aetheriot.dev/crates/aether-integration-contract.md",
+      "canonical_url": "https://docs.aetheriot.ai/crates/aether-integration-contract.md",
       "title": "aether-integration-contract",
       "description": "Strict product-side Rust binding for the experimental AetherContracts aether.integration v1alpha1 contract in the 0.1.0-alpha.4 candidate.",
       "locale": "en",
@@ -796,7 +796,7 @@
     {
       "id": "edge-crates-aether-pack-readme",
       "path": "crates/aether-pack/README.md",
-      "canonical_url": "https://docs.aetheriot.dev/crates/aether-pack.md",
+      "canonical_url": "https://docs.aetheriot.ai/crates/aether-pack.md",
       "title": "aether-pack",
       "description": "Versioned, industry-neutral domain-pack manifest loading for the Aether edge kernel. The crate validates a pack's own release identity, distribution identity, compatible Aether range, required capability and protocol IDs, explicitly…",
       "locale": "en",
@@ -824,7 +824,7 @@
     {
       "id": "edge-crates-aether-ports-readme",
       "path": "crates/aether-ports/README.md",
-      "canonical_url": "https://docs.aetheriot.dev/crates/aether-ports.md",
+      "canonical_url": "https://docs.aetheriot.ai/crates/aether-ports.md",
       "title": "aether-ports",
       "description": "Small, object-safe capability interfaces for kernel and downstream adapters.",
       "locale": "en",
@@ -852,7 +852,7 @@
     {
       "id": "edge-crates-aether-sdk-readme",
       "path": "crates/aether-sdk/README.md",
-      "canonical_url": "https://docs.aetheriot.dev/crates/aether-sdk.md",
+      "canonical_url": "https://docs.aetheriot.ai/crates/aether-sdk.md",
       "title": "aether-edge-sdk",
       "description": "Versioned beta facade for embedding the Aether AI-native IoT edge kernel.",
       "locale": "en",
@@ -880,7 +880,7 @@
     {
       "id": "edge-crates-aether-testkit-readme",
       "path": "crates/aether-testkit/README.md",
-      "canonical_url": "https://docs.aetheriot.dev/crates/aether-testkit.md",
+      "canonical_url": "https://docs.aetheriot.ai/crates/aether-testkit.md",
       "title": "aether-testkit",
       "description": "Reusable conformance checks and deterministic test doubles for Aether adapter authors.",
       "locale": "en",
@@ -1048,7 +1048,7 @@
     {
       "id": "edge-docs-aethercloud-index",
       "path": "docs/aethercloud/index.md",
-      "canonical_url": "https://docs.aetheriot.dev/aethercloud.md",
+      "canonical_url": "https://docs.aetheriot.ai/aethercloud.md",
       "title": "AetherCloud",
       "description": "AetherCloud is the AI-native, industry-neutral, multi-cloud IoT fusion and control plane for AetherEdge runtimes and cloud-side workloads. It is a separate product, not a hosted copy of the edge runtime.",
       "locale": "en",
@@ -1076,7 +1076,7 @@
     {
       "id": "edge-docs-aethercontracts-index",
       "path": "docs/aethercontracts/index.md",
-      "canonical_url": "https://docs.aetheriot.dev/aethercontracts.md",
+      "canonical_url": "https://docs.aetheriot.ai/aethercontracts.md",
       "title": "AetherContracts",
       "description": "AetherContracts is the public, language-neutral interoperability authority for AetherEdge, AetherCloud, and independent implementations.",
       "locale": "en",
@@ -1104,7 +1104,7 @@
     {
       "id": "edge-docs-aetheredge-index",
       "path": "docs/aetheredge/index.md",
-      "canonical_url": "https://docs.aetheriot.dev/aetheredge.md",
+      "canonical_url": "https://docs.aetheriot.ai/aetheredge.md",
       "title": "AetherEdge",
       "description": "AetherEdge is the open-source, industry-neutral Linux edge runtime, Kernel, CLI, and Rust SDK formerly published from the AetherIot repository name.",
       "locale": "en",
@@ -1216,7 +1216,7 @@
     {
       "id": "edge-docs-compatibility-version-matrix",
       "path": "docs/compatibility/version-matrix.md",
-      "canonical_url": "https://docs.aetheriot.dev/compatibility/version-matrix.md",
+      "canonical_url": "https://docs.aetheriot.ai/compatibility/version-matrix.md",
       "title": "Product version compatibility",
       "description": "This matrix distinguishes released compatibility evidence from planned product combinations. A green local test never upgrades an experimental public contract to production status.",
       "locale": "en",
@@ -1244,7 +1244,7 @@
     {
       "id": "edge-docs-concepts-architecture",
       "path": "docs/concepts/architecture.md",
-      "canonical_url": "https://docs.aetheriot.dev/concepts/architecture.md",
+      "canonical_url": "https://docs.aetheriot.ai/concepts/architecture.md",
       "title": "System Architecture",
       "description": "Isolated edge services communicating over shared memory, per-consumer UDS events, SQLite, HTTP, and MQTT",
       "locale": "en",
@@ -1272,7 +1272,7 @@
     {
       "id": "edge-docs-concepts-data-flow",
       "path": "docs/concepts/data-flow.md",
-      "canonical_url": "https://docs.aetheriot.dev/concepts/data-flow.md",
+      "canonical_url": "https://docs.aetheriot.ai/concepts/data-flow.md",
       "title": "Data Flow",
       "description": "SHM-native uplink and downlink paths end to end, with latency budgets",
       "locale": "en",
@@ -1300,7 +1300,7 @@
     {
       "id": "edge-docs-concepts-data-model",
       "path": "docs/concepts/data-model.md",
-      "canonical_url": "https://docs.aetheriot.dev/concepts/data-model.md",
+      "canonical_url": "https://docs.aetheriot.ai/concepts/data-model.md",
       "title": "Data Model",
       "description": "Products, instances, and T/S/C/A points - and why an instance is a pure thing-model with no status field",
       "locale": "en",
@@ -1328,7 +1328,7 @@
     {
       "id": "edge-docs-concepts-data-processing-flow",
       "path": "docs/concepts/data-processing-flow.md",
-      "canonical_url": "https://docs.aetheriot.dev/concepts/data-processing-flow.md",
+      "canonical_url": "https://docs.aetheriot.ai/concepts/data-processing-flow.md",
       "title": "Data Processing Flow",
       "description": "How Aether assembles governed IoT data, invokes a request-driven processor, validates derived data, and keeps control separate",
       "locale": "en",
@@ -1356,7 +1356,7 @@
     {
       "id": "edge-docs-concepts-data-processing",
       "path": "docs/concepts/data-processing.md",
-      "canonical_url": "https://docs.aetheriot.dev/concepts/data-processing.md",
+      "canonical_url": "https://docs.aetheriot.ai/concepts/data-processing.md",
       "title": "Aether Data Processing",
       "description": "Industry-neutral, request-driven processing of governed IoT data into validated derived data",
       "locale": "en",
@@ -1384,7 +1384,7 @@
     {
       "id": "edge-docs-concepts-rule-engine",
       "path": "docs/concepts/rule-engine.md",
-      "canonical_url": "https://docs.aetheriot.dev/concepts/rule-engine.md",
+      "canonical_url": "https://docs.aetheriot.ai/concepts/rule-engine.md",
       "title": "Rule Engine",
       "description": "Dual-column rule storage, tick and event scheduling, execution, and hot reload",
       "locale": "en",
@@ -1412,7 +1412,7 @@
     {
       "id": "edge-docs-concepts-shared-memory",
       "path": "docs/concepts/shared-memory.md",
-      "canonical_url": "https://docs.aetheriot.dev/concepts/shared-memory.md",
+      "canonical_url": "https://docs.aetheriot.ai/concepts/shared-memory.md",
       "title": "Shared Memory",
       "description": "The SHM data plane - slot layout, writer ownership, seqlock reads, generations, and the PointWatch event plane",
       "locale": "en",
@@ -1580,7 +1580,7 @@
     {
       "id": "edge-docs-guides-ai-assistants",
       "path": "docs/guides/ai-assistants.md",
-      "canonical_url": "https://docs.aetheriot.dev/guides/ai-assistants.md",
+      "canonical_url": "https://docs.aetheriot.ai/guides/ai-assistants.md",
       "title": "Connect AI Assistants",
       "description": "Point Claude or any MCP client at aether mcp, and choose between read-only and write access",
       "locale": "en",
@@ -1625,7 +1625,7 @@
     {
       "id": "edge-docs-guides-build-applications-with-ai",
       "path": "docs/guides/build-applications-with-ai.md",
-      "canonical_url": "https://docs.aetheriot.dev/guides/build-applications-with-ai.md",
+      "canonical_url": "https://docs.aetheriot.ai/guides/build-applications-with-ai.md",
       "title": "Build Applications with AI",
       "description": "Generate contract-first IoT applications without turning a Web UI or an AI agent into a second runtime authority",
       "locale": "en",
@@ -1653,7 +1653,7 @@
     {
       "id": "edge-docs-guides-connect-devices",
       "path": "docs/guides/connect-devices.md",
-      "canonical_url": "https://docs.aetheriot.dev/guides/connect-devices.md",
+      "canonical_url": "https://docs.aetheriot.ai/guides/connect-devices.md",
       "title": "Connect Devices",
       "description": "Configure channels, choose protocols, and map device points to instances",
       "locale": "en",
@@ -1691,7 +1691,7 @@
     {
       "id": "edge-docs-guides-data-processors",
       "path": "docs/guides/data-processors.md",
-      "canonical_url": "https://docs.aetheriot.dev/guides/data-processors.md",
+      "canonical_url": "https://docs.aetheriot.ai/guides/data-processors.md",
       "title": "Connect Data Processors",
       "description": "Declare data-processing tasks in domain packs and connect request-driven local or remote processors",
       "locale": "en",
@@ -1729,7 +1729,7 @@
     {
       "id": "edge-docs-guides-deployment",
       "path": "docs/guides/deployment.md",
-      "canonical_url": "https://docs.aetheriot.dev/guides/deployment.md",
+      "canonical_url": "https://docs.aetheriot.ai/guides/deployment.md",
       "title": "Deployment",
       "description": "Run with Docker Compose or build a self-contained installer for edge devices",
       "locale": "en",
@@ -1763,7 +1763,7 @@
     {
       "id": "edge-docs-guides-edge-contracts-cloud",
       "path": "docs/guides/edge-contracts-cloud.md",
-      "canonical_url": "https://docs.aetheriot.dev/guides/edge-contracts-cloud.md",
+      "canonical_url": "https://docs.aetheriot.ai/guides/edge-contracts-cloud.md",
       "title": "Connect AetherEdge to AetherCloud through AetherContracts",
       "description": "This agent task validates the current cross-repository integration path without claiming production CloudLink readiness. It starts with a safe local runtime, verifies the shared contract release, and then runs the available product…",
       "locale": "en",
@@ -1791,7 +1791,7 @@
     {
       "id": "edge-docs-guides-getting-started",
       "path": "docs/guides/getting-started.md",
-      "canonical_url": "https://docs.aetheriot.dev/guides/getting-started.md",
+      "canonical_url": "https://docs.aetheriot.ai/guides/getting-started.md",
       "title": "Getting Started",
       "description": "Install a safe-empty runtime, establish operator access, verify health, and choose the next commissioning step",
       "locale": "en",
@@ -1819,7 +1819,7 @@
     {
       "id": "edge-docs-guides-safe-operations",
       "path": "docs/guides/safe-operations.md",
-      "canonical_url": "https://docs.aetheriot.dev/guides/safe-operations.md",
+      "canonical_url": "https://docs.aetheriot.ai/guides/safe-operations.md",
       "title": "Safe Operations for Applications and Agents",
       "description": "Preserve identity, confirmation, audit, topology fencing, and uncertain command outcomes when operating AetherEdge",
       "locale": "en",
@@ -1865,7 +1865,7 @@
     {
       "id": "edge-docs-guides-writing-rules",
       "path": "docs/guides/writing-rules.md",
-      "canonical_url": "https://docs.aetheriot.dev/guides/writing-rules.md",
+      "canonical_url": "https://docs.aetheriot.ai/guides/writing-rules.md",
       "title": "Writing Rules",
       "description": "Author rules through the HTTP API or a downstream product console",
       "locale": "en",
@@ -1903,7 +1903,7 @@
     {
       "id": "edge-docs-migration-aetheriot-to-aetheredge",
       "path": "docs/migration/aetheriot-to-aetheredge.md",
-      "canonical_url": "https://docs.aetheriot.dev/migration/aetheriot-to-aetheredge.md",
+      "canonical_url": "https://docs.aetheriot.ai/migration/aetheriot-to-aetheredge.md",
       "title": "Migrate from AetherIot to AetherEdge",
       "description": "The edge product and repository are renamed from AetherIot to AetherEdge. AetherIoT becomes the umbrella project name for AetherEdge, AetherCloud, and AetherContracts. This is a product-identity change, not a protocol or package namespace…",
       "locale": "en",
@@ -1931,7 +1931,7 @@
     {
       "id": "edge-docs-migration-home-assistant-extraction",
       "path": "docs/migration/home-assistant-extraction.md",
-      "canonical_url": "https://docs.aetheriot.dev/migration/home-assistant-extraction.md",
+      "canonical_url": "https://docs.aetheriot.ai/migration/home-assistant-extraction.md",
       "title": "Home Assistant integration extraction",
       "description": "Migrate installations away from the retired in-kernel Home Assistant bridge",
       "locale": "en",
@@ -1992,7 +1992,7 @@
     {
       "id": "edge-docs-overview-ai-native-platform",
       "path": "docs/overview/ai-native-platform.md",
-      "canonical_url": "https://docs.aetheriot.dev/overview/ai-native-platform.md",
+      "canonical_url": "https://docs.aetheriot.ai/overview/ai-native-platform.md",
       "title": "AI-native platform",
       "description": "AetherIoT is building an open runtime platform for agents to turn human intent into governed, verifiable behavior across physical spaces.",
       "locale": "en",
@@ -2020,7 +2020,7 @@
     {
       "id": "edge-docs-overview-deployment-topologies",
       "path": "docs/overview/deployment-topologies.md",
-      "canonical_url": "https://docs.aetheriot.dev/overview/deployment-topologies.md",
+      "canonical_url": "https://docs.aetheriot.ai/overview/deployment-topologies.md",
       "title": "Deployment topologies",
       "description": "AetherIoT supports deployments that keep physical authority at the edge while adding cloud coordination only where it creates value.",
       "locale": "en",
@@ -2048,7 +2048,7 @@
     {
       "id": "edge-docs-overview-platform",
       "path": "docs/overview/platform.md",
-      "canonical_url": "https://docs.aetheriot.dev/overview/platform.md",
+      "canonical_url": "https://docs.aetheriot.ai/overview/platform.md",
       "title": "AetherIoT platform overview",
       "description": "AetherIoT is the open-source, AI-native project identity for a family of interoperable products that turn human intent into governed, verifiable behavior across physical spaces. It is not a fourth runtime and does not own a separate wire…",
       "locale": "en",
@@ -2076,7 +2076,7 @@
     {
       "id": "edge-docs-overview-user-journeys",
       "path": "docs/overview/user-journeys.md",
-      "canonical_url": "https://docs.aetheriot.dev/overview/user-journeys.md",
+      "canonical_url": "https://docs.aetheriot.ai/overview/user-journeys.md",
       "title": "AetherEdge User Journeys",
       "description": "Choose the right product and follow the safe path from an empty edge runtime to a commissioned application",
       "locale": "en",
@@ -2104,7 +2104,7 @@
     {
       "id": "edge-docs-recovery-cloudlink-spool-recovery",
       "path": "docs/recovery/cloudlink-spool-recovery.md",
-      "canonical_url": "https://docs.aetheriot.dev/recovery/cloudlink-spool-recovery.md",
+      "canonical_url": "https://docs.aetheriot.ai/recovery/cloudlink-spool-recovery.md",
       "title": "CloudLink spool recovery",
       "description": "Recover a file-backed CloudLink spool without discarding unacknowledged facts or fabricating delivery evidence.",
       "locale": "en",
@@ -2132,7 +2132,7 @@
     {
       "id": "edge-docs-recovery-configuration-rollback",
       "path": "docs/recovery/configuration-rollback.md",
-      "canonical_url": "https://docs.aetheriot.dev/recovery/configuration-rollback.md",
+      "canonical_url": "https://docs.aetheriot.ai/recovery/configuration-rollback.md",
       "title": "Configuration rollback and reconciliation",
       "description": "Recover a commissioned Edge configuration without creating a second authority or repeating an uncertain mutation.",
       "locale": "en",
@@ -2169,7 +2169,7 @@
     {
       "id": "edge-docs-recovery-gateway-identity-recovery",
       "path": "docs/recovery/gateway-identity-recovery.md",
-      "canonical_url": "https://docs.aetheriot.dev/recovery/gateway-identity-recovery.md",
+      "canonical_url": "https://docs.aetheriot.ai/recovery/gateway-identity-recovery.md",
       "title": "Gateway identity recovery",
       "description": "Contain a lost or compromised Gateway credential and re-establish an experimental CloudLink session without weakening Edge authority.",
       "locale": "en",
@@ -2197,7 +2197,7 @@
     {
       "id": "edge-docs-recovery-safe-stop-and-control-revocation",
       "path": "docs/recovery/safe-stop-and-control-revocation.md",
-      "canonical_url": "https://docs.aetheriot.dev/recovery/safe-stop-and-control-revocation.md",
+      "canonical_url": "https://docs.aetheriot.ai/recovery/safe-stop-and-control-revocation.md",
       "title": "Safe stop and control revocation",
       "description": "Contain an unsafe or uncertain control path while preserving deterministic local safety and audit evidence.",
       "locale": "en",
@@ -2235,7 +2235,7 @@
     {
       "id": "edge-docs-reference-cli",
       "path": "docs/reference/cli.md",
-      "canonical_url": "https://docs.aetheriot.dev/reference/cli.md",
+      "canonical_url": "https://docs.aetheriot.ai/reference/cli.md",
       "title": "CLI Reference",
       "description": "Every aether command - services, sync, doctor, channels, rules, and more",
       "locale": "en",
@@ -2263,7 +2263,7 @@
     {
       "id": "edge-docs-reference-cloudlink-mqtt-v1",
       "path": "docs/reference/cloudlink-mqtt-v1.md",
-      "canonical_url": "https://docs.aetheriot.dev/reference/cloudlink-mqtt-v1.md",
+      "canonical_url": "https://docs.aetheriot.ai/reference/cloudlink-mqtt-v1.md",
       "title": "Experimental CloudLink MQTT v1 edge contract",
       "description": "This document describes the experimental CloudLink candidate. The public AetherContracts v0.1.0-alpha.3 release is the sole authority, and AetherEdge and AetherCloud commit the same digest-pinned consumer lock. The current claim is…",
       "locale": "en",
@@ -2291,7 +2291,7 @@
     {
       "id": "edge-docs-reference-configuration",
       "path": "docs/reference/configuration.md",
-      "canonical_url": "https://docs.aetheriot.dev/reference/configuration.md",
+      "canonical_url": "https://docs.aetheriot.ai/reference/configuration.md",
       "title": "Configuration Reference",
       "description": "YAML configuration schema, the sync pipeline, and environment variables",
       "locale": "en",
@@ -2319,7 +2319,7 @@
     {
       "id": "edge-docs-reference-data-processing-contracts",
       "path": "docs/reference/data-processing-contracts.md",
-      "canonical_url": "https://docs.aetheriot.dev/reference/data-processing-contracts.md",
+      "canonical_url": "https://docs.aetheriot.ai/reference/data-processing-contracts.md",
       "title": "Data Processing Contracts",
       "description": "Version 1 contracts for processing frames, requests, derived results, validation, and failure semantics",
       "locale": "en",
@@ -2347,7 +2347,7 @@
     {
       "id": "edge-docs-reference-gateway-enrollment",
       "path": "docs/reference/gateway-enrollment.md",
-      "canonical_url": "https://docs.aetheriot.dev/reference/gateway-enrollment.md",
+      "canonical_url": "https://docs.aetheriot.ai/reference/gateway-enrollment.md",
       "title": "AetherCloud Gateway enrollment",
       "description": "Generate and claim a local AetherEdge Gateway identity without implying an active CloudLink credential or session.",
       "locale": "en",
@@ -2375,7 +2375,7 @@
     {
       "id": "edge-docs-reference-http-api",
       "path": "docs/reference/http-api.md",
-      "canonical_url": "https://docs.aetheriot.dev/reference/http-api.md",
+      "canonical_url": "https://docs.aetheriot.ai/reference/http-api.md",
       "title": "HTTP API",
       "description": "The single remote gateway, service-local OpenAPI, authentication, and compatibility conventions",
       "locale": "en",
@@ -2403,7 +2403,7 @@
     {
       "id": "edge-docs-reference-mcp-tools",
       "path": "docs/reference/mcp-tools.md",
-      "canonical_url": "https://docs.aetheriot.dev/reference/mcp-tools.md",
+      "canonical_url": "https://docs.aetheriot.ai/reference/mcp-tools.md",
       "title": "MCP Tools Reference",
       "description": "All MCP tools grouped by domain, with parameters and write-safety markers",
       "locale": "en",
@@ -2451,7 +2451,7 @@
     {
       "id": "edge-docs-roadmap-status",
       "path": "docs/roadmap/status.md",
-      "canonical_url": "https://docs.aetheriot.dev/roadmap/status.md",
+      "canonical_url": "https://docs.aetheriot.ai/roadmap/status.md",
       "title": "Platform status and roadmap",
       "description": "Status is reported separately for implemented, experimental, and planned capabilities. Product names do not upgrade technical readiness.",
       "locale": "en",
@@ -2479,7 +2479,7 @@
     {
       "id": "edge-docs-security-dependency-exceptions",
       "path": "docs/security/dependency-exceptions.md",
-      "canonical_url": "https://docs.aetheriot.dev/security/dependency-exceptions.md",
+      "canonical_url": "https://docs.aetheriot.ai/security/dependency-exceptions.md",
       "title": "Dependency security exceptions",
       "description": "Security advisories are denied by default. An exception is permitted only when the affected operation is unreachable, the boundary is enforced in code and a removal condition is recorded here.",
       "locale": "en",

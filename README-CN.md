@@ -6,7 +6,7 @@
 [![版本](https://img.shields.io/badge/version-0.0.1-yellow.svg)](https://github.com/EvanL1/AetherEdge/releases)
 [![状态](https://img.shields.io/badge/status-beta-orange.svg)](https://github.com/EvanL1/AetherEdge/releases)
 
-**文档：** [docs.aetheriot.dev](https://docs.aetheriot.dev/) ·
+**文档：** [docs.aetheriot.ai](https://docs.aetheriot.ai/) ·
 [快速开始](docs/guides/getting-started.md) ·
 [用户旅程](docs/overview/user-journeys.md) ·
 [连接设备](docs/guides/connect-devices.md) ·
