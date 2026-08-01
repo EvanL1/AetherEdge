@@ -28,7 +28,7 @@ const CLAIMED_MESSAGE: &str = "身份已配对，CloudLink 凭据尚未激活";
 pub enum CloudCommands {
     /// Generate or reuse a local key and submit one AetherCloud Claim
     Enroll {
-        /// Bare AetherCloud origin, such as https://api.aetheriot.dev
+        /// Bare AetherCloud origin, such as https://api.aetheriot.ai
         #[arg(long)]
         cloud_url: String,
 

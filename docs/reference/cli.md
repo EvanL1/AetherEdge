@@ -114,7 +114,7 @@ Interactive enrollment reads the Enrollment Token through a hidden prompt:
 
 ```bash
 aether cloud enroll \
-  --cloud-url https://api.aetheriot.dev \
+  --cloud-url https://api.aetheriot.ai \
   --tenant-id <TENANT_UUID> \
   --project-id <PROJECT_UUID> \
   --gateway-id <GATEWAY_UUID>

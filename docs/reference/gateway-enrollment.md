@@ -22,7 +22,7 @@ arguments and shell history:
 
 ```bash
 aether cloud enroll \
-  --cloud-url https://api.aetheriot.dev \
+  --cloud-url https://api.aetheriot.ai \
   --tenant-id 11111111-1111-4111-8111-111111111111 \
   --project-id 22222222-2222-4222-8222-222222222222 \
   --gateway-id 33333333-3333-4333-8333-333333333333
@@ -33,7 +33,7 @@ token line to stdin:
 
 ```bash
 secret-provider-command | aether cloud enroll \
-  --cloud-url https://api.aetheriot.dev \
+  --cloud-url https://api.aetheriot.ai \
   --tenant-id 11111111-1111-4111-8111-111111111111 \
   --project-id 22222222-2222-4222-8222-222222222222 \
   --gateway-id 33333333-3333-4333-8333-333333333333 \
@@ -54,7 +54,7 @@ For stable non-secret output, put the global JSON flag before the command:
 
 ```bash
 aether --json cloud enroll \
-  --cloud-url https://api.aetheriot.dev \
+  --cloud-url https://api.aetheriot.ai \
   --tenant-id 11111111-1111-4111-8111-111111111111 \
   --project-id 22222222-2222-4222-8222-222222222222 \
   --gateway-id 33333333-3333-4333-8333-333333333333
