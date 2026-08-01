@@ -4,15 +4,18 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-use aether_domain::{ChannelId, PointKind};
+use aether_domain::ChannelId;
 #[cfg(test)]
 use aether_ports::ChannelHealthObservation;
 use aether_ports::{ChannelHealthSource, PortError, PortErrorKind, PortResult};
 use aether_shm_bridge::{
-    ChannelPointManifest, PhysicalPointAddress, PointWatchEvent, ShmClientConfig,
-    ShmReadTopologyGeneration, SlotSnapshot, SlotSource,
+    ChannelPointManifest, PhysicalPointAddress, PointWatchEvent, ShmReadTopologyGeneration,
+    SlotSnapshot, SlotSource,
 };
-use aether_sqlite_topology::{SqliteLiveTopologySnapshot, load_sqlite_live_topology};
+use aether_sqlite_topology::{
+    SqliteLiveTopologySnapshot, layouts_match, load_sqlite_live_topology, open_read_topology,
+    parse_point_kind,
+};
 use anyhow::Context;
 use arc_swap::ArcSwap;
 use sqlx::SqlitePool;
@@ -20,39 +23,19 @@ use sqlx::SqlitePool;
 use crate::config::AlarmConfig;
 use crate::models::AlertRule;
 
-/// One physical channel point referenced by routing configuration.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ChannelPointRef {
-    channel_id: u32,
-    kind: PointKind,
-    point_id: u32,
-}
-
-impl ChannelPointRef {
-    /// Creates a physical channel-point reference.
-    #[must_use]
-    pub const fn new(channel_id: u32, kind: PointKind, point_id: u32) -> Self {
-        Self {
-            channel_id,
-            kind,
-            point_id,
-        }
-    }
-}
-
 /// In-memory instance-to-channel routing snapshot used by alarm reads.
 #[derive(Debug, Clone, Default)]
 pub struct AlarmRouting {
-    measurements: HashMap<(u32, u32), ChannelPointRef>,
-    actions: HashMap<(u32, u32), ChannelPointRef>,
+    measurements: HashMap<(u32, u32), PhysicalPointAddress>,
+    actions: HashMap<(u32, u32), PhysicalPointAddress>,
 }
 
 impl AlarmRouting {
     /// Builds routing from `(instance_id, point_id, channel_target)` entries.
     #[must_use]
     pub fn from_entries(
-        measurements: impl IntoIterator<Item = (u32, u32, ChannelPointRef)>,
-        actions: impl IntoIterator<Item = (u32, u32, ChannelPointRef)>,
+        measurements: impl IntoIterator<Item = (u32, u32, PhysicalPointAddress)>,
+        actions: impl IntoIterator<Item = (u32, u32, PhysicalPointAddress)>,
     ) -> Self {
         Self {
             measurements: measurements
@@ -66,11 +49,11 @@ impl AlarmRouting {
         }
     }
 
-    fn measurement(&self, instance_id: u32, point_id: u32) -> Option<ChannelPointRef> {
+    fn measurement(&self, instance_id: u32, point_id: u32) -> Option<PhysicalPointAddress> {
         self.measurements.get(&(instance_id, point_id)).copied()
     }
 
-    fn action(&self, instance_id: u32, point_id: u32) -> Option<ChannelPointRef> {
+    fn action(&self, instance_id: u32, point_id: u32) -> Option<PhysicalPointAddress> {
         self.actions.get(&(instance_id, point_id)).copied()
     }
 }
@@ -164,7 +147,11 @@ impl ShmAlarmValueSource {
                 .topology
                 .as_ref()
                 .is_some_and(|topology| topology.publication_epoch() == 0);
-        if physical_layout_matches(&current, &snapshot) && (physical_current || lazy_route_only) {
+        let physical_layout_unchanged = current
+            .topology
+            .as_ref()
+            .is_some_and(|topology| layouts_match(topology, &snapshot));
+        if physical_layout_unchanged && (physical_current || lazy_route_only) {
             let routing = Arc::new(alarm_routing_from_snapshot(&snapshot));
             let topology = Arc::clone(current.topology.as_ref().ok_or_else(|| {
                 PortError::new(
@@ -191,16 +178,15 @@ impl ShmAlarmValueSource {
         }
 
         let config = config.clone();
-        let candidate = tokio::task::spawn_blocking(move || {
-            build_alarm_generation(snapshot, &config, TopologyOpenMode::ValidatePhysical)
-        })
-        .await
-        .map_err(|error| {
-            PortError::new(
-                PortErrorKind::Unavailable,
-                format!("alarm topology validation task failed: {error}"),
-            )
-        })??;
+        let candidate =
+            tokio::task::spawn_blocking(move || build_alarm_generation(snapshot, &config, true))
+                .await
+                .map_err(|error| {
+                    PortError::new(
+                        PortErrorKind::Unavailable,
+                        format!("alarm topology validation task failed: {error}"),
+                    )
+                })??;
         let candidate = Arc::new(candidate);
         let topology = Arc::clone(candidate.topology.as_ref().ok_or_else(|| {
             PortError::new(
@@ -223,15 +209,8 @@ impl ShmAlarmValueSource {
 }
 
 impl AlarmValueGeneration {
-    fn read_point(&self, point: ChannelPointRef) -> PortResult<Option<SlotSnapshot>> {
-        let Some(slot) = self
-            .manifest
-            .slot_for(PhysicalPointAddress::from_legacy_raw(
-                point.channel_id,
-                point.kind,
-                point.point_id,
-            ))
-        else {
+    fn read_point(&self, point: PhysicalPointAddress) -> PortResult<Option<SlotSnapshot>> {
+        let Some(slot) = self.manifest.slot_for(point) else {
             return Ok(None);
         };
         let Some(sample) = self.slots.read_slot(slot)? else {
@@ -257,9 +236,9 @@ impl AlarmValueGeneration {
             ("io", AlertRule::CHANNEL_ONLINE_DATA_TYPE) => {
                 ResolvedAlarmTarget::ChannelHealth(owner_id)
             },
-            ("io", data_type) => ResolvedAlarmTarget::Point(ChannelPointRef::new(
+            ("io", data_type) => ResolvedAlarmTarget::Point(PhysicalPointAddress::from_legacy_raw(
                 owner_id,
-                parse_channel_kind(data_type)
+                parse_point_kind(data_type)
                     .ok_or_else(|| invalid_rule_target(rule, "unsupported channel point type"))?,
                 point_id,
             )),
@@ -287,7 +266,7 @@ impl AlarmValueGeneration {
 }
 
 enum ResolvedAlarmTarget {
-    Point(ChannelPointRef),
+    Point(PhysicalPointAddress),
     ChannelHealth(u32),
 }
 
@@ -312,15 +291,7 @@ impl AlarmValueSource for ShmAlarmValueSource {
     fn watched_slot(&self, rule: &AlertRule) -> PortResult<Option<usize>> {
         let generation = self.current.load();
         match generation.resolve_target(rule)? {
-            Some(ResolvedAlarmTarget::Point(target)) => {
-                Ok(generation
-                    .manifest
-                    .slot_for(PhysicalPointAddress::from_legacy_raw(
-                        target.channel_id,
-                        target.kind,
-                        target.point_id,
-                    )))
-            },
+            Some(ResolvedAlarmTarget::Point(target)) => Ok(generation.manifest.slot_for(target)),
             Some(ResolvedAlarmTarget::ChannelHealth(_)) | None => Ok(None),
         }
     }
@@ -340,16 +311,6 @@ fn checked_u32(value: i64, label: &str) -> PortResult<u32> {
             format!("alarm rule {label} must fit in u32, got {value}"),
         )
     })
-}
-
-fn parse_channel_kind(code: &str) -> Option<PointKind> {
-    match code {
-        "T" => Some(PointKind::Telemetry),
-        "S" => Some(PointKind::Status),
-        "C" => Some(PointKind::Command),
-        "A" => Some(PointKind::Action),
-        _ => None,
-    }
 }
 
 fn invalid_rule_target(rule: &AlertRule, reason: &str) -> PortError {
@@ -373,7 +334,7 @@ pub async fn build_shm_alarm_source(
     let snapshot = load_sqlite_live_topology(pool)
         .await
         .context("load canonical live topology for alarm")?;
-    let generation = build_alarm_generation(snapshot, config, TopologyOpenMode::Lazy)
+    let generation = build_alarm_generation(snapshot, config, false)
         .context("compose lazy alarm SHM topology")?;
     Ok(Arc::new(ShmAlarmValueSource {
         current: ArcSwap::from_pointee(generation),
@@ -411,48 +372,33 @@ pub async fn run_alarm_topology_refresh(
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-enum TopologyOpenMode {
-    Lazy,
-    ValidatePhysical,
-}
-
 fn build_alarm_generation(
     snapshot: SqliteLiveTopologySnapshot,
     config: &AlarmConfig,
-    mode: TopologyOpenMode,
+    validate_physical: bool,
 ) -> PortResult<AlarmValueGeneration> {
     let digest = snapshot.digest();
     let routing = Arc::new(alarm_routing_from_snapshot(&snapshot));
     let (point_manifest, health_manifest, _, _) = snapshot.into_parts();
-    let point_manifest = Arc::new(point_manifest);
-    let health_manifest = Arc::new(health_manifest);
-    let point_config = shm_client_config(&config.shm_path, point_manifest.layout_hash(), config);
-    let health_config = shm_client_config(
+    let opened = open_read_topology(
+        Arc::new(point_manifest),
+        Arc::new(health_manifest),
+        &config.shm_path,
         &config.channel_health_shm_path,
-        health_manifest.layout_hash(),
-        config,
+        Duration::from_millis(config.shm_writer_stale_after_ms),
+        Duration::from_millis(config.shm_identity_check_interval_ms),
+        validate_physical,
     );
-    let topology = Arc::new(match mode {
-        TopologyOpenMode::Lazy => ShmReadTopologyGeneration::new_lazy(
-            point_config,
-            health_config,
-            Arc::clone(&point_manifest),
-            Arc::clone(&health_manifest),
-        )?,
-        TopologyOpenMode::ValidatePhysical => ShmReadTopologyGeneration::open(
-            point_config,
-            health_config,
-            Arc::clone(&point_manifest),
-            Arc::clone(&health_manifest),
-        )
-        .map_err(retryable_topology_transition)?,
-    });
+    let topology = if validate_physical {
+        opened.map_err(retryable_topology_transition)?
+    } else {
+        opened?
+    };
     let slots: Arc<dyn SlotSource> = topology.point_source().clone();
     let channel_health: Arc<dyn ChannelHealthSource> = topology.channel_health().clone();
     Ok(AlarmValueGeneration {
         slots,
-        manifest: point_manifest,
+        manifest: Arc::clone(topology.point_manifest()),
         routing,
         channel_health,
         topology: Some(topology),
@@ -460,53 +406,8 @@ fn build_alarm_generation(
     })
 }
 
-fn physical_layout_matches(
-    current: &AlarmValueGeneration,
-    snapshot: &SqliteLiveTopologySnapshot,
-) -> bool {
-    current.topology.as_ref().is_some_and(|topology| {
-        topology.point_manifest().layout_hash() == snapshot.point_manifest().layout_hash()
-            && topology.point_manifest().slot_count() == snapshot.point_manifest().slot_count()
-            && topology.health_manifest().layout_hash() == snapshot.health_manifest().layout_hash()
-            && topology.health_manifest().slot_count() == snapshot.health_manifest().slot_count()
-    })
-}
-
 fn alarm_routing_from_snapshot(snapshot: &SqliteLiveTopologySnapshot) -> AlarmRouting {
-    AlarmRouting::from_entries(
-        snapshot
-            .measurement_routes()
-            .map(|(instance_id, point_id, target)| {
-                (
-                    instance_id,
-                    point_id,
-                    ChannelPointRef::new(
-                        target.channel_id().get(),
-                        target.kind(),
-                        target.point_id().get(),
-                    ),
-                )
-            }),
-        snapshot
-            .action_routes()
-            .map(|(instance_id, point_id, target)| {
-                (
-                    instance_id,
-                    point_id,
-                    ChannelPointRef::new(
-                        target.channel_id().get(),
-                        target.kind(),
-                        target.point_id().get(),
-                    ),
-                )
-            }),
-    )
-}
-
-fn shm_client_config(path: &str, layout_hash: u64, config: &AlarmConfig) -> ShmClientConfig {
-    ShmClientConfig::new(path, layout_hash)
-        .with_writer_stale_after(Duration::from_millis(config.shm_writer_stale_after_ms))
-        .with_identity_check_interval(Duration::from_millis(config.shm_identity_check_interval_ms))
+    AlarmRouting::from_entries(snapshot.measurement_routes(), snapshot.action_routes())
 }
 
 fn retryable_topology_transition(error: PortError) -> PortError {
@@ -530,9 +431,7 @@ mod tests {
         ChannelPointManifest, PhysicalPointAddress, PointWatchEvent, SlotSnapshot, SlotSource,
     };
 
-    use super::{
-        AlarmRouting, AlarmValueSource, ChannelPointRef, NoChannelHealth, ShmAlarmValueSource,
-    };
+    use super::{AlarmRouting, AlarmValueSource, NoChannelHealth, ShmAlarmValueSource};
     use crate::models::AlertRule;
 
     struct StubSlots {
@@ -595,8 +494,16 @@ mod tests {
             (a_slot, SlotSnapshot::new(7.0, 1_001)),
         ]);
         let routing = AlarmRouting::from_entries(
-            [(100, 5, ChannelPointRef::new(10, PointKind::Telemetry, 1))],
-            [(100, 8, ChannelPointRef::new(10, PointKind::Action, 0))],
+            [(
+                100,
+                5,
+                PhysicalPointAddress::from_legacy_raw(10, PointKind::Telemetry, 1),
+            )],
+            [(
+                100,
+                8,
+                PhysicalPointAddress::from_legacy_raw(10, PointKind::Action, 0),
+            )],
         );
 
         ShmAlarmValueSource::new(
@@ -608,6 +515,30 @@ mod tests {
             Arc::new(routing),
             Arc::new(NoChannelHealth),
         )
+    }
+
+    async fn config_pool(seed: &[&str]) -> sqlx::SqlitePool {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("open embedded config database");
+        const SCHEMA: [&str; 7] = [
+            "CREATE TABLE channels (channel_id INTEGER PRIMARY KEY, protocol TEXT NOT NULL)",
+            "CREATE TABLE telemetry_points (channel_id INTEGER, point_id INTEGER)",
+            "CREATE TABLE signal_points (channel_id INTEGER, point_id INTEGER)",
+            "CREATE TABLE control_points (channel_id INTEGER, point_id INTEGER)",
+            "CREATE TABLE adjustment_points (channel_id INTEGER, point_id INTEGER)",
+            "CREATE TABLE measurement_routing (instance_id INTEGER, channel_id INTEGER, channel_type TEXT, channel_point_id INTEGER, measurement_id INTEGER, enabled BOOLEAN)",
+            "CREATE TABLE action_routing (instance_id INTEGER, channel_id INTEGER, channel_type TEXT, channel_point_id INTEGER, action_id INTEGER, enabled BOOLEAN)",
+        ];
+        for statement in SCHEMA.iter().chain(seed) {
+            sqlx::query(statement)
+                .execute(&pool)
+                .await
+                .expect("create minimal alarm config schema");
+        }
+        pool
     }
 
     #[test]
@@ -710,27 +641,11 @@ mod tests {
 
     #[tokio::test]
     async fn production_source_builds_before_shm_writer() {
-        let pool = sqlx::sqlite::SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect("sqlite::memory:")
-            .await
-            .expect("open in-memory config database");
-        for statement in [
-            "CREATE TABLE channels (channel_id INTEGER PRIMARY KEY, protocol TEXT NOT NULL)",
-            "CREATE TABLE telemetry_points (channel_id INTEGER, point_id INTEGER)",
-            "CREATE TABLE signal_points (channel_id INTEGER, point_id INTEGER)",
-            "CREATE TABLE control_points (channel_id INTEGER, point_id INTEGER)",
-            "CREATE TABLE adjustment_points (channel_id INTEGER, point_id INTEGER)",
-            "CREATE TABLE measurement_routing (instance_id INTEGER, channel_id INTEGER, channel_type TEXT, channel_point_id INTEGER, measurement_id INTEGER, enabled BOOLEAN)",
-            "CREATE TABLE action_routing (instance_id INTEGER, channel_id INTEGER, channel_type TEXT, channel_point_id INTEGER, action_id INTEGER, enabled BOOLEAN)",
+        let pool = config_pool(&[
             "INSERT INTO channels VALUES (10, 'modbus')",
             "INSERT INTO telemetry_points VALUES (10, 0)",
-        ] {
-            sqlx::query(statement)
-                .execute(&pool)
-                .await
-                .expect("create minimal config schema");
-        }
+        ])
+        .await;
         let dir = tempfile::tempdir().expect("temporary directory");
         let shm_path = dir
             .path()
@@ -760,29 +675,13 @@ mod tests {
 
     #[tokio::test]
     async fn routing_only_refresh_succeeds_while_io_is_offline() {
-        let pool = sqlx::sqlite::SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect("sqlite::memory:")
-            .await
-            .expect("open embedded config database");
-        for statement in [
-            "CREATE TABLE channels (channel_id INTEGER PRIMARY KEY, protocol TEXT NOT NULL)",
-            "CREATE TABLE telemetry_points (channel_id INTEGER, point_id INTEGER)",
-            "CREATE TABLE signal_points (channel_id INTEGER, point_id INTEGER)",
-            "CREATE TABLE control_points (channel_id INTEGER, point_id INTEGER)",
-            "CREATE TABLE adjustment_points (channel_id INTEGER, point_id INTEGER)",
-            "CREATE TABLE measurement_routing (instance_id INTEGER, channel_id INTEGER, channel_type TEXT, channel_point_id INTEGER, measurement_id INTEGER, enabled BOOLEAN)",
-            "CREATE TABLE action_routing (instance_id INTEGER, channel_id INTEGER, channel_type TEXT, channel_point_id INTEGER, action_id INTEGER, enabled BOOLEAN)",
+        let pool = config_pool(&[
             "INSERT INTO channels VALUES (10, 'modbus_tcp')",
             "INSERT INTO telemetry_points VALUES (10, 0)",
             "INSERT INTO telemetry_points VALUES (10, 1)",
             "INSERT INTO measurement_routing VALUES (100, 10, 'T', 0, 5, TRUE)",
-        ] {
-            sqlx::query(statement)
-                .execute(&pool)
-                .await
-                .expect("create routing-only topology");
-        }
+        ])
+        .await;
         let directory = tempfile::tempdir().expect("temporary missing-SHM directory");
         let config = crate::config::AlarmConfig {
             shm_path: directory
@@ -834,28 +733,12 @@ mod tests {
             begin_topology_publication,
         };
 
-        let pool = sqlx::sqlite::SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect("sqlite::memory:")
-            .await
-            .expect("open embedded topology database");
-        for statement in [
-            "CREATE TABLE channels (channel_id INTEGER PRIMARY KEY, protocol TEXT NOT NULL)",
-            "CREATE TABLE telemetry_points (channel_id INTEGER, point_id INTEGER)",
-            "CREATE TABLE signal_points (channel_id INTEGER, point_id INTEGER)",
-            "CREATE TABLE control_points (channel_id INTEGER, point_id INTEGER)",
-            "CREATE TABLE adjustment_points (channel_id INTEGER, point_id INTEGER)",
-            "CREATE TABLE measurement_routing (instance_id INTEGER, channel_id INTEGER, channel_type TEXT, channel_point_id INTEGER, measurement_id INTEGER, enabled BOOLEAN)",
-            "CREATE TABLE action_routing (instance_id INTEGER, channel_id INTEGER, channel_type TEXT, channel_point_id INTEGER, action_id INTEGER, enabled BOOLEAN)",
+        let pool = config_pool(&[
             "INSERT INTO channels VALUES (10, 'modbus_tcp')",
             "INSERT INTO telemetry_points VALUES (10, 0)",
             "INSERT INTO measurement_routing VALUES (100, 10, 'T', 0, 5, TRUE)",
-        ] {
-            sqlx::query(statement)
-                .execute(&pool)
-                .await
-                .expect("create initial topology");
-        }
+        ])
+        .await;
         let directory = tempfile::tempdir().expect("temporary SHM directory");
         let point_path = directory.path().join("live.shm");
         let health_path = directory.path().join("health.shm");

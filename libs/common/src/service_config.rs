@@ -66,6 +66,15 @@ pub fn automation_url() -> String {
     env::var(ENV_AUTOMATION_URL).unwrap_or_else(|_| DEFAULT_AUTOMATION_URL.to_string())
 }
 
+/// Read `name` from the environment, falling back to `default` when the
+/// variable is unset or does not parse.
+pub fn env_or<T: FromStr>(name: &str, default: T) -> T {
+    env::var(name)
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(default)
+}
+
 // ============================================================================
 // Base service configuration
 // ============================================================================
@@ -319,30 +328,16 @@ pub enum ValidationLevel {
 /// Core trait for configuration validation
 pub trait ConfigValidator: Send + Sync {
     /// Validate syntax (YAML/CSV format)
-    fn validate_syntax(&self) -> Result<ValidationResult> {
-        let mut result = ValidationResult::new(ValidationLevel::Syntax);
-        result.add_warning("Syntax validation not implemented for this config type".to_string());
-        Ok(result)
-    }
+    fn validate_syntax(&self) -> Result<ValidationResult>;
 
     /// Validate schema (required fields, types)
-    fn validate_schema(&self) -> Result<ValidationResult> {
-        let mut result = ValidationResult::new(ValidationLevel::Schema);
-        result.add_warning("Schema validation not implemented for this config type".to_string());
-        Ok(result)
-    }
+    fn validate_schema(&self) -> Result<ValidationResult>;
 
     /// Validate business rules
     fn validate_business(&self) -> Result<ValidationResult>;
 
     /// Validate runtime environment
-    fn validate_runtime(&self) -> Result<ValidationResult> {
-        let mut result = ValidationResult::new(ValidationLevel::Runtime);
-        result.add_warning(
-            "Runtime validation not applicable for configuration management".to_string(),
-        );
-        Ok(result)
-    }
+    fn validate_runtime(&self) -> Result<ValidationResult>;
 
     /// Perform full validation up to specified level
     fn validate(&self, up_to_level: ValidationLevel) -> Result<ValidationResult> {

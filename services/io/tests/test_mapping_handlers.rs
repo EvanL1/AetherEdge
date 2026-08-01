@@ -22,11 +22,8 @@ use axum::{
 };
 use http_body_util::BodyExt;
 use serde_json::json;
-use std::sync::Arc;
+use support::{ADMIN_ACCESS_TOKEN, create_test_app_with_pool};
 use tower::ServiceExt;
-
-const TEST_JWT_SECRET: &str = "0123456789abcdef0123456789abcdef";
-const ADMIN_ACCESS_TOKEN: &str = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyX2lkIjo3LCJyb2xlIjoiQWRtaW4iLCJ0eXBlIjoiYWNjZXNzIiwiaWF0IjoxNzAwMDAwMDAwLCJleHAiOjQxMDI0NDQ4MDB9.JtjQvDBo7j0bLOxwed6yC9-M9qFCloc4H2Dt0LjzF9E";
 
 /// Create test SQLite database with required schema (including point tables)
 async fn create_test_database() -> Result<sqlx::SqlitePool> {
@@ -123,34 +120,6 @@ async fn create_test_database_with_gpio_channel() -> Result<sqlx::SqlitePool> {
     Ok(pool)
 }
 
-/// Helper function to create a test app router with custom database
-async fn create_test_app_with_pool(pool: sqlx::SqlitePool) -> Result<axum::Router> {
-    // Create routing cache (empty for integration test)
-    let routing_cache = Arc::new(aether_routing::RoutingCache::new());
-
-    // Create the channel manager over an available temporary SHM layout.
-    let channel_manager = Arc::new(aether_io::ChannelManager::new(
-        support::create_test_shm_handle(),
-        routing_cache,
-    )?);
-
-    let point_topology = Arc::new(aether_io::point_topology::PointTopologyApplication::new(
-        pool.clone(),
-        Arc::new(aether_store_local::MemoryAuditSink::new()),
-    ));
-    let authenticator = Arc::new(
-        aether_auth_jwt::AccessTokenAuthenticator::new(TEST_JWT_SECRET)
-            .expect("test authenticator"),
-    );
-    let router = aether_io::api::routes::create_api_routes_with_point_topology(
-        channel_manager,
-        pool,
-        point_topology,
-        authenticator,
-    );
-    Ok(router)
-}
-
 /// Helper function to make HTTP requests and extract response
 async fn make_request(
     app: &axum::Router,
@@ -178,34 +147,7 @@ async fn make_request(
             .header("x-aether-expected-revision", revision.to_string());
     }
 
-    let body_bytes = if let Some(json_body) = body {
-        req_builder = req_builder.header("content-type", "application/json");
-        serde_json::to_vec(&json_body)?
-    } else {
-        Vec::new()
-    };
-
-    let request = req_builder.body(Body::from(body_bytes))?;
-
-    let response = app.clone().oneshot(request).await?;
-    let status = response.status();
-
-    let body_bytes = response.into_body().collect().await?.to_bytes();
-    let response_json: serde_json::Value = if body_bytes.is_empty() {
-        json!({})
-    } else {
-        match serde_json::from_slice(&body_bytes) {
-            Ok(json) => json,
-            Err(e) => {
-                eprintln!("JSON parse error on {} {}: {}", method, uri, e);
-                let text = String::from_utf8_lossy(&body_bytes);
-                eprintln!("Raw response: {}", text);
-                json!({ "raw": text.to_string() })
-            },
-        }
-    };
-
-    Ok((status, response_json))
+    support::send(app, req_builder, body).await
 }
 
 // ============================================================================

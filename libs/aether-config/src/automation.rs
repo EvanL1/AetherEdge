@@ -327,9 +327,6 @@ impl common::ConfigValidator for AutomationConfig {
     }
 }
 
-/// Type alias for backward compatibility - use GenericValidator directly for new code
-pub type AutomationValidator = common::GenericValidator<AutomationConfig>;
-
 // ============================================================================
 // Centralized SQL Queries for Automation
 // ============================================================================

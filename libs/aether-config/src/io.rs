@@ -425,9 +425,6 @@ impl ChannelConfig {
     }
 }
 
-/// Type alias for backward compatibility - use GenericValidator directly for new code
-pub type IoValidator = common::GenericValidator<IoConfig>;
-
 impl Point {
     /// Insert a point row into the points table with the given type-specific values
     async fn insert_point<'e, E>(

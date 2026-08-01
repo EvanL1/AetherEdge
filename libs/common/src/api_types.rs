@@ -311,34 +311,6 @@ impl<T> PaginatedResponse<T> {
     }
 }
 
-/// Pagination request parameters
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "openapi", derive(ToSchema))]
-pub struct PaginationParams {
-    /// Page number (0-indexed)
-    #[serde(default)]
-    pub page: usize,
-    /// Items per page
-    #[serde(default = "crate::serde_helpers::page_size")]
-    pub page_size: usize,
-    /// Sort field
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub sort_by: Option<String>,
-    /// Sort order
-    #[serde(default)]
-    pub sort_order: SortOrder,
-}
-
-/// Sort order
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default)]
-#[cfg_attr(feature = "openapi", derive(ToSchema))]
-#[serde(rename_all = "lowercase")]
-pub enum SortOrder {
-    #[default]
-    Asc,
-    Desc,
-}
-
 // ============================================================================
 // Time Range Filter
 // ============================================================================

@@ -39,52 +39,31 @@ impl Default for GatewayConfig {
 
         Self {
             api_host: env::var("API_HOST").unwrap_or_else(|_| "0.0.0.0".to_string()),
-            api_port: env::var("API_PORT")
-                .ok()
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(6005),
+            api_port: common::env_or("API_PORT", 6005),
             shm_path: shm_path.to_string_lossy().into_owned(),
             channel_health_shm_path: channel_health_shm_path.to_string_lossy().into_owned(),
-            shm_writer_stale_after_ms: env::var("SHM_WRITER_STALE_AFTER_MS")
-                .ok()
-                .and_then(|value| value.parse().ok())
-                .unwrap_or(30_000),
-            shm_identity_check_interval_ms: env::var("SHM_IDENTITY_CHECK_INTERVAL_MS")
-                .ok()
-                .and_then(|value| value.parse().ok())
-                .unwrap_or(250),
-            shm_topology_refresh_interval_ms: env::var("SHM_TOPOLOGY_REFRESH_INTERVAL_MS")
-                .ok()
-                .and_then(|value| value.parse().ok())
-                .unwrap_or(1_000),
+            shm_writer_stale_after_ms: common::env_or("SHM_WRITER_STALE_AFTER_MS", 30_000),
+            shm_identity_check_interval_ms: common::env_or("SHM_IDENTITY_CHECK_INTERVAL_MS", 250),
+            shm_topology_refresh_interval_ms: common::env_or(
+                "SHM_TOPOLOGY_REFRESH_INTERVAL_MS",
+                1_000,
+            ),
             point_watch_socket: env::var("AETHER_API_POINT_WATCH_SOCKET").unwrap_or_else(|_| {
                 aether_shm_bridge::point_watch_socket_from_shm(&shm_path, "api")
                     .to_string_lossy()
                     .into_owned()
             }),
-            point_watch_debounce_ms: env::var("POINT_WATCH_DEBOUNCE_MS")
-                .ok()
-                .and_then(|value| value.parse().ok())
-                .unwrap_or(25),
+            point_watch_debounce_ms: common::env_or("POINT_WATCH_DEBOUNCE_MS", 25),
             db_path,
             jwt_secret: env::var("JWT_SECRET_KEY").unwrap_or_default(),
-            access_token_expire_minutes: env::var("ACCESS_TOKEN_EXPIRE_MINUTES")
-                .ok()
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(30),
-            refresh_token_expire_days: env::var("REFRESH_TOKEN_EXPIRE_DAYS")
-                .ok()
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(7),
+            access_token_expire_minutes: common::env_or("ACCESS_TOKEN_EXPIRE_MINUTES", 30),
+            refresh_token_expire_days: common::env_or("REFRESH_TOKEN_EXPIRE_DAYS", 7),
             allow_public_registration: env::var("AETHER_ALLOW_PUBLIC_REGISTRATION")
                 .ok()
                 .is_some_and(|value| explicit_opt_in(&value)),
             network_config_dir: env::var("NETWORK_CONFIG_DIR")
                 .unwrap_or_else(|_| "/etc/systemd/network".to_string()),
-            data_fetch_interval_secs: env::var("DATA_FETCH_INTERVAL")
-                .ok()
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(1),
+            data_fetch_interval_secs: common::env_or("DATA_FETCH_INTERVAL", 1),
             data_processing_enabled: env::var("AETHER_DATA_PROCESSING_ENABLED")
                 .ok()
                 .is_some_and(|value| explicit_opt_in(&value)),
@@ -100,10 +79,7 @@ impl Default for GatewayConfig {
                 .unwrap_or_else(|_| "http://127.0.0.1:6006".to_string()),
             alarm_service_url: env::var("AETHER_ALARM_SERVICE_URL")
                 .unwrap_or_else(|_| "http://127.0.0.1:6007".to_string()),
-            service_request_timeout_secs: env::var("AETHER_SERVICE_REQUEST_TIMEOUT_SECS")
-                .ok()
-                .and_then(|value| value.parse().ok())
-                .unwrap_or(60),
+            service_request_timeout_secs: common::env_or("AETHER_SERVICE_REQUEST_TIMEOUT_SECS", 60),
         }
     }
 }

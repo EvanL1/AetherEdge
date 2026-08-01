@@ -72,7 +72,7 @@ pub mod runtime {
     pub use lifecycle::{
         shutdown_handler, shutdown_services, start_cleanup_task, wait_for_shutdown,
     };
-    pub use reconnect::{ReconnectContext, ReconnectError, ReconnectHelper, ReconnectPolicy};
+    pub use reconnect::{ReconnectHelper, ReconnectPolicy};
 }
 
 // Private compatibility alias for HTTP modules during the namespace migration.

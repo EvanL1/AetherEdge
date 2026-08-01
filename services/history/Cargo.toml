@@ -52,8 +52,6 @@ url = "2.5.8"
 [features]
 default = ["openapi"]
 openapi = ["common/openapi"]
-# Deprecated build-compatibility alias; Swagger UI is gateway-only.
-swagger-ui = ["openapi"]
 postgres-storage = ["sqlx/postgres"]
 
 [dev-dependencies]

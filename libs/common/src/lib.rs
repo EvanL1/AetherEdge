@@ -14,7 +14,6 @@ pub mod service_ports;
 // Common modules
 pub mod admin_api;
 pub mod api_types;
-pub mod config_loader;
 pub mod log_rotation;
 pub mod logging;
 pub mod serde_helpers;
@@ -58,6 +57,8 @@ pub use service_config::{
     ValidationLevel,
     ValidationResult,
     automation_url,
+    // Environment fallback helper
+    env_or,
     // URL resolver functions
     io_url,
 };
@@ -70,9 +71,7 @@ pub use api_types::{
     ErrorResponse,
     HealthStatus,
     PaginatedResponse,
-    PaginationParams,
     ServiceStatus,
-    SortOrder,
     SuccessResponse,
     TimeRange,
 };

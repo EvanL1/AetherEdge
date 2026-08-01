@@ -314,8 +314,8 @@ impl AutomationTopologyHandle {
         let health_path = health_path.into();
         let parts = CandidateParts::from_snapshot(snapshot);
         let read = Arc::new(ShmReadTopologyGeneration::new_lazy(
-            point_client(&point_path, parts.point_manifest.layout_hash()),
-            health_client(&health_path, parts.health_manifest.layout_hash()),
+            shm_client(&point_path, parts.point_manifest.layout_hash()),
+            shm_client(&health_path, parts.health_manifest.layout_hash()),
             Arc::clone(&parts.point_manifest),
             Arc::clone(&parts.health_manifest),
         )?);
@@ -483,8 +483,8 @@ impl AutomationTopologyHandle {
         let health_manifest = Arc::clone(&parts.health_manifest);
         let read = tokio::task::spawn_blocking(move || {
             ShmReadTopologyGeneration::open(
-                point_client(&point_path, point_manifest.layout_hash()),
-                health_client(&health_path, health_manifest.layout_hash()),
+                shm_client(&point_path, point_manifest.layout_hash()),
+                shm_client(&health_path, health_manifest.layout_hash()),
                 point_manifest,
                 health_manifest,
             )
@@ -685,11 +685,7 @@ impl PinnedAutomationCommandView {
     }
 }
 
-fn point_client(path: &Path, layout_hash: u64) -> ShmClientConfig {
-    ShmClientConfig::new(path, layout_hash).with_writer_stale_after(WRITER_STALE_AFTER)
-}
-
-fn health_client(path: &Path, layout_hash: u64) -> ShmClientConfig {
+fn shm_client(path: &Path, layout_hash: u64) -> ShmClientConfig {
     ShmClientConfig::new(path, layout_hash).with_writer_stale_after(WRITER_STALE_AFTER)
 }
 
