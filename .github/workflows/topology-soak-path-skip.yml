@@ -1,0 +1,45 @@
+# The cross-process soak is a required status check on main, but
+# topology-soak.yml only runs it when the runtime crates, services, or the
+# workspace manifests change. A documentation-only pull request never reports
+# the context and branch protection blocks it forever.
+#
+# This workflow reports the same context as trivially successful for the
+# complementary path set. Keep its `paths-ignore` list identical to the `paths`
+# list in topology-soak.yml, and keep the job name byte-identical to the one
+# there — branch protection matches on the job name, not the workflow name.
+name: Topology Soak (path-skipped)
+
+on:
+  pull_request:
+    branches: [main]
+    paths-ignore:
+      - Cargo.toml
+      - Cargo.lock
+      - rust-toolchain.toml
+      - workspace-hack/**
+      - crates/aether-acquisition-port/**
+      - crates/aether-application/**
+      - crates/aether-dataplane/**
+      - crates/aether-domain/**
+      - crates/aether-ports/**
+      - libs/aether-shm-bridge/**
+      - services/automation/**
+      - services/history/**
+      - services/io/**
+      - services/uplink/**
+      - .github/actions/setup-rust-env/**
+      - .github/workflows/topology-soak.yml
+
+permissions:
+  contents: read
+
+jobs:
+  cross-process-topology:
+    name: Cross-process topology and restart soak
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Report the soak as not applicable
+        run: |
+          echo "No runtime crate, service, or workspace manifest path changed."
+          echo "topology-soak.yml owns this check when those paths change."
