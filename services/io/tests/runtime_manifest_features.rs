@@ -13,6 +13,11 @@ fn compiled_io_protocol_features() -> Vec<&'static str> {
         (cfg!(feature = "j1939"), "j1939"),
         (cfg!(feature = "gpio"), "gpio"),
         (cfg!(feature = "dl645"), "dl645"),
+        (cfg!(feature = "bacnet"), "bacnet"),
+        (cfg!(feature = "cjt188"), "cjt188"),
+        (cfg!(feature = "iec101"), "iec101"),
+        (cfg!(feature = "gb32960"), "gb32960"),
+        (cfg!(feature = "jt808"), "jt808"),
         (cfg!(feature = "aether_485"), "aether_485"),
         (cfg!(feature = "mqtt"), "mqtt"),
         (cfg!(feature = "http"), "http"),
@@ -59,6 +64,11 @@ fn manifest_protocols_match_the_io_binary_feature_set() {
     assert!(!protocols.contains("sunspec_rtu"));
     assert_eq!(protocols.contains("opcua"), cfg!(feature = "opcua"));
     assert_eq!(protocols.contains("dl645"), cfg!(feature = "dl645"));
+    assert_eq!(protocols.contains("bacnet_ip"), cfg!(feature = "bacnet"));
+    assert_eq!(protocols.contains("cjt188"), cfg!(feature = "cjt188"));
+    assert_eq!(protocols.contains("iec101"), cfg!(feature = "iec101"));
+    assert_eq!(protocols.contains("gb32960"), cfg!(feature = "gb32960"));
+    assert_eq!(protocols.contains("jt808"), cfg!(feature = "jt808"));
     assert_eq!(
         protocols.contains("aether_485"),
         cfg!(feature = "aether_485")

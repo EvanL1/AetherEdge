@@ -41,6 +41,26 @@ pub mod gpio;
 #[cfg(feature = "dl645")]
 pub mod dl645;
 
+#[cfg(feature = "bacnet")]
+pub mod bacnet;
+
+#[cfg(feature = "cjt188")]
+pub mod cjt188;
+
+#[cfg(feature = "iec101")]
+pub mod iec101;
+
+// Accept-loop, connection-bound and rebind plumbing shared by the two dial-in
+// terminal servers below.
+#[cfg(any(feature = "gb32960", feature = "jt808"))]
+pub(crate) mod tcp_terminal_server;
+
+#[cfg(feature = "gb32960")]
+pub mod gb32960;
+
+#[cfg(feature = "jt808")]
+pub mod jt808;
+
 #[cfg(feature = "aether_485")]
 pub mod aether_485;
 

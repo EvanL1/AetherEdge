@@ -352,6 +352,41 @@ fn validate_dl645_parameters(config: &ChannelConfig) -> Result<()> {
     parameters.validate().map_err(Into::into)
 }
 
+#[cfg(feature = "bacnet")]
+fn validate_bacnet_parameters(config: &ChannelConfig) -> Result<()> {
+    let parameters: crate::protocols::adapters::bacnet::BacnetParamsConfig =
+        decode_parameters(&config.parameters, "BACnet/IP")?;
+    parameters.validate().map_err(Into::into)
+}
+
+#[cfg(feature = "cjt188")]
+fn validate_cjt188_parameters(config: &ChannelConfig) -> Result<()> {
+    let parameters: crate::protocols::adapters::cjt188::Cjt188ParamsConfig =
+        decode_parameters(&config.parameters, "CJ/T 188")?;
+    parameters.validate().map_err(Into::into)
+}
+
+#[cfg(feature = "iec101")]
+fn validate_iec101_parameters(config: &ChannelConfig) -> Result<()> {
+    let parameters: crate::protocols::adapters::iec101::Iec101ParamsConfig =
+        decode_parameters(&config.parameters, "IEC 101")?;
+    parameters.validate().map_err(Into::into)
+}
+
+#[cfg(feature = "gb32960")]
+fn validate_gb32960_parameters(config: &ChannelConfig) -> Result<()> {
+    let parameters: crate::protocols::adapters::gb32960::Gb32960ParamsConfig =
+        decode_parameters(&config.parameters, "GB/T 32960")?;
+    parameters.validate().map_err(Into::into)
+}
+
+#[cfg(feature = "jt808")]
+fn validate_jt808_parameters(config: &ChannelConfig) -> Result<()> {
+    let parameters: crate::protocols::adapters::jt808::Jt808ParamsConfig =
+        decode_parameters(&config.parameters, "JT/T 808")?;
+    parameters.validate().map_err(Into::into)
+}
+
 #[cfg(all(feature = "gpio", target_os = "linux"))]
 fn validate_gpio_parameters(config: &ChannelConfig) -> Result<()> {
     let parameters: crate::protocols::adapters::gpio::GpioChannelParamsConfig =
@@ -532,6 +567,335 @@ fn build_dl645(config: &RuntimeChannelConfig) -> Result<Box<dyn ChannelRuntime>>
         parameters.into_channel_config(),
         config.id(),
     )))
+}
+
+#[cfg(feature = "bacnet")]
+fn build_bacnet(config: &RuntimeChannelConfig) -> Result<Box<dyn ChannelRuntime>> {
+    use crate::protocols::adapters::bacnet::{
+        BacnetChannel, BacnetParamsConfig, BacnetPointConfig, parse_point_mapping,
+    };
+
+    let parameters: BacnetParamsConfig =
+        decode_parameters(&config.channel_config().parameters, "BACnet/IP")?;
+    parameters.validate()?;
+    let mut points = Vec::with_capacity(config.point_count());
+
+    for point in &config.telemetry_points {
+        let mapping = runtime_mapping(&point.base)?.ok_or_else(|| {
+            invalid_mapping(
+                point.base.point_id,
+                "BACnet telemetry point requires a mapping",
+            )
+        })?;
+        points.push(BacnetPointConfig {
+            point_id: point.base.point_id,
+            point_type: PointType::Telemetry,
+            mapping: parse_point_mapping(&mapping, PointType::Telemetry)?,
+            scale: point.scale,
+            offset: point.offset,
+            reverse: false,
+        });
+    }
+    for point in &config.signal_points {
+        let mapping = runtime_mapping(&point.base)?.ok_or_else(|| {
+            invalid_mapping(
+                point.base.point_id,
+                "BACnet signal point requires a mapping",
+            )
+        })?;
+        points.push(BacnetPointConfig {
+            point_id: point.base.point_id,
+            point_type: PointType::Signal,
+            mapping: parse_point_mapping(&mapping, PointType::Signal)?,
+            scale: 1.0,
+            offset: 0.0,
+            reverse: point.reverse,
+        });
+    }
+    for point in &config.control_points {
+        let mapping = runtime_mapping(&point.base)?.ok_or_else(|| {
+            invalid_mapping(
+                point.base.point_id,
+                "BACnet control point requires a mapping",
+            )
+        })?;
+        points.push(BacnetPointConfig {
+            point_id: point.base.point_id,
+            point_type: PointType::Control,
+            mapping: parse_point_mapping(&mapping, PointType::Control)?,
+            scale: 1.0,
+            offset: 0.0,
+            reverse: point.reverse,
+        });
+    }
+    for point in &config.adjustment_points {
+        let mapping = runtime_mapping(&point.base)?.ok_or_else(|| {
+            invalid_mapping(
+                point.base.point_id,
+                "BACnet adjustment point requires a mapping",
+            )
+        })?;
+        if point.scale == 0.0 {
+            return Err(invalid_mapping(
+                point.base.point_id,
+                "BACnet adjustment scale must not be zero",
+            ));
+        }
+        points.push(BacnetPointConfig {
+            point_id: point.base.point_id,
+            point_type: PointType::Adjustment,
+            mapping: parse_point_mapping(&mapping, PointType::Adjustment)?,
+            scale: point.scale,
+            offset: point.offset,
+            reverse: false,
+        });
+    }
+
+    Ok(Box::new(BacnetChannel::new(
+        parameters,
+        config.id(),
+        points,
+    )?))
+}
+
+#[cfg(feature = "cjt188")]
+fn build_cjt188(config: &RuntimeChannelConfig) -> Result<Box<dyn ChannelRuntime>> {
+    use crate::protocols::adapters::cjt188::{
+        Cjt188Channel, Cjt188ParamsConfig, Cjt188PointConfig, parse_point_mapping,
+    };
+
+    reject_mapped_points(
+        "CJ/T 188",
+        PointType::Control,
+        config.control_points.iter().map(|point| &point.base),
+    )?;
+    reject_mapped_points(
+        "CJ/T 188",
+        PointType::Adjustment,
+        config.adjustment_points.iter().map(|point| &point.base),
+    )?;
+    let parameters: Cjt188ParamsConfig =
+        decode_parameters(&config.channel_config().parameters, "CJ/T 188")?;
+    parameters.validate()?;
+    let mut points = Vec::with_capacity(config.telemetry_points.len() + config.signal_points.len());
+    for point in &config.telemetry_points {
+        let mapping = runtime_mapping(&point.base)?.ok_or_else(|| {
+            invalid_mapping(
+                point.base.point_id,
+                "CJ/T 188 telemetry point requires a mapping",
+            )
+        })?;
+        points.push(Cjt188PointConfig {
+            point_id: point.base.point_id,
+            point_type: PointType::Telemetry,
+            mapping: parse_point_mapping(&mapping, PointType::Telemetry)?,
+            scale: point.scale,
+            offset: point.offset,
+            reverse: false,
+        });
+    }
+    for point in &config.signal_points {
+        let mapping = runtime_mapping(&point.base)?.ok_or_else(|| {
+            invalid_mapping(
+                point.base.point_id,
+                "CJ/T 188 signal point requires a mapping",
+            )
+        })?;
+        points.push(Cjt188PointConfig {
+            point_id: point.base.point_id,
+            point_type: PointType::Signal,
+            mapping: parse_point_mapping(&mapping, PointType::Signal)?,
+            scale: 1.0,
+            offset: 0.0,
+            reverse: point.reverse,
+        });
+    }
+
+    Ok(Box::new(Cjt188Channel::new(
+        parameters,
+        config.id(),
+        points,
+    )?))
+}
+
+#[cfg(feature = "iec101")]
+fn build_iec101(config: &RuntimeChannelConfig) -> Result<Box<dyn ChannelRuntime>> {
+    use crate::protocols::adapters::iec101::{
+        Iec101Channel, Iec101ParamsConfig, Iec101PointConfig, parse_point_mapping,
+    };
+
+    reject_mapped_points(
+        "IEC 101",
+        PointType::Control,
+        config.control_points.iter().map(|point| &point.base),
+    )?;
+    reject_mapped_points(
+        "IEC 101",
+        PointType::Adjustment,
+        config.adjustment_points.iter().map(|point| &point.base),
+    )?;
+    let parameters: Iec101ParamsConfig =
+        decode_parameters(&config.channel_config().parameters, "IEC 101")?;
+    parameters.validate()?;
+    let mut points = Vec::with_capacity(config.telemetry_points.len() + config.signal_points.len());
+    for point in &config.telemetry_points {
+        let mapping = runtime_mapping(&point.base)?.ok_or_else(|| {
+            invalid_mapping(
+                point.base.point_id,
+                "IEC 101 telemetry point requires a mapping",
+            )
+        })?;
+        points.push(Iec101PointConfig {
+            point_id: point.base.point_id,
+            point_type: PointType::Telemetry,
+            mapping: parse_point_mapping(&mapping, PointType::Telemetry)?,
+            scale: point.scale,
+            offset: point.offset,
+            reverse: false,
+        });
+    }
+    for point in &config.signal_points {
+        let mapping = runtime_mapping(&point.base)?.ok_or_else(|| {
+            invalid_mapping(
+                point.base.point_id,
+                "IEC 101 signal point requires a mapping",
+            )
+        })?;
+        points.push(Iec101PointConfig {
+            point_id: point.base.point_id,
+            point_type: PointType::Signal,
+            mapping: parse_point_mapping(&mapping, PointType::Signal)?,
+            scale: 1.0,
+            offset: 0.0,
+            reverse: point.reverse,
+        });
+    }
+
+    Ok(Box::new(Iec101Channel::new(
+        parameters,
+        config.id(),
+        points,
+    )?))
+}
+
+#[cfg(feature = "gb32960")]
+fn build_gb32960(config: &RuntimeChannelConfig) -> Result<Box<dyn ChannelRuntime>> {
+    use crate::protocols::adapters::gb32960::{
+        Gb32960Channel, Gb32960ParamsConfig, Gb32960PointConfig, parse_point_mapping,
+    };
+
+    reject_mapped_points(
+        "GB/T 32960",
+        PointType::Control,
+        config.control_points.iter().map(|point| &point.base),
+    )?;
+    reject_mapped_points(
+        "GB/T 32960",
+        PointType::Adjustment,
+        config.adjustment_points.iter().map(|point| &point.base),
+    )?;
+    let parameters: Gb32960ParamsConfig =
+        decode_parameters(&config.channel_config().parameters, "GB/T 32960")?;
+    parameters.validate()?;
+    let mut points = Vec::with_capacity(config.telemetry_points.len() + config.signal_points.len());
+    for point in &config.telemetry_points {
+        let mapping = runtime_mapping(&point.base)?.ok_or_else(|| {
+            invalid_mapping(
+                point.base.point_id,
+                "GB/T 32960 telemetry point requires a mapping",
+            )
+        })?;
+        points.push(Gb32960PointConfig {
+            point_id: point.base.point_id,
+            point_type: PointType::Telemetry,
+            mapping: parse_point_mapping(&mapping, PointType::Telemetry)?,
+            scale: point.scale,
+            offset: point.offset,
+            reverse: false,
+        });
+    }
+    for point in &config.signal_points {
+        let mapping = runtime_mapping(&point.base)?.ok_or_else(|| {
+            invalid_mapping(
+                point.base.point_id,
+                "GB/T 32960 signal point requires a mapping",
+            )
+        })?;
+        points.push(Gb32960PointConfig {
+            point_id: point.base.point_id,
+            point_type: PointType::Signal,
+            mapping: parse_point_mapping(&mapping, PointType::Signal)?,
+            scale: 1.0,
+            offset: 0.0,
+            reverse: point.reverse,
+        });
+    }
+
+    Ok(Box::new(Gb32960Channel::new(
+        parameters,
+        config.id(),
+        points,
+    )?))
+}
+
+#[cfg(feature = "jt808")]
+fn build_jt808(config: &RuntimeChannelConfig) -> Result<Box<dyn ChannelRuntime>> {
+    use crate::protocols::adapters::jt808::{
+        Jt808Channel, Jt808ParamsConfig, Jt808PointConfig, parse_point_mapping,
+    };
+
+    reject_mapped_points(
+        "JT/T 808",
+        PointType::Control,
+        config.control_points.iter().map(|point| &point.base),
+    )?;
+    reject_mapped_points(
+        "JT/T 808",
+        PointType::Adjustment,
+        config.adjustment_points.iter().map(|point| &point.base),
+    )?;
+    let parameters: Jt808ParamsConfig =
+        decode_parameters(&config.channel_config().parameters, "JT/T 808")?;
+    parameters.validate()?;
+    let mut points = Vec::with_capacity(config.telemetry_points.len() + config.signal_points.len());
+    for point in &config.telemetry_points {
+        let mapping = runtime_mapping(&point.base)?.ok_or_else(|| {
+            invalid_mapping(
+                point.base.point_id,
+                "JT/T 808 telemetry point requires a mapping",
+            )
+        })?;
+        points.push(Jt808PointConfig {
+            point_id: point.base.point_id,
+            point_type: PointType::Telemetry,
+            mapping: parse_point_mapping(&mapping, PointType::Telemetry)?,
+            scale: point.scale,
+            offset: point.offset,
+            reverse: false,
+        });
+    }
+    for point in &config.signal_points {
+        let mapping = runtime_mapping(&point.base)?.ok_or_else(|| {
+            invalid_mapping(
+                point.base.point_id,
+                "JT/T 808 signal point requires a mapping",
+            )
+        })?;
+        points.push(Jt808PointConfig {
+            point_id: point.base.point_id,
+            point_type: PointType::Signal,
+            mapping: parse_point_mapping(&mapping, PointType::Signal)?,
+            scale: 1.0,
+            offset: 0.0,
+            reverse: point.reverse,
+        });
+    }
+
+    Ok(Box::new(Jt808Channel::new(
+        parameters,
+        config.id(),
+        points,
+    )?))
 }
 
 #[cfg(all(feature = "can", target_os = "linux"))]
@@ -934,6 +1298,41 @@ fn reject_inline_mapping(_point_type: PointType, point_id: u32, _mapping: &Value
     ))
 }
 
+#[cfg(feature = "bacnet")]
+fn validate_bacnet_mapping(point_type: PointType, point_id: u32, mapping: &Value) -> Result<()> {
+    crate::protocols::adapters::bacnet::parse_point_mapping(mapping, point_type)
+        .map(|_| ())
+        .map_err(|error| invalid_mapping(point_id, &error.to_string()))
+}
+
+#[cfg(feature = "cjt188")]
+fn validate_cjt188_mapping(point_type: PointType, point_id: u32, mapping: &Value) -> Result<()> {
+    crate::protocols::adapters::cjt188::parse_point_mapping(mapping, point_type)
+        .map(|_| ())
+        .map_err(|error| invalid_mapping(point_id, &error.to_string()))
+}
+
+#[cfg(feature = "iec101")]
+fn validate_iec101_mapping(point_type: PointType, point_id: u32, mapping: &Value) -> Result<()> {
+    crate::protocols::adapters::iec101::parse_point_mapping(mapping, point_type)
+        .map(|_| ())
+        .map_err(|error| invalid_mapping(point_id, &error.to_string()))
+}
+
+#[cfg(feature = "gb32960")]
+fn validate_gb32960_mapping(point_type: PointType, point_id: u32, mapping: &Value) -> Result<()> {
+    crate::protocols::adapters::gb32960::parse_point_mapping(mapping, point_type)
+        .map(|_| ())
+        .map_err(|error| invalid_mapping(point_id, &error.to_string()))
+}
+
+#[cfg(feature = "jt808")]
+fn validate_jt808_mapping(point_type: PointType, point_id: u32, mapping: &Value) -> Result<()> {
+    crate::protocols::adapters::jt808::parse_point_mapping(mapping, point_type)
+        .map(|_| ())
+        .map_err(|error| invalid_mapping(point_id, &error.to_string()))
+}
+
 fn build_registry() -> ProtocolRegistry {
     let mut registry = ProtocolRegistry::new();
 
@@ -1121,6 +1520,116 @@ fn build_registry() -> ProtocolRegistry {
             validate_dl645_parameters,
             reject_inline_mapping,
             build_dl645,
+        ));
+    }
+
+    #[cfg(feature = "bacnet")]
+    {
+        use crate::protocols::adapters::bacnet::BacnetChannel;
+        registry.register(ProtocolFactory::new(
+            ProtocolMetadata {
+                name: "bacnet",
+                display_name: "BACnet/IP",
+                description: "BACnet/IP building automation protocol over UDP",
+                protocol_type: "bacnet_ip",
+                drivers: vec![BacnetChannel::metadata()],
+                supports_points: true,
+            },
+            &["bacnet"],
+            1_000,
+            &[
+                "object_type",
+                "object_instance",
+                "property_id",
+                "array_index",
+            ],
+            validate_bacnet_parameters,
+            validate_bacnet_mapping,
+            build_bacnet,
+        ));
+    }
+
+    #[cfg(feature = "cjt188")]
+    {
+        use crate::protocols::adapters::cjt188::Cjt188Channel;
+        registry.register(ProtocolFactory::new(
+            ProtocolMetadata {
+                name: "cjt188",
+                display_name: "CJ/T 188",
+                description: "CJ/T 188 household meter protocol over serial or TCP",
+                protocol_type: "cjt188",
+                drivers: vec![Cjt188Channel::metadata()],
+                supports_points: true,
+            },
+            &["cj_t_188", "cjt_188"],
+            5_000,
+            &["data_id", "byte_offset", "byte_length"],
+            validate_cjt188_parameters,
+            validate_cjt188_mapping,
+            build_cjt188,
+        ));
+    }
+
+    #[cfg(feature = "iec101")]
+    {
+        use crate::protocols::adapters::iec101::Iec101Channel;
+        registry.register(ProtocolFactory::new(
+            ProtocolMetadata {
+                name: "iec101",
+                display_name: "IEC 60870-5-101",
+                description: "IEC 101 unbalanced master over serial or TCP gateway",
+                protocol_type: "iec101",
+                drivers: vec![Iec101Channel::metadata()],
+                supports_points: true,
+            },
+            &["iec_101", "iec60870_5_101", "iec_60870_5_101"],
+            5_000,
+            &["ioa", "type_id"],
+            validate_iec101_parameters,
+            validate_iec101_mapping,
+            build_iec101,
+        ));
+    }
+
+    #[cfg(feature = "gb32960")]
+    {
+        use crate::protocols::adapters::gb32960::Gb32960Channel;
+        registry.register(ProtocolFactory::new(
+            ProtocolMetadata {
+                name: "gb32960",
+                display_name: "GB/T 32960",
+                description: "GB/T 32960 vehicle telemetry terminal server",
+                protocol_type: "gb32960",
+                drivers: vec![Gb32960Channel::metadata()],
+                supports_points: true,
+            },
+            &["gb_t_32960", "gbt32960"],
+            1_000,
+            &["motor_index"],
+            validate_gb32960_parameters,
+            validate_gb32960_mapping,
+            build_gb32960,
+        ));
+    }
+
+    #[cfg(feature = "jt808")]
+    {
+        use crate::protocols::adapters::jt808::Jt808Channel;
+        registry.register(ProtocolFactory::new(
+            ProtocolMetadata {
+                name: "jt808",
+                display_name: "JT/T 808",
+                description: "Authenticated JT/T 808 positioning terminal server",
+                protocol_type: "jt808",
+                drivers: vec![Jt808Channel::metadata()],
+                supports_points: true,
+            },
+            &["jt_t_808", "jtt808"],
+            1_000,
+            &[],
+            validate_jt808_parameters,
+            validate_jt808_mapping,
+            build_jt808,
         ));
     }
 

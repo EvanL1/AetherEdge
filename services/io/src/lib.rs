@@ -53,6 +53,8 @@ pub use store::ShmDataStore;
 // - mqtt: protocols::MqttChannel
 // - http: protocols::HttpChannel
 // - dl645: protocols::Dl645Channel
+// - bacnet_ip/cjt188/iec101: polling field-protocol channels
+// - gb32960/jt808: allow-listed or authenticated event-driven terminal servers
 // - can/j1939: protocols::CanChannel
 // - gpio: protocols::GpioChannel
 
