@@ -8,13 +8,14 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-use aether_domain::PointKind;
 use aether_ports::{PortError, PortErrorKind, PortResult};
 use aether_shm_bridge::{
-    ChannelPointManifest, PhysicalPointAddress, ShmClientConfig, ShmReadTopologyGeneration,
-    SlotSource,
+    ChannelPointManifest, PhysicalPointAddress, ShmReadTopologyGeneration, SlotSource,
 };
-use aether_sqlite_topology::{SqliteLiveTopologySnapshot, load_sqlite_live_topology};
+use aether_sqlite_topology::{
+    SqliteLiveTopologySnapshot, layouts_match, load_sqlite_live_topology, open_read_topology,
+    point_kind_code,
+};
 use anyhow::Context;
 use arc_swap::ArcSwap;
 use chrono::{DateTime, Utc};
@@ -94,7 +95,11 @@ impl ShmHistoryCollector {
             return Ok(false);
         }
 
-        if physical_current && physical_layout_matches(&current, &snapshot) {
+        let physical_layout_unchanged = current
+            .topology
+            .as_ref()
+            .is_some_and(|topology| layouts_match(topology, &snapshot));
+        if physical_current && physical_layout_unchanged {
             let topology = Arc::clone(current.topology.as_ref().ok_or_else(|| {
                 PortError::new(
                     PortErrorKind::Permanent,
@@ -113,16 +118,15 @@ impl ShmHistoryCollector {
         }
 
         let config = config.clone();
-        let candidate = tokio::task::spawn_blocking(move || {
-            build_history_generation(snapshot, &config, TopologyOpenMode::ValidatePhysical)
-        })
-        .await
-        .map_err(|error| {
-            PortError::new(
-                PortErrorKind::Unavailable,
-                format!("history topology validation task failed: {error}"),
-            )
-        })??;
+        let candidate =
+            tokio::task::spawn_blocking(move || build_history_generation(snapshot, &config, true))
+                .await
+                .map_err(|error| {
+                    PortError::new(
+                        PortErrorKind::Unavailable,
+                        format!("history topology validation task failed: {error}"),
+                    )
+                })??;
         let candidate = Arc::new(candidate);
         let topology = Arc::clone(candidate.topology.as_ref().ok_or_else(|| {
             PortError::new(
@@ -228,7 +232,7 @@ pub async fn build_shm_history_collector(
     let snapshot = load_sqlite_live_topology(pool)
         .await
         .context("load canonical live topology for history")?;
-    let generation = build_history_generation(snapshot, config, TopologyOpenMode::Lazy)
+    let generation = build_history_generation(snapshot, config, false)
         .context("compose lazy history SHM topology")?;
     Ok(Arc::new(ShmHistoryCollector {
         current: ArcSwap::from_pointee(generation),
@@ -262,43 +266,24 @@ pub async fn run_history_topology_refresh(
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-enum TopologyOpenMode {
-    Lazy,
-    ValidatePhysical,
-}
-
 fn build_history_generation(
     snapshot: SqliteLiveTopologySnapshot,
     config: &EnvConfig,
-    mode: TopologyOpenMode,
+    validate_physical: bool,
 ) -> PortResult<HistoryGeneration> {
     let digest = snapshot.digest();
     let series: Arc<[HistorySeries]> = history_series_from_snapshot(&snapshot)?.into();
     let (point_manifest, health_manifest, _, _) = snapshot.into_parts();
-    let point_manifest = Arc::new(point_manifest);
-    let health_manifest = Arc::new(health_manifest);
     let point_slot_count = point_manifest.slot_count();
-    let point_config = shm_client_config(&config.shm_path, point_manifest.layout_hash(), config);
-    let health_config = shm_client_config(
+    let topology = open_read_topology(
+        Arc::new(point_manifest),
+        Arc::new(health_manifest),
+        &config.shm_path,
         &config.channel_health_shm_path,
-        health_manifest.layout_hash(),
-        config,
-    );
-    let topology = Arc::new(match mode {
-        TopologyOpenMode::Lazy => ShmReadTopologyGeneration::new_lazy(
-            point_config,
-            health_config,
-            point_manifest,
-            health_manifest,
-        )?,
-        TopologyOpenMode::ValidatePhysical => ShmReadTopologyGeneration::open(
-            point_config,
-            health_config,
-            point_manifest,
-            health_manifest,
-        )?,
-    });
+        Duration::from_millis(config.shm_writer_stale_after_ms),
+        Duration::from_millis(config.shm_identity_check_interval_ms),
+        validate_physical,
+    )?;
     let slots: Arc<dyn SlotSource> = topology.point_source().clone();
     Ok(HistoryGeneration {
         slots,
@@ -382,33 +367,6 @@ fn add_series(
     Ok(())
 }
 
-fn physical_layout_matches(
-    current: &HistoryGeneration,
-    snapshot: &SqliteLiveTopologySnapshot,
-) -> bool {
-    current.topology.as_ref().is_some_and(|topology| {
-        topology.point_manifest().layout_hash() == snapshot.point_manifest().layout_hash()
-            && topology.point_manifest().slot_count() == snapshot.point_manifest().slot_count()
-            && topology.health_manifest().layout_hash() == snapshot.health_manifest().layout_hash()
-            && topology.health_manifest().slot_count() == snapshot.health_manifest().slot_count()
-    })
-}
-
-fn shm_client_config(path: &str, layout_hash: u64, config: &EnvConfig) -> ShmClientConfig {
-    ShmClientConfig::new(path, layout_hash)
-        .with_writer_stale_after(Duration::from_millis(config.shm_writer_stale_after_ms))
-        .with_identity_check_interval(Duration::from_millis(config.shm_identity_check_interval_ms))
-}
-
-const fn point_kind_code(kind: PointKind) -> &'static str {
-    match kind {
-        PointKind::Telemetry => "T",
-        PointKind::Status => "S",
-        PointKind::Command => "C",
-        PointKind::Action => "A",
-    }
-}
-
 fn compile_globs(patterns: &[PatternEntry]) -> Vec<Regex> {
     patterns
         .iter()
@@ -455,6 +413,7 @@ fn series_glob_regex(pattern: &str) -> Result<Regex, regex::Error> {
 mod tests {
     use std::collections::HashMap;
 
+    use aether_domain::PointKind;
     use aether_shm_bridge::SlotSnapshot;
 
     use super::*;

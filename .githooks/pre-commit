@@ -36,12 +36,7 @@ if ! cargo clippy --all-targets --all-features -- -D warnings 2>/dev/null; then
     exit 1
 fi
 
-# Load .env file for test environment variables
-if [ -f ".env" ]; then
-    export $(cat .env | grep -E "^REDIS_URL=" | xargs)
-fi
-
-# Run unit tests only (integration tests require Redis, run separately)
+# Run unit tests only; integration tests run separately in CI.
 echo "🧪 Running tests..."
 if ! cargo test --workspace --lib --quiet -- --test-threads=1 2>/dev/null; then
     echo -e "${RED}❌ Tests failed!${NC}"

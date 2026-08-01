@@ -95,7 +95,7 @@ jobs:
             echo "No ignored tests found."
           fi
 
-  # Job 1: Code Quality Checks (fastest, no Redis needed)
+  # Job 1: Code Quality Checks (fastest)
   quality-check:
     name: Quality Check
     runs-on: ubuntu-latest
@@ -158,7 +158,7 @@ jobs:
           rustup target add thumbv7em-none-eabihf
           cargo check --manifest-path firmware/Cargo.toml --target thumbv7em-none-eabihf
 
-  # Job 2: Unit Tests (no Redis instance needed)
+  # Job 2: Unit Tests
   unit-tests:
     name: Unit Tests
     runs-on: ubuntu-latest
@@ -332,68 +332,7 @@ jobs:
           rm -rf $TEST_CONFIG_DIR $TEST_DB_DIR
           echo "Test directories cleaned up"
 
-  # Job 4: Optional external Redis client contract
-  integration-tests:
-    name: Redis Client Contract
-    runs-on: ubuntu-latest
-    needs: [unit-tests, config-validation]
-
-    steps:
-      - uses: actions/checkout@v5
-        with:
-          submodules: true
-
-      - name: Setup Environment
-        uses: ./.github/actions/setup-rust-env
-        with:
-          install-protoc: 'true'
-
-      - name: Install cargo-nextest
-        uses: taiki-e/install-action@nextest
-
-      # Clean Aether Binary Cache (prevent schema mismatch)
-      - name: Clean Aether Binary Cache
-        run: |
-          echo "Cleaning cached Aether binaries to prevent schema mismatch..."
-          rm -f target/debug/aether target/release/aether
-
-      # Build & Start Redis
-      - name: Build & Start Redis
-        run: |
-          echo "Starting Redis container..."
-          docker compose --profile redis up -d aether-redis
-
-          echo "Waiting for Redis to be ready..."
-          for i in {1..30}; do
-            if docker compose exec -T aether-redis redis-cli ping >/dev/null 2>&1; then
-              echo "✓ Redis is ready and responding to ping"
-              exit 0
-            fi
-            echo "Waiting for Redis to start... ($i/30)"
-            sleep 2
-          done
-
-          echo "Redis failed to start in time" >&2
-          docker compose logs aether-redis
-          exit 1
-
-      # Redis is external compatibility infrastructure; core services are not
-      # started and must not acquire a dependency on this container.
-      - name: Run Legacy Redis Client Contracts
-        env:
-          REDIS_URL: redis://localhost:6379
-        run: |
-          docker compose exec -T aether-redis redis-cli FLUSHDB
-          cargo test -p aether-infra -- --ignored --test-threads=1
-
-      # Cleanup Docker resources
-      - name: Stop Redis
-        if: always()
-        run: |
-          docker compose down -v --rmi local
-          docker system prune -f
-
-  # Job 5: SHM-only E2E integration tests (no external database)
+  # Job 4: SHM-only E2E integration tests (no external database)
   # Tests the complete data acquisition flow:
   #   simulator -> aether-io -> SHM -> aether-automation
   e2e-tests:
@@ -479,7 +418,6 @@ jobs:
       - unit-tests
       - coverage-report
       - config-validation
-      - integration-tests
       - e2e-tests
 
     steps:
@@ -493,12 +431,11 @@ jobs:
           UNIT: ${{ needs.unit-tests.result }}
           COVERAGE: ${{ needs.coverage-report.result }}
           CONFIG: ${{ needs.config-validation.result }}
-          REDIS: ${{ needs.integration-tests.result }}
           E2E: ${{ needs.e2e-tests.result }}
         run: |
           for result in \
             "$POLICY" "$SUBMODULE" "$IGNORED" "$QUALITY" "$FIRMWARE" \
-            "$UNIT" "$COVERAGE" "$CONFIG" "$REDIS" "$E2E"; do
+            "$UNIT" "$COVERAGE" "$CONFIG" "$E2E"; do
             if [[ "$result" != "success" ]]; then
               echo "Required Code Check job did not succeed: $result" >&2
               exit 1

@@ -8,10 +8,8 @@ partial and is not a production release.
 
 The contract is transport neutral at the business layer. MQTT v3.1.1/QoS 1 is
 the first binding, with application-level durable acknowledgements above MQTT.
-See `docs/adr/0017-experimental-cloudlink-mqtt-edge-foundation.md`,
-`docs/adr/0018-pinned-aethercontracts-consumption.md`, and
-`docs/reference/cloudlink-mqtt-v1.md` for authority, migration, and compatibility
-findings. `v1/MIGRATION.md`, `v1/wire-profile.json`, its fixture manifest, and
+See `docs/reference/cloudlink-mqtt-v1.md` for authority, migration, and
+compatibility findings. `v1/MIGRATION.md`, `v1/wire-profile.json`, its fixture manifest, and
 the interoperability files record product integration history and remaining
 release work; they cannot override the public core.
 

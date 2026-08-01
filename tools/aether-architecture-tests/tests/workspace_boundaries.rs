@@ -310,9 +310,9 @@ fn core_crates_do_not_select_infrastructure_or_runtime_implementations() {
                 continue;
             }
 
-            // ADR-0013 retains this optional SDK composition facade. Keeping the
-            // exception explicit prevents it from becoming a general core ->
-            // extension dependency allowance.
+            // This optional SDK composition facade is retained deliberately.
+            // Keeping the exception explicit prevents it from becoming a general
+            // core -> extension dependency allowance.
             let sdk_local_runtime_compatibility = package.name == "aether-edge-sdk"
                 && dependency.name == "aether-store-local"
                 && declaration.optional;

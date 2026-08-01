@@ -83,7 +83,7 @@ pub struct ReadRequest {
     pub field: Option<String>,
     #[serde(rename = "msgId")]
     pub msg_id: Option<String>,
-    /// W3C trace context established by the caller (ADR-0016). Echoed on the
+    /// W3C trace context established by the caller. Echoed on the
     /// reply so the cloud can attribute latency to a hop.
     #[serde(default, deserialize_with = "trace_context::deserialize_optional")]
     pub traceparent: Option<TraceParent>,
@@ -124,7 +124,7 @@ pub struct WriteRequest {
     pub value: serde_json::Value,
     #[serde(rename = "msgId")]
     pub msg_id: Option<String>,
-    /// W3C trace context established by the caller (ADR-0016). Echoed on the
+    /// W3C trace context established by the caller. Echoed on the
     /// reply and forwarded on the loopback hop to automation.
     #[serde(default, deserialize_with = "trace_context::deserialize_optional")]
     pub traceparent: Option<TraceParent>,
@@ -181,7 +181,7 @@ pub struct CommandReply {
     pub traceparent: Option<TraceParent>,
 }
 
-/// Trace-context propagation across the cloud↔gateway envelope (ADR-0016).
+/// Trace-context propagation across the cloud↔gateway envelope.
 ///
 /// Every assertion here is a compatibility claim about a wire format that is
 /// already deployed. Fielded gateways talk to clouds that predate this field.

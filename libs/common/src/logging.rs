@@ -1477,10 +1477,6 @@ mod tests {
         assert!(!log_root.to_string_lossy().is_empty());
     }
 
-    // ========================================================================
-    // RedisPoolConfig tests (from redis.rs - included here for coverage)
-    // ========================================================================
-
     #[test]
     fn test_daily_rolling_writer_filename_format() {
         // Test that the filename format is correct: {YYYYMMDD}_{service}.log

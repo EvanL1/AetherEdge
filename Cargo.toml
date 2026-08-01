@@ -48,13 +48,11 @@ members = [
     "libs/aether-config",
     "libs/aether-core",
     # libs/aether-comlink removed - types moved to io
-    "libs/aether-infra",
     # libs/aether-protocols removed - protocols are now in io
     "libs/aether-routing",
     "libs/aether-runtime-catalog",
     "libs/aether-rules",
     "libs/aether-schema-macro",
-    "libs/aether-sim",
     "services/alarm",
     "services/api",
     "services/history",
@@ -80,6 +78,16 @@ repository = "https://github.com/EvanL1/AetherEdge"
 cast-possible-truncation = "allow"
 cast-possible-wrap = "allow"
 cast-sign-loss = "allow"
+
+# Wasted work. These caught a per-request `Utc::now()` and per-row `json!({})`
+# allocation; keeping them denied stops the pattern from returning.
+or-fun-call = "deny"
+redundant-clone = "deny"
+unnecessary-to-owned = "deny"
+clone-on-copy = "deny"
+inefficient-to-string = "deny"
+redundant-allocation = "deny"
+useless-conversion = "deny"
 
 [workspace.dependencies]
 # no_std compatible
@@ -111,9 +119,6 @@ sqlx = { version = "0.8", default-features = false, features = [
     "uuid",
     "macros",
 ] }
-redis = { version = "0.32", features = ["tokio-comp", "connection-manager"] }
-bb8 = "0.9"
-bb8-redis = "0.24"
 
 # Error handling
 anyhow = "1.0.103"

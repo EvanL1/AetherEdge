@@ -99,8 +99,9 @@ struct Cli {
     #[arg(short = 'c', long = "config-path", global = true)]
     config_path: Option<String>,
 
-    /// Database files path (overrides env, install context, and auto-detection)
-    #[arg(long = "db-path", global = true)]
+    /// Directory holding aether.db — not the database file itself
+    /// (overrides env, install context, and auto-detection)
+    #[arg(long = "db-path", global = true, value_name = "DIR")]
     db_path: Option<String>,
 }
 
@@ -289,8 +290,8 @@ enum Commands {
 }
 
 /// Resolve the API gateway base URL: `--host` wins, then `AETHER_API_URL`,
-/// then loopback. The gateway is the only remote application boundary
-/// (ADR-0021); the CLI data plane never addresses internal service ports.
+/// then loopback. The gateway is the only remote application boundary; the
+/// CLI data plane never addresses internal service ports.
 pub(crate) fn api_base_url(host: Option<&str>) -> String {
     if let Some(h) = host {
         return format!("http://{h}:{}", common::service_ports::API_PORT);
@@ -459,7 +460,7 @@ async fn run(cli: Cli) -> Result<()> {
             export_command(output, detailed, &config_path, &db_path, json).await?;
         },
 
-        // Service management commands (all use the API gateway, ADR-0021)
+        // Service management commands (all use the API gateway)
         Commands::Channels { command } => {
             let urls = mcp::BaseUrls::from_api_base(&api_base_url(host));
             channels::handle_command(command, &urls.io, json).await?;
@@ -918,7 +919,25 @@ async fn status_command(detailed: bool, db_path: &Path, json: bool) -> Result<()
     Ok(())
 }
 
+/// Rejects a `--db-path` that names the database file instead of its directory.
+///
+/// `init` appends `aether.db` to whatever it is given, so a file path produces
+/// `<...>/aether.db/aether.db` and the directory creation below happily turns
+/// the intended database file into a directory — then reports success. Catch
+/// it before anything touches the filesystem.
+fn require_data_directory(db_path: &Path) -> Result<()> {
+    if db_path.is_file() || db_path.file_name().is_some_and(|name| name == "aether.db") {
+        anyhow::bail!(
+            "--db-path takes the directory that holds aether.db, not the database file.\n\
+             Try: --db-path {}",
+            db_path.parent().unwrap_or_else(|| Path::new(".")).display()
+        );
+    }
+    Ok(())
+}
+
 async fn init_command(db_path: &Path, force: bool, json: bool) -> Result<()> {
+    require_data_directory(db_path)?;
     let db_file = db_path.join("aether.db");
 
     if !json {
@@ -1200,8 +1219,34 @@ async fn check_point_duplicates(pool: &sqlx::SqlitePool, table: &str, json: bool
 
 #[cfg(test)]
 mod cli_tests {
-    use super::Cli;
+    use super::{Cli, require_data_directory};
     use clap::CommandFactory;
+    use std::path::Path;
+
+    #[test]
+    fn db_path_naming_the_database_file_is_rejected_before_anything_is_created() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+
+        // The silent-corruption case: the file does not exist yet, so
+        // create_dir_all would succeed and turn it into a directory.
+        let fresh = directory.path().join("fresh").join("aether.db");
+        let error = require_data_directory(&fresh).expect_err("must reject a database file path");
+        assert!(error.to_string().contains("not the database file"));
+        assert!(
+            !fresh.exists(),
+            "rejection must happen before anything touches the filesystem"
+        );
+
+        // An existing file under any name is equally wrong.
+        let existing = directory.path().join("edge.sqlite");
+        std::fs::write(&existing, b"").expect("write probe file");
+        require_data_directory(&existing).expect_err("must reject an existing file");
+
+        // The correct form is accepted.
+        require_data_directory(directory.path()).expect("a directory is accepted");
+        require_data_directory(Path::new("/does/not/exist/yet"))
+            .expect("a not-yet-created directory is accepted");
+    }
 
     /// clap's own validator. It catches structural mistakes the type checker
     /// cannot — e.g. a positional `bool` field, which derive silently gives

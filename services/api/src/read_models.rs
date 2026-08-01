@@ -12,17 +12,19 @@ pub struct RoleRecord {
     pub updated_at: Option<String>,
 }
 
-#[allow(dead_code)]
+/// The credential columns the auth routes actually read.
+///
+/// Profile reads go through [`UserProfile`], which joins the role, so this
+/// row deliberately does not mirror the whole `users` table.
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct UserRecord {
+    /// Read by the registration and deactivation tests, not by a route.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub id: i64,
-    pub username: String,
     pub password_hash: String,
+    /// Read by the role-assignment tests, not by a route.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub role_id: i64,
-    pub is_active: bool,
-    pub last_login: Option<String>,
-    pub created_at: Option<String>,
-    pub updated_at: Option<String>,
 }
 
 #[derive(Debug, Clone)]

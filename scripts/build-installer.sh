@@ -9,8 +9,8 @@
 #   --enable-swagger: Enable the single gateway Swagger UI
 #
 # Service names: aether-io, aether-automation, aether-history, aether-api,
-# aether-uplink, aether-alarm, redis, timescaledb (canonical
-# aether-redis/aether-timescaledb names are accepted as aliases)
+# aether-uplink, aether-alarm, timescaledb (the canonical
+# aether-timescaledb name is accepted as an alias)
 # Service groups: rust (all six Rust services)
 #
 # Examples:
@@ -264,9 +264,6 @@ service_to_image() {
         aether-io|aether-automation|aether-history|aether-api|aether-uplink|aether-alarm)
             echo "aetherems:latest"
             ;;
-        aether-redis|redis)
-            echo "redis:8-alpine"
-            ;;
         aether-timescaledb|timescaledb)
             echo "timescale/timescaledb:2.25.2-pg17"
             ;;
@@ -306,7 +303,7 @@ if [[ -n "$SELECTED_SERVICES" ]]; then
             BUILD_IMAGES=$(add_csv_item "$BUILD_IMAGES" "$image")
         else
             echo -e "${RED}Error: Unknown service '$service'${NC}"
-            echo "Available services: aether-io aether-automation aether-history aether-api aether-uplink aether-alarm redis timescaledb"
+            echo "Available services: aether-io aether-automation aether-history aether-api aether-uplink aether-alarm timescaledb"
             exit 1
         fi
     done
@@ -623,14 +620,7 @@ if csv_contains "$BUILD_IMAGES" "aetherems:latest"; then
     done
 
     if [[ "$BARE_METAL" == 1 ]]; then
-        INCLUDE_REDIS_STATIC=0
-        if csv_contains "$BUILD_IMAGES" "redis:8-alpine"; then
-            INCLUDE_REDIS_STATIC=1
-        fi
-        echo -e "${BLUE}[2/3] Building selected static dependencies...${NC}"
-        INCLUDE_REDIS="$INCLUDE_REDIS_STATIC" ./scripts/build-static-deps.sh "$ARCH"
-
-        echo -e "${BLUE}[3/3] Packaging bare-metal installer...${NC}"
+        echo -e "${BLUE}[2/2] Packaging bare-metal installer...${NC}"
         BM_PKG_DIR="$BUILD_DIR/baremetal-pkg"
         rm -rf "$BM_PKG_DIR"
         mkdir -p "$BM_PKG_DIR/bin" "$BM_PKG_DIR/systemd" "$BM_PKG_DIR/config.template"
@@ -638,15 +628,7 @@ if csv_contains "$BUILD_IMAGES" "aetherems:latest"; then
         for svc in aether aether-io aether-automation aether-history aether-api aether-uplink aether-alarm; do
             cp "target/$TARGET/release/$svc" "$BM_PKG_DIR/bin/$svc"
         done
-        # Keep in sync with scripts/build-static-deps.sh's REDIS_VERSION default.
-        if [[ "$INCLUDE_REDIS_STATIC" == "1" ]]; then
-            cp "build/cache/static-deps/redis-server-${REDIS_VERSION:-8.0.2}-$ARCH/redis-server" "$BM_PKG_DIR/bin/redis-server"
-            cp "build/cache/static-deps/redis-server-${REDIS_VERSION:-8.0.2}-$ARCH/redis-cli" "$BM_PKG_DIR/bin/redis-cli"
-        fi
         cp scripts/systemd/*.service scripts/systemd/*.target "$BM_PKG_DIR/systemd/"
-        if [[ "$INCLUDE_REDIS_STATIC" != "1" ]]; then
-            rm -f "$BM_PKG_DIR/systemd/aether-redis.service"
-        fi
         cp scripts/install-baremetal.sh "$BM_PKG_DIR/install.sh"
         cp "$LICENSE_MIT_FILE" "$BM_PKG_DIR/LICENSE-MIT"
         cp "$LICENSE_APACHE_FILE" "$BM_PKG_DIR/LICENSE-APACHE"
@@ -659,11 +641,7 @@ if csv_contains "$BUILD_IMAGES" "aetherems:latest"; then
 
         chmod +x "$BM_PKG_DIR/bin/"* "$BM_PKG_DIR/install.sh"
 
-        BM_VARIANT=""
-        if [[ "$INCLUDE_REDIS_STATIC" == "1" ]]; then
-            BM_VARIANT="${BM_VARIANT}-redis"
-        fi
-        BM_OUTPUT_NAME="AetherEdge-baremetal-${ARCH}-${VERSION}${BM_VARIANT}.run"
+        BM_OUTPUT_NAME="AetherEdge-baremetal-${ARCH}-${VERSION}.run"
         makeself --gzip "$BM_PKG_DIR" "$OUTPUT_DIR/$BM_OUTPUT_NAME" \
             "AetherEdge bare-metal installer ($ARCH, $VERSION)" \
             bash ./install.sh
@@ -717,11 +695,6 @@ fi
 
 # Pull official images if needed
 echo -e "${BLUE}Pulling official images...${NC}"
-if csv_contains "$BUILD_IMAGES" "redis:8-alpine"; then
-    pull_and_save_image "redis:8-alpine" "aether-redis.tar.gz"
-else
-    echo -e "${YELLOW}⊘ Skipping redis:8-alpine (not selected)${NC}"
-fi
 
 if csv_contains "$BUILD_IMAGES" "timescale/timescaledb:2.25.2-pg17"; then
     pull_and_save_image "timescale/timescaledb:2.25.2-pg17" "aether-timescaledb.tar.gz"
@@ -736,9 +709,6 @@ echo -e "${YELLOW}Verifying Docker images...${NC}"
 EXPECTED_IMAGES=""
 if csv_contains "$BUILD_IMAGES" "aetherems:latest"; then
     EXPECTED_IMAGES=$(add_csv_item "$EXPECTED_IMAGES" "aetherems")
-fi
-if csv_contains "$BUILD_IMAGES" "redis:8-alpine"; then
-    EXPECTED_IMAGES=$(add_csv_item "$EXPECTED_IMAGES" "aether-redis")
 fi
 if csv_contains "$BUILD_IMAGES" "timescale/timescaledb:2.25.2-pg17"; then
     EXPECTED_IMAGES=$(add_csv_item "$EXPECTED_IMAGES" "aether-timescaledb")

@@ -1,7 +1,7 @@
 //! OPC UA protocol adapter.
 //!
 //! This module provides the `OpcUaChannel` adapter that integrates
-//! `async-opcua` with the protocol layer's `Protocol`, `ProtocolClient`, and `EventDrivenProtocol` traits.
+//! `async-opcua` with the protocol layer's `ChannelRuntime` trait.
 //!
 //! OPC UA supports both polling and subscription (event-driven) modes.
 //! This adapter primarily uses the subscription mode for real-time data updates.
@@ -56,9 +56,8 @@ use crate::protocols::core::diagnostics::AtomicDiagnostics;
 use crate::protocols::core::error::{GatewayError, Result};
 use crate::protocols::core::point::PointConfig;
 use crate::protocols::core::traits::{
-    AdjustmentCommand, CommunicationMode, ConnectionState, ControlCommand, DataEvent,
-    DataEventReceiver, DataEventSender, Diagnostics, EventDrivenProtocol, PointFailure, PollResult,
-    Protocol, ProtocolCapabilities, ProtocolClient, WriteResult, data_event_channel,
+    AdjustmentCommand, ConnectionState, ControlCommand, DataEvent, DataEventReceiver,
+    DataEventSender, Diagnostics, PointFailure, PollResult, WriteResult, data_event_channel,
 };
 use crate::protocols::runtime::ChannelRuntime;
 use aether_config::io::MAX_CHANNEL_TIMING_MS;
@@ -723,7 +722,7 @@ fn make_node_id_key(namespace_index: u16, identifier: &str) -> String {
 /// OPC UA channel adapter.
 ///
 /// This struct wraps an `async-opcua` client and implements
-/// the protocol layer's `Protocol`, `ProtocolClient`, and `EventDrivenProtocol` traits.
+/// the protocol layer's `ChannelRuntime` trait.
 ///
 /// Note: This adapter follows the "protocol layer separated from storage" design.
 /// The channel emits DataEvent::DataUpdate events; the service layer handles persistence.
@@ -919,276 +918,9 @@ impl OpcUaChannel {
     }
 }
 
-impl ProtocolCapabilities for OpcUaChannel {
+impl OpcUaChannel {
     fn name(&self) -> &'static str {
         "OPC UA"
-    }
-
-    fn supported_modes(&self) -> &[CommunicationMode] {
-        &[CommunicationMode::EventDriven, CommunicationMode::Hybrid]
-    }
-
-    fn version(&self) -> &'static str {
-        "1.0"
-    }
-}
-
-impl Protocol for OpcUaChannel {
-    fn connection_state(&self) -> ConnectionState {
-        self.get_state()
-    }
-
-    #[allow(clippy::disallowed_methods)] // json! macro
-    async fn diagnostics(&self) -> Result<Diagnostics> {
-        let state = self.get_state();
-
-        // Calculate last data received time (lock-free)
-        let last_data_received_secs = {
-            let ms = self.diag_last_data_received_ms.load(Ordering::Relaxed);
-            if ms == 0 {
-                None
-            } else {
-                let now_ms = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_millis() as u64;
-                Some((now_ms.saturating_sub(ms)) / 1000)
-            }
-        };
-
-        // Get subscription ID (0 = none)
-        let subscription_id = match self.diag_subscription_id.load(Ordering::Relaxed) {
-            0 => None,
-            id => Some(id),
-        };
-
-        Ok(Diagnostics {
-            protocol: ProtocolCapabilities::name(self).to_string(),
-            connection_state: state,
-            read_count: self.diagnostics.read_count(),
-            write_count: self.diagnostics.write_count(),
-            error_count: self.diagnostics.error_count(),
-            last_error: self.diagnostics.last_error(),
-            extra: serde_json::json!({
-                "endpoint_url": self.config.endpoint_url,
-                "application_name": self.config.application_name,
-                "security_policy": format!("{:?}", self.config.security_policy),
-                "subscription_id": subscription_id,
-                "monitored_items_count": self.diag_monitored_items_count.load(Ordering::Relaxed),
-                "points_configured": self.config.points.len(),
-                "last_data_received_secs_ago": last_data_received_secs,
-            }),
-        })
-    }
-}
-
-impl ProtocolClient for OpcUaChannel {
-    async fn connect(&mut self) -> Result<()> {
-        validate_dependency_exception(&self.config)?;
-        self.set_state(ConnectionState::Connecting);
-
-        // Build client
-        let mut builder = ClientBuilder::new()
-            .application_name(&self.config.application_name)
-            .application_uri(&self.config.application_uri)
-            .session_retry_limit(self.config.session_retry_limit as i32)
-            .create_sample_keypair(false);
-
-        if self.config.trust_server_certs {
-            builder = builder.trust_server_certs(true);
-        }
-
-        if let Some(pki_dir) = &self.config.pki_dir {
-            builder = builder.pki_dir(pki_dir);
-        }
-
-        let mut client = builder
-            .client()
-            .map_err(|e| GatewayError::Config(e.join(", ")))?;
-
-        // Prepare endpoint and identity
-        let identity = self.config.identity.to_identity_token();
-        let security_policy = self.config.security_policy.to_uri();
-        let message_mode = self.config.message_security_mode.to_message_security_mode();
-
-        // Connect to server
-        let (session, event_loop) = client
-            .connect_to_matching_endpoint(
-                (
-                    self.config.endpoint_url.as_str(),
-                    security_policy,
-                    message_mode,
-                    UserTokenPolicy::anonymous(),
-                ),
-                identity,
-            )
-            .await
-            .map_err(|e| {
-                self.set_state(ConnectionState::Error);
-                GatewayError::Connection(e.to_string())
-            })?;
-
-        // Wait for connection to be established
-        session.wait_for_connection().await;
-
-        self.session = Some(session);
-        self.set_state(ConnectionState::Connected);
-
-        // Spawn event loop in background
-        let state = self.state.clone();
-        let event_tx = self.event_tx.clone();
-        tokio::spawn(async move {
-            let _handle = event_loop.spawn();
-
-            // Note: The spawned event loop will run until the session is closed.
-            // When the connection is lost, the state will be updated via callbacks.
-            // For now, we just keep running. In a production implementation,
-            // we'd monitor the handle for completion.
-            let _ = state;
-            let _ = event_tx;
-        });
-
-        // Send connection event
-        let _ = self
-            .event_tx
-            .try_send(DataEvent::ConnectionChanged(ConnectionState::Connected));
-
-        Ok(())
-    }
-
-    async fn disconnect(&mut self) -> Result<()> {
-        // Delete subscription
-        if let (Some(session), Some(sub_id)) = (&self.session, self.subscription_id) {
-            let _ = session.delete_subscription(sub_id).await;
-        }
-
-        // Disconnect session
-        if let Some(session) = self.session.take() {
-            let _ = session.disconnect().await;
-        }
-
-        self.subscription_id = None;
-        self.set_state(ConnectionState::Disconnected);
-
-        // Send disconnect event
-        let _ = self
-            .event_tx
-            .try_send(DataEvent::ConnectionChanged(ConnectionState::Disconnected));
-
-        Ok(())
-    }
-
-    async fn write_control(&mut self, commands: &[ControlCommand]) -> Result<WriteResult> {
-        let mut success_count = 0;
-        let mut failures = Vec::with_capacity(commands.len());
-
-        for cmd in commands {
-            let (point, opc_addr) = match self.resolve_opcua_addr(cmd.id) {
-                Ok(v) => v,
-                Err(e) => {
-                    failures.push(e);
-                    continue;
-                },
-            };
-            let value = point.transform.apply_bool(cmd.value);
-            let (nid, ns) = (opc_addr.node_id.clone(), opc_addr.namespace_index);
-            match self
-                .write_single_value(&nid, ns, Variant::Boolean(value))
-                .await
-            {
-                Ok(()) => success_count += 1,
-                Err(e) => failures.push((cmd.id, e)),
-            }
-        }
-
-        self.diagnostics.add_write(success_count as u64);
-        Ok(WriteResult {
-            success_count,
-            failures,
-        })
-    }
-
-    async fn write_adjustment(&mut self, adjustments: &[AdjustmentCommand]) -> Result<WriteResult> {
-        let mut success_count = 0;
-        let mut failures = Vec::with_capacity(adjustments.len());
-
-        for adj in adjustments {
-            let (point, opc_addr) = match self.resolve_opcua_addr(adj.id) {
-                Ok(v) => v,
-                Err(e) => {
-                    failures.push(e);
-                    continue;
-                },
-            };
-            let raw_value = match point.transform.reverse_apply(adj.value) {
-                Ok(v) => v,
-                Err(e) => {
-                    failures.push((adj.id, e.to_string()));
-                    continue;
-                },
-            };
-            let (nid, ns) = (opc_addr.node_id.clone(), opc_addr.namespace_index);
-            match self
-                .write_single_value(&nid, ns, Variant::Double(raw_value))
-                .await
-            {
-                Ok(()) => success_count += 1,
-                Err(e) => failures.push((adj.id, e)),
-            }
-        }
-
-        self.diagnostics.add_write(success_count as u64);
-        Ok(WriteResult {
-            success_count,
-            failures,
-        })
-    }
-
-    async fn poll_once(&mut self) -> PollResult {
-        // OPC UA is event-driven via subscriptions.
-        // Data changes are received asynchronously through the subscription callback.
-        // For poll_once, we check for any pending session events but typically
-        // return an empty batch since real data comes through DataChange callbacks.
-        //
-        // In a true polling scenario, you would call session.poll() here,
-        // but the OPC UA SDK handles this internally via async tasks.
-
-        if !self.get_state().is_connected() {
-            // Return empty result with no failure tracking (connection-level issue)
-            return PollResult::success(DataBatch::new());
-        }
-
-        // Return empty batch - data comes through subscription callbacks
-        PollResult::success(DataBatch::new())
-    }
-}
-
-impl EventDrivenProtocol for OpcUaChannel {
-    fn take_event_receiver(&mut self) -> Option<DataEventReceiver> {
-        self.event_rx.take()
-    }
-
-    async fn start(&mut self) -> Result<()> {
-        // For OPC UA, start means creating a subscription with monitored items
-        self.create_subscription().await?;
-        self.add_monitored_items().await?;
-        Ok(())
-    }
-
-    async fn stop(&mut self) -> Result<()> {
-        // Delete subscription
-        if let (Some(session), Some(sub_id)) = (&self.session, self.subscription_id.take()) {
-            session
-                .delete_subscription(sub_id)
-                .await
-                .map_err(|e| GatewayError::Protocol(e.to_string()))?;
-        }
-
-        // Clear diagnostics (lock-free)
-        self.diag_subscription_id.store(0, Ordering::Relaxed);
-        self.diag_monitored_items_count.store(0, Ordering::Relaxed);
-
-        Ok(())
     }
 }
 
@@ -1453,6 +1185,74 @@ impl HasMetadata for OpcUaChannel {
 // ChannelRuntime implementation (direct, no wrapper needed)
 // ============================================================================
 
+impl OpcUaChannel {
+    async fn write_adjustment(&mut self, adjustments: &[AdjustmentCommand]) -> Result<WriteResult> {
+        let mut success_count = 0;
+        let mut failures = Vec::with_capacity(adjustments.len());
+
+        for adj in adjustments {
+            let (point, opc_addr) = match self.resolve_opcua_addr(adj.id) {
+                Ok(v) => v,
+                Err(e) => {
+                    failures.push(e);
+                    continue;
+                },
+            };
+            let raw_value = match point.transform.reverse_apply(adj.value) {
+                Ok(v) => v,
+                Err(e) => {
+                    failures.push((adj.id, e.to_string()));
+                    continue;
+                },
+            };
+            let (nid, ns) = (opc_addr.node_id.clone(), opc_addr.namespace_index);
+            match self
+                .write_single_value(&nid, ns, Variant::Double(raw_value))
+                .await
+            {
+                Ok(()) => success_count += 1,
+                Err(e) => failures.push((adj.id, e)),
+            }
+        }
+
+        self.diagnostics.add_write(success_count as u64);
+        Ok(WriteResult {
+            success_count,
+            failures,
+        })
+    }
+
+    async fn write_control(&mut self, commands: &[ControlCommand]) -> Result<WriteResult> {
+        let mut success_count = 0;
+        let mut failures = Vec::with_capacity(commands.len());
+
+        for cmd in commands {
+            let (point, opc_addr) = match self.resolve_opcua_addr(cmd.id) {
+                Ok(v) => v,
+                Err(e) => {
+                    failures.push(e);
+                    continue;
+                },
+            };
+            let value = point.transform.apply_bool(cmd.value);
+            let (nid, ns) = (opc_addr.node_id.clone(), opc_addr.namespace_index);
+            match self
+                .write_single_value(&nid, ns, Variant::Boolean(value))
+                .await
+            {
+                Ok(()) => success_count += 1,
+                Err(e) => failures.push((cmd.id, e)),
+            }
+        }
+
+        self.diagnostics.add_write(success_count as u64);
+        Ok(WriteResult {
+            success_count,
+            failures,
+        })
+    }
+}
+
 #[async_trait]
 impl ChannelRuntime for OpcUaChannel {
     fn is_event_driven(&self) -> bool {
@@ -1460,15 +1260,116 @@ impl ChannelRuntime for OpcUaChannel {
     }
 
     async fn connect(&mut self) -> Result<()> {
-        <Self as ProtocolClient>::connect(self).await
+        validate_dependency_exception(&self.config)?;
+        self.set_state(ConnectionState::Connecting);
+
+        // Build client
+        let mut builder = ClientBuilder::new()
+            .application_name(&self.config.application_name)
+            .application_uri(&self.config.application_uri)
+            .session_retry_limit(self.config.session_retry_limit as i32)
+            .create_sample_keypair(false);
+
+        if self.config.trust_server_certs {
+            builder = builder.trust_server_certs(true);
+        }
+
+        if let Some(pki_dir) = &self.config.pki_dir {
+            builder = builder.pki_dir(pki_dir);
+        }
+
+        let mut client = builder
+            .client()
+            .map_err(|e| GatewayError::Config(e.join(", ")))?;
+
+        // Prepare endpoint and identity
+        let identity = self.config.identity.to_identity_token();
+        let security_policy = self.config.security_policy.to_uri();
+        let message_mode = self.config.message_security_mode.to_message_security_mode();
+
+        // Connect to server
+        let (session, event_loop) = client
+            .connect_to_matching_endpoint(
+                (
+                    self.config.endpoint_url.as_str(),
+                    security_policy,
+                    message_mode,
+                    UserTokenPolicy::anonymous(),
+                ),
+                identity,
+            )
+            .await
+            .map_err(|e| {
+                self.set_state(ConnectionState::Error);
+                GatewayError::Connection(e.to_string())
+            })?;
+
+        // Wait for connection to be established
+        session.wait_for_connection().await;
+
+        self.session = Some(session);
+        self.set_state(ConnectionState::Connected);
+
+        // Spawn event loop in background
+        let state = self.state.clone();
+        let event_tx = self.event_tx.clone();
+        tokio::spawn(async move {
+            let _handle = event_loop.spawn();
+
+            // Note: The spawned event loop will run until the session is closed.
+            // When the connection is lost, the state will be updated via callbacks.
+            // For now, we just keep running. In a production implementation,
+            // we'd monitor the handle for completion.
+            let _ = state;
+            let _ = event_tx;
+        });
+
+        // Send connection event
+        let _ = self
+            .event_tx
+            .try_send(DataEvent::ConnectionChanged(ConnectionState::Connected));
+
+        Ok(())
     }
 
     async fn disconnect(&mut self) -> Result<()> {
-        <Self as ProtocolClient>::disconnect(self).await
+        // Delete subscription
+        if let (Some(session), Some(sub_id)) = (&self.session, self.subscription_id) {
+            let _ = session.delete_subscription(sub_id).await;
+        }
+
+        // Disconnect session
+        if let Some(session) = self.session.take() {
+            let _ = session.disconnect().await;
+        }
+
+        self.subscription_id = None;
+        self.set_state(ConnectionState::Disconnected);
+
+        // Send disconnect event
+        let _ = self
+            .event_tx
+            .try_send(DataEvent::ConnectionChanged(ConnectionState::Disconnected));
+
+        Ok(())
     }
 
     async fn poll_once(&mut self) -> PollResult {
-        <Self as ProtocolClient>::poll_once(self).await
+        // OPC UA is event-driven via subscriptions.
+        // Data changes are received asynchronously through the subscription callback.
+        // For poll_once, we check for any pending session events but typically
+        // return an empty batch since real data comes through DataChange callbacks.
+        //
+        // In a true polling scenario, you would call session.poll() here,
+        // but the OPC UA SDK handles this internally via async tasks.
+
+        if !self.get_state().is_connected() {
+            // Return empty result with no failure tracking (connection-level issue)
+            return PollResult::success(DataBatch::new());
+        }
+
+        // Return empty batch - data comes through subscription callbacks
+        PollResult::success(DataBatch::new())
     }
 
     async fn write_control(&mut self, commands: &[(u32, f64)]) -> Result<usize> {
@@ -1476,7 +1377,7 @@ impl ChannelRuntime for OpcUaChannel {
             .iter()
             .map(|(id, value)| ControlCommand::latching(*id, *value != 0.0))
             .collect();
-        let result = <Self as ProtocolClient>::write_control(self, &cmds).await?;
+        let result = Self::write_control(self, &cmds).await?;
         Ok(result.success_count)
     }
 
@@ -1485,28 +1386,81 @@ impl ChannelRuntime for OpcUaChannel {
             .iter()
             .map(|(id, value)| AdjustmentCommand::new(*id, *value))
             .collect();
-        let result = <Self as ProtocolClient>::write_adjustment(self, &adjs).await?;
+        let result = Self::write_adjustment(self, &adjs).await?;
         Ok(result.success_count)
     }
 
     fn take_event_receiver(&mut self) -> Option<DataEventReceiver> {
-        <Self as EventDrivenProtocol>::take_event_receiver(self)
+        self.event_rx.take()
     }
 
     async fn start_events(&mut self) -> Result<()> {
-        <Self as EventDrivenProtocol>::start(self).await
+        // For OPC UA, start means creating a subscription with monitored items
+        self.create_subscription().await?;
+        self.add_monitored_items().await?;
+        Ok(())
     }
 
     async fn stop_events(&mut self) -> Result<()> {
-        <Self as EventDrivenProtocol>::stop(self).await
+        // Delete subscription
+        if let (Some(session), Some(sub_id)) = (&self.session, self.subscription_id.take()) {
+            session
+                .delete_subscription(sub_id)
+                .await
+                .map_err(|e| GatewayError::Protocol(e.to_string()))?;
+        }
+
+        // Clear diagnostics (lock-free)
+        self.diag_subscription_id.store(0, Ordering::Relaxed);
+        self.diag_monitored_items_count.store(0, Ordering::Relaxed);
+
+        Ok(())
     }
 
     async fn diagnostics(&self) -> Result<Diagnostics> {
-        <Self as Protocol>::diagnostics(self).await
+        let state = self.get_state();
+
+        // Calculate last data received time (lock-free)
+        let last_data_received_secs = {
+            let ms = self.diag_last_data_received_ms.load(Ordering::Relaxed);
+            if ms == 0 {
+                None
+            } else {
+                let now_ms = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis() as u64;
+                Some((now_ms.saturating_sub(ms)) / 1000)
+            }
+        };
+
+        // Get subscription ID (0 = none)
+        let subscription_id = match self.diag_subscription_id.load(Ordering::Relaxed) {
+            0 => None,
+            id => Some(id),
+        };
+
+        Ok(Diagnostics {
+            protocol: self.name().to_string(),
+            connection_state: state,
+            read_count: self.diagnostics.read_count(),
+            write_count: self.diagnostics.write_count(),
+            error_count: self.diagnostics.error_count(),
+            last_error: self.diagnostics.last_error(),
+            extra: serde_json::json!({
+                "endpoint_url": self.config.endpoint_url,
+                "application_name": self.config.application_name,
+                "security_policy": format!("{:?}", self.config.security_policy),
+                "subscription_id": subscription_id,
+                "monitored_items_count": self.diag_monitored_items_count.load(Ordering::Relaxed),
+                "points_configured": self.config.points.len(),
+                "last_data_received_secs_ago": last_data_received_secs,
+            }),
+        })
     }
 
     fn connection_state(&self) -> ConnectionState {
-        <Self as Protocol>::connection_state(self)
+        self.get_state()
     }
 }
 
@@ -1697,17 +1651,7 @@ mod tests {
         let config = OpcUaChannelConfig::new("opc.tcp://localhost:4840");
         let channel = OpcUaChannel::new(config);
 
-        assert_eq!(ProtocolCapabilities::name(&channel), "OPC UA");
-        assert!(
-            channel
-                .supported_modes()
-                .contains(&CommunicationMode::EventDriven)
-        );
-        assert!(
-            channel
-                .supported_modes()
-                .contains(&CommunicationMode::Hybrid)
-        );
+        assert_eq!(channel.name(), "OPC UA");
     }
 
     #[test]

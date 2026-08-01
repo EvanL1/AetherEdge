@@ -76,7 +76,7 @@ This local command is not evidence of a published or signed release. The
 future standalone AetherEMS repository must consume an independently released
 Aether Kernel artifact and publish its own Pack artifact and downstream CI
 evidence according to
-[ADR-0007](../../docs/adr/0007-aether-core-and-ems-distribution.md).
+the Pack manifests.
 
 Load and PV forecasting are the first Aether Data Processing tasks in this
 pack. Their complete disabled-by-default declarations, synthetic binding, and

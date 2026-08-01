@@ -115,6 +115,42 @@ impl ErrorInfo {
 }
 
 // ============================================================================
+// OpenAPI Document Helpers
+// ============================================================================
+
+/// Count the HTTP operations declared by an OpenAPI document.
+///
+/// Services use this to guard their own Router/OpenAPI drift assertions, so it
+/// is panic-free: a document without a `paths` object simply counts as zero.
+#[must_use]
+pub fn openapi_operation_count(specification: &serde_json::Value) -> usize {
+    specification["paths"].as_object().map_or(0, |paths| {
+        paths
+            .values()
+            .filter_map(serde_json::Value::as_object)
+            .map(|path_item| {
+                path_item
+                    .keys()
+                    .filter(|method| {
+                        matches!(
+                            method.as_str(),
+                            "get"
+                                | "put"
+                                | "post"
+                                | "delete"
+                                | "patch"
+                                | "options"
+                                | "head"
+                                | "trace"
+                        )
+                    })
+                    .count()
+            })
+            .sum()
+    })
+}
+
+// ============================================================================
 // AppError - HTTP Error with proper status codes (requires axum feature)
 // ============================================================================
 
@@ -239,6 +275,29 @@ impl From<anyhow::Error> for AppError {
     }
 }
 
+/// Project a domain error onto the shared HTTP error envelope.
+///
+/// Service adapters own the `From<TheirError> for AppError` impl and delegate
+/// the body here so the status mapping, the `error_code / category / retryable`
+/// detail string and the optional suggestion stay identical across services.
+#[cfg(feature = "axum")]
+#[must_use]
+pub fn app_error_from(error: &dyn errors::AetherErrorTrait) -> AppError {
+    let status = status_for_error_category(error.category());
+    let mut info = ErrorInfo::new(error.to_string())
+        .with_code(status.as_u16())
+        .with_details(format!(
+            "error_code: {}, category: {:?}, retryable: {}",
+            error.error_code(),
+            error.category(),
+            error.is_retryable()
+        ));
+    if let Some(suggestion) = error.suggestion() {
+        info = info.with_suggestion(suggestion);
+    }
+    AppError::new(status, info)
+}
+
 // ============================================================================
 // Pagination Models
 // ============================================================================
@@ -309,34 +368,6 @@ impl<T> PaginatedResponse<T> {
         // Convert to 0-indexed for internal storage
         Self::new(items, total, page - 1, page_size)
     }
-}
-
-/// Pagination request parameters
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "openapi", derive(ToSchema))]
-pub struct PaginationParams {
-    /// Page number (0-indexed)
-    #[serde(default)]
-    pub page: usize,
-    /// Items per page
-    #[serde(default = "crate::serde_helpers::page_size")]
-    pub page_size: usize,
-    /// Sort field
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub sort_by: Option<String>,
-    /// Sort order
-    #[serde(default)]
-    pub sort_order: SortOrder,
-}
-
-/// Sort order
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default)]
-#[cfg_attr(feature = "openapi", derive(ToSchema))]
-#[serde(rename_all = "lowercase")]
-pub enum SortOrder {
-    #[default]
-    Asc,
-    Desc,
 }
 
 // ============================================================================

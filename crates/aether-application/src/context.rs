@@ -2,7 +2,8 @@
 
 use std::collections::BTreeSet;
 
-use aether_domain::TimestampMs;
+use aether_domain::{PointKind, TimestampMs};
+use sha2::{Digest, Sha256};
 
 /// Authenticated human, service, or AI actor.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -90,5 +91,20 @@ impl RequestContext {
     #[must_use]
     pub const fn timestamp(&self) -> TimestampMs {
         self.timestamp
+    }
+}
+
+/// Renders the lowercase hexadecimal SHA-256 of an audit detail value.
+pub(crate) fn digest(value: &str) -> String {
+    format!("{:x}", Sha256::digest(value.as_bytes()))
+}
+
+/// Renders the audit-stable name of a point kind.
+pub(crate) const fn point_kind_name(kind: PointKind) -> &'static str {
+    match kind {
+        PointKind::Telemetry => "telemetry",
+        PointKind::Status => "status",
+        PointKind::Command => "command",
+        PointKind::Action => "action",
     }
 }

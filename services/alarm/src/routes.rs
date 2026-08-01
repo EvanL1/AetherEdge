@@ -227,31 +227,11 @@ mod openapi_tests {
                 "missing {method} {path}"
             );
         }
-        let operation_count = specification["paths"]
-            .as_object()
-            .expect("paths object")
-            .values()
-            .map(|item| {
-                item.as_object()
-                    .expect("path item")
-                    .keys()
-                    .filter(|method| {
-                        matches!(
-                            method.as_str(),
-                            "get"
-                                | "put"
-                                | "post"
-                                | "delete"
-                                | "patch"
-                                | "options"
-                                | "head"
-                                | "trace"
-                        )
-                    })
-                    .count()
-            })
-            .sum::<usize>();
-        assert_eq!(operation_count, 23, "Router/OpenAPI operation drift");
+        assert_eq!(
+            common::openapi_operation_count(&specification),
+            23,
+            "Router/OpenAPI operation drift"
+        );
 
         assert!(
             specification["components"]["securitySchemes"]["bearer_auth"].is_object(),
@@ -1467,27 +1447,15 @@ fn format_timestamp(ts: i64) -> String {
 }
 
 fn not_found(msg: &str) -> Response {
-    (
-        StatusCode::NOT_FOUND,
-        Json(json!({ "success": false, "message": msg, "data": null })),
-    )
-        .into_response()
+    error_response(StatusCode::NOT_FOUND, msg)
 }
 
 fn bad_request(msg: &str) -> Response {
-    (
-        StatusCode::BAD_REQUEST,
-        Json(json!({ "success": false, "message": msg, "data": null })),
-    )
-        .into_response()
+    error_response(StatusCode::BAD_REQUEST, msg)
 }
 
 fn server_error(msg: &str) -> Response {
-    (
-        StatusCode::INTERNAL_SERVER_ERROR,
-        Json(json!({ "success": false, "message": msg, "data": null })),
-    )
-        .into_response()
+    error_response(StatusCode::INTERNAL_SERVER_ERROR, msg)
 }
 
 #[cfg(test)]

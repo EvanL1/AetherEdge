@@ -20,9 +20,8 @@ use crate::protocols::core::metadata::{
 };
 use crate::protocols::core::point::TransformConfig;
 use crate::protocols::core::traits::{
-    AdjustmentCommand, CommunicationMode, ConnectionState, ControlCommand, DataEvent,
-    DataEventReceiver, DataEventSender, Diagnostics, EventDrivenProtocol, PollResult, Protocol,
-    ProtocolCapabilities, ProtocolClient, WriteResult, data_event_channel,
+    CommunicationMode, ConnectionState, DataEvent, DataEventReceiver, DataEventSender, Diagnostics,
+    PollResult, data_event_channel,
 };
 use crate::protocols::runtime::ChannelRuntime;
 
@@ -395,54 +394,26 @@ impl HasMetadata for J1939Client {
     }
 }
 
-impl ProtocolCapabilities for J1939Client {
+impl J1939Client {
+    /// Asserted by `test_client_creation`; no runtime caller.
+    #[cfg_attr(not(test), allow(dead_code))]
     fn name(&self) -> &'static str {
         "J1939"
     }
 
+    /// Asserted by `test_client_creation`; no runtime caller.
+    #[cfg_attr(not(test), allow(dead_code))]
     fn supported_modes(&self) -> &[CommunicationMode] {
         &[CommunicationMode::EventDriven]
     }
+}
 
-    fn supports_client(&self) -> bool {
+#[async_trait::async_trait]
+impl ChannelRuntime for J1939Client {
+    fn is_event_driven(&self) -> bool {
         true
     }
 
-    fn supports_server(&self) -> bool {
-        false
-    }
-
-    fn version(&self) -> &'static str {
-        "SAE J1939-21"
-    }
-}
-
-impl Protocol for J1939Client {
-    fn connection_state(&self) -> ConnectionState {
-        ConnectionState::from(self.connection_state.load(Ordering::Acquire))
-    }
-
-    async fn diagnostics(&self) -> Result<Diagnostics> {
-        let (spn_count, pgn_count) = database_stats();
-
-        Ok(Diagnostics {
-            protocol: "J1939".to_string(),
-            connection_state: ConnectionState::from(self.connection_state.load(Ordering::Acquire)),
-            read_count: self.read_count.load(Ordering::Relaxed),
-            write_count: 0,
-            error_count: self.error_count.load(Ordering::Relaxed),
-            last_error: self.last_error.load().as_ref().map(|s| (**s).clone()),
-            extra: serde_json::json!({
-                "device": self.config.device,
-                "source_address": format!("0x{:02X}", self.config.source_address),
-                "spn_count": spn_count,
-                "pgn_count": pgn_count,
-            }),
-        })
-    }
-}
-
-impl ProtocolClient for J1939Client {
     async fn connect(&mut self) -> Result<()> {
         let state = ConnectionState::from(self.connection_state.load(Ordering::Acquire));
         let has_transport = self.socket.is_some()
@@ -497,73 +468,15 @@ impl ProtocolClient for J1939Client {
         Ok(())
     }
 
-    async fn write_control(&mut self, _commands: &[ControlCommand]) -> Result<WriteResult> {
-        // J1939 control requires proprietary PGN support
-        Err(GatewayError::Unsupported(
-            "J1939 control commands require proprietary PGN implementation".to_string(),
-        ))
-    }
-
     async fn poll_once(&mut self) -> PollResult {
         PollResult::success(DataBatch::new())
     }
 
-    async fn write_adjustment(
-        &mut self,
-        _adjustments: &[AdjustmentCommand],
-    ) -> Result<WriteResult> {
-        // J1939 adjustment requires proprietary PGN support
-        Err(GatewayError::Unsupported(
-            "J1939 adjustment commands require proprietary PGN implementation".to_string(),
-        ))
-    }
-}
-
-#[async_trait::async_trait]
-impl ChannelRuntime for J1939Client {
-    fn is_event_driven(&self) -> bool {
-        true
-    }
-
-    async fn connect(&mut self) -> Result<()> {
-        ProtocolClient::connect(self).await
-    }
-
-    async fn disconnect(&mut self) -> Result<()> {
-        ProtocolClient::disconnect(self).await
-    }
-
-    async fn poll_once(&mut self) -> PollResult {
-        ProtocolClient::poll_once(self).await
-    }
-
-    fn take_event_receiver(&mut self) -> Option<DataEventReceiver> {
-        EventDrivenProtocol::take_event_receiver(self)
-    }
-
-    async fn start_events(&mut self) -> Result<()> {
-        EventDrivenProtocol::start(self).await
-    }
-
-    async fn stop_events(&mut self) -> Result<()> {
-        EventDrivenProtocol::stop(self).await
-    }
-
-    async fn diagnostics(&self) -> Result<Diagnostics> {
-        Protocol::diagnostics(self).await
-    }
-
-    fn connection_state(&self) -> ConnectionState {
-        Protocol::connection_state(self)
-    }
-}
-
-impl EventDrivenProtocol for J1939Client {
     fn take_event_receiver(&mut self) -> Option<DataEventReceiver> {
         self.event_rx.take()
     }
 
-    async fn start(&mut self) -> Result<()> {
+    async fn start_events(&mut self) -> Result<()> {
         if self
             .receive_handle
             .as_ref()
@@ -579,12 +492,35 @@ impl EventDrivenProtocol for J1939Client {
         Ok(())
     }
 
-    async fn stop(&mut self) -> Result<()> {
+    async fn stop_events(&mut self) -> Result<()> {
         // Stop the receive task
         if let Some(handle) = self.receive_handle.take() {
             handle.abort();
         }
         Ok(())
+    }
+
+    async fn diagnostics(&self) -> Result<Diagnostics> {
+        let (spn_count, pgn_count) = database_stats();
+
+        Ok(Diagnostics {
+            protocol: "J1939".to_string(),
+            connection_state: ConnectionState::from(self.connection_state.load(Ordering::Acquire)),
+            read_count: self.read_count.load(Ordering::Relaxed),
+            write_count: 0,
+            error_count: self.error_count.load(Ordering::Relaxed),
+            last_error: self.last_error.load().as_ref().map(|s| (**s).clone()),
+            extra: serde_json::json!({
+                "device": self.config.device,
+                "source_address": format!("0x{:02X}", self.config.source_address),
+                "spn_count": spn_count,
+                "pgn_count": pgn_count,
+            }),
+        })
+    }
+
+    fn connection_state(&self) -> ConnectionState {
+        ConnectionState::from(self.connection_state.load(Ordering::Acquire))
     }
 }
 

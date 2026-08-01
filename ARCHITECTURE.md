@@ -1,23 +1,8 @@
 # Aether Architecture
 
-Aether is migrating from a Redis-centred multi-service EMS product to an
-AI-native, industry-neutral edge kernel. The target architecture and migration
-rules are defined in:
+Aether is an AI-native, industry-neutral edge kernel. The target architecture
+and its boundaries are defined in:
 
-- [ADR-0001: AI-native edge kernel](docs/adr/0001-ai-native-edge-kernel.md)
-- [ADR-0003: Multi-process SHM and event plane](docs/adr/0003-multi-process-shm-event-plane.md)
-- [ADR-0004: Canonical service names](docs/adr/0004-canonical-service-names.md)
-- [ADR-0009: Aether Data Processing](docs/adr/0009-aether-data-processing.md)
-- [ADR-0010: Physical acquisition addresses](docs/adr/0010-physical-acquisition-addresses.md)
-- [ADR-0011: Governed channel desired state](docs/adr/0011-governed-channel-desired-state.md)
-- [ADR-0017: Experimental CloudLink MQTT edge foundation](docs/adr/0017-experimental-cloudlink-mqtt-edge-foundation.md)
-- [ADR-0018: Pinned AetherContracts consumption](docs/adr/0018-pinned-aethercontracts-consumption.md)
-- [ADR-0023: Canonical domain-model owner](docs/adr/0023-canonical-domain-model.md)
-- [ADR-0024: Typed architecture contracts](docs/adr/0024-typed-architecture-contracts.md)
-- [ADR-0025: Physical IO and optional protocol extensions](docs/adr/0025-physical-io-and-optional-protocol-extensions.md)
-- [ADR-0026: Minimal kernel and out-of-tree integrations](docs/adr/0026-minimal-kernel-and-out-of-tree-integrations.md)
-- [ADR-0027: Exact IO protocol capabilities](docs/adr/0027-exact-io-protocol-capabilities.md)
-- [ADR-0028: AetherCloud gateway enrollment identity boundary](docs/adr/0028-aethercloud-gateway-enrollment.md)
 - [Target repository layout](docs/architecture/target-layout.md)
 - [AI invariants](ai/invariants.md)
 - [Capability safety policy](ai/safety-policy.yaml)
@@ -141,8 +126,8 @@ value, source timestamp, exposed quality, and coherent topology generation. It
 does not fabricate a Thing Model revision. AetherCloud and AetherEdge now share
 the digest-pinned public AetherContracts subset. Three public behavior artifacts
 remain pending, so distribution integrity does not imply codec conformance.
-Remaining implementation mismatches and release gates are recorded in ADR-0017,
-ADR-0018, and `contracts/cloudlink/v1/MIGRATION.md`.
+Remaining implementation mismatches and release gates are recorded in
+`contracts/cloudlink/v1/MIGRATION.md`.
 
 ## Data-processing capability
 
@@ -200,6 +185,3 @@ graph orchestrator. README wording, branding strings, and similar prose are
 not architecture gates. Deployment, installer, runtime-manifest, and Pack
 layout checks run independently through
 `scripts/check-distribution-contracts.sh`.
-
-The concrete extraction and local-outbox decisions are recorded in
-[ADR-0002](docs/adr/0002-dataplane-and-local-outbox.md).

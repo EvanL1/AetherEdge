@@ -4,7 +4,6 @@
 
 use rand::Rng;
 use std::time::{Duration, Instant};
-use thiserror::Error;
 use tracing::{debug, info, warn};
 
 /// Default cooldown before auto-recovery attempt (seconds)
@@ -18,22 +17,6 @@ const DEFAULT_INITIAL_DELAY_SECS: u64 = 1;
 
 /// Default maximum delay between reconnection attempts (seconds)
 const DEFAULT_MAX_DELAY_SECS: u64 = 60;
-
-/// Reconnection error types
-#[derive(Error, Debug)]
-pub enum ReconnectError {
-    /// Maximum retry attempts exceeded
-    #[error("Maximum reconnection attempts exceeded")]
-    MaxAttemptsExceeded,
-
-    /// Connection failed
-    #[error("Connection failed: {0}")]
-    ConnectionFailed(String),
-
-    /// Reconnection was cancelled
-    #[error("Reconnection cancelled")]
-    Cancelled,
-}
 
 /// Reconnection state enumeration
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

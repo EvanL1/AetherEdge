@@ -18,7 +18,6 @@ BINARIES_SWAPPED=false
 BINARY_STAGE=""
 BINARY_BACKUP=""
 BOOTSTRAP_ADMIN_REQUIRED=false
-REDIS_INCLUDED=false
 SERVICE_STATE_CAPTURED=false
 STATE_BACKUP_DIR=""
 STATE_SNAPSHOT_CAPTURED=false
@@ -184,7 +183,6 @@ normalize_root_owned_tree() {
 
 validate_bare_metal_bundle() {
     local bundle_root=$1
-    local redis_included=$2
     local binary unit
 
     for directory in bin systemd config.template; do
@@ -211,16 +209,6 @@ validate_bare_metal_bundle() {
             return 1
         fi
     done
-    if [[ "$redis_included" == true ]]; then
-        for binary in redis-server redis-cli; do
-            if [[ ! -f "$bundle_root/bin/$binary" \
-                || ! -x "$bundle_root/bin/$binary" \
-                || -L "$bundle_root/bin/$binary" ]]; then
-                echo "ERROR: required bundled Redis binary is unsafe: $binary" >&2
-                return 1
-            fi
-        done
-    fi
 }
 
 validate_bare_metal_install_dir() {
@@ -274,7 +262,7 @@ reject_existing_bare_metal_footprint() {
     for unit in \
         aether.target aether-io.service aether-automation.service \
         aether-history.service aether-api.service aether-uplink.service \
-        aether-alarm.service aether-redis.service; do
+        aether-alarm.service; do
         if [[ -e "$SYSTEMD_DIR/$unit" || -L "$SYSTEMD_DIR/$unit" ]]; then
             echo "ERROR: fresh installation refused; systemd unit exists: $unit" >&2
             return 1
@@ -287,51 +275,13 @@ reject_existing_bare_metal_footprint() {
     if command -v docker >/dev/null 2>&1; then
         for container in \
             aether-io aether-automation aether-history aether-api \
-            aether-uplink aether-alarm aether-redis aether-timescaledb; do
+            aether-uplink aether-alarm aether-timescaledb; do
             if docker inspect "$container" >/dev/null 2>&1; then
                 echo "ERROR: fresh installation refused; Docker container exists: $container" >&2
                 return 1
             fi
         done
     fi
-}
-
-detect_bundled_redis() {
-    local bundle_root=$1
-    local trace_count=0
-    local valid_count=0
-
-    [[ -e "$bundle_root/bin/redis-server" || -L "$bundle_root/bin/redis-server" ]] \
-        && trace_count=$((trace_count + 1))
-    [[ -e "$bundle_root/bin/redis-cli" || -L "$bundle_root/bin/redis-cli" ]] \
-        && trace_count=$((trace_count + 1))
-    [[ -e "$bundle_root/systemd/aether-redis.service" \
-        || -L "$bundle_root/systemd/aether-redis.service" ]] \
-        && trace_count=$((trace_count + 1))
-
-    [[ -f "$bundle_root/bin/redis-server" \
-        && -x "$bundle_root/bin/redis-server" \
-        && ! -L "$bundle_root/bin/redis-server" ]] \
-        && valid_count=$((valid_count + 1))
-    [[ -f "$bundle_root/bin/redis-cli" && -x "$bundle_root/bin/redis-cli" \
-        && ! -L "$bundle_root/bin/redis-cli" ]] \
-        && valid_count=$((valid_count + 1))
-    [[ -f "$bundle_root/systemd/aether-redis.service" \
-        && ! -L "$bundle_root/systemd/aether-redis.service" ]] \
-        && valid_count=$((valid_count + 1))
-
-    case "$trace_count:$valid_count" in
-        0:0)
-            printf '%s\n' false
-            ;;
-        3:3)
-            printf '%s\n' true
-            ;;
-        *)
-            echo "ERROR: incomplete optional Redis bundle; expected redis-server, redis-cli, and aether-redis.service" >&2
-            return 1
-            ;;
-    esac
 }
 
 validate_expected_symlink_if_exists() {
@@ -401,7 +351,7 @@ validate_bare_metal_host_layout() {
     for unit in \
         aether.target aether-io.service aether-automation.service \
         aether-history.service aether-api.service aether-uplink.service \
-        aether-alarm.service aether-redis.service; do
+        aether-alarm.service; do
         validate_secure_regular_file_if_exists \
             "$SYSTEMD_DIR/$unit" "installed systemd unit"
     done
@@ -420,7 +370,7 @@ validate_bare_metal_host_layout() {
         return 1
     fi
 
-    for path in "$DATA_DIR/logs" "$DATA_DIR/redis"; do
+    for path in "$DATA_DIR/logs"; do
         if [[ -e "$path" ]]; then
             validate_secure_installed_tree "$path" "runtime data directory"
         else
@@ -472,7 +422,7 @@ snapshot_bare_metal_state() {
         systemd-multi-user-aether-target
     for unit in \
         aether-io aether-automation aether-history aether-api aether-uplink \
-        aether-alarm aether-redis; do
+        aether-alarm; do
         snapshot_bare_metal_path \
             "$SYSTEMD_DIR/$unit.service" "systemd-$unit"
     done
@@ -501,7 +451,7 @@ restore_bare_metal_state() {
         systemd-multi-user-aether-target || return 1
     for unit in \
         aether-io aether-automation aether-history aether-api aether-uplink \
-        aether-alarm aether-redis; do
+        aether-alarm; do
         restore_bare_metal_path \
             "$SYSTEMD_DIR/$unit.service" "systemd-$unit" || return 1
     done
@@ -652,7 +602,6 @@ quiesce_aether_services_for_rollback() {
         aether-api.service
         aether-uplink.service
         aether-alarm.service
-        aether-redis.service
     )
 
     for unit in "${units[@]}"; do
@@ -692,10 +641,6 @@ wait_for_bare_metal_services() {
         aether-uplink.service
         aether-alarm.service
     )
-
-    if [[ "$REDIS_INCLUDED" == true ]]; then
-        units+=(aether-redis.service)
-    fi
 
     for ((attempt = 1; attempt <= attempts; attempt++)); do
         local all_active=true
@@ -760,7 +705,7 @@ finish_install() {
             if ! systemctl daemon-reload; then
                 rollback_complete=false
             fi
-            for unit in aether-redis.service aether.target; do
+            for unit in aether.target; do
                 systemctl disable "$unit" >/dev/null 2>&1 || true
                 if systemctl is-enabled --quiet "$unit"; then
                     rollback_complete=false
@@ -796,8 +741,6 @@ if [[ "${AETHER_BARE_METAL_INSTALLER_FUNCTIONS_ONLY:-false}" == true ]]; then
     return 0 2>/dev/null || exit 0
 fi
 
-REDIS_INCLUDED=$(detect_bundled_redis .)
-
 echo "=== AetherEdge bare-metal installer ==="
 
 validate_bare_metal_install_dir "$INSTALL_DIR"
@@ -808,7 +751,7 @@ if ! command -v systemctl >/dev/null 2>&1; then
     echo "as an alternative on non-systemd systems." >&2
     exit 1
 fi
-validate_bare_metal_bundle . "$REDIS_INCLUDED"
+validate_bare_metal_bundle .
 if [[ ! -f config.template/runtime-manifest.json \
     || -L config.template/runtime-manifest.json ]]; then
     echo "ERROR: bare-metal package is missing a regular runtime manifest" >&2
@@ -864,11 +807,6 @@ echo "[4/7] Preparing runtime data directories under $DATA_DIR ..."
 mkdir -p "$DATA_DIR/logs"
 chown 0:0 "$DATA_DIR" "$DATA_DIR/logs"
 chmod go-w "$DATA_DIR" "$DATA_DIR/logs"
-if [[ -x "$INSTALL_DIR/bin/redis-server" ]]; then
-    mkdir -p "$DATA_DIR/redis"
-    chown 0:0 "$DATA_DIR/redis"
-    chmod go-w "$DATA_DIR/redis"
-fi
 
 echo "[5/7] Installing configuration to $CONFIG_DIR ..."
 mkdir -p "$CONFIG_DIR"
@@ -984,9 +922,6 @@ done
 "$INSTALL_DIR/bin/aether" --config-path "$CONFIG_DIR/config" --db-path "$DATA_DIR" init
 "$INSTALL_DIR/bin/aether" --config-path "$CONFIG_DIR/config" --db-path "$DATA_DIR" sync
 
-if [[ "$REDIS_INCLUDED" == true ]]; then
-    systemctl enable aether-redis.service
-fi
 systemctl enable --now aether.target
 wait_for_bare_metal_services 30
 INSTALL_COMPLETED=true

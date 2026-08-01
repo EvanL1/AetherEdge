@@ -6,10 +6,10 @@ use aether_ports::{
     AuditOutcome, AuditRecord, AuditSink, AutomationRuleMutator, RevisionedRuleMutation,
     RuleMutation,
 };
-use sha2::{Digest, Sha256};
 
 use crate::{
     ApplicationError, MANAGE_RULE_CAPABILITY, RequestContext, RuleMutationAcceptance, SafetyPolicy,
+    context::digest,
 };
 
 /// Rule-management facade shared by HTTP, CLI, MCP, and embedded transports.
@@ -185,6 +185,28 @@ impl RuleMutationApplication {
     }
 }
 
+/// Carries a rule mutation that either arrived with a caller-supplied
+/// revision or came through the revisionless compatibility surface.
+///
+/// # Removal criteria
+///
+/// `Legacy` exists only for the published `AutomationRuleMutator::mutate`
+/// entry point, which third-party implementations may still call. No
+/// first-party route constructs it: `rule_routes` submits
+/// `RevisionedRuleMutation`, and the SQLite adapter services an old `mutate`
+/// by reading the current head and submitting the same CAS path. That
+/// prevents two simultaneous commits from sharing a head, but cannot detect
+/// an edit made since the caller's earlier read, so it is not strict
+/// optimistic concurrency.
+///
+/// Drop this variant, `RuleMutationApplication::mutate`, and the
+/// `AutomationRuleMutator::mutate` port method together, once:
+///
+/// 1. every browser client sends the revision exposed by rule `GET` ETags;
+/// 2. distribution telemetry reports no use of the revisionless shim for one
+///    stability window (the shim warns on every call in `rule_routes`); and
+/// 3. the compatibility contract tests are replaced by mandatory-revision
+///    tests.
 enum PendingRuleMutation {
     Legacy(RuleMutation),
     Revisioned(RevisionedRuleMutation),
@@ -215,7 +237,9 @@ fn mutation_audit_detail(mutation: &RuleMutation, expected_revision: Option<u64>
         } => format!(
             "expected_revision={expected}; name_sha256={}; description_sha256={}",
             digest(name),
-            description.as_deref().map_or("none".to_string(), digest)
+            description
+                .as_deref()
+                .map_or_else(|| "none".to_string(), digest)
         ),
         RuleMutation::Update {
             name,
@@ -273,8 +297,4 @@ fn mutation_audit_detail(mutation: &RuleMutation, expected_revision: Option<u64>
             format!("expected_revision={expected}; reload=true")
         },
     }
-}
-
-fn digest(value: &str) -> String {
-    format!("{:x}", Sha256::digest(value.as_bytes()))
 }

@@ -1,7 +1,7 @@
 //! Modbus protocol adapter.
 //!
 //! This module provides the `ModbusChannel` adapter that integrates
-//! `voltage_modbus` with the protocol layer's `Protocol` and `ProtocolClient` traits.
+//! `voltage_modbus` with the protocol layer's `ChannelRuntime` trait.
 //!
 //! # Module structure
 //!
@@ -25,8 +25,7 @@ use crate::protocols::core::data::{DataBatch, Value};
 use crate::protocols::core::diagnostics::AtomicDiagnostics;
 use crate::protocols::core::error::{GatewayError, Result};
 use crate::protocols::core::logging::{
-    ChannelLogConfig, ChannelLogHandler, ErrorContext, LogContext, LoggableProtocol,
-    ModbusTransportType,
+    ChannelLogConfig, ChannelLogHandler, ErrorContext, LogContext, ModbusTransportType,
 };
 use crate::protocols::core::metadata::{
     DriverMetadata, HasMetadata, ParameterMetadata, ParameterType,
@@ -34,8 +33,8 @@ use crate::protocols::core::metadata::{
 
 use crate::protocols::core::point::PointConfig;
 use crate::protocols::core::traits::{
-    AdjustmentCommand, CommunicationMode, ConnectionState, ControlCommand, Diagnostics,
-    PointFailure, PollResult, Protocol, ProtocolCapabilities, ProtocolClient, WriteResult,
+    AdjustmentCommand, ConnectionState, ControlCommand, Diagnostics, PointFailure, PollResult,
+    WriteResult,
 };
 use crate::protocols::runtime::ChannelRuntime;
 use async_trait::async_trait;
@@ -61,7 +60,7 @@ const DEFAULT_POLLING_INTERVAL_MS: u64 = 1000;
 /// Modbus channel adapter.
 ///
 /// Wraps a `voltage_modbus` client and implements the protocol layer's
-/// `Protocol` and `ProtocolClient` traits. Pure protocol implementation
+/// `ChannelRuntime` trait. Pure protocol implementation
 /// that handles device communication — data storage belongs to the service layer.
 pub struct ModbusChannel {
     config: ModbusChannelConfig,
@@ -228,7 +227,7 @@ impl HasMetadata for ModbusChannel {
     }
 }
 
-impl ProtocolCapabilities for ModbusChannel {
+impl ModbusChannel {
     fn name(&self) -> &'static str {
         match self.config.connection_mode {
             ConnectionMode::Tcp => "Modbus TCP",
@@ -236,67 +235,294 @@ impl ProtocolCapabilities for ModbusChannel {
             ConnectionMode::Rtu => "Modbus RTU",
         }
     }
-
-    fn supported_modes(&self) -> &[CommunicationMode] {
-        &[CommunicationMode::Polling]
-    }
-
-    fn version(&self) -> &'static str {
-        "1.0"
-    }
 }
 
-impl LoggableProtocol for ModbusChannel {
-    fn set_log_handler(&mut self, handler: Arc<dyn ChannelLogHandler>) {
-        if let Some(ctx) = Arc::get_mut(&mut self.log_context) {
-            ctx.set_handler(handler);
-        } else {
-            let mut new_ctx = (*self.log_context).clone();
-            new_ctx.set_handler(handler);
-            self.log_context = Arc::new(new_ctx);
+// ============================================================================
+// Connection helpers (extracted from connect() to reduce function length)
+// ============================================================================
+
+impl ModbusChannel {
+    /// Create a Modbus client based on the configured connection mode.
+    async fn create_client(&self) -> Result<ModbusClientWrapper> {
+        match self.config.connection_mode {
+            ConnectionMode::Tcp => self.create_tcp_client().await,
+            #[cfg(feature = "modbus")]
+            ConnectionMode::Rtu => self.create_rtu_client(),
         }
     }
 
-    fn set_log_config(&mut self, config: ChannelLogConfig) {
-        if let Some(ctx) = Arc::get_mut(&mut self.log_context) {
-            ctx.set_config(config);
-        } else {
-            let mut new_ctx = (*self.log_context).clone();
-            new_ctx.set_config(config);
-            self.log_context = Arc::new(new_ctx);
+    async fn create_tcp_client(&self) -> Result<ModbusClientWrapper> {
+        let socket_addr: std::net::SocketAddr = self
+            .config
+            .address
+            .parse()
+            .map_err(|e| GatewayError::Connection(format!("Invalid address: {}", e)))?;
+
+        match TcpTransport::new(socket_addr, self.config.connect_timeout).await {
+            Ok(mut transport) => {
+                let callback = create_packet_callback(
+                    self.log_context.clone(),
+                    ModbusTransportType::Tcp,
+                    self.current_group_id.clone(),
+                );
+                transport.set_packet_callback(callback);
+                let client = ModbusTcpClient::from_transport(transport);
+                Ok(ModbusClientWrapper::Tcp(client))
+            },
+            Err(e) => Err(GatewayError::Connection(e.to_string())),
         }
     }
 
-    fn log_config(&self) -> &ChannelLogConfig {
-        self.log_context.config()
+    #[cfg(feature = "modbus")]
+    fn create_rtu_client(&self) -> Result<ModbusClientWrapper> {
+        match RtuTransport::new(&self.config.rtu_device, self.config.baud_rate) {
+            Ok(mut transport) => {
+                let callback = create_packet_callback(
+                    self.log_context.clone(),
+                    ModbusTransportType::Rtu,
+                    self.current_group_id.clone(),
+                );
+                transport.set_packet_callback(callback);
+                let client = ModbusRtuClient::from_transport(transport);
+                Ok(ModbusClientWrapper::Rtu(client))
+            },
+            Err(e) => Err(GatewayError::Connection(e.to_string())),
+        }
     }
 }
 
-impl Protocol for ModbusChannel {
-    fn connection_state(&self) -> ConnectionState {
-        self.state
-    }
+// ============================================================================
+// Write helpers
+// ============================================================================
 
-    #[allow(clippy::disallowed_methods)]
-    async fn diagnostics(&self) -> Result<Diagnostics> {
-        let state = self.state;
+/// Write a single encoded value to a Modbus register.
+///
+/// Uses FC06 for single-register formats, FC10 for multi-register.
+async fn write_single_value(
+    client: &mut ModbusClientWrapper,
+    addr: &ModbusAddress,
+    raw_value: f64,
+) -> std::result::Result<(), String> {
+    let regs = encode_value(raw_value, addr.format, addr.byte_order).map_err(|e| {
+        format!(
+            "Encode error for slave {} reg {}: {}",
+            addr.slave_id, addr.register, e
+        )
+    })?;
 
-        Ok(Diagnostics {
-            protocol: ProtocolCapabilities::name(self).to_string(),
-            connection_state: state,
-            read_count: self.diagnostics.read_count(),
-            write_count: self.diagnostics.write_count(),
-            error_count: self.diagnostics.error_count(),
-            last_error: self.diagnostics.last_error(),
-            extra: serde_json::json!({
-                "address": self.config.address,
-                "points": self.config.points.len(),
-            }),
-        })
+    write_registers(client, addr.slave_id, addr.register, &regs)
+        .await
+        .map_err(|e| format!("Write slave {} reg {}: {}", addr.slave_id, addr.register, e))
+}
+
+/// FC06 for single register, FC10 for multiple registers.
+async fn write_registers(
+    client: &mut ModbusClientWrapper,
+    slave_id: u8,
+    address: u16,
+    regs: &[u16],
+) -> voltage_modbus::ModbusResult<()> {
+    if regs.len() == 1 {
+        client.write_06(slave_id, address, regs[0]).await
+    } else {
+        client.write_10(slave_id, address, regs).await
     }
 }
 
-impl ProtocolClient for ModbusChannel {
+// ============================================================================
+// Value encoding/transform helpers
+// ============================================================================
+
+/// Encode a Value to Modbus registers.
+fn encode_value(
+    value: f64,
+    format: crate::protocols::core::point::DataFormat,
+    byte_order: crate::protocols::core::point::ByteOrder,
+) -> Result<Vec<u16>> {
+    use crate::protocols::codec::byte_order::encode_registers;
+    encode_registers(&Value::Float(value), format, byte_order)
+}
+
+/// Reverse transform to get raw value.
+fn reverse_transform(
+    value: f64,
+    transform: &crate::protocols::core::point::TransformConfig,
+) -> Result<f64> {
+    transform.reverse_apply(value)
+}
+
+// ============================================================================
+// ChannelRuntime implementation
+// ============================================================================
+
+impl ModbusChannel {
+    async fn write_adjustment(&mut self, adjustments: &[AdjustmentCommand]) -> Result<WriteResult> {
+        let start_time = std::time::Instant::now();
+        let mut success_count = 0;
+        let mut failures: Vec<(u32, String)> = Vec::with_capacity(adjustments.len());
+
+        let client = match self.client.as_mut() {
+            Some(c) => c,
+            None => {
+                let err = GatewayError::NotConnected;
+                self.log_context
+                    .log_adjustment_write(
+                        adjustments,
+                        Err(err.to_string()),
+                        start_time.elapsed().as_millis() as u64,
+                    )
+                    .await;
+                return Err(err);
+            },
+        };
+
+        for adj in adjustments {
+            let point = match self
+                .config
+                .points
+                .iter()
+                .find(|p| p.id == adj.id && p.point_type == PointType::Adjustment)
+            {
+                Some(p) => p,
+                None => {
+                    failures.push((adj.id, "Point not found".into()));
+                    continue;
+                },
+            };
+
+            let modbus_addr = &point.address;
+
+            let raw_value = match reverse_transform(adj.value, &point.transform) {
+                Ok(v) => v,
+                Err(e) => {
+                    failures.push((adj.id, e.to_string()));
+                    continue;
+                },
+            };
+
+            match write_single_value(client, modbus_addr, raw_value).await {
+                Ok(_) => success_count += 1,
+                Err(msg) => failures.push((adj.id, msg)),
+            }
+        }
+
+        self.diagnostics.add_write(success_count as u64);
+        let error_count = failures.len();
+        if error_count > 0 {
+            self.diagnostics.add_error(error_count as u64);
+        }
+
+        let duration_ms = start_time.elapsed().as_millis() as u64;
+        let result = WriteResult {
+            success_count,
+            failures,
+        };
+
+        self.log_context
+            .log_adjustment_write(adjustments, Ok(&result), duration_ms)
+            .await;
+
+        Ok(result)
+    }
+    async fn write_control(&mut self, commands: &[ControlCommand]) -> Result<WriteResult> {
+        let start_time = std::time::Instant::now();
+        let mut success_count = 0;
+        let mut failures: Vec<(u32, String)> = Vec::with_capacity(commands.len());
+
+        let client = match self.client.as_mut() {
+            Some(c) => c,
+            None => {
+                let err = GatewayError::NotConnected;
+                self.log_context
+                    .log_control_write(
+                        commands,
+                        Err(err.to_string()),
+                        start_time.elapsed().as_millis() as u64,
+                    )
+                    .await;
+                return Err(err);
+            },
+        };
+
+        for cmd in commands {
+            let point = match self
+                .config
+                .points
+                .iter()
+                .find(|p| p.id == cmd.id && p.point_type == PointType::Control)
+            {
+                Some(p) => p,
+                None => {
+                    failures.push((cmd.id, "Point not found".into()));
+                    continue;
+                },
+            };
+
+            let modbus_addr = &point.address;
+
+            let value = point.transform.apply_bool(cmd.value);
+
+            let result = match modbus_addr.function_code {
+                5 => {
+                    client
+                        .write_05(modbus_addr.slave_id, modbus_addr.register, value)
+                        .await
+                },
+                6 => {
+                    let reg_value = if value { 1u16 } else { 0u16 };
+                    client
+                        .write_06(modbus_addr.slave_id, modbus_addr.register, reg_value)
+                        .await
+                },
+                16 => {
+                    let reg_value = if value { 1u16 } else { 0u16 };
+                    client
+                        .write_10(modbus_addr.slave_id, modbus_addr.register, &[reg_value])
+                        .await
+                },
+                fc => {
+                    failures.push((
+                        cmd.id,
+                        format!("Unsupported function code {} for control", fc),
+                    ));
+                    continue;
+                },
+            };
+
+            match result {
+                Ok(_) => success_count += 1,
+                Err(e) => failures.push((
+                    cmd.id,
+                    format!(
+                        "Control write slave {} reg {}: {}",
+                        modbus_addr.slave_id, modbus_addr.register, e
+                    ),
+                )),
+            }
+        }
+
+        self.diagnostics.add_write(success_count as u64);
+        let error_count = failures.len();
+        if error_count > 0 {
+            self.diagnostics.add_error(error_count as u64);
+        }
+
+        let duration_ms = start_time.elapsed().as_millis() as u64;
+        let result = WriteResult {
+            success_count,
+            failures,
+        };
+
+        self.log_context
+            .log_control_write(commands, Ok(&result), duration_ms)
+            .await;
+
+        Ok(result)
+    }
+}
+
+#[async_trait]
+impl ChannelRuntime for ModbusChannel {
     async fn connect(&mut self) -> Result<()> {
         let start_time = std::time::Instant::now();
         let old_state = self.state;
@@ -476,310 +702,12 @@ impl ProtocolClient for ModbusChannel {
         }
     }
 
-    async fn write_control(&mut self, commands: &[ControlCommand]) -> Result<WriteResult> {
-        let start_time = std::time::Instant::now();
-        let mut success_count = 0;
-        let mut failures: Vec<(u32, String)> = Vec::with_capacity(commands.len());
-
-        let client = match self.client.as_mut() {
-            Some(c) => c,
-            None => {
-                let err = GatewayError::NotConnected;
-                self.log_context
-                    .log_control_write(
-                        commands,
-                        Err(err.to_string()),
-                        start_time.elapsed().as_millis() as u64,
-                    )
-                    .await;
-                return Err(err);
-            },
-        };
-
-        for cmd in commands {
-            let point = match self
-                .config
-                .points
-                .iter()
-                .find(|p| p.id == cmd.id && p.point_type == PointType::Control)
-            {
-                Some(p) => p,
-                None => {
-                    failures.push((cmd.id, "Point not found".into()));
-                    continue;
-                },
-            };
-
-            let modbus_addr = &point.address;
-
-            let value = point.transform.apply_bool(cmd.value);
-
-            let result = match modbus_addr.function_code {
-                5 => {
-                    client
-                        .write_05(modbus_addr.slave_id, modbus_addr.register, value)
-                        .await
-                },
-                6 => {
-                    let reg_value = if value { 1u16 } else { 0u16 };
-                    client
-                        .write_06(modbus_addr.slave_id, modbus_addr.register, reg_value)
-                        .await
-                },
-                16 => {
-                    let reg_value = if value { 1u16 } else { 0u16 };
-                    client
-                        .write_10(modbus_addr.slave_id, modbus_addr.register, &[reg_value])
-                        .await
-                },
-                fc => {
-                    failures.push((
-                        cmd.id,
-                        format!("Unsupported function code {} for control", fc),
-                    ));
-                    continue;
-                },
-            };
-
-            match result {
-                Ok(_) => success_count += 1,
-                Err(e) => failures.push((
-                    cmd.id,
-                    format!(
-                        "Control write slave {} reg {}: {}",
-                        modbus_addr.slave_id, modbus_addr.register, e
-                    ),
-                )),
-            }
-        }
-
-        self.diagnostics.add_write(success_count as u64);
-        let error_count = failures.len();
-        if error_count > 0 {
-            self.diagnostics.add_error(error_count as u64);
-        }
-
-        let duration_ms = start_time.elapsed().as_millis() as u64;
-        let result = WriteResult {
-            success_count,
-            failures,
-        };
-
-        self.log_context
-            .log_control_write(commands, Ok(&result), duration_ms)
-            .await;
-
-        Ok(result)
-    }
-
-    async fn write_adjustment(&mut self, adjustments: &[AdjustmentCommand]) -> Result<WriteResult> {
-        let start_time = std::time::Instant::now();
-        let mut success_count = 0;
-        let mut failures: Vec<(u32, String)> = Vec::with_capacity(adjustments.len());
-
-        let client = match self.client.as_mut() {
-            Some(c) => c,
-            None => {
-                let err = GatewayError::NotConnected;
-                self.log_context
-                    .log_adjustment_write(
-                        adjustments,
-                        Err(err.to_string()),
-                        start_time.elapsed().as_millis() as u64,
-                    )
-                    .await;
-                return Err(err);
-            },
-        };
-
-        for adj in adjustments {
-            let point = match self
-                .config
-                .points
-                .iter()
-                .find(|p| p.id == adj.id && p.point_type == PointType::Adjustment)
-            {
-                Some(p) => p,
-                None => {
-                    failures.push((adj.id, "Point not found".into()));
-                    continue;
-                },
-            };
-
-            let modbus_addr = &point.address;
-
-            let raw_value = match reverse_transform(adj.value, &point.transform) {
-                Ok(v) => v,
-                Err(e) => {
-                    failures.push((adj.id, e.to_string()));
-                    continue;
-                },
-            };
-
-            match write_single_value(client, modbus_addr, raw_value).await {
-                Ok(_) => success_count += 1,
-                Err(msg) => failures.push((adj.id, msg)),
-            }
-        }
-
-        self.diagnostics.add_write(success_count as u64);
-        let error_count = failures.len();
-        if error_count > 0 {
-            self.diagnostics.add_error(error_count as u64);
-        }
-
-        let duration_ms = start_time.elapsed().as_millis() as u64;
-        let result = WriteResult {
-            success_count,
-            failures,
-        };
-
-        self.log_context
-            .log_adjustment_write(adjustments, Ok(&result), duration_ms)
-            .await;
-
-        Ok(result)
-    }
-}
-
-// ============================================================================
-// Connection helpers (extracted from connect() to reduce function length)
-// ============================================================================
-
-impl ModbusChannel {
-    /// Create a Modbus client based on the configured connection mode.
-    async fn create_client(&self) -> Result<ModbusClientWrapper> {
-        match self.config.connection_mode {
-            ConnectionMode::Tcp => self.create_tcp_client().await,
-            #[cfg(feature = "modbus")]
-            ConnectionMode::Rtu => self.create_rtu_client(),
-        }
-    }
-
-    async fn create_tcp_client(&self) -> Result<ModbusClientWrapper> {
-        let socket_addr: std::net::SocketAddr = self
-            .config
-            .address
-            .parse()
-            .map_err(|e| GatewayError::Connection(format!("Invalid address: {}", e)))?;
-
-        match TcpTransport::new(socket_addr, self.config.connect_timeout).await {
-            Ok(mut transport) => {
-                let callback = create_packet_callback(
-                    self.log_context.clone(),
-                    ModbusTransportType::Tcp,
-                    self.current_group_id.clone(),
-                );
-                transport.set_packet_callback(callback);
-                let client = ModbusTcpClient::from_transport(transport);
-                Ok(ModbusClientWrapper::Tcp(client))
-            },
-            Err(e) => Err(GatewayError::Connection(e.to_string())),
-        }
-    }
-
-    #[cfg(feature = "modbus")]
-    fn create_rtu_client(&self) -> Result<ModbusClientWrapper> {
-        match RtuTransport::new(&self.config.rtu_device, self.config.baud_rate) {
-            Ok(mut transport) => {
-                let callback = create_packet_callback(
-                    self.log_context.clone(),
-                    ModbusTransportType::Rtu,
-                    self.current_group_id.clone(),
-                );
-                transport.set_packet_callback(callback);
-                let client = ModbusRtuClient::from_transport(transport);
-                Ok(ModbusClientWrapper::Rtu(client))
-            },
-            Err(e) => Err(GatewayError::Connection(e.to_string())),
-        }
-    }
-}
-
-// ============================================================================
-// Write helpers
-// ============================================================================
-
-/// Write a single encoded value to a Modbus register.
-///
-/// Uses FC06 for single-register formats, FC10 for multi-register.
-async fn write_single_value(
-    client: &mut ModbusClientWrapper,
-    addr: &ModbusAddress,
-    raw_value: f64,
-) -> std::result::Result<(), String> {
-    let regs = encode_value(raw_value, addr.format, addr.byte_order).map_err(|e| {
-        format!(
-            "Encode error for slave {} reg {}: {}",
-            addr.slave_id, addr.register, e
-        )
-    })?;
-
-    write_registers(client, addr.slave_id, addr.register, &regs)
-        .await
-        .map_err(|e| format!("Write slave {} reg {}: {}", addr.slave_id, addr.register, e))
-}
-
-/// FC06 for single register, FC10 for multiple registers.
-async fn write_registers(
-    client: &mut ModbusClientWrapper,
-    slave_id: u8,
-    address: u16,
-    regs: &[u16],
-) -> voltage_modbus::ModbusResult<()> {
-    if regs.len() == 1 {
-        client.write_06(slave_id, address, regs[0]).await
-    } else {
-        client.write_10(slave_id, address, regs).await
-    }
-}
-
-// ============================================================================
-// Value encoding/transform helpers
-// ============================================================================
-
-/// Encode a Value to Modbus registers.
-fn encode_value(
-    value: f64,
-    format: crate::protocols::core::point::DataFormat,
-    byte_order: crate::protocols::core::point::ByteOrder,
-) -> Result<Vec<u16>> {
-    use crate::protocols::codec::byte_order::encode_registers;
-    encode_registers(&Value::Float(value), format, byte_order)
-}
-
-/// Reverse transform to get raw value.
-fn reverse_transform(
-    value: f64,
-    transform: &crate::protocols::core::point::TransformConfig,
-) -> Result<f64> {
-    transform.reverse_apply(value)
-}
-
-// ============================================================================
-// ChannelRuntime implementation
-// ============================================================================
-
-#[async_trait]
-impl ChannelRuntime for ModbusChannel {
-    async fn connect(&mut self) -> Result<()> {
-        <Self as ProtocolClient>::connect(self).await
-    }
-
-    async fn disconnect(&mut self) -> Result<()> {
-        <Self as ProtocolClient>::disconnect(self).await
-    }
-
-    async fn poll_once(&mut self) -> PollResult {
-        <Self as ProtocolClient>::poll_once(self).await
-    }
-
     async fn write_control(&mut self, commands: &[(u32, f64)]) -> Result<usize> {
         let cmds: Vec<_> = commands
             .iter()
             .map(|(id, value)| ControlCommand::latching(*id, *value != 0.0))
             .collect();
-        let result = <Self as ProtocolClient>::write_control(self, &cmds).await?;
+        let result = Self::write_control(self, &cmds).await?;
         Ok(result.success_count)
     }
 
@@ -788,24 +716,50 @@ impl ChannelRuntime for ModbusChannel {
             .iter()
             .map(|(id, value)| AdjustmentCommand::new(*id, *value))
             .collect();
-        let result = <Self as ProtocolClient>::write_adjustment(self, &adjs).await?;
+        let result = Self::write_adjustment(self, &adjs).await?;
         Ok(result.success_count)
     }
 
     async fn diagnostics(&self) -> Result<Diagnostics> {
-        <Self as Protocol>::diagnostics(self).await
+        let state = self.state;
+
+        Ok(Diagnostics {
+            protocol: self.name().to_string(),
+            connection_state: state,
+            read_count: self.diagnostics.read_count(),
+            write_count: self.diagnostics.write_count(),
+            error_count: self.diagnostics.error_count(),
+            last_error: self.diagnostics.last_error(),
+            extra: serde_json::json!({
+                "address": self.config.address,
+                "points": self.config.points.len(),
+            }),
+        })
     }
 
     fn connection_state(&self) -> ConnectionState {
-        <Self as Protocol>::connection_state(self)
+        self.state
     }
 
+    #[allow(clippy::disallowed_methods)]
     fn set_log_handler(&mut self, handler: Arc<dyn ChannelLogHandler>) {
-        <Self as LoggableProtocol>::set_log_handler(self, handler);
+        if let Some(ctx) = Arc::get_mut(&mut self.log_context) {
+            ctx.set_handler(handler);
+        } else {
+            let mut new_ctx = (*self.log_context).clone();
+            new_ctx.set_handler(handler);
+            self.log_context = Arc::new(new_ctx);
+        }
     }
 
     fn set_log_config(&mut self, config: ChannelLogConfig) {
-        <Self as LoggableProtocol>::set_log_config(self, config);
+        if let Some(ctx) = Arc::get_mut(&mut self.log_context) {
+            ctx.set_config(config);
+        } else {
+            let mut new_ctx = (*self.log_context).clone();
+            new_ctx.set_config(config);
+            self.log_context = Arc::new(new_ctx);
+        }
     }
 }
 
@@ -835,8 +789,7 @@ mod tests {
         let config = ModbusChannelConfig::tcp("127.0.0.1:502");
         let channel = ModbusChannel::new(config, 1);
 
-        assert_eq!(ProtocolCapabilities::name(&channel), "Modbus TCP");
-        assert_eq!(channel.supported_modes(), &[CommunicationMode::Polling]);
+        assert_eq!(channel.name(), "Modbus TCP");
     }
 
     #[test]
@@ -884,7 +837,7 @@ mod tests {
         assert_eq!(config.address, "192.168.1.100:502");
 
         let channel = ModbusChannel::new(config, 1);
-        assert_eq!(ProtocolCapabilities::name(&channel), "Modbus TCP");
+        assert_eq!(channel.name(), "Modbus TCP");
     }
 
     #[cfg(feature = "modbus")]
@@ -897,6 +850,6 @@ mod tests {
         assert_eq!(config.baud_rate, 9600);
 
         let channel = ModbusChannel::new(config, 1);
-        assert_eq!(ProtocolCapabilities::name(&channel), "Modbus RTU");
+        assert_eq!(channel.name(), "Modbus RTU");
     }
 }

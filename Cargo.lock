@@ -305,7 +305,6 @@ dependencies = [
 name = "aether-config"
 version = "0.0.1"
 dependencies = [
- "aether-schema-macro",
  "anyhow",
  "chrono",
  "common",
@@ -401,7 +400,6 @@ dependencies = [
  "aether-ports",
  "aether-shm-bridge",
  "aether-sqlite-topology",
- "aether-store-local",
  "anyhow",
  "arc-swap",
  "async-trait",
@@ -436,23 +434,6 @@ dependencies = [
  "serde_json",
  "tokio",
  "wiremock",
-]
-
-[[package]]
-name = "aether-infra"
-version = "0.0.1"
-dependencies = [
- "anyhow",
- "bb8",
- "bb8-redis",
- "bytes",
- "redis",
- "serde",
- "serde_json",
- "serde_yaml_ng",
- "sqlx",
- "tokio",
- "tracing",
 ]
 
 [[package]]
@@ -567,7 +548,6 @@ name = "aether-rules"
 version = "0.0.1"
 dependencies = [
  "aether-calc",
- "aether-dataplane",
  "aether-domain",
  "aether-ports",
  "anyhow",
@@ -626,16 +606,6 @@ dependencies = [
  "tempfile",
  "tokio",
  "tokio-util",
-]
-
-[[package]]
-name = "aether-sim"
-version = "0.0.1"
-dependencies = [
- "chrono",
- "rand 0.8.7",
- "serde",
- "workspace-hack",
 ]
 
 [[package]]
@@ -1074,15 +1044,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "backon"
-version = "1.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cffb0e931875b666fc4fcb20fee52e9bbd1ef836fd9e9e04ec21555f9f85f7ef"
-dependencies = [
- "fastrand",
-]
-
-[[package]]
 name = "base64"
 version = "0.22.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1093,28 +1054,6 @@ name = "base64ct"
 version = "1.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7d809780667f4410e7c41b07f52439b94d2bdf8528eeedc287fa38d3b7f95d82"
-
-[[package]]
-name = "bb8"
-version = "0.9.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "457d7ed3f888dfd2c7af56d4975cade43c622f74bdcddfed6d4352f57acc6310"
-dependencies = [
- "futures-util",
- "parking_lot",
- "portable-atomic",
- "tokio",
-]
-
-[[package]]
-name = "bb8-redis"
-version = "0.24.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5143936af5e1eea1a881e3e3d21b6777da6315e5e307bc3d0c2301c44fa37da9"
-dependencies = [
- "bb8",
- "redis",
-]
 
 [[package]]
 name = "bcrypt"
@@ -1458,11 +1397,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ba5a308b75df32fe02788e748662718f03fde005016435c444eea572398219fd"
 dependencies = [
  "bytes",
- "futures-core",
  "memchr",
- "pin-project-lite",
- "tokio",
- "tokio-util",
 ]
 
 [[package]]
@@ -1470,18 +1405,13 @@ name = "common"
 version = "0.0.1"
 dependencies = [
  "aether-core",
- "aether-infra",
  "aether-schema-macro",
  "anyhow",
  "axum",
  "chrono",
- "clap",
  "csv",
  "errors",
  "flate2",
- "futures",
- "redis",
- "reqwest",
  "schemars 0.8.22",
  "serde",
  "serde_json",
@@ -2069,15 +1999,11 @@ name = "errors"
 version = "0.0.1"
 dependencies = [
  "anyhow",
- "redis",
  "reqwest",
- "schemars 0.8.22",
- "serde",
  "serde_json",
  "serde_yaml_ng",
  "sqlx",
  "thiserror 2.0.18",
- "tracing",
 ]
 
 [[package]]
@@ -3606,12 +3532,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "portable-atomic"
-version = "1.13.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c33a9471896f1c69cecef8d20cbe2f7accd12527ce60845ff44c153bb2a21b49"
-
-[[package]]
 name = "potential_utf"
 version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3828,31 +3748,6 @@ checksum = "22e18b0f0062d30d4230b2e85ff77fdfe4326feb054b9783a3460d8435c8ab91"
 dependencies = [
  "crossbeam-deque",
  "crossbeam-utils",
-]
-
-[[package]]
-name = "redis"
-version = "0.32.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "014cc767fefab6a3e798ca45112bccad9c6e0e218fbd49720042716c73cfef44"
-dependencies = [
- "arc-swap",
- "backon",
- "bytes",
- "cfg-if",
- "combine",
- "futures-channel",
- "futures-util",
- "itoa",
- "num-bigint",
- "percent-encoding",
- "pin-project-lite",
- "ryu",
- "sha1_smol",
- "socket2 0.6.1",
- "tokio",
- "tokio-util",
- "url",
 ]
 
 [[package]]
@@ -4628,7 +4523,6 @@ dependencies = [
 name = "simulator"
 version = "0.0.1"
 dependencies = [
- "aether-sim",
  "anyhow",
  "axum",
  "chrono",
@@ -6318,7 +6212,6 @@ dependencies = [
  "digest",
  "ed25519-dalek",
  "either",
- "fastrand",
  "form_urlencoded",
  "futures-channel",
  "futures-core",
@@ -6334,8 +6227,6 @@ dependencies = [
  "log",
  "memchr",
  "mio",
- "num-bigint",
- "num-integer",
  "num-traits",
  "once_cell",
  "percent-encoding",

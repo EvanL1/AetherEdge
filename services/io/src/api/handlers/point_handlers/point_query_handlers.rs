@@ -441,9 +441,7 @@ mod cache_tests {
             .await
             .unwrap();
 
-        common::test_utils::schema::init_io_schema(&pool)
-            .await
-            .unwrap();
+        common::schema::init_io_schema(&pool).await.unwrap();
 
         pool
     }

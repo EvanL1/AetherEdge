@@ -5,7 +5,7 @@
 
 use aether_pack::{ProductDefinition, ProductLibrary, ProductPointDefinition};
 use anyhow::{Context, Result};
-use common::test_utils::schema::INSTANCES_TABLE;
+use common::schema::INSTANCES_TABLE;
 use sqlx::SqlitePool;
 use std::sync::Arc;
 use tracing::debug;

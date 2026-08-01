@@ -140,7 +140,7 @@ check_local_gates() {
     local runtime_features_source="distributions/aetherems/runtime-io-features.txt"
     local temp_dir release_target runtime_features normalized_features artifact_entries
 
-    echo "Checking locally provable ADR-0007 extraction gates..."
+    echo "Checking locally provable extraction gates..."
     [[ -s "$runtime_manifest_source" ]] \
         || fail "runtime-manifest binary source is missing: $runtime_manifest_source"
     if git check-ignore -q "$runtime_manifest_source"; then
@@ -168,7 +168,6 @@ check_local_gates() {
     cargo run --quiet -p aether-example-minimal-gateway >/dev/null
     cargo run --quiet -p aether-example-energy-gateway >/dev/null
 
-    assert_profiled_service aether-redis redis
     assert_profiled_service timescaledb postgres-storage
     if rg -q '^default[[:space:]]*=.*postgres-storage' services/history/Cargo.toml; then
         fail "PostgreSQL history storage must not be a default service feature"

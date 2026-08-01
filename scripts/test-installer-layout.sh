@@ -8,7 +8,6 @@ readonly ROOT_DIR
 readonly DOCKER_INSTALLER="$ROOT_DIR/scripts/install.sh"
 readonly BARE_METAL_INSTALLER="$ROOT_DIR/scripts/install-baremetal.sh"
 readonly INSTALLER_BUILDER="$ROOT_DIR/scripts/build-installer.sh"
-readonly STATIC_DEP_BUILDER="$ROOT_DIR/scripts/build-static-deps.sh"
 
 fail() {
     echo "FAIL: $*" >&2
@@ -182,13 +181,13 @@ echo "Testing Docker dependency-image staging remains rollback-safe..."
                 ;;
             tag)
                 printf 'tag %s %s\n' "$2" "$3" >> "$docker_log"
-                if [[ "$3" == redis:8-alpine ]]; then
+                if [[ "$3" == timescale/timescaledb:2.25.2-pg17 ]]; then
                     public_id="$old_id"
                 fi
                 ;;
             rmi)
                 printf 'rmi %s\n' "$2" >> "$docker_log"
-                [[ "$2" == redis:8-alpine ]] && public_id=""
+                [[ "$2" == timescale/timescaledb:2.25.2-pg17 ]] && public_id=""
                 ;;
             *) return 0 ;;
         esac
@@ -201,16 +200,16 @@ echo "Testing Docker dependency-image staging remains rollback-safe..."
         public_id="$new_id"
     }
 
-    smart_load_image "$TEST_ROOT/aether-redis.tar.gz"
+    smart_load_image "$TEST_ROOT/aether-timescaledb.tar.gz"
     backup_line=$(grep -n '^tag sha256:aaaaaaaa' "$docker_log" | cut -d: -f1)
-    remove_line=$(grep -n '^rmi redis:8-alpine' "$docker_log" | cut -d: -f1)
+    remove_line=$(grep -n '^rmi timescale/timescaledb:2.25.2-pg17' "$docker_log" | cut -d: -f1)
     load_line=$(grep -n '^load$' "$docker_log" | cut -d: -f1)
     [[ -n "$backup_line" && "$backup_line" -lt "$remove_line" \
         && "$remove_line" -lt "$load_line" ]] \
         || fail "dependency image was not tagged before public-tag replacement"
-    [[ "${IMAGE_PREVIOUS_IDS[redis:8-alpine]}" == "$old_id" ]] \
+    [[ "${IMAGE_PREVIOUS_IDS[timescale/timescaledb:2.25.2-pg17]}" == "$old_id" ]] \
         || fail "rollback state did not capture the previous dependency image"
-    restore_image_tag_from_backup redis:8-alpine
+    restore_image_tag_from_backup timescale/timescaledb:2.25.2-pg17
     [[ "$public_id" == "$old_id" ]] \
         || fail "image rollback did not restore the exact dependency image ID"
 )
@@ -449,37 +448,6 @@ fi
 )
 
 (
-    REDIS_EXTENSION_SELECTED=false
-    existing_volume=""
-    transaction_volumes_exist=false
-    removed_volumes="$TEST_ROOT/removed-redis-volumes.log"
-    : > "$removed_volumes"
-    docker() {
-        if [[ "$1" == volume && "$2" == inspect ]]; then
-            [[ "$3" == "$existing_volume" && -n "$existing_volume" ]] \
-                || [[ "$transaction_volumes_exist" == true ]]
-            return
-        fi
-        if [[ "$1" == volume && "$2" == rm ]]; then
-            printf '%s\n' "$3" >> "$removed_volumes"
-            return 0
-        fi
-        return 1
-    }
-    reject_existing_redis_volume_footprint
-    existing_volume=aetheredge_redis-data
-    if reject_existing_redis_volume_footprint; then
-        fail "core-only fresh preflight accepted a stale Aether Redis volume"
-    fi
-    existing_volume=""
-    REDIS_EXTENSION_SELECTED=true
-    transaction_volumes_exist=true
-    remove_fresh_redis_volumes
-    [[ "$(wc -l < "$removed_volumes" | tr -d ' ')" == 2 ]] \
-        || fail "fresh rollback did not remove both transaction-created Redis volumes"
-)
-
-(
     compose_log="$TEST_ROOT/compose-project.log"
     : > "$compose_log"
     docker() {
@@ -676,30 +644,6 @@ assert_contains "$BARE_METAL_INSTALLER" 'AETHER_BARE_METAL_INSTALLER_FUNCTIONS_O
         || fail "bare-metal installer printed the bootstrap password"
     assert_contains "$bare_bootstrap_env" 'AETHER_ALLOW_PUBLIC_REGISTRATION=false'
 
-    redis_bundle="$TEST_ROOT/bare-redis-bundle"
-    mkdir -p "$redis_bundle/bin" "$redis_bundle/systemd"
-    touch "$redis_bundle/bin/redis-server" \
-        "$redis_bundle/bin/redis-cli" \
-        "$redis_bundle/systemd/aether-redis.service"
-    chmod +x "$redis_bundle/bin/redis-server" "$redis_bundle/bin/redis-cli"
-    [[ "$(detect_bundled_redis "$redis_bundle")" == true ]] \
-        || fail "a complete bare-metal Redis infrastructure bundle was not detected"
-
-    partial_redis_bundle="$TEST_ROOT/bare-partial-redis-bundle"
-    mkdir -p "$partial_redis_bundle/bin"
-    touch "$partial_redis_bundle/bin/redis-server"
-    chmod +x "$partial_redis_bundle/bin/redis-server"
-    if detect_bundled_redis "$partial_redis_bundle" >/dev/null; then
-        fail "an incomplete bare-metal Redis infrastructure bundle was accepted"
-    fi
-
-    non_executable_redis_bundle="$TEST_ROOT/bare-non-executable-redis-bundle"
-    mkdir -p "$non_executable_redis_bundle/bin"
-    touch "$non_executable_redis_bundle/bin/redis-server"
-    if detect_bundled_redis "$non_executable_redis_bundle" >/dev/null; then
-        fail "a non-executable Redis artifact was treated as a core-only bundle"
-    fi
-
     (
         mock_active=true
         mock_stop_calls=0
@@ -756,22 +700,11 @@ bare_mutation_line=$(grep -nFx 'normalize_root_owned_tree .' "$BARE_METAL_INSTAL
 [[ "$bare_root_guard_line" -lt "$bare_preflight_line" \
     && "$bare_preflight_line" -lt "$bare_mutation_line" ]] \
     || fail "bare-metal footprint preflight must run before host mutation"
-redis_detection_line=$(grep -nF 'REDIS_INCLUDED=$(detect_bundled_redis .)' "$BARE_METAL_INSTALLER" | head -1 | cut -d: -f1)
-[[ "$redis_detection_line" -lt "$bare_preflight_line" ]] \
-    || fail "bare-metal Redis artifacts must be validated before footprint preflight"
 assert_contains "$BARE_METAL_INSTALLER" 'validate_secure_regular_file_if_exists'
 state_snapshot_line=$(grep -nFx 'snapshot_bare_metal_state' "$BARE_METAL_INSTALLER" | tail -1 | cut -d: -f1)
 [[ "$bare_preflight_recheck_line" -lt "$state_snapshot_line" \
     && "$state_snapshot_line" -lt "$binary_publish_line" ]] \
     || fail "bare-metal host-state snapshot is taken after binary publication"
-
-echo "Testing optional static dependency builds require trusted provenance..."
-if INCLUDE_REDIS=1 REDIS_VERSION=9.9.9 \
-    REDIS_SHA256=untrusted bash "$STATIC_DEP_BUILDER" arm64 >/dev/null 2>&1; then
-    fail "static Redis build accepted an invalid source digest"
-fi
-assert_contains "$STATIC_DEP_BUILDER" '.source-sha256'
-assert_contains "$STATIC_DEP_BUILDER" 'validate_static_elf'
 
 echo "Testing optional PostgreSQL storage stays opt-in during installation..."
 timescale_guard_line=$(grep -nF 'if [[ -f "docker/aether-timescaledb.tar.gz" ]]' "$DOCKER_INSTALLER" | head -1 | cut -d: -f1)
@@ -784,7 +717,6 @@ assert_contains "$ROOT_DIR/docker-compose.yml" '${AETHER_TIMESCALE_DATA_PATH:-./
 assert_not_contains "$ROOT_DIR/docker-compose.yml" 'TIMESCALEDB_PASSWORD:-postgres'
 assert_contains "$ROOT_DIR/docker-compose.yml" 'POSTGRES_PASSWORD=${TIMESCALEDB_PASSWORD:-}'
 assert_contains "$ROOT_DIR/docker-compose.yml" 'listen_addresses=127.0.0.1'
-assert_contains "$ROOT_DIR/docker-compose.yml" '"--bind", "127.0.0.1"'
 [[ "$(grep -Fc 'AETHER_UPLINK_CONTROL_TOKEN=${AETHER_UPLINK_CONTROL_TOKEN:?' "$ROOT_DIR/docker-compose.yml")" == 2 ]] \
     || fail "uplink control credential must be injected only into automation and uplink"
 assert_contains "$BARE_METAL_INSTALLER" 'AETHER_UPLINK_CONTROL_TOKEN=$UPLINK_CONTROL_TOKEN'
@@ -811,7 +743,7 @@ assert_not_contains "$INSTALLER_BUILDER" 'BUILD_IMAGES="aetherems:latest,aether-
 assert_not_contains "$INSTALLER_BUILDER" 'dev-py'
 assert_not_contains "$INSTALLER_BUILDER" 'former Python'
 assert_not_contains "$INSTALLER_BUILDER" '"py"'
-if bash "$INSTALLER_BUILDER" v0-test amd64 --services=redis \
+if bash "$INSTALLER_BUILDER" v0-test amd64 --services=timescaledb \
     >/dev/null 2>&1; then
     fail "Docker installer builder accepted an optional-service-only fresh package"
 fi
@@ -822,7 +754,7 @@ for retired_python_group in py dev-py; do
     fi
 done
 assert_contains "$INSTALLER_BUILDER" '! csv_contains "$BUILD_IMAGES" "aetherems:latest"'
-assert_contains "$INSTALLER_BUILDER" 'csv_contains "$BUILD_IMAGES" "redis:8-alpine"'
+assert_contains "$INSTALLER_BUILDER" 'csv_contains "$BUILD_IMAGES" "timescale/timescaledb:2.25.2-pg17"'
 assert_contains "$INSTALLER_BUILDER" 'CARGO_FEATURES=""'
 assert_contains "$INSTALLER_BUILDER" 'generate "$TARGET" "$RUNTIME_MANIFEST_DIR"'
 assert_contains "$INSTALLER_BUILDER" 'normalize-io-features'
@@ -841,8 +773,6 @@ postgres_feature_line=$(grep -nF '"$CARGO_FEATURES" "aether-history/postgres-sto
     && "$timescale_feature_guard_line" -lt "$postgres_feature_line" \
     && "$(grep -Fc 'aether-history/postgres-storage' "$INSTALLER_BUILDER")" == 1 ]] \
     || fail "PostgreSQL history feature is not exclusively guarded by Timescale selection"
-assert_contains "$BARE_METAL_INSTALLER" 'REDIS_INCLUDED=$(detect_bundled_redis .)'
-assert_contains "$BARE_METAL_INSTALLER" 'systemctl enable aether-redis.service'
 rollback_body=$(awk '
     /^finish_install\(\)/ { in_finish = 1 }
     in_finish && /^if \[\[ "\$\{AETHER_BARE_METAL_INSTALLER_FUNCTIONS_ONLY/ { exit }
@@ -851,7 +781,7 @@ rollback_body=$(awk '
 if grep -Fq '_INCLUDED' <<< "$rollback_body"; then
     fail "bare-metal rollback derives previous optional-service state from the incoming bundle"
 fi
-grep -Fq 'for unit in aether-redis.service aether.target; do' \
+grep -Fq 'for unit in aether.target; do' \
     <<< "$rollback_body" \
     || fail "bare-metal rollback does not remove newly enabled service state"
 rollback_quiesce_line=$(grep -nF 'quiesce_aether_services_for_rollback' <<< "$rollback_body" | head -1 | cut -d: -f1)
@@ -914,7 +844,6 @@ assert_not_contains "$DOCKER_INSTALLER" 'alpine.tar.gz'
 assert_not_contains "$DOCKER_INSTALLER" 'docker image prune -f'
 assert_not_contains "$DOCKER_INSTALLER" 'docker images -f "dangling=true" -q'
 assert_contains "$DOCKER_INSTALLER" 'docker rm -f "$container"'
-assert_contains "$DOCKER_INSTALLER" 'remove_fresh_redis_volumes'
 assert_contains "$DOCKER_INSTALLER" 'snapshot_runtime_directory "$INSTALL_DIR" install-root'
 assert_contains "$DOCKER_INSTALLER" 'snapshot_runtime_directory "$DATA_DIR" data-root'
 snapshot_line=$(grep -nFx 'snapshot_runtime_data_for_rollback' "$DOCKER_INSTALLER" | tail -1 | cut -d: -f1)
@@ -956,7 +885,6 @@ echo "Testing the AetherEdge distribution remains headless..."
 for headless_owner in \
     "$ROOT_DIR/docker-compose.yml" \
     "$ROOT_DIR/scripts/build-installer.sh" \
-    "$ROOT_DIR/scripts/build-static-deps.sh" \
     "$ROOT_DIR/scripts/install-baremetal.sh" \
     "$ROOT_DIR/scripts/install.sh" \
     "$ROOT_DIR/scripts/offline/build-docker-arm64.sh" \

@@ -8,10 +8,10 @@ use aether_domain::{
     InstanceId, PointAddress, PointId, PointKind, PointQuality, PointSample, TimestampMs,
 };
 use aether_ports::{ChannelHealthObservation, PortError, PortErrorKind, PortResult};
-use aether_shm_bridge::{
-    PhysicalPointAddress, ShmClientConfig, ShmReadTopologyGeneration, SlotSource,
+use aether_shm_bridge::{PhysicalPointAddress, ShmReadTopologyGeneration, SlotSource};
+use aether_sqlite_topology::{
+    SqliteLiveTopologySnapshot, load_sqlite_live_topology, open_read_topology, point_kind_code,
 };
-use aether_sqlite_topology::{SqliteLiveTopologySnapshot, load_sqlite_live_topology};
 use arc_swap::ArcSwap;
 use regex::Regex;
 use sqlx::SqlitePool;
@@ -123,7 +123,7 @@ impl UplinkTopologyGeneration {
     /// Reads channel connectivity from the health plane pinned to this generation.
     ///
     /// `None` means unconfigured or never observed — deliberately not the same
-    /// claim as offline (ADR-0016).
+    /// claim as offline.
     pub fn channel_health(&self, channel_id: u32) -> PortResult<Option<ChannelHealthObservation>> {
         self.read.channel_health().read_channel(channel_id)
     }
@@ -394,29 +394,15 @@ fn build_uplink_generation(
 ) -> PortResult<UplinkTopologyGeneration> {
     let digest = snapshot.digest();
     let groups = logical_groups_from_snapshot(&snapshot)?;
-    let point_manifest = Arc::new(snapshot.point_manifest().clone());
-    let health_manifest = Arc::new(snapshot.health_manifest().clone());
-    let point_config = shm_client_config(&config.shm_path, point_manifest.layout_hash(), config);
-    let health_config = shm_client_config(
+    let read = open_read_topology(
+        Arc::new(snapshot.point_manifest().clone()),
+        Arc::new(snapshot.health_manifest().clone()),
+        &config.shm_path,
         &config.channel_health_shm_path,
-        health_manifest.layout_hash(),
-        config,
-    );
-    let read = Arc::new(if validate_physical {
-        ShmReadTopologyGeneration::open(
-            point_config,
-            health_config,
-            point_manifest,
-            health_manifest,
-        )?
-    } else {
-        ShmReadTopologyGeneration::new_lazy(
-            point_config,
-            health_config,
-            point_manifest,
-            health_manifest,
-        )?
-    });
+        Duration::from_millis(config.shm_writer_stale_after_ms),
+        Duration::from_millis(config.shm_identity_check_interval_ms),
+        validate_physical,
+    )?;
     let slots: Arc<dyn SlotSource> = read.point_source().clone();
     Ok(UplinkTopologyGeneration {
         read,
@@ -485,7 +471,7 @@ fn add_physical_group_point(groups: &mut GroupMap, target: PhysicalPointAddress,
         groups,
         "io",
         &target.channel_id().get().to_string(),
-        point_kind_code(target),
+        point_kind_code(target.kind()),
         target.point_id().get().to_string(),
         slot,
     );
@@ -514,21 +500,6 @@ fn add_routed_group_point(
         slot,
     );
     Ok(())
-}
-
-fn point_kind_code(target: PhysicalPointAddress) -> &'static str {
-    match target.kind() {
-        aether_domain::PointKind::Telemetry => "T",
-        aether_domain::PointKind::Status => "S",
-        aether_domain::PointKind::Command => "C",
-        aether_domain::PointKind::Action => "A",
-    }
-}
-
-fn shm_client_config(path: &str, layout_hash: u64, config: &EnvConfig) -> ShmClientConfig {
-    ShmClientConfig::new(path, layout_hash)
-        .with_writer_stale_after(Duration::from_millis(config.shm_writer_stale_after_ms))
-        .with_identity_check_interval(Duration::from_millis(config.shm_identity_check_interval_ms))
 }
 
 fn compile_globs(patterns: &[String]) -> Vec<Regex> {

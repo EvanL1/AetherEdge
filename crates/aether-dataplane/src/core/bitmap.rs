@@ -59,11 +59,6 @@ pub const fn bitmap_data_size(total_slots: usize) -> usize {
     total_slots.div_ceil(64) * 8
 }
 
-/// Calculate total bitmap size (header + data)
-pub const fn total_bitmap_size(total_slots: usize) -> usize {
-    SlotBitmapHeader::SIZE + bitmap_data_size(total_slots)
-}
-
 /// Slot allocation result
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SlotAllocation {

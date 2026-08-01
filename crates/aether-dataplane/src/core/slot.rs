@@ -28,8 +28,9 @@ use std::sync::atomic::{AtomicU32, AtomicU64, Ordering, fence};
 /// # Safety (shared memory usage)
 ///
 /// This struct is `#[repr(C)]` to guarantee a deterministic field layout
-/// when cast from raw pointers in `unified_shm.rs`. The compile-time
-/// assertion below ensures the size never drifts from expectations.
+/// when cast from raw pointers in `core::slot_io` and `core::snapshot_save`.
+/// The compile-time assertion below ensures the size never drifts from
+/// expectations.
 #[repr(C, align(32))]
 pub struct PointSlot {
     /// Engineering value (IEEE 754 double as bits)
@@ -80,8 +81,8 @@ impl PointSlot {
     ///
     /// A NaN `value_bits` is the canonical "unwritten" marker — every real
     /// write path (PointSlot::set) overwrites both NaN sentinels with a
-    /// finite f64. Readers (ShmRedisSync, aether-rules executor) use this
-    /// to skip pushing pseudo-zeros to downstream caches.
+    /// finite f64. Readers (the aether-rules executor, downstream
+    /// `StateMirror` adapters) use this to skip pushing pseudo-zeros.
     #[inline]
     pub fn is_unwritten(&self) -> bool {
         f64::from_bits(self.value_bits.load(Ordering::Relaxed)).is_nan()
@@ -89,7 +90,7 @@ impl PointSlot {
 
     /// Reset this slot to the "unwritten" sentinel state in-place.
     ///
-    /// Used by `UnifiedWriter::create` after `set_len` zero-fills the mmap
+    /// Used by `SlotWriter::create` after `set_len` zero-fills the mmap
     /// region: zero-filled bytes decode as `(value=0.0, raw=0.0)` which is
     /// the legacy ambiguous default, so we overwrite those into NaN here.
     /// `timestamp`, `seq`, and `dirty` correctly stay 0 (their zero-bit
@@ -278,7 +279,7 @@ impl PointSlot {
         // Dirty flag — Release so a reader observing dirty=1 is guaranteed
         // to also see the completed seq=even and committed data. With
         // Relaxed the dirty store could be reordered past the seq→even
-        // RMW on AArch64, making ShmRedisSync take_dirty_slots() find a
+        // RMW on AArch64, making a `take_dirty_slots()` sweep find a
         // slot whose seq is still odd → wasted retry. Harmless but real.
         self.dirty.store(1, Ordering::Release);
     }

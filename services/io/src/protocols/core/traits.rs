@@ -1,26 +1,23 @@
-//! Core traits for protocol implementations.
+//! Shared vocabulary for protocol adapters.
 //!
-//! This module defines the fundamental traits that all protocols must implement.
+//! This module owns the types every adapter exchanges with the runtime —
+//! connection state, communication mode, poll results, diagnostics and the
+//! bounded event channel. It declares no trait.
 //!
-//! # Trait Hierarchy
+//! Adapters implement exactly one trait, [`ChannelRuntime`], declared in
+//! `crate::protocols::runtime`. The layered `ProtocolCapabilities` /
+//! `Protocol` / `ProtocolClient` / `EventDrivenProtocol` hierarchy this module
+//! used to describe was removed: nothing ever called through it, every adapter
+//! reached the runtime through `ChannelRuntime` alone, and the extra traits
+//! only forced each adapter to write its methods out twice.
 //!
-//! ```text
-//! Layer 1: Basic Capabilities (stateless queries)
-//! ├── ProtocolCapabilities  // metadata: name, modes, version
-//! └── Protocol              // connection_state, diagnostics
-//!
-//! Layer 2: Core Operations (single responsibility)
-//! ├── ProtocolClient        // connect, disconnect, poll_once, write_*
-//! └── EventDrivenProtocol   // bounded single-consumer event queue
-//! ```
+//! [`ChannelRuntime`]: crate::protocols::runtime::ChannelRuntime
 
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
-use std::future::Future;
 use tokio::sync::mpsc;
 
 use crate::protocols::core::data::DataBatch;
-use crate::protocols::core::error::Result;
 
 /// Communication mode supported by a protocol.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -340,89 +337,6 @@ impl Diagnostics {
     }
 }
 
-/// Protocol capabilities description.
-pub trait ProtocolCapabilities {
-    /// Get the protocol name.
-    fn name(&self) -> &'static str;
-
-    /// Get supported communication modes.
-    fn supported_modes(&self) -> &[CommunicationMode];
-
-    /// Check if client role is supported.
-    fn supports_client(&self) -> bool {
-        true
-    }
-
-    /// Check if server role is supported.
-    fn supports_server(&self) -> bool {
-        false
-    }
-
-    /// Get protocol version.
-    fn version(&self) -> &'static str {
-        "1.0"
-    }
-}
-
-/// Base protocol trait - connection status and diagnostics.
-///
-/// This trait provides read-only access to protocol state. For data acquisition,
-/// use `ProtocolClient::poll_once()` instead.
-pub trait Protocol: ProtocolCapabilities + Send + Sync {
-    /// Get current connection state.
-    fn connection_state(&self) -> ConnectionState;
-
-    /// Get diagnostics information.
-    ///
-    /// Returns protocol statistics including read/write counts, error counts,
-    /// and protocol-specific extra information.
-    fn diagnostics(&self) -> impl Future<Output = Result<Diagnostics>> + Send;
-}
-
-/// Client protocol trait - active connection + data operations.
-///
-/// This trait combines connection lifecycle management with data acquisition
-/// and command writing capabilities.
-pub trait ProtocolClient: Protocol {
-    /// Connect to the target device/server.
-    fn connect(&mut self) -> impl Future<Output = Result<()>> + Send;
-
-    /// Disconnect from the target.
-    fn disconnect(&mut self) -> impl Future<Output = Result<()>> + Send;
-
-    /// Execute a single poll cycle and return collected data.
-    ///
-    /// This is the primary method for data acquisition. The caller (service layer)
-    /// is responsible for:
-    /// - Managing the polling loop (interval, scheduling)
-    /// - Storing the returned data
-    /// - Handling reconnection on failures
-    ///
-    /// # Returns
-    ///
-    /// A `PollResult` containing:
-    /// - `data`: Successfully read data points
-    /// - `failures`: Points that failed to read (partial success supported)
-    fn poll_once(&mut self) -> impl Future<Output = PollResult> + Send;
-
-    /// Write control commands (remote control).
-    ///
-    /// Control commands are boolean operations (ON/OFF, OPEN/CLOSE) with
-    /// optional pulse duration for momentary outputs.
-    fn write_control(
-        &mut self,
-        commands: &[ControlCommand],
-    ) -> impl Future<Output = Result<WriteResult>> + Send;
-
-    /// Write adjustment commands (remote adjustment).
-    ///
-    /// Adjustment commands are setpoint operations with floating-point values.
-    fn write_adjustment(
-        &mut self,
-        adjustments: &[AdjustmentCommand],
-    ) -> impl Future<Output = Result<WriteResult>> + Send;
-}
-
 /// Data event for event-driven protocols.
 ///
 /// Each runtime has exactly one service-layer consumer, so batches move through
@@ -471,44 +385,6 @@ const DATA_EVENT_CHANNEL_CAPACITY: usize = 1024;
 ))]
 pub(crate) fn data_event_channel() -> (DataEventSender, DataEventReceiver) {
     mpsc::channel(DATA_EVENT_CHANNEL_CAPACITY)
-}
-
-/// Event-driven protocol extension trait.
-///
-/// Protocols implementing this trait can push data events to the unified
-/// channel task instead of (or in addition to) being polled.
-pub trait EventDrivenProtocol: Protocol {
-    /// Take the runtime's sole data-event receiver.
-    ///
-    /// Returns `None` after the receiver has already been taken.
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// let Some(mut rx) = protocol.take_event_receiver() else {
-    ///     return;
-    /// };
-    /// tokio::spawn(async move {
-    ///     while let Some(event) = rx.recv().await {
-    ///         match event {
-    ///             DataEvent::DataUpdate(batch) => { /* handle data */ }
-    ///             DataEvent::ConnectionChanged(state) => { /* handle state change */ }
-    ///             _ => {}
-    ///         }
-    ///     }
-    /// });
-    /// ```
-    fn take_event_receiver(&mut self) -> Option<DataEventReceiver>;
-
-    /// Start receiving events from the device/server.
-    ///
-    /// For IEC 104, this triggers STARTDT. For OPC UA, this activates subscriptions.
-    fn start(&mut self) -> impl Future<Output = Result<()>> + Send;
-
-    /// Stop receiving events.
-    ///
-    /// For IEC 104, this triggers STOPDT. For OPC UA, this deactivates subscriptions.
-    fn stop(&mut self) -> impl Future<Output = Result<()>> + Send;
 }
 
 #[cfg(test)]

@@ -41,11 +41,8 @@ async fn probe_backend(req: &StorageTestRequest) -> anyhow::Result<()> {
         "postgres" | "timescaledb" => anyhow::bail!(
             "PostgreSQL storage is optional; rebuild history with --features postgres-storage"
         ),
-        "influxdb" => anyhow::bail!(
-            "InfluxDB backend is not yet implemented; connectivity test not supported"
-        ),
         other => anyhow::bail!(
-            "Unknown backend type '{}'. Valid options: sqlite | postgres | timescaledb | influxdb",
+            "Unknown backend type '{}'. Valid options: sqlite | postgres | timescaledb",
             other
         ),
     }
@@ -270,31 +267,11 @@ mod openapi_tests {
                 "missing {method} {path}"
             );
         }
-        let operation_count = specification["paths"]
-            .as_object()
-            .expect("paths object")
-            .values()
-            .map(|item| {
-                item.as_object()
-                    .expect("path item")
-                    .keys()
-                    .filter(|method| {
-                        matches!(
-                            method.as_str(),
-                            "get"
-                                | "put"
-                                | "post"
-                                | "delete"
-                                | "patch"
-                                | "options"
-                                | "head"
-                                | "trace"
-                        )
-                    })
-                    .count()
-            })
-            .sum::<usize>();
-        assert_eq!(operation_count, 19, "Router/OpenAPI operation drift");
+        assert_eq!(
+            common::openapi_operation_count(&specification),
+            19,
+            "Router/OpenAPI operation drift"
+        );
     }
 
     #[test]
@@ -367,11 +344,6 @@ pub async fn connect_storage_backend(
         "postgres" | "timescaledb" => anyhow::bail!(
             "PostgreSQL storage is optional; rebuild history with --features postgres-storage"
         ),
-        "influxdb" => {
-            let storage = Arc::new(crate::backend_influx::InfluxDbBackend);
-            storage.init_schema().await?;
-            Ok(storage)
-        },
         other => anyhow::bail!("Unknown storage backend '{other}'"),
     }
 }
@@ -453,7 +425,7 @@ async fn connect_postgres_backend(
 /// Returns service name, version, and status. Use this to confirm the history
 /// process is alive and the expected version is deployed.
 /// Does not depend on any storage backend — returns 200 even if
-/// TimescaleDB / InfluxDB is down.
+/// TimescaleDB is down.
 #[utoipa::path(get, path = "/", tag = "Health",
     responses((status = 200, description = "Service name, version, and status")))]
 async fn root() -> Json<Value> {
@@ -481,7 +453,7 @@ async fn ping() -> &'static str {
 
 /// Storage backend connectivity health check.
 ///
-/// Probes the active `StorageBackend` (Null / Postgres / Timescale / Influx)
+/// Probes the active `StorageBackend` (Null / Postgres / Timescale)
 /// with a real ping or query, not a cached status flag.
 /// If the backend is unreachable, history still returns HTTP 200 but the
 /// response `data` object will contain `connected: false` plus the error
@@ -519,7 +491,7 @@ async fn health(State(state): State<Arc<AppState>>) -> Json<Value> {
 /// slices the time window using `start_time` / `end_time`. An optional `step`
 /// parameter enables downsampling aggregation. Returns a paginated list of
 /// `[(timestamp, value), ...]` records. Downsampling is handled natively by
-/// the backend (TimescaleDB continuous aggregate / InfluxDB group-by); history
+/// the backend (TimescaleDB continuous aggregate); history
 /// itself does not resample. **Returns an empty set when no storage backend
 /// is configured** — this is not an error condition.
 #[cfg_attr(feature = "openapi", utoipa::path(get, path = "/hisApi/data/query", tag = "Data",
@@ -872,7 +844,7 @@ async fn update_config(
 
 /// Retrieve the current storage backend configuration and connection status.
 ///
-/// Returns the active backend kind (Null / Postgres / Timescale / Influx),
+/// Returns the active backend kind (Null / Postgres / Timescale),
 /// its connection parameters (host, port, database name, etc.; **password
 /// field is masked**), and the live connection status (`connected: true/false`
 /// plus last error detail if any). Use this to verify the historical write

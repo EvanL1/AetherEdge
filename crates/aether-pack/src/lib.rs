@@ -1197,14 +1197,14 @@ fn validate_asset_index(
     if dto.schema != PACK_ASSET_INDEX_SCHEMA {
         return Err(PackError::InvalidAssetIndex {
             category: category.to_string(),
-            path: index_path.clone(),
+            path: index_path,
             message: format!("unsupported schema {:?}", dto.schema),
         });
     }
     if dto.category != category {
         return Err(PackError::InvalidAssetIndex {
             category: category.to_string(),
-            path: index_path.clone(),
+            path: index_path,
             message: format!("index category {:?} does not match manifest", dto.category),
         });
     }
@@ -1225,7 +1225,7 @@ fn validate_asset_index(
         if declared.schema != expected_asset_schema {
             return Err(PackError::InvalidAssetIndex {
                 category: category.to_string(),
-                path: index_path.clone(),
+                path: index_path,
                 message: format!(
                     "asset {:?} declares schema {:?}; Pack v1 requires {:?}",
                     declared.id, declared.schema, expected_asset_schema

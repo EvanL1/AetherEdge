@@ -1,4 +1,4 @@
-//! W3C trace-context propagation across the cloud↔gateway boundary (ADR-0016).
+//! W3C trace-context propagation across the cloud↔gateway boundary.
 //!
 //! A cloud-issued `read`/`write`/`call-*` request fans out across loopback
 //! services before it reaches a device. Without a correlation identifier the

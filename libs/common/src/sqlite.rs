@@ -1,3 +1,9 @@
+//! Per-service configuration stored in the local SQLite database.
+//!
+//! Reads the service's port and any extra keys the composition root wrote, so
+//! a service does not need a YAML file beside its binary. Live point state
+//! never comes from here — SHM remains the authority for that.
+
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use sqlx::{Row, SqlitePool};
@@ -21,8 +27,6 @@ pub struct ServiceConfig {
     pub service_name: String,
     /// Service port
     pub port: u16,
-    /// Redis URL
-    pub redis_url: String,
     /// Additional configuration as JSON
     pub extra_config: serde_json::Value,
 }
@@ -144,20 +148,12 @@ impl ServiceConfigLoader {
             .and_then(|v| v.as_i64())
             .unwrap_or(self.default_port as i64) as u16;
 
-        let redis_url = config_map
-            .get("redis.url")  // Standard dotted format from Aether
-            .and_then(|v| v.as_str())
-            .unwrap_or("redis://localhost:6379")
-            .to_string();
-
         // Remove standard fields from map
         config_map.remove("service.port");
-        config_map.remove("redis.url");
 
         Ok(ServiceConfig {
             service_name: self.service_name.clone(),
             port,
-            redis_url,
             extra_config: serde_json::Value::Object(config_map.into_iter().collect()),
         })
     }
@@ -201,68 +197,8 @@ impl ServiceConfigLoader {
         Ok(result)
     }
 
-    /// Load service-specific tables (override in service-specific implementations)
-    pub async fn load_custom_tables(&self) -> Result<serde_json::Value> {
-        // Base implementation returns empty object
-        // Services can override this to load their specific tables
-        Ok(serde_json::json!({}))
-    }
-
     /// Get the database pool for custom queries
     pub fn pool(&self) -> &SqlitePool {
         &self.pool
     }
-}
-
-/// Helper to migrate YAML config to SQLite
-pub async fn migrate_yaml_to_db(
-    yaml_path: impl AsRef<Path>,
-    db_path: impl AsRef<Path>,
-    service_name: &str,
-    default_port: u16,
-) -> Result<()> {
-    let yaml_path = yaml_path.as_ref();
-    let db_path = db_path.as_ref();
-
-    // Read YAML file
-    let yaml_content = std::fs::read_to_string(yaml_path)?;
-    let yaml_value: serde_yml::Value = serde_yml::from_str(&yaml_content)?;
-
-    // Create database if not exists
-    if !db_path.exists() {
-        if let Some(parent) = db_path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        std::fs::File::create(db_path)?;
-    }
-
-    // Connect to database
-    let loader = ServiceConfigLoader::new(db_path, service_name, default_port).await?;
-    loader.init_schema().await?;
-
-    // Flatten and store configuration
-    if let serde_yml::Value::Mapping(map) = yaml_value {
-        for (key, value) in map {
-            if let Some(key_str) = key.as_str() {
-                let (value_str, value_type) = match value {
-                    serde_yml::Value::Bool(b) => (b.to_string(), "boolean"),
-                    serde_yml::Value::Number(n) => (n.to_string(), "number"),
-                    serde_yml::Value::String(s) => (s, "string"),
-                    serde_yml::Value::Mapping(_) | serde_yml::Value::Sequence(_) => {
-                        (serde_json::to_string(&value)?, "json")
-                    },
-                    _ => continue,
-                };
-
-                loader.set_config(key_str, &value_str, value_type).await?;
-            }
-        }
-    }
-
-    info!(
-        "Migrated {} configuration from YAML to SQLite: {:?}",
-        service_name, db_path
-    );
-
-    Ok(())
 }

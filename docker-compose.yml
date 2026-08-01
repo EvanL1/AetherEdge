@@ -1,37 +1,4 @@
 services:
-  # Redis - High-performance data store (official Redis 8)
-  aether-redis:
-    profiles: ["redis"]
-    image: redis:8-alpine
-    container_name: aether-redis
-    user: "0:0"  # Root to bypass entrypoint gosu privilege drop
-    entrypoint: ["redis-server"]  # Skip docker-entrypoint.sh (drops to redis user, breaks socket bind)
-    network_mode: host
-    labels:
-      - "aetherems.role=infrastructure"
-      - "aetherems.protected=true"
-      - "aetherems.description=Redis data store - avoid unnecessary restarts"
-    volumes:
-      - redis-data:/data
-      - redis-socket:/run/redis:rw # Unix socket directory for better performance
-    restart: unless-stopped
-    command: [
-      "--bind", "127.0.0.1",
-      "--protected-mode", "yes",
-      "--appendonly", "yes",
-      "--save", "60", "1",
-      "--unixsocket", "/run/redis/redis.sock",
-      "--unixsocketperm", "777"
-    ]
-    environment:
-      - NO_PROXY=*
-      - no_proxy=*
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
   # TimescaleDB - Time-series database for history historical data
   timescaledb:
     profiles: ["postgres-storage"]
@@ -247,8 +214,3 @@ services:
         max-size: "10m"
         max-file: "3"
     restart: unless-stopped
-
-volumes:
-  redis-data:
-  redis-socket: # Shared Unix socket volume for better performance
-  # The authoritative dataplane uses the host /dev/shm bind mount for local access

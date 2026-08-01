@@ -37,13 +37,10 @@ use crate::protocols::core::data::{DataBatch, DataPoint};
 use crate::protocols::core::diagnostics::AtomicDiagnostics;
 use crate::protocols::core::error::{GatewayError, Result};
 use crate::protocols::core::logging::{
-    ChannelLogConfig, ChannelLogHandler, ErrorContext, LogContext, LoggableProtocol,
+    ChannelLogConfig, ChannelLogHandler, ErrorContext, LogContext,
 };
 use crate::protocols::core::metadata::{DriverMetadata, HasMetadata};
-use crate::protocols::core::{
-    AdjustmentCommand, CommunicationMode, ConnectionState, ControlCommand, Diagnostics,
-    PointFailure, PollResult, Protocol, ProtocolCapabilities, ProtocolClient, WriteResult,
-};
+use crate::protocols::core::{ConnectionState, Diagnostics, PointFailure, PollResult};
 
 // ============================================================================
 // Constants
@@ -358,7 +355,7 @@ pub struct Aether485ChannelConfig {
 
 /// Aether-485 channel adapter.
 ///
-/// Implements `ProtocolClient` + `ChannelRuntime` for the company's private
+/// Implements `ChannelRuntime` for the company's private
 /// RS-485 protocol. Polling-based — sends CMD 0x01 queries to each configured
 /// device on the bus and collects power readings (mW).
 pub struct Aether485Channel {
@@ -539,54 +536,8 @@ impl HasMetadata for Aether485Channel {
     }
 }
 
-impl ProtocolCapabilities for Aether485Channel {
-    fn name(&self) -> &'static str {
-        "aether_485"
-    }
-
-    fn supported_modes(&self) -> &[CommunicationMode] {
-        &[CommunicationMode::Polling]
-    }
-
-    fn version(&self) -> &'static str {
-        "1.0"
-    }
-}
-
-impl LoggableProtocol for Aether485Channel {
-    fn set_log_handler(&mut self, handler: Arc<dyn ChannelLogHandler>) {
-        self.log_context.set_handler(handler);
-    }
-
-    fn set_log_config(&mut self, config: ChannelLogConfig) {
-        self.log_context.set_config(config);
-    }
-
-    fn log_config(&self) -> &ChannelLogConfig {
-        self.log_context.config()
-    }
-}
-
-impl Protocol for Aether485Channel {
-    fn connection_state(&self) -> ConnectionState {
-        self.state
-    }
-
-    async fn diagnostics(&self) -> Result<Diagnostics> {
-        let snap = self.diagnostics.snapshot();
-        Ok(Diagnostics {
-            protocol: "aether_485".to_string(),
-            connection_state: self.state,
-            read_count: snap.read_count,
-            write_count: snap.write_count,
-            error_count: snap.error_count,
-            last_error: None,
-            extra: serde_json::Value::Null,
-        })
-    }
-}
-
-impl ProtocolClient for Aether485Channel {
+#[async_trait]
+impl ChannelRuntime for Aether485Channel {
     async fn connect(&mut self) -> Result<()> {
         let start = std::time::Instant::now();
         let old = self.state;
@@ -678,54 +629,29 @@ impl ProtocolClient for Aether485Channel {
         }
     }
 
-    async fn write_control(&mut self, _commands: &[ControlCommand]) -> Result<WriteResult> {
-        warn!("Aether-485 protocol does not support control commands");
-        Ok(WriteResult {
-            success_count: 0,
-            failures: vec![(0, "Control not supported by aether_485".into())],
-        })
-    }
-
-    async fn write_adjustment(
-        &mut self,
-        _adjustments: &[AdjustmentCommand],
-    ) -> Result<WriteResult> {
-        warn!("Aether-485 protocol does not support adjustment commands");
-        Ok(WriteResult {
-            success_count: 0,
-            failures: vec![(0, "Adjustment not supported by aether_485".into())],
-        })
-    }
-}
-
-#[async_trait]
-impl ChannelRuntime for Aether485Channel {
-    async fn connect(&mut self) -> Result<()> {
-        <Self as ProtocolClient>::connect(self).await
-    }
-
-    async fn disconnect(&mut self) -> Result<()> {
-        <Self as ProtocolClient>::disconnect(self).await
-    }
-
-    async fn poll_once(&mut self) -> PollResult {
-        <Self as ProtocolClient>::poll_once(self).await
-    }
-
     async fn diagnostics(&self) -> Result<Diagnostics> {
-        <Self as Protocol>::diagnostics(self).await
+        let snap = self.diagnostics.snapshot();
+        Ok(Diagnostics {
+            protocol: "aether_485".to_string(),
+            connection_state: self.state,
+            read_count: snap.read_count,
+            write_count: snap.write_count,
+            error_count: snap.error_count,
+            last_error: None,
+            extra: serde_json::Value::Null,
+        })
     }
 
     fn connection_state(&self) -> ConnectionState {
-        <Self as Protocol>::connection_state(self)
+        self.state
     }
 
     fn set_log_handler(&mut self, handler: Arc<dyn ChannelLogHandler>) {
-        <Self as LoggableProtocol>::set_log_handler(self, handler);
+        self.log_context.set_handler(handler);
     }
 
     fn set_log_config(&mut self, config: ChannelLogConfig) {
-        <Self as LoggableProtocol>::set_log_config(self, config);
+        self.log_context.set_config(config);
     }
 }
 

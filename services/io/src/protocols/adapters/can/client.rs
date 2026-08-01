@@ -17,9 +17,8 @@ use crate::protocols::core::error::{GatewayError, Result};
 use async_trait::async_trait;
 
 use crate::protocols::core::traits::{
-    AdjustmentCommand, CommunicationMode, ConnectionState, ControlCommand, DataEvent,
-    DataEventReceiver, DataEventSender, Diagnostics, EventDrivenProtocol, PollResult, Protocol,
-    ProtocolCapabilities, ProtocolClient, WriteResult, data_event_channel,
+    ConnectionState, DataEvent, DataEventReceiver, DataEventSender, Diagnostics, PollResult,
+    data_event_channel,
 };
 use crate::protocols::runtime::ChannelRuntime;
 
@@ -372,145 +371,6 @@ impl CanClient {
 // Trait Implementations
 // ============================================================================
 
-impl ProtocolCapabilities for CanClient {
-    fn name(&self) -> &'static str {
-        "CAN"
-    }
-
-    fn supported_modes(&self) -> &[CommunicationMode] {
-        &[CommunicationMode::EventDriven]
-    }
-
-    fn supports_client(&self) -> bool {
-        true
-    }
-
-    fn supports_server(&self) -> bool {
-        false
-    }
-
-    fn version(&self) -> &'static str {
-        "LYNK Protocol"
-    }
-}
-
-impl Protocol for CanClient {
-    fn connection_state(&self) -> ConnectionState {
-        ConnectionState::from(self.connection_state.load(Ordering::Acquire))
-    }
-
-    async fn diagnostics(&self) -> Result<Diagnostics> {
-        Ok(Diagnostics {
-            protocol: "CAN".to_string(),
-            connection_state: ConnectionState::from(self.connection_state.load(Ordering::Acquire)),
-            read_count: self.read_count.load(Ordering::Relaxed),
-            write_count: 0,
-            error_count: self.error_count.load(Ordering::Relaxed),
-            last_error: self.last_error.load().as_ref().map(|s| (**s).clone()),
-            extra: serde_json::json!({
-                "device": self.config.can_interface,
-                "bitrate": self.config.bitrate,
-                "connect_timeout_ms": self.config.connect_timeout_ms,
-                "retry_interval_ms": self.config.retry_interval_ms,
-            }),
-        })
-    }
-}
-
-impl ProtocolClient for CanClient {
-    async fn connect(&mut self) -> Result<()> {
-        self.connection_state
-            .store(ConnectionState::Connecting.into(), Ordering::Release);
-
-        // Verify CAN interface exists
-        let _socket = CanSocket::open(&self.config.can_interface).map_err(|e| {
-            GatewayError::Connection(format!(
-                "Failed to open CAN interface {}: {}",
-                self.config.can_interface, e
-            ))
-        })?;
-
-        #[cfg(feature = "tracing-support")]
-        tracing::info!(
-            "CAN interface {} opened successfully",
-            self.config.can_interface
-        );
-
-        self.is_connected.store(true, Ordering::SeqCst);
-        self.connection_state
-            .store(ConnectionState::Connected.into(), Ordering::Release);
-
-        // Start receive and read tasks
-        self.start_receive_task()?;
-        self.start_read_task()?;
-
-        Ok(())
-    }
-
-    async fn disconnect(&mut self) -> Result<()> {
-        self.is_connected.store(false, Ordering::SeqCst);
-
-        // Stop receive task
-        if let Some(handle) = self.receive_handle.take() {
-            handle.abort();
-        }
-
-        // Stop read task
-        if let Some(handle) = self.read_handle.take() {
-            handle.abort();
-        }
-
-        self.connection_state
-            .store(ConnectionState::Disconnected.into(), Ordering::Release);
-
-        #[cfg(feature = "tracing-support")]
-        tracing::info!("CAN client disconnected");
-
-        Ok(())
-    }
-
-    async fn poll_once(&mut self) -> PollResult {
-        PollResult::success(DataBatch::new())
-    }
-
-    async fn write_control(&mut self, _commands: &[ControlCommand]) -> Result<WriteResult> {
-        Err(GatewayError::Unsupported(
-            "Write control not supported for CAN protocol".to_string(),
-        ))
-    }
-
-    async fn write_adjustment(
-        &mut self,
-        _adjustments: &[AdjustmentCommand],
-    ) -> Result<WriteResult> {
-        Err(GatewayError::Unsupported(
-            "Write adjustment not supported for CAN protocol".to_string(),
-        ))
-    }
-}
-
-impl EventDrivenProtocol for CanClient {
-    fn take_event_receiver(&mut self) -> Option<DataEventReceiver> {
-        self.event_rx.take()
-    }
-
-    async fn start(&mut self) -> Result<()> {
-        // CAN client starts automatically on connect
-        Ok(())
-    }
-
-    async fn stop(&mut self) -> Result<()> {
-        // Stop receive and read tasks
-        if let Some(handle) = self.receive_handle.take() {
-            handle.abort();
-        }
-        if let Some(handle) = self.read_handle.take() {
-            handle.abort();
-        }
-        Ok(())
-    }
-}
-
 // ============================================================================
 // HasMetadata Implementation
 // ============================================================================
@@ -593,34 +453,98 @@ impl ChannelRuntime for CanClient {
     }
 
     async fn connect(&mut self) -> Result<()> {
-        <Self as ProtocolClient>::connect(self).await
+        self.connection_state
+            .store(ConnectionState::Connecting.into(), Ordering::Release);
+
+        // Verify CAN interface exists
+        let _socket = CanSocket::open(&self.config.can_interface).map_err(|e| {
+            GatewayError::Connection(format!(
+                "Failed to open CAN interface {}: {}",
+                self.config.can_interface, e
+            ))
+        })?;
+
+        #[cfg(feature = "tracing-support")]
+        tracing::info!(
+            "CAN interface {} opened successfully",
+            self.config.can_interface
+        );
+
+        self.is_connected.store(true, Ordering::SeqCst);
+        self.connection_state
+            .store(ConnectionState::Connected.into(), Ordering::Release);
+
+        // Start receive and read tasks
+        self.start_receive_task()?;
+        self.start_read_task()?;
+
+        Ok(())
     }
 
     async fn disconnect(&mut self) -> Result<()> {
-        <Self as ProtocolClient>::disconnect(self).await
+        self.is_connected.store(false, Ordering::SeqCst);
+
+        // Stop receive task
+        if let Some(handle) = self.receive_handle.take() {
+            handle.abort();
+        }
+
+        // Stop read task
+        if let Some(handle) = self.read_handle.take() {
+            handle.abort();
+        }
+
+        self.connection_state
+            .store(ConnectionState::Disconnected.into(), Ordering::Release);
+
+        #[cfg(feature = "tracing-support")]
+        tracing::info!("CAN client disconnected");
+
+        Ok(())
     }
 
     async fn poll_once(&mut self) -> PollResult {
-        <Self as ProtocolClient>::poll_once(self).await
+        PollResult::success(DataBatch::new())
     }
 
     fn take_event_receiver(&mut self) -> Option<DataEventReceiver> {
-        <Self as EventDrivenProtocol>::take_event_receiver(self)
+        self.event_rx.take()
     }
 
     async fn start_events(&mut self) -> Result<()> {
-        <Self as EventDrivenProtocol>::start(self).await
+        // CAN client starts automatically on connect
+        Ok(())
     }
 
     async fn stop_events(&mut self) -> Result<()> {
-        <Self as EventDrivenProtocol>::stop(self).await
+        // Stop receive and read tasks
+        if let Some(handle) = self.receive_handle.take() {
+            handle.abort();
+        }
+        if let Some(handle) = self.read_handle.take() {
+            handle.abort();
+        }
+        Ok(())
     }
 
     async fn diagnostics(&self) -> Result<Diagnostics> {
-        <Self as Protocol>::diagnostics(self).await
+        Ok(Diagnostics {
+            protocol: "CAN".to_string(),
+            connection_state: ConnectionState::from(self.connection_state.load(Ordering::Acquire)),
+            read_count: self.read_count.load(Ordering::Relaxed),
+            write_count: 0,
+            error_count: self.error_count.load(Ordering::Relaxed),
+            last_error: self.last_error.load().as_ref().map(|s| (**s).clone()),
+            extra: serde_json::json!({
+                "device": self.config.can_interface,
+                "bitrate": self.config.bitrate,
+                "connect_timeout_ms": self.config.connect_timeout_ms,
+                "retry_interval_ms": self.config.retry_interval_ms,
+            }),
+        })
     }
 
     fn connection_state(&self) -> ConnectionState {
-        <Self as Protocol>::connection_state(self)
+        ConnectionState::from(self.connection_state.load(Ordering::Acquire))
     }
 }

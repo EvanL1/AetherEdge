@@ -3,10 +3,10 @@ use std::sync::Arc;
 use aether_ports::PortErrorKind;
 use aether_shm_bridge::{
     ChannelHealthManifest, ChannelPointManifest, ShmChannelHealthWriterHandle, ShmClientConfig,
-    ShmReadTopologyGeneration, ShmReadTopologyHandle, ShmRuntimeConfig, ShmWriterHandle,
-    SlotSource, begin_topology_publication, commit_topology_publication,
-    topology_commit_path_from_shm,
+    ShmReadTopologyGeneration, ShmRuntimeConfig, ShmWriterHandle, SlotSource,
+    begin_topology_publication, commit_topology_publication, topology_commit_path_from_shm,
 };
+use arc_swap::ArcSwap;
 
 fn point_manifest(entries: &[(u32, [u32; 4])]) -> Arc<ChannelPointManifest> {
     Arc::new(ChannelPointManifest::from_entries(entries.iter().copied()))
@@ -257,8 +257,12 @@ fn partial_dual_plane_publication_is_never_accepted_as_a_reader_generation() {
     assert!(error.is_retryable());
 }
 
+/// The six services that swap read generations all do it as
+/// `candidate.with_validated_authority(|| self.current.store(candidate))`, so
+/// the guarantee they depend on is that a candidate which fails validation
+/// never runs the closure — and therefore never replaces the live generation.
 #[test]
-fn handle_retains_its_previous_generation_when_candidate_validation_fails() {
+fn failed_candidate_validation_never_runs_the_publish_closure() {
     let directory = tempfile::tempdir().expect("temporary directory");
     let point_path = directory.path().join("live.shm");
     let health_path = directory.path().join("health.shm");
@@ -286,7 +290,7 @@ fn handle_retains_its_previous_generation_when_candidate_validation_fails() {
         )
         .expect("open initial topology"),
     );
-    let handle = ShmReadTopologyHandle::new(initial);
+    let live = ArcSwap::new(initial);
 
     point_writer
         .rebuild_for_publication(Arc::clone(&new_points), 22)
@@ -301,17 +305,17 @@ fn handle_retains_its_previous_generation_when_candidate_validation_fails() {
         .expect("compose replacement candidate"),
     );
 
-    let error = handle
-        .publish(candidate)
-        .expect_err("partial physical publication must not advance the handle");
+    let error = candidate
+        .with_validated_authority(|| live.store(Arc::clone(&candidate)))
+        .expect_err("partial physical publication must not advance the live generation");
 
     assert_eq!(error.kind(), PortErrorKind::Conflict);
     assert_eq!(
-        handle.load().point_manifest().layout_hash(),
+        live.load().point_manifest().layout_hash(),
         old_points.layout_hash()
     );
     assert_eq!(
-        handle.load().health_manifest().layout_hash(),
+        live.load().health_manifest().layout_hash(),
         old_health.layout_hash()
     );
 }

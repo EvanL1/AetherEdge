@@ -134,31 +134,11 @@ mod openapi_tests {
                 "missing {method} {path}"
             );
         }
-        let operation_count = specification["paths"]
-            .as_object()
-            .expect("paths object")
-            .values()
-            .map(|item| {
-                item.as_object()
-                    .expect("path item")
-                    .keys()
-                    .filter(|method| {
-                        matches!(
-                            method.as_str(),
-                            "get"
-                                | "put"
-                                | "post"
-                                | "delete"
-                                | "patch"
-                                | "options"
-                                | "head"
-                                | "trace"
-                        )
-                    })
-                    .count()
-            })
-            .sum::<usize>();
-        assert_eq!(operation_count, 18, "Router/OpenAPI operation drift");
+        assert_eq!(
+            common::openapi_operation_count(&specification),
+            18,
+            "Router/OpenAPI operation drift"
+        );
     }
 
     #[test]
@@ -685,7 +665,7 @@ async fn inst_sync_push(
     let msg_id = chrono::Utc::now().timestamp_millis().to_string();
 
     // Locally triggered, so there is no caller trace context to preserve. The
-    // gateway does not mint one (ADR-0016).
+    // gateway does not mint one.
     do_inst_sync(Arc::clone(&state), Some(msg_id.clone()), None)
         .await
         .map(|_| {

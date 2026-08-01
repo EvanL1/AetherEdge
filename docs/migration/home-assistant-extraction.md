@@ -5,7 +5,7 @@ description: Migrate installations away from the retired in-kernel Home Assistan
 
 # Home Assistant integration extraction
 
-ADR-0026 removes the experimental Home Assistant bridge from the minimal
+The experimental Home Assistant bridge is removed from the minimal
 AetherEdge kernel. Standard IO binaries no longer expose the
 `home-assistant`, `home-assistant-cloudlink`, or
 `home-assistant-integration-control` features and ignore none of their former
@@ -31,6 +31,5 @@ state and prompts, and never write SHM or kernel storage directly. AetherEdge
 currently ships no generic dynamic plugin host and does not load downstream
 scripts, shared libraries, or child processes.
 
-The superseded design and its former authority rules remain recorded in
-[ADR-0020](../adr/0020-home-assistant-edge-bridge.md). This migration page does
-not advertise Home Assistant as a capability of the standard kernel.
+This migration page does not advertise Home Assistant as a capability of the
+standard kernel.

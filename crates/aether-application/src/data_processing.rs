@@ -1800,7 +1800,7 @@ mod tests {
             ],
             vec![
                 Series::new(
-                    definition.clone(),
+                    definition,
                     vec![
                         FeatureValue::missing(),
                         FeatureValue::number(2.0).expect("value is valid"),

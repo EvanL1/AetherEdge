@@ -1,17 +1,12 @@
 //! `AetherEdge` basic library (basic library)
 //!
 //! Provides basic functions shared by all services, including:
-//! - Redis client
 //! - monitoring and health checking
 //! - logging functions
 //! - service configuration types
 
-// Re-export from aether-infra for backward compatibility
-#[cfg(feature = "redis")]
-pub use aether_infra::redis;
-
 #[cfg(feature = "sqlite")]
-pub use aether_infra::sqlite;
+pub mod sqlite;
 
 pub mod service_config;
 pub mod service_ports;
@@ -19,7 +14,6 @@ pub mod service_ports;
 // Common modules
 pub mod admin_api;
 pub mod api_types;
-pub mod config_loader;
 pub mod log_rotation;
 pub mod logging;
 pub mod serde_helpers;
@@ -27,8 +21,6 @@ pub mod service_bootstrap;
 pub mod shutdown;
 pub mod system_metrics;
 pub mod validation;
-#[cfg(feature = "redis")]
-pub mod warning_monitor;
 
 // Re-export commonly used csv types (previously in csv.rs module)
 pub use csv::{Reader, ReaderBuilder, StringRecord, Writer, WriterBuilder};
@@ -65,15 +57,12 @@ pub use service_config::{
     ValidationLevel,
     ValidationResult,
     automation_url,
-    // Helpers
-    helpers,
+    // Listener address construction
+    bind_address,
+    // Environment fallback helper
+    env_or,
     // URL resolver functions
     io_url,
-};
-
-#[cfg(feature = "redis")]
-pub use service_config::{
-    DEFAULT_REDIS_HOST, DEFAULT_REDIS_PORT, DEFAULT_REDIS_URL, RedisConfig, RedisRoutingKeys,
 };
 
 // Re-export commonly used API types
@@ -84,48 +73,29 @@ pub use api_types::{
     ErrorResponse,
     HealthStatus,
     PaginatedResponse,
-    PaginationParams,
     ServiceStatus,
-    SortOrder,
     SuccessResponse,
     TimeRange,
+    // Helpers
+    openapi_operation_count,
 };
 
 // Re-export AppError when axum feature is enabled
 #[cfg(feature = "axum")]
-pub use api_types::{AppError, status_for_error_category};
-
-// Startup dependency checker
-#[cfg(feature = "dependency")]
-pub mod dependency;
+pub use api_types::{AppError, app_error_from, status_for_error_category};
 
 // Bootstrap modules
 pub mod bootstrap_args;
 pub mod bootstrap_database;
 pub mod bootstrap_system;
 
-// Test utilities (for use in test code only)
-pub mod test_utils;
+// Canonical SQLite schema (DDL constants, triggers and bootstrap helpers).
+// Production startup paths depend on this; it is not test-only.
+#[cfg(feature = "sqlite")]
+pub mod schema;
 
 // Re-export common dependencies
 pub use anyhow;
 pub use serde;
 pub use serde_json;
 pub use tokio;
-
-// Re-export CLI dependencies when cli feature is enabled
-#[cfg(feature = "cli")]
-pub use clap;
-
-// Re-export clap derive macros separately for proper macro resolution
-#[cfg(feature = "cli")]
-pub use clap::{Args, Parser, Subcommand, ValueEnum};
-
-#[cfg(feature = "cli")]
-pub use reqwest;
-
-// Pre-import common types
-pub mod prelude {
-    #[cfg(feature = "redis")]
-    pub use crate::redis::RedisClient;
-}

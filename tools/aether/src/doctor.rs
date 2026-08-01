@@ -124,7 +124,7 @@ fn check_status_for_service_response(
 
     match (enabled, backend.as_deref()) {
         (Some(false), _) | (_, Some("disabled")) => CheckStatus::Warning,
-        (Some(true), Some("postgres" | "timescaledb" | "influxdb")) => CheckStatus::Warning,
+        (Some(true), Some("postgres" | "timescaledb")) => CheckStatus::Warning,
         // Embedded SQLite is the default history authority. A failure here is
         // a core runtime failure, and unknown degraded responses fail closed.
         _ => CheckStatus::Error,

@@ -186,6 +186,5 @@ responses, oversized bodies, redirects, timeouts, and HTTPS downgrade. Remote
 response bodies are not copied into errors.
 
 The response contains no invented CloudLink credential bundle. See
-[ADR-0028](../adr/0028-aethercloud-gateway-enrollment.md) and
 [Gateway identity recovery](../recovery/gateway-identity-recovery.md) for the
 ownership and recovery boundaries.

@@ -239,7 +239,7 @@ aether channels list    # Outputs JSON without --json flag
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `AETHER_JSON` | Force JSON output | — |
-| `AETHER_API_URL` | API gateway base URL — the CLI data plane's single boundary (ADR-0021) | `http://localhost:6005` |
+| `AETHER_API_URL` | API gateway base URL — the CLI data plane's single boundary | `http://localhost:6005` |
 | `AETHER_ACCESS_TOKEN` | Access JWT attached to every gateway request; Viewer covers queries, Admin/Engineer for governed writes | — |
 | `AETHER_CONFIG_PATH` | Config directory path | Auto-detect |
 | `AETHER_DATA_PATH` | Data directory path | Auto-detect |

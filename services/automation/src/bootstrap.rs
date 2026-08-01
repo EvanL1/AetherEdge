@@ -331,38 +331,13 @@ pub async fn load_products(
 
     // Ensure rules tables exist (normally created by `aether init`,
     // but needed for standalone startup)
-    sqlx::query(
-        "CREATE TABLE IF NOT EXISTS rules (
-            id INTEGER PRIMARY KEY,
-            name TEXT NOT NULL,
-            description TEXT,
-            enabled BOOLEAN DEFAULT TRUE,
-            priority INTEGER DEFAULT 0,
-            cooldown_ms INTEGER DEFAULT 0,
-            trigger_config TEXT,
-            nodes_json TEXT NOT NULL,
-            flow_json TEXT,
-            format TEXT DEFAULT 'vue-flow',
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )",
-    )
-    .execute(sqlite_pool)
-    .await?;
-
-    sqlx::query(
-        "CREATE TABLE IF NOT EXISTS rule_history (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            rule_id INTEGER NOT NULL,
-            triggered_at TIMESTAMP NOT NULL,
-            execution_result TEXT,
-            error TEXT,
-            FOREIGN KEY (rule_id) REFERENCES rules(id)
-        )",
-    )
-    .execute(sqlite_pool)
-    .await?;
-    common::test_utils::schema::initialize_configuration_revisions(sqlite_pool).await?;
+    sqlx::query(common::schema::RULE_CHAINS_TABLE)
+        .execute(sqlite_pool)
+        .await?;
+    sqlx::query(common::schema::RULE_HISTORY_TABLE)
+        .execute(sqlite_pool)
+        .await?;
+    common::schema::initialize_configuration_revisions(sqlite_pool).await?;
     crate::instance_configuration::initialize_instance_configuration_revision(sqlite_pool).await?;
 
     info!(

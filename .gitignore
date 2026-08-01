@@ -75,8 +75,6 @@ aetherems-installer-*.sh
 *.tar.xz
 docker-images/
 docker-images-*.tar
-aether-redis-*.tar
-aether-redis-latest.tar
 
 # Test
 *.PID
@@ -148,6 +146,3 @@ venv/
 env/
 data/shm-snapshot.bin
 
-# Redis runtime artifacts (created by `redis-server` in cwd, e.g. during E2E)
-*.rdb
-appendonly.aof

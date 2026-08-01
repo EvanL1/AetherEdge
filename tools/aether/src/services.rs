@@ -282,34 +282,6 @@ pub async fn handle_command(
                         check_container_image_changed,
                     )?;
 
-                    // Stateful extensions are refreshed only when named explicitly.
-                    if changes.redis_targeted {
-                        if changes.redis_changed {
-                            println!("\n⚠️  Redis extension image has changed");
-                            println!("   Recreating it will briefly interrupt mirror consumers");
-                            println!("\nRecreate Redis extension? (yes/NO): ");
-
-                            use std::io::{Write, stdin, stdout};
-                            let mut input = String::new();
-                            stdout().flush()?;
-                            stdin().read_line(&mut input)?;
-
-                            if input.trim() == "yes" {
-                                execute_docker_compose(&[
-                                    "up",
-                                    "-d",
-                                    "--force-recreate",
-                                    "aether-redis",
-                                ])?;
-                                println!("✓ Redis extension recreated");
-                            } else {
-                                println!("Skipped Redis extension recreation");
-                            }
-                        } else {
-                            println!("✓ Redis extension image unchanged");
-                        }
-                    }
-
                     // Handle all Rust services (unified aetherems:latest image)
                     if changes.services_changed {
                         println!("\nRecreating services...");
@@ -461,8 +433,6 @@ const CORE_DOCKER_SERVICES: &[&str] = &[
 
 #[derive(Debug, PartialEq, Eq)]
 struct SmartRefreshChanges {
-    redis_targeted: bool,
-    redis_changed: bool,
     services_changed: bool,
     timescaledb_targeted: bool,
     timescaledb_changed: bool,
@@ -518,15 +488,10 @@ where
         None => false,
     };
 
-    let redis_targeted = extension_is_targeted(target_services, "aether-redis");
-    let redis_changed = redis_targeted && image_changed("aether-redis")?;
-
     let timescaledb_targeted = extension_is_targeted(target_services, "timescaledb");
     let timescaledb_changed = timescaledb_targeted && image_changed("aether-timescaledb")?;
 
     Ok(SmartRefreshChanges {
-        redis_targeted,
-        redis_changed,
         services_changed,
         timescaledb_targeted,
         timescaledb_changed,
@@ -643,9 +608,7 @@ fn check_container_image_changed(container_name: &str) -> Result<bool> {
     };
 
     // Determine the image name from container name
-    let image_name = if container_name == "aether-redis" {
-        "redis:8-alpine".to_string()
-    } else if container_name == "aether-timescaledb" {
+    let image_name = if container_name == "aether-timescaledb" {
         "timescale/timescaledb:2.25.2-pg17".to_string()
     } else if [
         "aether-io",
@@ -905,12 +868,7 @@ mod tests {
 
     #[test]
     fn optional_extensions_are_never_implicit_refresh_targets() {
-        assert!(!extension_is_targeted(&[], "aether-redis"));
         assert!(!extension_is_targeted(&[], "timescaledb"));
-        assert!(extension_is_targeted(
-            &["aether-redis".to_string()],
-            "aether-redis"
-        ));
         assert!(extension_is_targeted(
             &["timescaledb".to_string()],
             "timescaledb"

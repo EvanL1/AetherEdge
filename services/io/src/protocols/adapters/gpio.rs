@@ -58,14 +58,13 @@ use crate::protocols::core::data::{DataBatch, DataPoint};
 use crate::protocols::core::diagnostics::AtomicDiagnostics;
 use crate::protocols::core::error::{GatewayError, Result};
 use crate::protocols::core::logging::{
-    ChannelLogConfig, ChannelLogHandler, ErrorContext, LogContext, LoggableProtocol,
+    ChannelLogConfig, ChannelLogHandler, ErrorContext, LogContext,
 };
 use crate::protocols::core::metadata::{
     DriverMetadata, HasMetadata, ParameterMetadata, ParameterType,
 };
 use crate::protocols::core::traits::{
-    AdjustmentCommand, CommunicationMode, ConnectionState, ControlCommand, Diagnostics,
-    PointFailure, PollResult, Protocol, ProtocolCapabilities, ProtocolClient, WriteResult,
+    ConnectionState, ControlCommand, Diagnostics, PointFailure, PollResult, WriteResult,
 };
 use crate::protocols::runtime::ChannelRuntime;
 use aether_core::PointType;
@@ -898,27 +897,9 @@ impl GpioChannel {
     }
 }
 
-impl ProtocolCapabilities for GpioChannel {
+impl GpioChannel {
     fn name(&self) -> &'static str {
         "GPIO"
-    }
-
-    fn supported_modes(&self) -> &[CommunicationMode] {
-        &[CommunicationMode::Polling]
-    }
-}
-
-impl LoggableProtocol for GpioChannel {
-    fn set_log_handler(&mut self, handler: Arc<dyn ChannelLogHandler>) {
-        self.log_ctx.set_handler(handler);
-    }
-
-    fn set_log_config(&mut self, config: ChannelLogConfig) {
-        self.log_ctx.set_config(config);
-    }
-
-    fn log_config(&self) -> &ChannelLogConfig {
-        self.log_ctx.config()
     }
 }
 
@@ -951,32 +932,59 @@ impl GpioChannel {
     }
 }
 
-impl Protocol for GpioChannel {
-    fn connection_state(&self) -> ConnectionState {
-        self.state
-    }
+// ============================================================================
+// ChannelRuntime implementation (direct, no wrapper needed)
+// ============================================================================
 
-    #[allow(clippy::disallowed_methods)] // json! macro
-    async fn diagnostics(&self) -> Result<Diagnostics> {
-        let input_count = self.config.input_pins().count();
-        let output_count = self.config.output_pins().count();
+impl GpioChannel {
+    async fn write_control(&mut self, commands: &[ControlCommand]) -> Result<WriteResult> {
+        let start = Instant::now();
 
-        Ok(Diagnostics {
-            protocol: ProtocolCapabilities::name(self).to_string(),
-            connection_state: self.state,
-            read_count: self.diagnostics.read_count(),
-            write_count: self.diagnostics.write_count(),
-            error_count: self.diagnostics.error_count(),
-            last_error: self.diagnostics.last_error(),
-            extra: serde_json::json!({
-                "input_pins": input_count,
-                "output_pins": output_count,
-            }),
-        })
+        if !self.state.is_connected() {
+            return Err(GatewayError::NotConnected);
+        }
+
+        let mut success_count = 0;
+        let mut failures = Vec::new();
+
+        for cmd in commands {
+            // Find corresponding output pin
+            let pin = self
+                .config
+                .pins
+                .iter()
+                .find(|p| p.point_id == cmd.id && p.direction == GpioDirection::Output);
+
+            match pin {
+                Some(p) => match self.write_pin(p, cmd.value).await {
+                    Ok(()) => success_count += 1,
+                    Err(e) => failures.push((cmd.id, e.to_string())),
+                },
+                None => {
+                    failures.push((cmd.id, "Output pin not found".into()));
+                },
+            }
+        }
+
+        // Update write count (lock-free)
+        self.diagnostics.add_write(success_count as u64);
+
+        let result = WriteResult {
+            success_count,
+            failures,
+        };
+
+        // Log control write
+        self.log_ctx
+            .log_control_write(commands, Ok(&result), start.elapsed().as_millis() as u64)
+            .await;
+
+        Ok(result)
     }
 }
 
-impl ProtocolClient for GpioChannel {
+#[async_trait]
+impl ChannelRuntime for GpioChannel {
     async fn connect(&mut self) -> Result<()> {
         let start = Instant::now();
 
@@ -1053,103 +1061,44 @@ impl ProtocolClient for GpioChannel {
         }
     }
 
-    async fn write_control(&mut self, commands: &[ControlCommand]) -> Result<WriteResult> {
-        let start = Instant::now();
-
-        if !self.state.is_connected() {
-            return Err(GatewayError::NotConnected);
-        }
-
-        let mut success_count = 0;
-        let mut failures = Vec::new();
-
-        for cmd in commands {
-            // Find corresponding output pin
-            let pin = self
-                .config
-                .pins
-                .iter()
-                .find(|p| p.point_id == cmd.id && p.direction == GpioDirection::Output);
-
-            match pin {
-                Some(p) => match self.write_pin(p, cmd.value).await {
-                    Ok(()) => success_count += 1,
-                    Err(e) => failures.push((cmd.id, e.to_string())),
-                },
-                None => {
-                    failures.push((cmd.id, "Output pin not found".into()));
-                },
-            }
-        }
-
-        // Update write count (lock-free)
-        self.diagnostics.add_write(success_count as u64);
-
-        let result = WriteResult {
-            success_count,
-            failures,
-        };
-
-        // Log control write
-        self.log_ctx
-            .log_control_write(commands, Ok(&result), start.elapsed().as_millis() as u64)
-            .await;
-
-        Ok(result)
-    }
-
-    async fn write_adjustment(
-        &mut self,
-        _adjustments: &[AdjustmentCommand],
-    ) -> Result<WriteResult> {
-        // GPIO doesn't support analog output
-        Err(GatewayError::Unsupported(
-            "GPIO does not support analog adjustment".into(),
-        ))
-    }
-}
-
-// ============================================================================
-// ChannelRuntime implementation (direct, no wrapper needed)
-// ============================================================================
-
-#[async_trait]
-impl ChannelRuntime for GpioChannel {
-    async fn connect(&mut self) -> Result<()> {
-        <Self as ProtocolClient>::connect(self).await
-    }
-
-    async fn disconnect(&mut self) -> Result<()> {
-        <Self as ProtocolClient>::disconnect(self).await
-    }
-
-    async fn poll_once(&mut self) -> PollResult {
-        <Self as ProtocolClient>::poll_once(self).await
-    }
-
     async fn write_control(&mut self, commands: &[(u32, f64)]) -> Result<usize> {
         let cmds: Vec<_> = commands
             .iter()
             .map(|(id, value)| ControlCommand::latching(*id, *value != 0.0))
             .collect();
-        let result = <Self as ProtocolClient>::write_control(self, &cmds).await?;
+        let result = Self::write_control(self, &cmds).await?;
         Ok(result.success_count)
     }
 
+    #[allow(clippy::disallowed_methods)] // json! macro
     async fn diagnostics(&self) -> Result<Diagnostics> {
-        <Self as Protocol>::diagnostics(self).await
+        let input_count = self.config.input_pins().count();
+        let output_count = self.config.output_pins().count();
+
+        Ok(Diagnostics {
+            protocol: self.name().to_string(),
+            connection_state: self.state,
+            read_count: self.diagnostics.read_count(),
+            write_count: self.diagnostics.write_count(),
+            error_count: self.diagnostics.error_count(),
+            last_error: self.diagnostics.last_error(),
+            extra: serde_json::json!({
+                "input_pins": input_count,
+                "output_pins": output_count,
+            }),
+        })
     }
 
     fn connection_state(&self) -> ConnectionState {
-        <Self as Protocol>::connection_state(self)
+        self.state
     }
 
     fn set_log_handler(&mut self, handler: Arc<dyn ChannelLogHandler>) {
-        <Self as LoggableProtocol>::set_log_handler(self, handler);
+        self.log_ctx.set_handler(handler);
     }
 
     fn set_log_config(&mut self, config: ChannelLogConfig) {
-        <Self as LoggableProtocol>::set_log_config(self, config);
+        self.log_ctx.set_config(config);
     }
 }
 
@@ -1262,24 +1211,15 @@ mod tests {
         let mut gpio = create_mock_gpio(config, 1, "test_gpio");
 
         // GPIO is always connected on creation (local hardware, no external connection)
-        assert_eq!(
-            Protocol::connection_state(&gpio),
-            ConnectionState::Connected
-        );
+        assert_eq!(gpio.connection_state(), ConnectionState::Connected);
 
         // connect() is idempotent for GPIO
-        ProtocolClient::connect(&mut gpio).await.unwrap();
-        assert_eq!(
-            Protocol::connection_state(&gpio),
-            ConnectionState::Connected
-        );
+        gpio.connect().await.unwrap();
+        assert_eq!(gpio.connection_state(), ConnectionState::Connected);
 
         // disconnect() still works for explicit shutdown
-        ProtocolClient::disconnect(&mut gpio).await.unwrap();
-        assert_eq!(
-            Protocol::connection_state(&gpio),
-            ConnectionState::Disconnected
-        );
+        gpio.disconnect().await.unwrap();
+        assert_eq!(gpio.connection_state(), ConnectionState::Disconnected);
     }
 
     #[tokio::test]
@@ -1289,12 +1229,12 @@ mod tests {
 
         let shared = SharedMockDriver::new();
         let mut gpio = create_mock_gpio_with_shared_driver(config, 1, "test_gpio", &shared);
-        ProtocolClient::connect(&mut gpio).await.unwrap();
+        gpio.connect().await.unwrap();
 
-        let result =
-            ProtocolClient::write_control(&mut gpio, &[ControlCommand::latching(101, true)])
-                .await
-                .unwrap();
+        let result = gpio
+            .write_control(&[ControlCommand::latching(101, true)])
+            .await
+            .unwrap();
 
         assert_eq!(result.success_count, 1);
         assert!(result.failures.is_empty());
@@ -1308,7 +1248,7 @@ mod tests {
             .add_pin(GpioPinConfig::digital_output("gpiochip0", 18, 101));
 
         let gpio = create_mock_gpio(config, 1, "test_gpio");
-        let diag = Protocol::diagnostics(&gpio).await.unwrap();
+        let diag = gpio.diagnostics().await.unwrap();
 
         assert_eq!(diag.protocol, "GPIO");
         assert_eq!(diag.extra["input_pins"], 1);
@@ -1330,10 +1270,10 @@ mod tests {
         shared.set_pin_value(1, true);
 
         let mut gpio = create_mock_gpio_with_shared_driver(config, 1, "test_di", &shared);
-        ProtocolClient::connect(&mut gpio).await.unwrap();
+        gpio.connect().await.unwrap();
 
         // poll_once() reads all pins
-        let result = ProtocolClient::poll_once(&mut gpio).await;
+        let result = gpio.poll_once().await;
         assert!(result.is_success(), "poll should succeed");
 
         let batch = result.data;
@@ -1361,9 +1301,9 @@ mod tests {
         shared.set_pin_value(4, false);
 
         let mut gpio = create_mock_gpio_with_shared_driver(config, 1, "test_di_multi", &shared);
-        ProtocolClient::connect(&mut gpio).await.unwrap();
+        gpio.connect().await.unwrap();
 
-        let result = ProtocolClient::poll_once(&mut gpio).await;
+        let result = gpio.poll_once().await;
         assert!(result.is_success(), "poll should succeed");
 
         let batch = result.data;
@@ -1398,9 +1338,9 @@ mod tests {
 
         let mut gpio =
             create_mock_gpio_with_shared_driver(config, 1, "test_di_active_low", &shared);
-        ProtocolClient::connect(&mut gpio).await.unwrap();
+        gpio.connect().await.unwrap();
 
-        let result = ProtocolClient::poll_once(&mut gpio).await;
+        let result = gpio.poll_once().await;
         let batch = result.data;
 
         let point = batch.iter().next().expect("should have point");
@@ -1412,7 +1352,7 @@ mod tests {
 
         // Raw value is false, active_low should invert to true
         shared.set_pin_value(1, false);
-        let result = ProtocolClient::poll_once(&mut gpio).await;
+        let result = gpio.poll_once().await;
         let point = result.data.iter().next().expect("should have point");
         assert_eq!(
             point.value.as_bool(),
@@ -1435,7 +1375,7 @@ mod tests {
             .add_pin(GpioPinConfig::digital_output("gpiochip0", 20, 103));
 
         let mut gpio = create_mock_gpio_with_shared_driver(config, 1, "test_do_multi", &shared);
-        ProtocolClient::connect(&mut gpio).await.unwrap();
+        gpio.connect().await.unwrap();
 
         // Batch write: 101=true, 102=false, 103=true
         let commands = vec![
@@ -1443,9 +1383,7 @@ mod tests {
             ControlCommand::latching(102, false),
             ControlCommand::latching(103, true),
         ];
-        let result = ProtocolClient::write_control(&mut gpio, &commands)
-            .await
-            .unwrap();
+        let result = gpio.write_control(&commands).await.unwrap();
 
         assert_eq!(result.success_count, 3, "all 3 writes should succeed");
         assert!(result.failures.is_empty(), "no failures expected");
@@ -1479,10 +1417,10 @@ mod tests {
 
         let mut gpio =
             create_mock_gpio_with_shared_driver(config, 1, "test_do_active_low", &shared);
-        ProtocolClient::connect(&mut gpio).await.unwrap();
+        gpio.connect().await.unwrap();
 
         // Write true, active_low should invert to false
-        ProtocolClient::write_control(&mut gpio, &[ControlCommand::latching(101, true)])
+        gpio.write_control(&[ControlCommand::latching(101, true)])
             .await
             .unwrap();
         assert_eq!(
@@ -1492,7 +1430,7 @@ mod tests {
         );
 
         // Write false, active_low should invert to true
-        ProtocolClient::write_control(&mut gpio, &[ControlCommand::latching(101, false)])
+        gpio.write_control(&[ControlCommand::latching(101, false)])
             .await
             .unwrap();
         assert_eq!(
@@ -1509,13 +1447,13 @@ mod tests {
             GpioChannelConfig::new().add_pin(GpioPinConfig::digital_output("gpiochip0", 18, 101));
 
         let mut gpio = create_mock_gpio(config, 1, "test_do_nonexistent");
-        ProtocolClient::connect(&mut gpio).await.unwrap();
+        gpio.connect().await.unwrap();
 
         // Write to nonexistent pin 999
-        let result =
-            ProtocolClient::write_control(&mut gpio, &[ControlCommand::latching(999, true)])
-                .await
-                .unwrap();
+        let result = gpio
+            .write_control(&[ControlCommand::latching(999, true)])
+            .await
+            .unwrap();
 
         assert_eq!(result.success_count, 0, "no successful writes");
         assert_eq!(result.failures.len(), 1, "one failure expected");
@@ -1543,22 +1481,19 @@ mod tests {
         shared.set_pin_value(2, false);
 
         let mut gpio = create_mock_gpio_with_shared_driver(config, 1, "test_mixed", &shared);
-        ProtocolClient::connect(&mut gpio).await.unwrap();
+        gpio.connect().await.unwrap();
 
         // Write to DO pins
-        ProtocolClient::write_control(
-            &mut gpio,
-            &[
-                ControlCommand::latching(101, true),
-                ControlCommand::latching(102, false),
-            ],
-        )
+        gpio.write_control(&[
+            ControlCommand::latching(101, true),
+            ControlCommand::latching(102, false),
+        ])
         .await
         .unwrap();
 
         // Polling is acquisition-only: command-owned DO state stays out of
         // the batch after a successful write.
-        let result = ProtocolClient::poll_once(&mut gpio).await;
+        let result = gpio.poll_once().await;
         let batch = result.data;
 
         assert_eq!(batch.len(), 2, "only the two DI points are acquired");
@@ -1585,32 +1520,29 @@ mod tests {
             .add_pin(GpioPinConfig::digital_output("gpiochip0", 19, 102));
 
         let mut gpio = create_mock_gpio_with_shared_driver(config, 1, "test_feedback", &shared);
-        ProtocolClient::connect(&mut gpio).await.unwrap();
+        gpio.connect().await.unwrap();
 
         // An output-only channel has no acquisition data.
-        let result = ProtocolClient::poll_once(&mut gpio).await;
+        let result = gpio.poll_once().await;
         assert!(result.data.is_empty());
 
-        ProtocolClient::write_control(
-            &mut gpio,
-            &[
-                ControlCommand::latching(101, true),
-                ControlCommand::latching(102, true),
-            ],
-        )
+        gpio.write_control(&[
+            ControlCommand::latching(101, true),
+            ControlCommand::latching(102, true),
+        ])
         .await
         .unwrap();
 
-        let result = ProtocolClient::poll_once(&mut gpio).await;
+        let result = gpio.poll_once().await;
         assert!(result.data.is_empty());
         assert_eq!(shared.get_raw_value(101), Some(true));
         assert_eq!(shared.get_raw_value(102), Some(true));
 
-        ProtocolClient::write_control(&mut gpio, &[ControlCommand::latching(101, false)])
+        gpio.write_control(&[ControlCommand::latching(101, false)])
             .await
             .unwrap();
 
-        let result = ProtocolClient::poll_once(&mut gpio).await;
+        let result = gpio.poll_once().await;
         assert!(result.data.is_empty());
         assert_eq!(shared.get_raw_value(101), Some(false));
         assert_eq!(shared.get_raw_value(102), Some(true));

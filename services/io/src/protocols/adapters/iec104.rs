@@ -1,7 +1,7 @@
 //! IEC 60870-5-104 protocol adapter.
 //!
 //! This module provides the `Iec104Channel` adapter that integrates
-//! `voltage_iec104` with the protocol layer's `Protocol` and `EventDrivenProtocol` traits.
+//! `voltage_iec104` with the protocol layer's `ChannelRuntime` trait.
 //!
 //! IEC 104 is an event-driven protocol - data is received via spontaneous
 //! transmissions from the controlled station (RTU/substation).
@@ -52,9 +52,8 @@ use crate::protocols::core::diagnostics::AtomicDiagnostics;
 use crate::protocols::core::error::{GatewayError, Result};
 use crate::protocols::core::point::PointConfig;
 use crate::protocols::core::traits::{
-    AdjustmentCommand, CommunicationMode, ConnectionState, ControlCommand, DataEvent,
-    DataEventReceiver, DataEventSender, Diagnostics, EventDrivenProtocol, PointFailure, PollResult,
-    Protocol, ProtocolCapabilities, ProtocolClient, WriteResult, data_event_channel,
+    AdjustmentCommand, ConnectionState, ControlCommand, DataEvent, DataEventReceiver,
+    DataEventSender, Diagnostics, PointFailure, PollResult, WriteResult, data_event_channel,
 };
 use crate::protocols::runtime::ChannelRuntime;
 use aether_config::io::MAX_CHANNEL_TIMING_MS;
@@ -380,7 +379,7 @@ impl Iec104ParamsConfig {
 /// IEC 104 channel adapter.
 ///
 /// This struct wraps a `voltage_iec104::Iec104Client` and implements
-/// the protocol layer's `Protocol`, `ProtocolClient`, and `EventDrivenProtocol` traits.
+/// the protocol layer's `ChannelRuntime` trait.
 ///
 /// Note: This adapter follows the "protocol layer separated from storage" design.
 /// The channel returns DataBatch via events; the service layer handles persistence.
@@ -641,210 +640,9 @@ impl Iec104Channel {
     }
 }
 
-impl ProtocolCapabilities for Iec104Channel {
+impl Iec104Channel {
     fn name(&self) -> &'static str {
         "IEC 60870-5-104"
-    }
-
-    fn supported_modes(&self) -> &[CommunicationMode] {
-        &[CommunicationMode::EventDriven, CommunicationMode::Polling]
-    }
-
-    fn version(&self) -> &'static str {
-        "1.0"
-    }
-}
-
-impl Protocol for Iec104Channel {
-    fn connection_state(&self) -> ConnectionState {
-        self.get_state()
-    }
-
-    #[allow(clippy::disallowed_methods)] // json! macro
-    async fn diagnostics(&self) -> Result<Diagnostics> {
-        let state = self.get_state();
-
-        // Calculate seconds since last interrogation (lock-free)
-        let last_interrogation_secs = {
-            let ms = self.last_interrogation_ms.load(Ordering::Relaxed);
-            if ms == 0 {
-                None
-            } else {
-                let now_ms = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_millis() as u64;
-                Some((now_ms.saturating_sub(ms)) / 1000)
-            }
-        };
-
-        Ok(Diagnostics {
-            protocol: ProtocolCapabilities::name(self).to_string(),
-            connection_state: state,
-            read_count: self.diagnostics.read_count(),
-            write_count: self.diagnostics.write_count(),
-            error_count: self.diagnostics.error_count(),
-            last_error: self.diagnostics.last_error(),
-            extra: serde_json::json!({
-                "address": self.config.address,
-                "common_address": self.config.common_address,
-                "points": self.config.points.len(),
-                "last_interrogation": last_interrogation_secs,
-            }),
-        })
-    }
-}
-
-impl ProtocolClient for Iec104Channel {
-    async fn connect(&mut self) -> Result<()> {
-        self.set_state(ConnectionState::Connecting);
-
-        match self.client.connect().await {
-            Ok(()) => {
-                self.set_state(ConnectionState::Connected);
-                Ok(())
-            },
-            Err(e) => {
-                self.set_state(ConnectionState::Error);
-                let err_msg = e.to_string();
-                self.record_error(err_msg.clone());
-                Err(GatewayError::Connection(err_msg))
-            },
-        }
-    }
-
-    async fn disconnect(&mut self) -> Result<()> {
-        // Stop poll task if running
-        if let Some(task) = self.poll_task.take() {
-            task.abort();
-        }
-
-        // Stop data transfer first
-        let _ = self.stop_data_transfer().await;
-
-        // Disconnect
-        match self.client.disconnect().await {
-            Ok(()) => {
-                self.set_state(ConnectionState::Disconnected);
-                Ok(())
-            },
-            Err(e) => Err(GatewayError::Connection(e.to_string())),
-        }
-    }
-
-    async fn poll_once(&mut self) -> PollResult {
-        // IEC 104 is event-driven, so poll_once fetches any pending events
-        // from the underlying client and converts them to a DataBatch.
-        let event = match self.client.poll().await {
-            Ok(ev) => ev,
-            Err(_e) => {
-                // Lock-free error recording
-                self.diagnostics.add_error(1);
-                // Return empty result with no failure tracking (connection-level error)
-                return PollResult::success(DataBatch::new());
-            },
-        };
-
-        let result = if let Some(voltage_iec104::Iec104Event::DataUpdate(points)) = event {
-            self.convert_data_points(points)
-        } else {
-            PollResult::success(DataBatch::new())
-        };
-
-        if !result.data.is_empty() {
-            // Lock-free read count increment
-            self.diagnostics.inc_read();
-        }
-
-        result
-    }
-
-    async fn write_control(&mut self, commands: &[ControlCommand]) -> Result<WriteResult> {
-        let mut success_count = 0;
-        let mut failures = Vec::new();
-
-        for cmd in commands {
-            let (_point, iec_addr) = match self.resolve_iec104_addr(cmd.id) {
-                Ok(v) => v,
-                Err(e) => {
-                    failures.push(e);
-                    continue;
-                },
-            };
-            let ioa = iec_addr.ioa;
-            match self
-                .client
-                .single_command(self.config.common_address, ioa, cmd.value, false)
-                .await
-            {
-                Ok(()) => success_count += 1,
-                Err(e) => failures.push((cmd.id, e.to_string())),
-            }
-        }
-
-        self.diagnostics.add_write(success_count as u64);
-        Ok(WriteResult {
-            success_count,
-            failures,
-        })
-    }
-
-    async fn write_adjustment(&mut self, adjustments: &[AdjustmentCommand]) -> Result<WriteResult> {
-        let mut success_count = 0;
-        let mut failures = Vec::new();
-
-        for adj in adjustments {
-            let (point, iec_addr) = match self.resolve_iec104_addr(adj.id) {
-                Ok(v) => v,
-                Err(e) => {
-                    failures.push(e);
-                    continue;
-                },
-            };
-            let raw_value = match point.transform.reverse_apply(adj.value) {
-                Ok(v) => v as f32,
-                Err(e) => {
-                    failures.push((adj.id, e.to_string()));
-                    continue;
-                },
-            };
-            let ioa = iec_addr.ioa;
-            match self
-                .client
-                .setpoint_float(self.config.common_address, ioa, raw_value, false)
-                .await
-            {
-                Ok(()) => success_count += 1,
-                Err(e) => failures.push((adj.id, e.to_string())),
-            }
-        }
-
-        self.diagnostics.add_write(success_count as u64);
-        Ok(WriteResult {
-            success_count,
-            failures,
-        })
-    }
-}
-
-impl EventDrivenProtocol for Iec104Channel {
-    fn take_event_receiver(&mut self) -> Option<DataEventReceiver> {
-        self.event_rx.take()
-    }
-
-    async fn start(&mut self) -> Result<()> {
-        // For IEC 104, start means starting data transfer and initial GI
-        self.start_data_transfer().await?;
-        self.general_interrogation().await?;
-        Ok(())
-    }
-
-    async fn stop(&mut self) -> Result<()> {
-        // Abort poll task if running
-        if let Some(task) = self.poll_task.take() {
-            task.abort();
-        }
-        self.stop_data_transfer().await
     }
 }
 
@@ -1003,6 +801,74 @@ impl HasMetadata for Iec104Channel {
 // ChannelRuntime implementation (direct, no wrapper needed)
 // ============================================================================
 
+impl Iec104Channel {
+    async fn write_adjustment(&mut self, adjustments: &[AdjustmentCommand]) -> Result<WriteResult> {
+        let mut success_count = 0;
+        let mut failures = Vec::new();
+
+        for adj in adjustments {
+            let (point, iec_addr) = match self.resolve_iec104_addr(adj.id) {
+                Ok(v) => v,
+                Err(e) => {
+                    failures.push(e);
+                    continue;
+                },
+            };
+            let raw_value = match point.transform.reverse_apply(adj.value) {
+                Ok(v) => v as f32,
+                Err(e) => {
+                    failures.push((adj.id, e.to_string()));
+                    continue;
+                },
+            };
+            let ioa = iec_addr.ioa;
+            match self
+                .client
+                .setpoint_float(self.config.common_address, ioa, raw_value, false)
+                .await
+            {
+                Ok(()) => success_count += 1,
+                Err(e) => failures.push((adj.id, e.to_string())),
+            }
+        }
+
+        self.diagnostics.add_write(success_count as u64);
+        Ok(WriteResult {
+            success_count,
+            failures,
+        })
+    }
+    async fn write_control(&mut self, commands: &[ControlCommand]) -> Result<WriteResult> {
+        let mut success_count = 0;
+        let mut failures = Vec::new();
+
+        for cmd in commands {
+            let (_point, iec_addr) = match self.resolve_iec104_addr(cmd.id) {
+                Ok(v) => v,
+                Err(e) => {
+                    failures.push(e);
+                    continue;
+                },
+            };
+            let ioa = iec_addr.ioa;
+            match self
+                .client
+                .single_command(self.config.common_address, ioa, cmd.value, false)
+                .await
+            {
+                Ok(()) => success_count += 1,
+                Err(e) => failures.push((cmd.id, e.to_string())),
+            }
+        }
+
+        self.diagnostics.add_write(success_count as u64);
+        Ok(WriteResult {
+            success_count,
+            failures,
+        })
+    }
+}
+
 #[async_trait]
 impl ChannelRuntime for Iec104Channel {
     fn is_event_driven(&self) -> bool {
@@ -1010,15 +876,66 @@ impl ChannelRuntime for Iec104Channel {
     }
 
     async fn connect(&mut self) -> Result<()> {
-        <Self as ProtocolClient>::connect(self).await
+        self.set_state(ConnectionState::Connecting);
+
+        match self.client.connect().await {
+            Ok(()) => {
+                self.set_state(ConnectionState::Connected);
+                Ok(())
+            },
+            Err(e) => {
+                self.set_state(ConnectionState::Error);
+                let err_msg = e.to_string();
+                self.record_error(err_msg.clone());
+                Err(GatewayError::Connection(err_msg))
+            },
+        }
     }
 
     async fn disconnect(&mut self) -> Result<()> {
-        <Self as ProtocolClient>::disconnect(self).await
+        // Stop poll task if running
+        if let Some(task) = self.poll_task.take() {
+            task.abort();
+        }
+
+        // Stop data transfer first
+        let _ = self.stop_data_transfer().await;
+
+        // Disconnect
+        match self.client.disconnect().await {
+            Ok(()) => {
+                self.set_state(ConnectionState::Disconnected);
+                Ok(())
+            },
+            Err(e) => Err(GatewayError::Connection(e.to_string())),
+        }
     }
 
     async fn poll_once(&mut self) -> PollResult {
-        <Self as ProtocolClient>::poll_once(self).await
+        // IEC 104 is event-driven, so poll_once fetches any pending events
+        // from the underlying client and converts them to a DataBatch.
+        let event = match self.client.poll().await {
+            Ok(ev) => ev,
+            Err(_e) => {
+                // Lock-free error recording
+                self.diagnostics.add_error(1);
+                // Return empty result with no failure tracking (connection-level error)
+                return PollResult::success(DataBatch::new());
+            },
+        };
+
+        let result = if let Some(voltage_iec104::Iec104Event::DataUpdate(points)) = event {
+            self.convert_data_points(points)
+        } else {
+            PollResult::success(DataBatch::new())
+        };
+
+        if !result.data.is_empty() {
+            // Lock-free read count increment
+            self.diagnostics.inc_read();
+        }
+
+        result
     }
 
     async fn write_control(&mut self, commands: &[(u32, f64)]) -> Result<usize> {
@@ -1026,7 +943,7 @@ impl ChannelRuntime for Iec104Channel {
             .iter()
             .map(|(id, value)| ControlCommand::latching(*id, *value != 0.0))
             .collect();
-        let result = <Self as ProtocolClient>::write_control(self, &cmds).await?;
+        let result = Self::write_control(self, &cmds).await?;
         Ok(result.success_count)
     }
 
@@ -1035,28 +952,64 @@ impl ChannelRuntime for Iec104Channel {
             .iter()
             .map(|(id, value)| AdjustmentCommand::new(*id, *value))
             .collect();
-        let result = <Self as ProtocolClient>::write_adjustment(self, &adjs).await?;
+        let result = Self::write_adjustment(self, &adjs).await?;
         Ok(result.success_count)
     }
 
     fn take_event_receiver(&mut self) -> Option<DataEventReceiver> {
-        <Self as EventDrivenProtocol>::take_event_receiver(self)
+        self.event_rx.take()
     }
 
     async fn start_events(&mut self) -> Result<()> {
-        <Self as EventDrivenProtocol>::start(self).await
+        // For IEC 104, start means starting data transfer and initial GI
+        self.start_data_transfer().await?;
+        self.general_interrogation().await?;
+        Ok(())
     }
 
     async fn stop_events(&mut self) -> Result<()> {
-        <Self as EventDrivenProtocol>::stop(self).await
+        // Abort poll task if running
+        if let Some(task) = self.poll_task.take() {
+            task.abort();
+        }
+        self.stop_data_transfer().await
     }
 
     async fn diagnostics(&self) -> Result<Diagnostics> {
-        <Self as Protocol>::diagnostics(self).await
+        let state = self.get_state();
+
+        // Calculate seconds since last interrogation (lock-free)
+        let last_interrogation_secs = {
+            let ms = self.last_interrogation_ms.load(Ordering::Relaxed);
+            if ms == 0 {
+                None
+            } else {
+                let now_ms = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis() as u64;
+                Some((now_ms.saturating_sub(ms)) / 1000)
+            }
+        };
+
+        Ok(Diagnostics {
+            protocol: self.name().to_string(),
+            connection_state: state,
+            read_count: self.diagnostics.read_count(),
+            write_count: self.diagnostics.write_count(),
+            error_count: self.diagnostics.error_count(),
+            last_error: self.diagnostics.last_error(),
+            extra: serde_json::json!({
+                "address": self.config.address,
+                "common_address": self.config.common_address,
+                "points": self.config.points.len(),
+                "last_interrogation": last_interrogation_secs,
+            }),
+        })
     }
 
     fn connection_state(&self) -> ConnectionState {
-        <Self as Protocol>::connection_state(self)
+        self.get_state()
     }
 }
 
@@ -1122,20 +1075,16 @@ mod tests {
         let config = Iec104ChannelConfig::new("127.0.0.1:2404");
         let channel = Iec104Channel::new(config);
 
-        assert_eq!(ProtocolCapabilities::name(&channel), "IEC 60870-5-104");
-        assert!(
-            channel
-                .supported_modes()
-                .contains(&CommunicationMode::EventDriven)
-        );
+        assert_eq!(channel.name(), "IEC 60870-5-104");
     }
 
     #[tokio::test]
     async fn event_receiver_is_taken_once_and_receives_updates() {
         let mut channel = Iec104Channel::new(Iec104ChannelConfig::new("127.0.0.1:2404"));
-        let mut receiver = EventDrivenProtocol::take_event_receiver(&mut channel)
+        let mut receiver = channel
+            .take_event_receiver()
             .expect("event receiver available");
-        assert!(EventDrivenProtocol::take_event_receiver(&mut channel).is_none());
+        assert!(channel.take_event_receiver().is_none());
 
         let sent = channel
             .event_tx
@@ -1202,7 +1151,8 @@ mod tests {
         use voltage_iec104::{DataPoint as Iec104DataPoint, DoublePointValue};
 
         let mut channel = Iec104Channel::new(Iec104ChannelConfig::new("127.0.0.1:2404"));
-        let mut receiver = EventDrivenProtocol::take_event_receiver(&mut channel)
+        let mut receiver = channel
+            .take_event_receiver()
             .expect("event receiver available");
 
         channel

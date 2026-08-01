@@ -104,8 +104,8 @@ pub(crate) struct BaseUrls {
 
 impl BaseUrls {
     /// Derives every domain base from the single API gateway base URL.
-    /// The gateway proxies each capability domain under `/api/v1/{domain}`
-    /// (ADR-0021); internal service ports are never addressed directly.
+    /// The gateway proxies each capability domain under `/api/v1/{domain}`;
+    /// internal service ports are never addressed directly.
     pub(crate) fn from_api_base(api_base: &str) -> Self {
         let api = api_base.trim_end_matches('/');
         Self {
@@ -2135,7 +2135,7 @@ mod tests {
             assert!(!names.contains(&write_tool.to_string()), "{names:?}");
         }
         for unexposed_tool in UNEXPOSED_WRITE_TOOL_NAMES {
-            assert!(!names.contains(&unexposed_tool.to_string()), "{names:?}");
+            assert!(!names.contains(&(*unexposed_tool).to_string()), "{names:?}");
         }
         // Route-count safety net catches a future write tool landing in the
         // wrong impl block or a name collision overwriting a read-only route.
@@ -2157,7 +2157,7 @@ mod tests {
             assert!(names.contains(&write_tool.to_string()), "{names:?}");
         }
         for unexposed_tool in UNEXPOSED_WRITE_TOOL_NAMES {
-            assert!(!names.contains(&unexposed_tool.to_string()), "{names:?}");
+            assert!(!names.contains(&(*unexposed_tool).to_string()), "{names:?}");
         }
         // Read-only tools are still present too -- --allow-write ADDS, doesn't replace.
         assert!(names.contains(&"channels_list".to_string()), "{names:?}");

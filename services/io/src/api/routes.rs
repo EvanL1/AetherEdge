@@ -37,7 +37,7 @@ pub fn set_service_start_time(start_time: DateTime<Utc>) {
 
 /// Get the service start time
 pub fn get_service_start_time() -> DateTime<Utc> {
-    *SERVICE_START_TIME.get().unwrap_or(&Utc::now())
+    SERVICE_START_TIME.get().copied().unwrap_or_else(Utc::now)
 }
 
 /// Application state containing the channel manager
@@ -80,8 +80,6 @@ impl AppState {
         }
     }
 }
-
-pub type ProductionAppState = AppState;
 
 #[derive(OpenApi)]
 #[openapi(
@@ -279,23 +277,6 @@ pub fn create_api_routes(
         sqlite_pool,
         None,
         ChannelManagementHttpBoundary::unavailable(),
-        PointTopologyHttpBoundary::unavailable(),
-    )
-}
-
-/// Create the production API router with the governed channel application
-/// command explicitly composed by the service binary.
-pub fn create_api_routes_with_channel_management(
-    channel_manager: Arc<ChannelManager>,
-    sqlite_pool: sqlx::SqlitePool,
-    channel_management: Arc<ChannelManagementApplication>,
-    access_authenticator: Arc<AccessTokenAuthenticator>,
-) -> Router {
-    create_api_routes_with_boundary(
-        channel_manager,
-        sqlite_pool,
-        None,
-        ChannelManagementHttpBoundary::governed(channel_management, access_authenticator),
         PointTopologyHttpBoundary::unavailable(),
     )
 }

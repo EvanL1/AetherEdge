@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # Build Docker images for ARM64 and export as tar files
-# Builds the self-contained Aether services image. Set INCLUDE_REDIS=1 to
-# additionally package the optional Redis mirror infrastructure image.
+# Builds the self-contained Aether services image.
 
 set -euo pipefail
 
@@ -19,7 +18,6 @@ NC='\033[0m'
 ROOT_DIR="$(cd "$(dirname "$0")"/../.. && pwd)"
 OUTPUT_DIR="$ROOT_DIR/offline-bundle/docker"
 PLATFORM="linux/arm64"
-INCLUDE_REDIS="${INCLUDE_REDIS:-0}"
 
 # Detect CPU cores for parallel compilation
 if command -v nproc &> /dev/null; then
@@ -54,7 +52,6 @@ mkdir -p "$OUTPUT_DIR"
 
 # Clean up old images to avoid confusion
 echo -e "${YELLOW}Cleaning up old images...${NC}"
-docker rmi aether-redis:arm64 2>/dev/null && echo "  Removed aether-redis:arm64" || true
 docker rmi aetherems:arm64 2>/dev/null && echo "  Removed aetherems:arm64" || true
 # Note: We keep :latest tags as they will be overwritten by new builds
 
@@ -99,20 +96,6 @@ build_and_save() {
         return 1
     fi
 }
-
-# Package Redis only when the extension profile was explicitly requested.
-if [[ "$INCLUDE_REDIS" == "1" ]]; then
-    echo ""
-    echo -e "${BLUE}[optional] Pulling official Redis 8 Alpine for ARM64...${NC}"
-    docker pull --platform "$PLATFORM" redis:8-alpine
-    echo "Saving optional Redis image..."
-    docker save redis:8-alpine | gzip > "$OUTPUT_DIR/aether-redis.tar.gz"
-    size=$(ls -lh "$OUTPUT_DIR/aether-redis.tar.gz" | awk '{print $5}')
-    echo -e "${GREEN}[DONE] Saved aether-redis.tar.gz ($size)${NC}"
-else
-    rm -f "$OUTPUT_DIR/aether-redis.tar.gz"
-    echo -e "${YELLOW}Skipping optional Redis image (set INCLUDE_REDIS=1 to include)${NC}"
-fi
 
 # Build AetherEdge services
 echo ""
@@ -203,9 +186,6 @@ echo "Total size: $(du -sh "$OUTPUT_DIR" | cut -f1)"
 echo ""
 echo "To load images on ARM64 device:"
 echo "  docker load < aetherems.tar.gz"
-if [[ -f "$OUTPUT_DIR/aether-redis.tar.gz" ]]; then
-    echo "  docker load < aether-redis.tar.gz  # optional mirror profile"
-fi
 echo ""
 echo "To start services:"
 echo "  docker-compose up -d"

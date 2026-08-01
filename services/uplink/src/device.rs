@@ -90,7 +90,7 @@ pub struct Topics {
     pub inst_sync: String,
     /// Reply topic for the device-list sync response.
     pub inst_sync_reply: String,
-    /// Ops telemetry about the acquisition path (ADR-0016). Never point values.
+    /// Ops telemetry about the acquisition path. Never point values.
     pub telemetry: String,
 }
 

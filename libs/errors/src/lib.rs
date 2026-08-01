@@ -3,72 +3,7 @@
 //! This module provides a comprehensive error system that all services can use,
 //! eliminating the need for service-specific error types.
 
-use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use thiserror::Error;
-
-// ============================================================================
-// ErrorInfo - API error response type
-// ============================================================================
-
-/// Standard error information for API responses
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-pub struct ErrorInfo {
-    /// Error code (HTTP status or custom)
-    pub code: u16,
-    /// Error message
-    pub message: String,
-    /// Detailed error description
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub details: Option<String>,
-    /// Suggested action to fix the error
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub suggestion: Option<String>,
-    /// Field-specific errors for validation
-    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
-    pub field_errors: HashMap<String, Vec<String>>,
-}
-
-impl ErrorInfo {
-    /// Create a new ErrorInfo with just a message
-    pub fn new(message: impl Into<String>) -> Self {
-        Self {
-            code: 500,
-            message: message.into(),
-            details: None,
-            suggestion: None,
-            field_errors: HashMap::new(),
-        }
-    }
-
-    /// Set the error code
-    pub fn with_code(mut self, code: u16) -> Self {
-        self.code = code;
-        self
-    }
-
-    /// Add details
-    pub fn with_details(mut self, details: impl Into<String>) -> Self {
-        self.details = Some(details.into());
-        self
-    }
-
-    /// Add a suggestion for how to fix the error
-    pub fn with_suggestion(mut self, suggestion: impl Into<String>) -> Self {
-        self.suggestion = Some(suggestion.into());
-        self
-    }
-
-    /// Add a field error
-    pub fn add_field_error(mut self, field: impl Into<String>, error: impl Into<String>) -> Self {
-        self.field_errors
-            .entry(field.into())
-            .or_default()
-            .push(error.into());
-        self
-    }
-}
 
 // ============================================================================
 // AetherError - Main error type
@@ -100,10 +35,6 @@ pub enum AetherError {
 
     #[error("SQLite error: {0}")]
     Sqlite(#[from] sqlx::Error),
-
-    #[error("Redis error: {0}")]
-    #[cfg(feature = "redis")]
-    Redis(#[from] redis::RedisError),
 
     #[error("Query failed: {query}: {error}")]
     QueryFailed { query: String, error: String },
@@ -242,65 +173,16 @@ pub enum AetherError {
 pub type AetherResult<T> = Result<T, AetherError>;
 
 impl AetherError {
-    /// Get the appropriate HTTP status code for this error
-    ///
-    /// Uses `category()` as the default mapping, with explicit overrides for
-    /// variants whose HTTP status differs from their semantic category.
-    pub fn status_code(&self) -> u16 {
-        // Variants where status_code differs from the category-based default
-        match self {
-            Self::Unauthorized(_) => return 401,
-            Self::InvalidExpression { .. } | Self::TypeMismatch { .. } => return 400,
-            Self::ServiceUnavailable(_) | Self::StartupFailed(_) => return 503,
-            _ => {},
-        }
-        // Category-based default mapping
-        match self.category() {
-            ErrorCategory::Validation => 400,
-            ErrorCategory::Permission => 403,
-            ErrorCategory::NotFound => 404,
-            ErrorCategory::Conflict => 409,
-            ErrorCategory::ResourceExhausted => 429,
-            ErrorCategory::Protocol | ErrorCategory::Connection | ErrorCategory::Network => 502,
-            ErrorCategory::ResourceBusy => 503,
-            ErrorCategory::Timeout => 504,
-            _ => 500,
-        }
-    }
-
     /// Check if this error is retryable
     pub fn is_retryable(&self) -> bool {
-        match self {
+        matches!(
+            self,
             Self::Timeout(_)
-            | Self::ServiceUnavailable(_)
-            | Self::ResourceBusy(_)
-            | Self::ConnectionFailed { .. }
-            | Self::Communication(_) => true,
-            #[cfg(feature = "redis")]
-            Self::Redis(_) => true,
-            _ => false,
-        }
-    }
-
-    /// Convert to API ErrorInfo for HTTP responses
-    pub fn to_error_info(&self) -> ErrorInfo {
-        let mut error_info = ErrorInfo::new(self.to_string()).with_code(self.status_code());
-
-        // Add details for specific error types
-        match self {
-            Self::InvalidParameter { param, reason } => {
-                error_info = error_info.add_field_error(param, reason);
-            },
-            Self::Validation(msg) => {
-                error_info = error_info.with_details(msg.clone());
-            },
-            Self::QueryFailed { query, error } => {
-                error_info = error_info.with_details(format!("Query: {}, Error: {}", query, error));
-            },
-            _ => {},
-        }
-
-        error_info
+                | Self::ServiceUnavailable(_)
+                | Self::ResourceBusy(_)
+                | Self::ConnectionFailed { .. }
+                | Self::Communication(_)
+        )
     }
 }
 
@@ -376,8 +258,6 @@ impl AetherErrorTrait for AetherError {
             // Database Errors
             Self::Database(_) => "DATABASE_ERROR",
             Self::Sqlite(_) => "SQLITE_ERROR",
-            #[cfg(feature = "redis")]
-            Self::Redis(_) => "REDIS_ERROR",
             Self::QueryFailed { .. } => "QUERY_FAILED",
 
             // Protocol & Communication Errors
@@ -446,8 +326,6 @@ impl AetherErrorTrait for AetherError {
             Self::Database(_) | Self::Sqlite(_) | Self::QueryFailed { .. } => {
                 ErrorCategory::Database
             },
-            #[cfg(feature = "redis")]
-            Self::Redis(_) => ErrorCategory::Database,
 
             // Protocol -> Protocol
             Self::Protocol { .. } | Self::Modbus(_) => ErrorCategory::Protocol,
@@ -533,14 +411,10 @@ pub enum ErrorCategory {
     // Calculation layer (automation-specific)
     Calculation,
 
-    // Rule engine layer (rules-specific)
-    RuleEngine,
-
     // System level
     Internal,
     ResourceBusy,
     ResourceExhausted,
-    DataCorruption,
 
     // Others
     Unknown,
@@ -611,46 +485,6 @@ pub trait AetherErrorTrait: std::error::Error + Send + Sync + 'static {
             _ => None,
         }
     }
-
-    /// Recommended retry delay in milliseconds
-    fn retry_delay_ms(&self) -> u64 {
-        match self.category() {
-            ErrorCategory::Network => 1000,
-            ErrorCategory::Timeout => 500,
-            ErrorCategory::ResourceBusy => 2000,
-            ErrorCategory::Connection => 1500,
-            _ => 0,
-        }
-    }
-
-    /// Maximum retry attempts
-    fn max_retries(&self) -> u32 {
-        if self.is_retryable() { 3 } else { 0 }
-    }
-
-    /// Get log level
-    fn log_level(&self) -> tracing::Level {
-        use tracing::Level;
-        match self.category() {
-            ErrorCategory::Internal | ErrorCategory::Database | ErrorCategory::DataCorruption => {
-                Level::ERROR
-            },
-            ErrorCategory::Network
-            | ErrorCategory::Timeout
-            | ErrorCategory::Connection
-            | ErrorCategory::Protocol => Level::WARN,
-            ErrorCategory::Validation | ErrorCategory::NotFound => Level::INFO,
-            _ => Level::WARN,
-        }
-    }
-
-    /// Whether an alert should be triggered
-    fn should_alert(&self) -> bool {
-        matches!(
-            self.category(),
-            ErrorCategory::Internal | ErrorCategory::Database | ErrorCategory::DataCorruption
-        )
-    }
 }
 
 // Tests
@@ -658,24 +492,6 @@ pub trait AetherErrorTrait: std::error::Error + Send + Sync + 'static {
 #[allow(clippy::disallowed_methods)] // Test code - unwrap is acceptable
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_error_status_codes() {
-        assert_eq!(AetherError::Validation("test".into()).status_code(), 400);
-        assert_eq!(AetherError::Unauthorized("test".into()).status_code(), 401);
-        assert_eq!(
-            AetherError::NotFound {
-                resource: "test".into()
-            }
-            .status_code(),
-            404
-        );
-        assert_eq!(AetherError::Internal("test".into()).status_code(), 500);
-        assert_eq!(
-            AetherError::ServiceUnavailable("test".into()).status_code(),
-            503
-        );
-    }
 
     #[test]
     fn test_error_retryable() {
@@ -688,16 +504,5 @@ mod tests {
             }
             .is_retryable()
         );
-    }
-
-    #[test]
-    fn test_error_info() {
-        let error = AetherError::InvalidParameter {
-            param: "name".into(),
-            reason: "too short".into(),
-        };
-        let info = error.to_error_info();
-        assert_eq!(info.code, 400);
-        assert!(info.field_errors.contains_key("name"));
     }
 }

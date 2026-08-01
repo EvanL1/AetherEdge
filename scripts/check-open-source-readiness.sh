@@ -41,7 +41,7 @@ readonly SDK_SOURCE_PACKAGES=(
     "aether-sqlite-history-query:services/api/adapters/sqlite-history-query"
 )
 
-# ADR-0022: the crates.io release set is aether-edge-sdk plus the transitive
+# The crates.io release set is aether-edge-sdk plus the transitive
 # closure of its normal and optional dependencies, plus aether-testkit for
 # port conformance suites. Adding a name here makes it a permanent public
 # registry entry, so this list is the deliberate gate. Every Rust package in
@@ -187,7 +187,7 @@ for entry in "${SDK_SOURCE_PACKAGES[@]}"; do
     fi
     if is_registry_release_package "$package"; then
         if rg -q '^publish[[:space:]]*=[[:space:]]*false' "$manifest"; then
-            fail "$package is in the ADR-0022 registry release set and must not set publish=false"
+            fail "$package is in the registry release set and must not set publish=false"
         fi
     elif ! rg -q '^publish[[:space:]]*=[[:space:]]*false' "$manifest"; then
         fail "$package is a source-only implementation package and must set publish=false"
@@ -275,16 +275,8 @@ else
         fi
     done
 
-    redis_services=""
-    if ! redis_services=$(
-        JWT_SECRET_KEY="$COMPOSE_VALIDATION_JWT_SECRET" \
-            AETHER_UPLINK_CONTROL_TOKEN="$COMPOSE_VALIDATION_UPLINK_TOKEN" \
-            docker compose -f docker-compose.yml --profile redis config --services
-    ); then
-        fail "the optional Redis infrastructure profile is invalid"
-    fi
-    if ! rg -q '^aether-redis$' <<<"$redis_services"; then
-        fail "the optional Redis infrastructure profile is missing"
+    if rg -qi 'redis' docker-compose.yml; then
+        fail "docker-compose.yml reintroduced a Redis service; the kernel ships no Redis adapter"
     fi
 
     postgres_services=""
@@ -301,7 +293,7 @@ else
 fi
 
 echo "Checking the signed source-release boundary..."
-# ADR-0022 keeps the signed source release and adds a registry release beside
+# The signed source release is kept, with a registry release beside
 # it. The registry step must publish the workspace as one ordered unit rather
 # than hand-rolling a per-crate order, and must run only after the GitHub
 # Release job has succeeded.

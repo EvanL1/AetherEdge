@@ -43,7 +43,6 @@ fi
 SHOW_HELP=false
 BOOTSTRAP_ADMIN_REQUIRED=false
 TIMESCALE_DATA_DIR=""
-REDIS_EXTENSION_SELECTED=false
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -496,7 +495,7 @@ reject_existing_docker_filesystem_footprint() {
     for unit in \
         aether.target aether-io.service aether-automation.service \
         aether-history.service aether-api.service aether-uplink.service \
-        aether-alarm.service aether-redis.service; do
+        aether-alarm.service; do
         reject_existing_path "/etc/systemd/system/$unit" "Aether systemd footprint" \
             || return 1
         if command -v systemctl >/dev/null 2>&1 \
@@ -528,35 +527,6 @@ reject_existing_docker_runtime_footprint() {
             return 1
         fi
     done
-}
-
-known_aether_redis_volumes() {
-    printf '%s\n' \
-        "${AETHER_COMPOSE_PROJECT}_redis-data" \
-        "${AETHER_COMPOSE_PROJECT}_redis-socket"
-}
-
-reject_existing_redis_volume_footprint() {
-    local volume
-
-    while IFS= read -r volume; do
-        if docker volume inspect "$volume" >/dev/null 2>&1; then
-            echo "Fresh installation refused: Redis volume already exists: $volume" >&2
-            return 1
-        fi
-    done < <(known_aether_redis_volumes)
-}
-
-remove_fresh_redis_volumes() {
-    local volume
-
-    [[ "$REDIS_EXTENSION_SELECTED" == true ]] || return 0
-    while IFS= read -r volume; do
-        if docker volume inspect "$volume" >/dev/null 2>&1 \
-            && ! docker volume rm "$volume" >/dev/null; then
-            return 1
-        fi
-    done < <(known_aether_redis_volumes)
 }
 
 resolve_compose_data_directory() {
@@ -853,7 +823,6 @@ ensure_compose_uplink_control_token() {
 # Tarball filename to image name mapping
 declare -A TARBALL_TO_IMAGE=(
     ["aetherems.tar.gz"]="aetherems:latest"
-    ["aether-redis.tar.gz"]="redis:8-alpine"
     ["aether-timescaledb.tar.gz"]="timescale/timescaledb:2.25.2-pg17"
 )
 
@@ -875,11 +844,11 @@ CLI_SNAPSHOT_CAPTURED=false
 CLI_WAS_PRESENT=false
 
 # Generate backup tag for an image
-# Example: redis:8-alpine -> redis:backup-8-alpine-1703260800
+# Example: aetherems:latest -> aetherems:backup-latest-1703260800
 generate_backup_tag() {
     local image=$1
     local timestamp=${BACKUP_TIMESTAMP:-$(date +%s)}
-    local name="${image%:*}"      # redis, aetherems
+    local name="${image%:*}"      # aetherems, timescale/timescaledb
     local tag="${image##*:}"      # 8-alpine, latest
     echo "${name}:backup-${tag}-${timestamp}"
 }
@@ -972,7 +941,7 @@ restore_image_tag_from_backup() {
 }
 
 # Smart load: only load if image has changed
-# Special handling for multi-arch images (timescaledb, redis)
+# Special handling for multi-arch images (timescaledb)
 # Returns: 0 if loaded, 1 if skipped (unchanged), 2 if error
 smart_load_image() {
     local tarball=$1
@@ -1096,7 +1065,6 @@ known_aether_containers() {
         aether-api \
         aether-uplink \
         aether-alarm \
-        aether-redis \
         aether-timescaledb
 }
 
@@ -1469,10 +1437,6 @@ rollback_docker_install() {
             fi
         done < <(known_aether_containers)
     fi
-    if [[ "$rollback_ok" == true && "$CONTAINER_STATE_MUTATED" == true ]] \
-        && ! remove_fresh_redis_volumes; then
-        rollback_ok=false
-    fi
     if [[ "$rollback_ok" == true ]] && ! restore_runtime_data_from_backup; then
         rollback_ok=false
     fi
@@ -1675,7 +1639,6 @@ if [[ -n "$PACKAGED_TEMPLATE_SYMLINK" ]]; then
 fi
 for package_tarball in \
     docker/aetherems.tar.gz \
-    docker/aether-redis.tar.gz \
     docker/aether-timescaledb.tar.gz \
     docker/apps.tar.gz; do
     if [[ -L "$package_tarball" \
@@ -1689,11 +1652,7 @@ if ! command -v docker >/dev/null 2>&1; then
     exit 1
 fi
 detect_docker_compose_cmd >/dev/null
-if [[ -f "docker/aether-redis.tar.gz" ]]; then
-    REDIS_EXTENSION_SELECTED=true
-fi
 reject_existing_docker_runtime_footprint
-reject_existing_redis_volume_footprint
 
 if [[ ! -f "docker/aetherems.tar.gz" ]]; then
     echo "Fresh installation requires the packaged core image docker/aetherems.tar.gz" >&2
@@ -1713,7 +1672,6 @@ BACKUP_TIMESTAMP="$(date +%s)-$$"
 INSTALL_TRANSACTION_ACTIVE=true
 trap docker_install_exit EXIT
 reject_existing_docker_runtime_footprint
-reject_existing_redis_volume_footprint
 require_empty_or_absent_directory "$DATA_DIR" "Aether data root"
 require_empty_or_absent_directory "$LOG_DIR" "Aether log root"
 if [[ -n "$TIMESCALE_DATA_DIR" ]]; then
@@ -1752,7 +1710,6 @@ STAGED_IMAGE_COUNT=0
 SKIPPED_IMAGE_COUNT=0
 tarball_list=(
     docker/aetherems.tar.gz
-    docker/aether-redis.tar.gz
     docker/aether-timescaledb.tar.gz
     docker/apps.tar.gz
 )
@@ -1781,9 +1738,9 @@ if ! docker image inspect aetherems:latest >/dev/null 2>&1; then
 fi
 echo -e "${GREEN}[DONE] Image staging: $STAGED_IMAGE_COUNT loaded, $SKIPPED_IMAGE_COUNT unchanged${NC}"
 
-# Redis is an explicitly optional, non-authoritative mirror. TimescaleDB is
-# snapshotted above before its selected image can start. No selected extension
-# container is started until schema/configuration publication has succeeded.
+# TimescaleDB is snapshotted above before its selected image can start. No
+# selected extension container is started until schema/configuration
+# publication has succeeded.
 
 # Step 3: Setup directories and configuration
 echo -e "${YELLOW}[3/3] Setting up configuration...${NC}"
@@ -2069,7 +2026,7 @@ if [[ "$AUTO_MODE" != true ]]; then
     echo "Installed components:"
     echo "  • CLI Tool: aether (unified management)"
     echo "  • Docker Image: aetherems (all Rust services)"
-    echo "    - Optional profiles: aether-redis mirror, aether-timescaledb history"
+    echo "    - Optional profile: aether-timescaledb history"
     if [[ "$LOG_DIR" != "$INSTALL_DIR/logs" ]]; then
         echo "  • Log directory: $LOG_DIR (symlinked from $INSTALL_DIR/logs)"
     else
@@ -2138,7 +2095,6 @@ if [[ "$AUTO_MODE" != true ]]; then
     echo "Network Configuration:"
     echo -e "${YELLOW}  • Using host network mode for optimal performance${NC}"
     echo "  • Services available on localhost:"
-    echo "    - Redis: 6379          (optional mirror profile)"
     echo "    - TimescaleDB: 5432    (optional PostgreSQL history profile)"
     echo "    - aether-io: 6001         (communication - Rust)"
     echo "    - aether-automation: 6002 (model + rules - Rust)"
@@ -2234,8 +2190,6 @@ add_install_service() {
     INSTALL_CONTAINERS+=("$container")
 }
 
-[[ -f "docker/aether-redis.tar.gz" ]] \
-    && add_install_service aether-redis aether-redis
 [[ -f "docker/aether-timescaledb.tar.gz" ]] \
     && add_install_service timescaledb aether-timescaledb
 echo -e "${GREEN}Starting and validating the complete installed stack...${NC}"

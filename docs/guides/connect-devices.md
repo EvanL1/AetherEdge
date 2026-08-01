@@ -115,7 +115,7 @@ feature that merely compiles but cannot construct a channel is therefore a
 test failure, not an advertised capability. The former `matter` feature was
 removed because its private UDP frame was not an interoperable Matter
 implementation; see
-[ADR-0027](../adr/0027-exact-io-protocol-capabilities.md).
+the runtime manifest.
 
 ## Point mapping contracts
 

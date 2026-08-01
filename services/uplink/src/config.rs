@@ -34,32 +34,20 @@ impl Default for EnvConfig {
 
         Self {
             api_host: env::var("API_HOST").unwrap_or_else(|_| common::DEFAULT_API_HOST.to_string()),
-            api_port: env::var("API_PORT")
-                .ok()
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(6006),
+            api_port: common::env_or("API_PORT", 6006),
             shm_path: shm_path.to_string_lossy().into_owned(),
             channel_health_shm_path: channel_health_shm_path.to_string_lossy().into_owned(),
-            shm_writer_stale_after_ms: env::var("SHM_WRITER_STALE_AFTER_MS")
-                .ok()
-                .and_then(|value| value.parse().ok())
-                .unwrap_or(30_000),
-            shm_identity_check_interval_ms: env::var("SHM_IDENTITY_CHECK_INTERVAL_MS")
-                .ok()
-                .and_then(|value| value.parse().ok())
-                .unwrap_or(250),
-            shm_topology_refresh_interval_ms: env::var("SHM_TOPOLOGY_REFRESH_INTERVAL_MS")
-                .ok()
-                .and_then(|value| value.parse().ok())
-                .unwrap_or(1_000),
+            shm_writer_stale_after_ms: common::env_or("SHM_WRITER_STALE_AFTER_MS", 30_000),
+            shm_identity_check_interval_ms: common::env_or("SHM_IDENTITY_CHECK_INTERVAL_MS", 250),
+            shm_topology_refresh_interval_ms: common::env_or(
+                "SHM_TOPOLOGY_REFRESH_INTERVAL_MS",
+                1_000,
+            ),
             db_path: env::var("AETHER_DB_PATH")
                 .unwrap_or_else(|_| "/app/data/aether.db".to_string()),
             outbox_path: env::var("AETHER_UPLINK_OUTBOX_PATH")
                 .unwrap_or_else(|_| "/app/data/uplink.outbox".to_string()),
-            outbox_capacity: env::var("AETHER_UPLINK_OUTBOX_CAPACITY")
-                .ok()
-                .and_then(|value| value.parse().ok())
-                .unwrap_or(10_000),
+            outbox_capacity: common::env_or("AETHER_UPLINK_OUTBOX_CAPACITY", 10_000),
             control_token: env::var("AETHER_UPLINK_CONTROL_TOKEN")
                 .ok()
                 .filter(|value| value.len() >= 32 && value.trim() == value),

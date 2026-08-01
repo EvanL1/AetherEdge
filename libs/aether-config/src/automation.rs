@@ -89,7 +89,7 @@ pub use common::SYNC_METADATA_TABLE;
 /// Re-export DDL from common (single source of truth — production code in
 /// aether and automation reads these constants; the Schema-macro variants that
 /// previously lived here drifted from the canonical SQL.)
-pub use common::test_utils::schema::{
+pub use common::schema::{
     ACTION_ROUTING_TABLE, CONFIGURATION_REVISIONS_TABLE, INSTANCE_PROPERTIES_TABLE,
     INSTANCES_TABLE, MEASUREMENT_ROUTING_TABLE,
 };
@@ -247,9 +247,6 @@ pub struct CreateInstanceRequest {
     pub properties: HashMap<String, serde_json::Value>,
 }
 
-/// Product hierarchy using tuples (following CLAUDE.md)
-pub type ProductHierarchy = Vec<(String, Option<String>)>;
-
 /// Topology tree node for hierarchical instance display
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct TopologyNode {
@@ -329,9 +326,6 @@ impl common::ConfigValidator for AutomationConfig {
         Ok(result)
     }
 }
-
-/// Type alias for backward compatibility - use GenericValidator directly for new code
-pub type AutomationValidator = common::GenericValidator<AutomationConfig>;
 
 // ============================================================================
 // Centralized SQL Queries for Automation

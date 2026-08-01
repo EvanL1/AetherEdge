@@ -1,21 +1,19 @@
-//! Waveform generation library for AetherEdge simulation.
+//! Waveform generation for the protocol simulator.
 //!
-//! This library provides various waveform generators for simulating
-//! industrial device data patterns. Used by the standalone simulator
-//! to generate realistic Modbus register values.
+//! Produces the time-varying values a simulated device reports, so a scenario
+//! can look like a real sensor instead of a constant. Simulation never enters
+//! the kernel runtime, so this stays inside the simulator binary.
 //!
 //! # Example
 //!
-//! ```rust
-//! use aether_sim::{WaveformGenerator, generators::SineWave};
+//! ```ignore
+//! use crate::waveform::{WaveformGenerator, generators::SineWave};
 //!
 //! let sine = SineWave::new(0.1, 100.0, 500.0, 0.0);
 //! let value = sine.generate(1000);
 //! ```
 
 pub mod generators;
-
-use std::sync::Arc;
 
 /// Core trait for waveform generation.
 ///
@@ -30,16 +28,10 @@ pub trait WaveformGenerator: Send + Sync {
     /// # Returns
     /// The generated value as f64
     fn generate(&self, timestamp_ms: i64) -> f64;
-
-    /// Get the generator type name for debugging.
-    fn type_name(&self) -> &'static str;
 }
 
 /// Boxed generator for dynamic dispatch.
 pub type BoxedGenerator = Box<dyn WaveformGenerator>;
-
-/// Arc-wrapped generator for shared ownership.
-pub type SharedGenerator = Arc<dyn WaveformGenerator>;
 
 // Re-export commonly used generators
 pub use generators::{

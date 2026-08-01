@@ -165,12 +165,6 @@ impl ControlCommand {
             timeout_ms: 5000,
         }
     }
-
-    /// Set timeout.
-    pub const fn with_timeout(mut self, timeout_ms: u32) -> Self {
-        self.timeout_ms = timeout_ms;
-        self
-    }
 }
 
 /// Command acknowledgment status.

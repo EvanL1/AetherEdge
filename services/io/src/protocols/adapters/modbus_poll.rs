@@ -65,11 +65,9 @@ async fn read_coils_individually(
     function_code: u8,
 ) -> Vec<(u32, DataPoint)> {
     let mut results = Vec::with_capacity(point_indices.len());
-
     for index in point_indices {
         let point = &points[*index];
         let modbus_addr = &point.address;
-
         let value_result = match function_code {
             1 => client
                 .read_01(slave_id, modbus_addr.register, 1)

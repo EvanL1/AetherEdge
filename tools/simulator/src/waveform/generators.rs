@@ -10,7 +10,7 @@
 //! - `LinearRamp` - Linear increase/decrease
 //! - `NoiseGenerator` - Gaussian noise
 
-use crate::WaveformGenerator;
+use super::WaveformGenerator;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 use std::f64::consts::PI;
@@ -49,10 +49,6 @@ impl WaveformGenerator for SineWave {
         let t = timestamp_ms as f64 / 1000.0; // Convert to seconds
         let angle = 2.0 * PI * self.frequency * t + self.phase;
         self.offset + self.amplitude * angle.sin()
-    }
-
-    fn type_name(&self) -> &'static str {
-        "SineWave"
     }
 }
 
@@ -100,10 +96,6 @@ impl WaveformGenerator for SquareWave {
             self.low
         }
     }
-
-    fn type_name(&self) -> &'static str {
-        "SquareWave"
-    }
 }
 
 // ============================================================================
@@ -144,10 +136,6 @@ impl WaveformGenerator for TriangleWave {
         };
 
         self.min + normalized * (self.max - self.min)
-    }
-
-    fn type_name(&self) -> &'static str {
-        "TriangleWave"
     }
 }
 
@@ -197,10 +185,6 @@ impl WaveformGenerator for RandomDrift {
 
         // Clamp to bounds
         (*state).clamp(self.center - self.max_delta, self.center + self.max_delta)
-    }
-
-    fn type_name(&self) -> &'static str {
-        "RandomDrift"
     }
 }
 
@@ -279,10 +263,6 @@ impl WaveformGenerator for DailyPattern {
 
         self.base_value + (self.peak_value - self.base_value) * factor
     }
-
-    fn type_name(&self) -> &'static str {
-        "DailyPattern"
-    }
 }
 
 // ============================================================================
@@ -306,10 +286,6 @@ impl ConstantValue {
 impl WaveformGenerator for ConstantValue {
     fn generate(&self, _timestamp_ms: i64) -> f64 {
         self.value
-    }
-
-    fn type_name(&self) -> &'static str {
-        "ConstantValue"
     }
 }
 
@@ -368,10 +344,6 @@ impl WaveformGenerator for LinearRamp {
 
         self.start_value + progress * (self.end_value - self.start_value)
     }
-
-    fn type_name(&self) -> &'static str {
-        "LinearRamp"
-    }
 }
 
 // ============================================================================
@@ -401,10 +373,6 @@ impl WaveformGenerator for NoiseGenerator {
         let u2: f64 = rng.r#gen();
         let z = (-2.0 * u1.ln()).sqrt() * (2.0 * PI * u2).cos();
         self.mean + z * self.std_dev
-    }
-
-    fn type_name(&self) -> &'static str {
-        "NoiseGenerator"
     }
 }
 

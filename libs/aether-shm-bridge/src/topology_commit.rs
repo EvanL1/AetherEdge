@@ -432,7 +432,7 @@ pub(crate) fn validate_topology_publication_locked(
     Ok(commit)
 }
 
-fn acquire_authority_pair(
+pub(crate) fn acquire_authority_pair(
     point_path: &Path,
     health_path: &Path,
 ) -> PortResult<(AuthorityReadGuard, AuthorityReadGuard)> {

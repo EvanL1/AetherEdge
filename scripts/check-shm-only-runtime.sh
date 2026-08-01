@@ -98,16 +98,7 @@ if rg -q '^aether-redis$' <<< "$default_services"; then
     exit 1
 fi
 
-redis_services=""
-if ! redis_services=$(
-    JWT_SECRET_KEY="$COMPOSE_TEST_SECRET" \
-        AETHER_UPLINK_CONTROL_TOKEN="$COMPOSE_TEST_UPLINK_TOKEN" \
-        docker compose --profile redis config --services
-); then
-    echo "ERROR: optional Redis infrastructure profile is invalid" >&2
-    exit 1
-fi
-if ! rg -q '^aether-redis$' <<< "$redis_services"; then
-    echo "ERROR: optional Redis infrastructure profile is missing" >&2
+if rg -qi 'redis' docker-compose.yml; then
+    echo "ERROR: docker-compose.yml reintroduced a Redis service" >&2
     exit 1
 fi

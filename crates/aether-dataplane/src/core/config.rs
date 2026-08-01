@@ -49,15 +49,6 @@ pub fn default_shm_path() -> PathBuf {
     PathBuf::from("/tmp/aether-rtdb.shm")
 }
 
-/// Check whether the parent directory of a SHM file path exists.
-///
-/// This is the only generic "is the SHM mountpoint available" check that
-/// makes sense without knowing anything about the business config. The
-/// business-config-aware version lives in `shared_config::is_shm_available`.
-pub fn parent_dir_exists(path: &Path) -> bool {
-    path.parent().map(|p| p.exists()).unwrap_or(false)
-}
-
 /// Get current timestamp in milliseconds since UNIX epoch.
 #[inline]
 pub fn timestamp_ms() -> u64 {

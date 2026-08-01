@@ -7,17 +7,13 @@ license.workspace = true
 
 [features]
 default = ["sqlite", "axum", "openapi"]
-redis = ["aether-infra/redis", "dep:redis", "errors/redis"]
-sqlite = ["aether-infra/sqlite", "dep:sqlx"]
-cli = ["dep:clap", "dep:reqwest"]
-dependency = ["dep:reqwest"]
+sqlite = ["dep:sqlx"]
 axum = ["dep:axum"]
 openapi = ["dep:utoipa"]
 schema = ["dep:schemars", "aether-core/schema"]
 
 [dependencies]
 errors = { path = "../errors", default-features = false }
-aether-infra = { path = "../aether-infra", default-features = false }
 aether-core = { path = "../aether-core", features = ["serde"] }
 aether-schema-macro = { path = "../aether-schema-macro" }
 tokio = { workspace = true, features = ["full"] }
@@ -36,19 +32,11 @@ chrono = { workspace = true, features = ["serde"] }
 anyhow = { workspace = true }
 flate2 = { workspace = true }
 csv = { workspace = true }
-futures = { workspace = true }
 axum = { workspace = true, optional = true }
 utoipa = { workspace = true, optional = true }
 sysinfo = "0.32"
 
-# CLI dependencies  
-clap = { workspace = true, features = ["derive", "env", "cargo"], optional = true }
-reqwest = { workspace = true, features = ["json"], optional = true }
-
-# Redis - kept for direct usage in warning_monitor and service_config helpers
-redis = { workspace = true, optional = true }
-
-# SQLite - kept for direct usage in test_utils and service_config
+# SQLite - kept for direct usage in schema and service_config
 sqlx = { workspace = true, optional = true }
 
 # Schema generation

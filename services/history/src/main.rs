@@ -9,17 +9,14 @@
 //! runtime settings are restored on restart and may still explicitly disable
 //! storage. The default profile requires only embedded SQLite and SHM.
 
-use std::net::SocketAddr;
 use std::sync::Arc;
 
-use sqlx::sqlite::SqlitePoolOptions;
 use tokio::sync::{Mutex, RwLock};
 use tokio_util::sync::CancellationToken;
 use tower_http::cors::{Any, CorsLayer};
 use tracing::info;
 
 mod api;
-mod backend_influx;
 mod backend_null;
 #[cfg(feature = "postgres-storage")]
 mod backend_pg;
@@ -46,15 +43,11 @@ async fn main() -> anyhow::Result<()> {
     let env = Arc::new(EnvConfig::default());
 
     // ── Logging ───────────────────────────────────────────────────────────────
-    let service_info = common::service_bootstrap::ServiceInfo::new(
+    common::service_bootstrap::init_service(
         "aether-history",
         "Historical data service",
         env.api_port,
-    );
-    common::service_bootstrap::init_logging(&service_info, None)
-        .map_err(|e| anyhow::anyhow!("Failed to init logging: {}", e))?;
-    common::logging::enable_sighup_log_reopen();
-    common::service_bootstrap::print_startup_banner(&service_info);
+    )?;
 
     info!("aether-history starting");
     info!("SHM: {}", env.shm_path);
@@ -62,16 +55,7 @@ async fn main() -> anyhow::Result<()> {
     info!("Embedded history: {}", env.history_db_path);
 
     // ── Shared SQLite – config table ──────────────────────────────────────────
-    if let Some(dir) = std::path::Path::new(&env.db_path).parent() {
-        std::fs::create_dir_all(dir)?;
-    }
-    let sqlite = SqlitePoolOptions::new()
-        .max_connections(5)
-        .connect_with(common::bootstrap_database::sqlite_connect_options(
-            &env.db_path,
-        ))
-        .await
-        .map_err(|e| anyhow::anyhow!("SQLite connect failed: {} path={}", e, env.db_path))?;
+    let sqlite = common::bootstrap_database::open_service_pool(&env.db_path).await?;
 
     db_config::create_config_table(&sqlite, &env.history_db_path).await?;
     let service_cfg = db_config::load_config(&sqlite).await?;
@@ -141,22 +125,9 @@ async fn main() -> anyhow::Result<()> {
         .layer(axum::extract::DefaultBodyLimit::max(1024 * 1024))
         .layer(cors);
 
-    let addr: SocketAddr = format!("{}:{}", env.api_host, env.api_port)
-        .parse()
-        .map_err(|e| anyhow::anyhow!("Invalid bind address: {}", e))?;
+    let addr = common::bind_address(&env.api_host, env.api_port)?;
 
-    info!("history listening on {}", addr);
+    common::shutdown::serve_with_shutdown(addr, app, shutdown).await?;
 
-    let listener = tokio::net::TcpListener::bind(addr).await?;
-
-    axum::serve(listener, app)
-        .with_graceful_shutdown(async move {
-            common::shutdown::wait_for_shutdown().await;
-            info!("Shutdown signal received");
-            shutdown.cancel();
-        })
-        .await?;
-
-    common::logging::shutdown_logging_tasks().await;
     Ok(())
 }

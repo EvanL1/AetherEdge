@@ -1,16 +1,14 @@
 //! Coherent read-side publication of the point and channel-health SHM planes.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use aether_dataplane::AuthorityReadGuard;
 use aether_ports::{PortError, PortErrorKind, PortResult};
-use arc_swap::ArcSwap;
 
-use crate::managed::map_dataplane_error;
 use crate::topology_commit::{
-    TopologyPublicationCommit, acquire_topology_authority, validate_topology_publication_locked,
+    TopologyPublicationCommit, acquire_authority_pair, acquire_topology_authority,
+    validate_topology_publication_locked,
 };
 use crate::{
     ChannelHealthManifest, ChannelPointManifest, ReconnectingSlotSource, ShmChannelHealthReader,
@@ -240,46 +238,6 @@ impl ShmReadTopologyGeneration {
     pub fn health_writer_generation(&self) -> u64 {
         self.health_writer_generation.load(Ordering::Acquire)
     }
-}
-
-/// Atomically replaceable read-side topology generation.
-pub struct ShmReadTopologyHandle {
-    current: ArcSwap<ShmReadTopologyGeneration>,
-}
-
-impl ShmReadTopologyHandle {
-    /// Creates a handle, typically with a lazy startup generation.
-    #[must_use]
-    pub fn new(initial: Arc<ShmReadTopologyGeneration>) -> Self {
-        Self {
-            current: ArcSwap::new(initial),
-        }
-    }
-
-    /// Pins one coherent generation for an entire logical read operation.
-    #[must_use]
-    pub fn load(&self) -> Arc<ShmReadTopologyGeneration> {
-        self.current.load_full()
-    }
-
-    /// Validates and publishes a complete replacement generation.
-    pub fn publish(&self, candidate: Arc<ShmReadTopologyGeneration>) -> PortResult<()> {
-        candidate.with_validated_authority(|| self.current.store(candidate.clone()))
-    }
-}
-
-fn acquire_authority_pair(
-    point_path: &Path,
-    health_path: &Path,
-) -> PortResult<(AuthorityReadGuard, AuthorityReadGuard)> {
-    let (first_path, second_path) = if point_path <= health_path {
-        (point_path, health_path)
-    } else {
-        (health_path, point_path)
-    };
-    let first = AuthorityReadGuard::acquire(first_path).map_err(map_dataplane_error)?;
-    let second = AuthorityReadGuard::acquire(second_path).map_err(map_dataplane_error)?;
-    Ok((first, second))
 }
 
 fn validate_config_hash(label: &str, configured: u64, manifest: u64) -> PortResult<()> {

@@ -2,13 +2,12 @@
 //!
 //! `SlotWriter` owns the mmap region, tracks dirty slots, and exposes
 //! slot-indexed I/O. It has no knowledge of channels, point types,
-//! instances, or routing — that lives in `UnifiedWriter` (in
-//! `unified_shm.rs`) which composes a `SlotWriter` and adds the
-//! channel-aware adapters.
+//! instances, or routing; that mapping belongs to the callers in
+//! `aether-shm-bridge`.
 //!
-//! Consumers that only need slot-level I/O should program against
-//! `&SlotWriter` or `&dyn SlotIo`; the channel adapters are not
-//! reachable that way by design.
+//! Write access is reached through [`SlotIoWrite`],
+//! a sub-trait of [`SlotIo`]. Code that holds only a
+//! `SlotIo` bound therefore cannot write.
 
 use std::fs::{File, Metadata, OpenOptions};
 use std::path::{Path, PathBuf};
@@ -19,11 +18,11 @@ use memmap2::{MmapMut, MmapOptions};
 use crate::core::authority::{AuthorityReadGuard, AuthorityWriteGuard};
 use crate::core::header::{
     HeaderSnapshot, UNIFIED_MAGIC, UNIFIED_VERSION, UnifiedHeader, calculate_file_size,
-    slot_offset, validate_mapping_layout,
+    validate_mapping_layout,
 };
 use crate::core::reader::SlotReader;
 use crate::core::slot::PointSlot;
-use crate::core::slot_io::{SlotIo, SlotIoWrite, SlotRead};
+use crate::core::slot_io::{self, SlotIo, SlotIoWrite, SlotRead};
 use crate::{DataplaneError, DataplaneResult};
 
 #[cfg(unix)]
@@ -85,7 +84,7 @@ pub struct SlotWriter {
     pub(crate) max_slots: u32,
     pub(crate) slot_count: usize,
     backing_identity: BackingFileIdentity,
-    /// Process-local dirty slot bitmap for fast SHM→Redis sync.
+    /// Process-local dirty slot bitmap for fast downstream mirror sync.
     ///
     /// PointSlot.dirty is shared across processes, but scanning it still
     /// costs O(slots). This bitmap is set by this writer's `set_direct`
@@ -407,23 +406,7 @@ impl SlotWriter {
     #[inline]
     #[doc(hidden)]
     pub fn slot_at(&self, index: usize) -> &PointSlot {
-        assert!(
-            index < self.slot_count,
-            "slot_at: index {} out of bounds (slot_count={})",
-            index,
-            self.slot_count
-        );
-        // SAFETY: alignment chain — mmap base is page-aligned (≥4096),
-        // slot_offset() == size_of::<UnifiedHeader>() == 64 (asserted at
-        // const time in core::header), and 64 is divisible by 32. So the
-        // base pointer for the slot array is 32-byte aligned, matching
-        // PointSlot's `#[repr(C, align(32))]` requirement. `index` is
-        // bounds-checked above against `slot_count`, and the constructor
-        // verified the mmap covers at least `max_slots` slots.
-        unsafe {
-            let ptr = self.mmap.as_ptr().add(slot_offset()) as *const PointSlot;
-            &*ptr.add(index)
-        }
+        slot_io::slot_at(&self.mmap, self.slot_count, index)
     }
 
     #[inline]
@@ -589,8 +572,8 @@ impl SlotWriter {
     /// Flushes the mmap first so OS-buffered dirty pages are stable in the
     /// backing file before the snapshot's tear-resistant per-slot read,
     /// then delegates to `core::snapshot_save`. This makes the public
-    /// `SlotWriter::save_snapshot` self-contained — callers outside
-    /// `UnifiedWriter` do not need to remember to flush.
+    /// `SlotWriter::save_snapshot` self-contained — callers do not need
+    /// to remember to flush.
     pub fn save_snapshot(&self, path: &Path) -> DataplaneResult<()> {
         self.flush()?;
         let current_slot_count = self.header().slot_count.load(Ordering::Acquire) as usize;
@@ -622,15 +605,7 @@ impl SlotIo for SlotWriter {
     }
 
     fn read_slot(&self, index: usize) -> Option<SlotRead> {
-        if index >= self.slot_count {
-            return None;
-        }
-        let (value, raw, timestamp_ms) = self.slot_at(index).try_load_consistent()?;
-        Some(SlotRead {
-            value,
-            raw,
-            timestamp_ms,
-        })
+        slot_io::read_slot(&self.mmap, self.slot_count, index)
     }
 
     fn generation(&self) -> u64 {

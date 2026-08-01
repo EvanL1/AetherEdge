@@ -2,10 +2,15 @@
 
 use std::collections::BTreeMap;
 use std::hash::{Hash, Hasher};
+use std::sync::Arc;
+use std::time::Duration;
 
 use aether_domain::{ChannelCommandAddress, CommandConstraints, PointKind};
 use aether_ports::{PortError, PortErrorKind, PortResult};
-use aether_shm_bridge::{ChannelHealthManifest, ChannelPointManifest, PhysicalPointAddress};
+use aether_shm_bridge::{
+    ChannelHealthManifest, ChannelPointManifest, PhysicalPointAddress, ShmClientConfig,
+    ShmReadTopologyGeneration,
+};
 use rustc_hash::FxHasher;
 use sqlx::{SqliteConnection, SqlitePool};
 
@@ -534,13 +539,79 @@ fn physical_address_key(address: PhysicalPointAddress) -> (u32, u8, u32) {
     (address.channel_id().get(), kind, address.point_id().get())
 }
 
-fn parse_point_kind(value: &str) -> Option<PointKind> {
+/// Opens the paired point and channel-health read planes for one snapshot.
+///
+/// `validate_physical` selects an eagerly validated publication; otherwise the
+/// generation stays lazy so a reader can start before IO publishes either
+/// plane. Both planes are tuned with the caller's staleness and identity
+/// intervals so a service never mixes the two SHM client configurations.
+pub fn open_read_topology(
+    point_manifest: Arc<ChannelPointManifest>,
+    health_manifest: Arc<ChannelHealthManifest>,
+    point_path: &str,
+    health_path: &str,
+    writer_stale_after: Duration,
+    identity_check_interval: Duration,
+    validate_physical: bool,
+) -> PortResult<Arc<ShmReadTopologyGeneration>> {
+    let client_config = |path: &str, layout_hash: u64| {
+        ShmClientConfig::new(path, layout_hash)
+            .with_writer_stale_after(writer_stale_after)
+            .with_identity_check_interval(identity_check_interval)
+    };
+    let point_config = client_config(point_path, point_manifest.layout_hash());
+    let health_config = client_config(health_path, health_manifest.layout_hash());
+    let generation = if validate_physical {
+        ShmReadTopologyGeneration::open(
+            point_config,
+            health_config,
+            point_manifest,
+            health_manifest,
+        )?
+    } else {
+        ShmReadTopologyGeneration::new_lazy(
+            point_config,
+            health_config,
+            point_manifest,
+            health_manifest,
+        )?
+    };
+    Ok(Arc::new(generation))
+}
+
+/// Reports whether an open read topology still matches a snapshot's physical
+/// layout, so a routing-only change can be published without reopening SHM.
+#[must_use]
+pub fn layouts_match(
+    topology: &ShmReadTopologyGeneration,
+    snapshot: &SqliteLiveTopologySnapshot,
+) -> bool {
+    topology.point_manifest().layout_hash() == snapshot.point_manifest().layout_hash()
+        && topology.point_manifest().slot_count() == snapshot.point_manifest().slot_count()
+        && topology.health_manifest().layout_hash() == snapshot.health_manifest().layout_hash()
+        && topology.health_manifest().slot_count() == snapshot.health_manifest().slot_count()
+}
+
+/// Parses the stored T/S/C/A channel-type code used at the SQLite boundary.
+#[must_use]
+pub fn parse_point_kind(value: &str) -> Option<PointKind> {
     match value {
         "T" => Some(PointKind::Telemetry),
         "S" => Some(PointKind::Status),
         "C" => Some(PointKind::Command),
         "A" => Some(PointKind::Action),
         _ => None,
+    }
+}
+
+/// Renders a point kind as the stored T/S/C/A channel-type code.
+#[must_use]
+pub const fn point_kind_code(kind: PointKind) -> &'static str {
+    match kind {
+        PointKind::Telemetry => "T",
+        PointKind::Status => "S",
+        PointKind::Command => "C",
+        PointKind::Action => "A",
     }
 }
 

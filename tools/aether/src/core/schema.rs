@@ -9,59 +9,19 @@ use std::path::Path;
 use tracing::{info, warn};
 
 // Import DDL constants from common (shared schema definitions)
-use common::test_utils::schema::{
+use common::schema::{
     ACTION_ROUTING_TABLE, ADJUSTMENT_POINTS_TABLE, CHANNEL_REVISION_BUMP_TRIGGER,
     CHANNEL_REVISION_DELETE_EXHAUSTED_TRIGGER, CHANNEL_REVISION_DELETE_TOMBSTONE_TRIGGER,
     CHANNEL_REVISION_EXHAUSTED_TRIGGER, CHANNEL_REVISION_INSERT_ADVANCE_TRIGGER,
     CHANNEL_REVISION_INSERT_GUARD_TRIGGER, CHANNEL_REVISION_TOMBSTONES_TABLE,
     CHANNEL_TEMPLATES_TABLE, CHANNELS_TABLE, CONFIGURATION_REVISIONS_TABLE, CONTROL_POINTS_TABLE,
     INSTANCE_PROPERTIES_TABLE, INSTANCES_TABLE, LOGICAL_ROUTING_INTEGRITY_TRIGGER_NAMES,
-    LOGICAL_ROUTING_INTEGRITY_TRIGGERS, MEASUREMENT_ROUTING_TABLE, SERVICE_CONFIG_TABLE,
-    SIGNAL_POINTS_TABLE, SYNC_METADATA_TABLE, TELEMETRY_POINTS_TABLE,
+    LOGICAL_ROUTING_INTEGRITY_TRIGGERS, MEASUREMENT_ROUTING_TABLE, RULE_CHAINS_TABLE,
+    RULE_HISTORY_TABLE, SERVICE_CONFIG_TABLE, SIGNAL_POINTS_TABLE, SYNC_METADATA_TABLE,
+    TELEMETRY_POINTS_TABLE,
 };
 
 use super::file_utils;
-
-// ============================================================================
-// Rules DDL (defined locally since rules are managed by aether)
-// ============================================================================
-
-/// Rules table SQL — mirrors `libs/common::test_utils::schema::RULE_CHAINS_TABLE`.
-///
-/// `id` uses AUTOINCREMENT so deleted rowids are never reused, which prevents
-/// `rule_history` rows from silently being re-bound to a new rule with the
-/// same id. All booleans are stored as INTEGER 1/0 for cross-version SQLite
-/// compatibility; timestamps as TEXT (CURRENT_TIMESTAMP) for consistency
-/// with the rest of the schema.
-const RULE_CHAINS_TABLE: &str = r#"
-    CREATE TABLE IF NOT EXISTS rules (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT NOT NULL,
-        description TEXT,
-        enabled INTEGER DEFAULT 1,
-        priority INTEGER DEFAULT 0,
-        cooldown_ms INTEGER DEFAULT 0,
-        trigger_config TEXT,
-        nodes_json TEXT NOT NULL,
-        flow_json TEXT,
-        format TEXT DEFAULT 'vue-flow',
-        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-        updated_at TEXT DEFAULT CURRENT_TIMESTAMP
-    )
-"#;
-
-/// Rule history table SQL — `rule_id` cascades on rule delete to prevent
-/// orphaned history rows (which would silently rebind under AUTOINCREMENT
-/// ID reuse — see v6 migration notes).
-const RULE_HISTORY_TABLE: &str = r#"
-    CREATE TABLE IF NOT EXISTS rule_history (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        rule_id INTEGER NOT NULL REFERENCES rules(id) ON DELETE CASCADE,
-        triggered_at TEXT NOT NULL,
-        execution_result TEXT,
-        error TEXT
-    )
-"#;
 
 // ============================================================================
 // Schema Version Migration

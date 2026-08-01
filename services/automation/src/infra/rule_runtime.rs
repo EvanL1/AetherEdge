@@ -3,7 +3,6 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use aether_calc::StateStore;
 use aether_ports::{PortError, PortErrorKind, PortResult};
 use aether_rules::RuleScheduler;
 use aether_shm_bridge::{ChannelPointManifestSource, PointWatchEvent, SubscriptionBitmap};
@@ -101,16 +100,16 @@ impl PointWatchRuntime {
 }
 
 /// Owns the only scheduler-to-PointWatch publication path in automation.
-pub struct RuleRuntimeCoordinator<S: StateStore> {
-    scheduler: Arc<RuleScheduler<S>>,
+pub struct RuleRuntimeCoordinator {
+    scheduler: Arc<RuleScheduler>,
     point_watch: Option<PointWatchRuntime>,
     reload_gate: Mutex<()>,
 }
 
-impl<S: StateStore + 'static> RuleRuntimeCoordinator<S> {
+impl RuleRuntimeCoordinator {
     /// Creates a scheduler-only runtime with the tick path always available.
     #[must_use]
-    pub fn new(scheduler: Arc<RuleScheduler<S>>) -> Self {
+    pub fn new(scheduler: Arc<RuleScheduler>) -> Self {
         Self {
             scheduler,
             point_watch: None,

@@ -7,11 +7,10 @@ use aether_ports::{
     AuditOutcome, AuditRecord, AuditSink, ChannelMutation, ChannelMutator, ChannelParameterValue,
     ChannelParameters, ChannelPatch,
 };
-use sha2::{Digest, Sha256};
 
 use crate::{
     ApplicationError, ChannelMutationAcceptance, MANAGE_CHANNEL_CAPABILITY, RequestContext,
-    SafetyPolicy,
+    SafetyPolicy, context::digest,
 };
 
 /// Channel-management facade shared by every application transport.
@@ -181,7 +180,9 @@ fn mutation_audit_detail(mutation: &ChannelMutation) -> String {
         ChannelMutation::Create { definition } => format!(
             "changed_fields=name,description,protocol,parameters,logging,enabled; name_sha256={}; description_sha256={}; protocol_sha256={}; protocol_bytes={}; enabled={}",
             digest(definition.name()),
-            definition.description().map_or("none".to_string(), digest),
+            definition
+                .description()
+                .map_or_else(|| "none".to_string(), digest),
             digest(definition.protocol()),
             definition.protocol().len(),
             definition.enabled()
@@ -224,10 +225,6 @@ fn patch_audit_detail(patch: &ChannelPatch) -> String {
     } else {
         format!("{changed_fields}; {}", values.join("; "))
     }
-}
-
-fn digest(value: &str) -> String {
-    format!("{:x}", Sha256::digest(value.as_bytes()))
 }
 
 fn validate_mutation(mutation: &ChannelMutation) -> Result<(), ApplicationError> {

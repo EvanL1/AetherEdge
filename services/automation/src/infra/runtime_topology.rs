@@ -183,14 +183,11 @@ impl AutomationTopologyGeneration {
 
     /// Rebuilds the transport-neutral rule index and publishes its canonical
     /// points through the service-owned SHM bitmap.
-    pub async fn rebuild_point_watch<S>(
+    pub async fn rebuild_point_watch(
         &self,
-        scheduler: &RuleScheduler<S>,
+        scheduler: &RuleScheduler,
         bitmap: Option<&SubscriptionBitmap>,
-    ) -> bool
-    where
-        S: aether_calc::StateStore + 'static,
-    {
+    ) -> bool {
         let (Ok(bindings), Some(bitmap)) = (self.measurement_route_bindings(), bitmap) else {
             return false;
         };
@@ -314,8 +311,8 @@ impl AutomationTopologyHandle {
         let health_path = health_path.into();
         let parts = CandidateParts::from_snapshot(snapshot);
         let read = Arc::new(ShmReadTopologyGeneration::new_lazy(
-            point_client(&point_path, parts.point_manifest.layout_hash()),
-            health_client(&health_path, parts.health_manifest.layout_hash()),
+            shm_client(&point_path, parts.point_manifest.layout_hash()),
+            shm_client(&health_path, parts.health_manifest.layout_hash()),
             Arc::clone(&parts.point_manifest),
             Arc::clone(&parts.health_manifest),
         )?);
@@ -483,8 +480,8 @@ impl AutomationTopologyHandle {
         let health_manifest = Arc::clone(&parts.health_manifest);
         let read = tokio::task::spawn_blocking(move || {
             ShmReadTopologyGeneration::open(
-                point_client(&point_path, point_manifest.layout_hash()),
-                health_client(&health_path, health_manifest.layout_hash()),
+                shm_client(&point_path, point_manifest.layout_hash()),
+                shm_client(&health_path, health_manifest.layout_hash()),
                 point_manifest,
                 health_manifest,
             )
@@ -521,23 +518,6 @@ impl AutomationTopologyHandle {
             self.notify_change(sequence);
         }
         Ok(changed)
-    }
-
-    /// Revokes all logical command routes after a committed mutation that
-    /// could not be published from a complete SQLite snapshot.
-    ///
-    /// The physical readers and measurement routes remain available. A later
-    /// successful refresh replaces this fail-closed generation and restores
-    /// the commissioned commands.
-    pub async fn revoke_action_routes(&self) {
-        let _refresh = self.refresh_gate.lock().await;
-        self.revoke_action_routes_locked().await;
-    }
-
-    /// Revokes all logical measurement routes after committed publication fails.
-    pub async fn revoke_measurement_routes(&self) {
-        let _refresh = self.refresh_gate.lock().await;
-        self.revoke_measurement_routes_locked().await;
     }
 
     async fn revoke_measurement_routes_locked(&self) -> Arc<AutomationTopologyGeneration> {
@@ -702,11 +682,7 @@ impl PinnedAutomationCommandView {
     }
 }
 
-fn point_client(path: &Path, layout_hash: u64) -> ShmClientConfig {
-    ShmClientConfig::new(path, layout_hash).with_writer_stale_after(WRITER_STALE_AFTER)
-}
-
-fn health_client(path: &Path, layout_hash: u64) -> ShmClientConfig {
+fn shm_client(path: &Path, layout_hash: u64) -> ShmClientConfig {
     ShmClientConfig::new(path, layout_hash).with_writer_stale_after(WRITER_STALE_AFTER)
 }
 

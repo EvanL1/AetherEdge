@@ -8,7 +8,6 @@ use std::sync::{Arc, Mutex};
 use aether_automation::infra::rule_mutation::SqliteRuleMutator;
 use aether_automation::infra::rule_runtime::RuleRuntimeCoordinator;
 use aether_automation::infra::runtime_topology::AutomationTopologyHandle;
-use aether_calc::MemoryStateStore;
 use aether_domain::PointKind;
 use aether_ports::{
     AutomationRuleMutator, AutomationRulesRevision, PortErrorKind, RevisionedRuleMutation,
@@ -28,13 +27,13 @@ async fn rules_pool(max_connections: u32) -> (tempfile::TempDir, sqlx::SqlitePoo
         .connect(&format!("sqlite://{}?mode=rwc", path.display()))
         .await
         .expect("rules database");
-    common::test_utils::schema::init_rules_schema(&pool)
+    common::schema::init_rules_schema(&pool)
         .await
         .expect("rules schema");
     (directory, pool)
 }
 
-fn scheduler(pool: &sqlx::SqlitePool) -> Arc<RuleScheduler<MemoryStateStore>> {
+fn scheduler(pool: &sqlx::SqlitePool) -> Arc<RuleScheduler> {
     Arc::new(RuleScheduler::new(
         Arc::new(MemoryRuleLiveState::new()),
         pool.clone(),
@@ -100,10 +99,10 @@ async fn legacy_rust_rule_mutation_reads_the_current_head_and_uses_the_cas_path(
 #[tokio::test]
 async fn point_watch_publication_failure_is_gated_and_a_later_reload_recovers() {
     let (_database_directory, pool) = rules_pool(1).await;
-    common::test_utils::schema::init_automation_schema(&pool)
+    common::schema::init_automation_schema(&pool)
         .await
         .expect("automation schema");
-    common::test_utils::schema::init_io_schema(&pool)
+    common::schema::init_io_schema(&pool)
         .await
         .expect("IO schema");
     sqlx::query(

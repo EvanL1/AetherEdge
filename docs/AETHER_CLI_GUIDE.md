@@ -38,7 +38,6 @@ aether doctor
   - [services - Docker 服务](#services---docker-服务)
   - [logs - 日志管理](#logs---日志管理)
 - [调试工具](#调试工具)
-  - [rtdb - 可选 Redis 镜像操作](#rtdb---可选-redis-镜像操作)
   - [shm - 共享内存](#shm---共享内存)
   - [doctor - 系统诊断](#doctor---系统诊断)
 - [环境变量](#环境变量)
@@ -406,46 +405,6 @@ aether logs get all
 
 ## 调试工具
 
-### rtdb - 可选 Redis 镜像操作
-
-仅用于检查显式启用的 下游 Redis `StateMirror` 适配器。该镜像不是实时状态权威面；
-实时值应通过 SHM 或服务 API 读取。
-
-```bash
-# 获取键值
-aether rtdb get <key>
-aether rtdb get <key> --field <field>  # Hash 字段
-
-# 设置键值
-aether rtdb set <key> <value>
-aether rtdb set <key> <value> --field <field>
-
-# 扫描键
-aether rtdb scan <pattern> [--limit 100]
-
-# 删除键
-aether rtdb del <key1> [key2...]
-aether rtdb del <key> --force
-
-# 检查键类型和内容
-aether rtdb inspect <key>
-aether rtdb inspect <key> --full
-
-# 显示常用键模式
-aether rtdb patterns
-```
-
-**扩展常见镜像键模式：**
-
-| 模式 | 说明 |
-|------|------|
-| `inst:<id>:M` | 实例测量点 Hash |
-| `inst:<id>:A` | 实例动作点 Hash |
-| `io:<ch_id>:T` | 通道遥测点 Hash |
-| `io:<ch_id>:S` | 通道信号点 Hash |
-
-具体键集合由下游镜像适配器配置决定，不应被核心服务用作路由或实时状态来源。
-
 ### shm - 共享内存
 
 零延迟共享内存 CLI（类似 mysql-cli）。
@@ -508,7 +467,6 @@ aether doctor --json
 | 检查项 | 说明 |
 |--------|------|
 | Docker Engine | Docker 是否运行 |
-| Redis（可选） | 已启用 `redis` profile 时的镜像容器状态和连接 |
 | aether-io | 通信服务健康状态 |
 | aether-automation | 模型服务健康状态 |
 | Database | SQLite 数据库状态 |
@@ -519,7 +477,6 @@ aether doctor --json
 
 ```
 ✓ Docker Engine    Running (v24.0.7)
-○ Redis            Optional profile not enabled
 ✓ aether-io       Healthy (port 6001)
 ✓ aether-automation Healthy (port 6002)
 ✓ Database         OK (last sync: 2024-01-15 10:30)
@@ -537,8 +494,7 @@ Aether 支持通过环境变量配置，所有变量使用 `AETHER_` 前缀：
 |------|------|--------|
 | `AETHER_CONFIG_PATH` | 配置文件目录 | 自动检测 |
 | `AETHER_DATA_PATH` | 数据文件目录 | 自动检测 |
-| `AETHER_REDIS_URL` | 可选 Redis 镜像连接 URL | `redis://localhost:6379` |
-| `AETHER_API_URL` | API 网关基址（CLI 数据面与 MCP 的唯一远程边界，ADR-0021） | `http://localhost:6005` |
+| `AETHER_API_URL` | API 网关基址（CLI 数据面与 MCP 的唯一远程边界） | `http://localhost:6005` |
 | `AETHER_ACCESS_TOKEN` | 网关访问令牌；查询用 Viewer 即可，受治理写操作需 Admin/Engineer | 未设置 |
 
 ---
@@ -592,9 +548,6 @@ aether services logs aether-io --follow
 
 # 3. 切换到 debug 模式
 aether logs level all debug
-
-# 4. 如启用了可选 Redis 镜像，检查镜像数据
-aether rtdb scan "inst:*"
 
 # 5. 监控实时数据
 aether shm top
@@ -659,17 +612,4 @@ aether services logs aether-io --tail 200
 
 # 检查端口占用
 lsof -i :6001
-```
-
-### 问题：可选 Redis 镜像命令不可用
-
-```bash
-# 显式启动镜像 profile
-docker compose --profile redis up -d
-
-# 检查环境变量
-echo $AETHER_REDIS_URL
-
-# 检查镜像连接
-aether --verbose rtdb scan "inst:*"
 ```

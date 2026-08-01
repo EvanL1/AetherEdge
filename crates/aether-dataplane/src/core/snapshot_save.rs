@@ -2,8 +2,9 @@
 //!
 //! Pure-infra: takes raw mmap bytes + slot count, produces a snapshot
 //! file at the given path. Knows nothing about channels, point types,
-//! instances, or routing — the restore-side adapter (in `unified_shm`)
-//! is the one that re-derives business semantics from the byte stream.
+//! instances, or routing. `core::snapshot_load` validates and reads the
+//! format back; re-deriving business semantics from those slots is the
+//! caller's job, not this module's.
 //!
 //! # Why per-slot seqlock-aware serialization
 //!
@@ -11,8 +12,8 @@
 //! writer was mid-update through a seqlock at snapshot time, the
 //! snapshot captured torn bytes (new value + old raw, or seq=odd
 //! mid-write) and preserved them across restart — a stale or
-//! impossible reading would then be restored to SHM and propagate
-//! through Redis until overwritten by the next live write.
+//! impossible reading would then be restored to SHM and propagate to
+//! every reader until overwritten by the next live write.
 //!
 //! Now each slot is read via `try_load_consistent()`. Torn reads
 //! (writer concurrently mid-update) become unwritten-NaN sentinels in

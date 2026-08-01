@@ -749,13 +749,6 @@ impl Clone for LogContext {
     }
 }
 
-/// Trait for protocols that support logging.
-pub trait LoggableProtocol {
-    fn set_log_handler(&mut self, handler: Arc<dyn ChannelLogHandler>);
-    fn set_log_config(&mut self, config: ChannelLogConfig);
-    fn log_config(&self) -> &ChannelLogConfig;
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

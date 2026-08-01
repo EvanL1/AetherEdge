@@ -230,12 +230,7 @@ pub struct StorageTestRequest {
 
 impl StorageTestRequest {
     pub fn addr(&self) -> String {
-        let default_port = if self.backend == "influxdb" {
-            8086
-        } else {
-            5432
-        };
-        format!("{}:{}", self.host, self.port.unwrap_or(default_port))
+        format!("{}:{}", self.host, self.port.unwrap_or(5432))
     }
 
     #[cfg(feature = "postgres-storage")]

@@ -56,8 +56,6 @@ utoipa = { workspace = true }
 [features]
 default = ["openapi"]
 openapi = ["common/openapi"]
-# Deprecated build-compatibility alias; Swagger UI is gateway-only.
-swagger-ui = ["openapi"]
 
 [dev-dependencies]
 tempfile = { workspace = true }

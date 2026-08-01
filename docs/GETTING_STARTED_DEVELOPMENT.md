@@ -27,7 +27,6 @@
 |------|------|----------|
 | **Docker** | 完整 Compose 发行版与可选 profile | [下载 Docker Desktop](https://docs.docker.com/get-docker/) |
 | **Node.js / pnpm** | 可选 Web 客户端 | `npm install -g pnpm` |
-| **redis-cli** | 可选 下游 Redis `StateMirror` 适配器调试 | `brew install redis` |
 | **sqlitebrowser** | SQLite 可视化 | `brew install --cask db-browser-for-sqlite` |
 | **just** | 任务运行器 | `brew install just` |
 
@@ -82,7 +81,6 @@ chmod 600 .env
 # AETHER_BOOTSTRAP_ADMIN_PASSWORD=<另一个随机值>
 # AETHER_CONFIG_PATH=./data/config
 # AETHER_DATA_PATH=./data
-# 仅启用可选下游 Redis StateMirror 适配器时才需要 AETHER_REDIS_URL
 ```
 
 ### 步骤 2：构建项目
@@ -113,7 +111,6 @@ cargo build --release --workspace
 docker compose up -d
 
 # 可选下游适配器必须显式选择 profile
-docker compose --profile redis up -d
 docker compose --profile postgres-storage up -d
 
 # 验收本地六进程、SQLite 与 SHM writer heartbeat
@@ -169,10 +166,8 @@ AetherEdge/
 ├── libs/                    # 共享 Rust 库
 │   ├── aether-core/       # 线协议类型与编解码器（no_std）
 │   ├── aether-routing/    # 数据流路由
-│   ├── aether-infra/      # 遗留基础设施辅助层（SQLite 与可选外部存储）
 │   ├── aether-calc/       # 表达式求值引擎
 │   ├── aether-rules/      # 规则引擎
-│   ├── aether-sim/        # 波形生成器
 │   ├── aether-schema-macro/ # SQL DDL 过程宏
 │   ├── common/             # 服务引导与共享工具
 │   └── errors/             # 统一错误类型
@@ -284,22 +279,6 @@ git push -u origin feature/my-feature
 
 ## 常见问题
 
-### Q: 可选 Redis 镜像连接失败
-
-```
-Error: Failed to connect to Redis at redis://localhost:6379
-```
-
-核心服务不依赖 Redis；未启用镜像时可忽略这类下游适配器诊断。确实需要镜像时：
-
-```bash
-# 显式启动可选 profile
-docker compose --profile redis up -d
-
-# 检查可选容器
-docker compose --profile redis ps
-```
-
 ### Q: 数据库初始化失败
 
 ```
@@ -351,16 +330,12 @@ export RUSTC_WRAPPER=sccache
 
 ### Q: 测试失败但本地服务正常
 
-**说明：** 默认测试使用内存或 SHM fixture，不需要 Redis。
+**说明：** 测试使用内存或 SHM fixture，不依赖任何外部服务。
 
 **解决方案：**
 ```bash
 # 确保测试隔离
 cargo test -- --test-threads=1
-
-# 清除误设的可选镜像地址，检查是否有环境依赖
-unset AETHER_REDIS_URL
-cargo test
 ```
 
 ### Q: 远程应用无法连接运行时

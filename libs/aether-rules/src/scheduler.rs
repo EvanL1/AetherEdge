@@ -17,7 +17,7 @@ use crate::logger::RuleLoggerManager;
 use crate::point_watch_dispatcher::MeasurementRouteBinding;
 use crate::repository;
 use crate::types::Rule;
-use aether_calc::StateStore;
+use aether_calc::MemoryStateStore;
 use sqlx::SqlitePool;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -223,12 +223,12 @@ impl crate::point_watch_dispatcher::RuleSubscriptionInfo for ScheduledRule {
 
 /// Rule Scheduler - manages periodic rule execution
 ///
-/// Generic over `S: StateStore` for stateful calculation memory. Live point
-/// values always come from the injected SHM-backed [`RuleLiveState`].
-pub struct RuleScheduler<S: StateStore = aether_calc::MemoryStateStore> {
+/// Stateful calculation memory lives in the in-process [`MemoryStateStore`].
+/// Live point values always come from the injected SHM-backed [`RuleLiveState`].
+pub struct RuleScheduler {
     live_state: Arc<dyn RuleLiveState>,
     /// Rule executor instance with configurable state store
-    executor: Arc<RuleExecutor<S>>,
+    executor: Arc<RuleExecutor>,
     /// SQLite pool for rule persistence
     pool: SqlitePool,
     /// Cached rules with their trigger configs
@@ -254,7 +254,7 @@ pub struct RuleScheduler<S: StateStore = aether_calc::MemoryStateStore> {
         Option<Arc<std::sync::Mutex<crate::point_watch_dispatcher::PointWatchDispatcher>>>,
 }
 
-impl RuleScheduler<aether_calc::MemoryStateStore> {
+impl RuleScheduler {
     /// Create a new rule scheduler with configurable tick interval (uses MemoryStateStore)
     ///
     /// # Arguments
@@ -279,19 +279,17 @@ impl RuleScheduler<aether_calc::MemoryStateStore> {
             pw_dispatcher: None,
         }
     }
-}
 
-impl<S: StateStore + 'static> RuleScheduler<S> {
-    /// Create with custom StateStore and full SHM support
+    /// Create with an externally owned state store and full SHM support
     ///
-    /// Use this constructor with a custom local state store.
+    /// Use this constructor when the composition root owns the state store.
     #[allow(clippy::too_many_arguments)]
     pub fn with_state_store<L>(
         live_state: Arc<L>,
         pool: SqlitePool,
         tick_ms: u64,
         log_root: PathBuf,
-        state_store: Arc<S>,
+        state_store: Arc<MemoryStateStore>,
         action_commands: Option<Arc<dyn RuleActionCommandFacade>>,
     ) -> Self
     where
@@ -943,7 +941,7 @@ impl<S: StateStore + 'static> RuleScheduler<S> {
 }
 
 #[async_trait::async_trait]
-impl<S: StateStore + 'static> aether_ports::AutomationRuleExecutor for RuleScheduler<S> {
+impl aether_ports::AutomationRuleExecutor for RuleScheduler {
     async fn execute(
         &self,
         rule_id: aether_domain::RuleId,
@@ -1183,10 +1181,7 @@ mod tests {
         pool
     }
 
-    fn failing_action_scheduler(
-        pool: SqlitePool,
-        log_root: PathBuf,
-    ) -> RuleScheduler<aether_calc::MemoryStateStore> {
+    fn failing_action_scheduler(pool: SqlitePool, log_root: PathBuf) -> RuleScheduler {
         RuleScheduler::with_state_store(
             Arc::new(crate::MemoryRuleLiveState::new()),
             pool,

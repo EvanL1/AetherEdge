@@ -29,8 +29,8 @@ services/     io, automation, history, api, uplink and alarm processes
 tools/        aether CLI/MCP and the protocol simulator
 examples/     minimal generic and compatibility composition proofs
 packs/        Pack manifests
-contracts/    pinned AetherContracts release consumed under ADR-0018
-docs/         current concepts, guides, references and ADRs
+contracts/    pinned AetherContracts release
+docs/         current concepts, guides and references
 ai/           generated agent catalog and the safety-policy authority
 skills/       the repository-owned Agent Skill
 firmware/     separately targeted embedded workspace
@@ -39,11 +39,10 @@ firmware/     separately targeted embedded workspace
 The unified documentation site source and deployment live in
 [`EvanL1/AetherDocs`](https://github.com/EvanL1/AetherDocs).
 
-Historical plans and scratch design material must stay outside GitHub. Preserve
-accepted decisions in ADRs instead.
+Historical plans and scratch design material must stay outside GitHub.
 
-Current authority is this file, accepted ADRs, the runtime manifest, OpenAPI,
-and the active Pack manifests.
+Current authority is this file, the runtime manifest, OpenAPI, and the active
+Pack manifests.
 
 ## Architecture Boundaries
 
@@ -105,7 +104,7 @@ domain <- ports <- application <- services/interfaces
   documentation site; internal Markdown uses GitHub; machine resources use
   Raw GitHub.
 - `llms.txt` is generated from that catalog and must cover every catalog entry
-  exactly once. Core task routes come first; ADRs, crates, libraries, service
+  exactly once. Core task routes come first; crates, libraries, service
   adapters, and other deep context remain discoverable under `Optional`.
 - Update both generated files with
   `node scripts/build-agent-docs.mjs --write`; never edit them by hand.
@@ -146,8 +145,8 @@ surface and deliberately does not carry this index or a project status report.
 Local verification is risk-proportional. Always run the narrowest affected
 check first, and stop once the changed behavior is covered:
 
-- Documentation or ADR-only changes: validate the affected links, numbering,
-  and documentation checks. Do not run Cargo commands.
+- Documentation-only changes: validate the affected links and documentation
+  checks. Do not run Cargo commands.
 - CI, YAML, or shell-only changes: parse or lint the affected files and run
   the directly related script tests. Do not compile the Rust workspace.
 - A single Rust crate: run formatting plus that crate's focused Clippy and
@@ -179,6 +178,6 @@ CI runs; retrieve detailed logs only for failures or when the user asks.
 
 - Do not mix frontend work into edge-kernel changes.
 - Do not edit generated files; regenerate them through the documented command.
-- Record changes to dependency direction or data authority as an ADR.
+- Changes to dependency direction or data authority must update this file.
 - Keep compatibility shims during staged migration and state their removal
-  criteria in the relevant ADR.
+  criteria alongside the shim.

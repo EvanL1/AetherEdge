@@ -2,7 +2,6 @@
 
 use std::sync::Arc;
 
-use aether_domain::PointKind;
 use aether_ports::{
     ActionRoutingMutation, ActionRoutingTarget, AuditOutcome, AuditRecord, AuditSink,
     AutomationActionRoutingMutator, RevisionedActionRoutingMutation,
@@ -10,7 +9,7 @@ use aether_ports::{
 
 use crate::{
     ActionRoutingMutationAcceptance, ApplicationError, MANAGE_ROUTING_CAPABILITY, RequestContext,
-    SafetyPolicy,
+    SafetyPolicy, context::point_kind_name,
 };
 
 /// Action-routing management facade shared by every application transport.
@@ -194,6 +193,18 @@ impl ActionRoutingApplication {
     }
 }
 
+/// Carries an action-routing mutation that either arrived with a
+/// caller-supplied revision or came through the revisionless compatibility
+/// surface.
+///
+/// # Removal criteria
+///
+/// Same staged migration as [`PendingRuleMutation`]: `Legacy` backs the
+/// published `AutomationActionRoutingMutator::mutate`, no first-party route
+/// constructs it, and the adapter upgrades such a call to the CAS path by
+/// reading the current head. Remove this variant,
+/// `ActionRoutingApplication::mutate`, and the port's `mutate` method
+/// together with the rule-side shim, under the same three conditions.
 enum PendingActionRoutingMutation {
     Legacy(ActionRoutingMutation),
     Revisioned(RevisionedActionRoutingMutation),
@@ -264,14 +275,5 @@ fn mutation_audit_detail(
         ActionRoutingMutation::DeleteAllActions => {
             format!("expected_revision={expected}; delete_scope=all_actions")
         },
-    }
-}
-
-const fn point_kind_name(kind: PointKind) -> &'static str {
-    match kind {
-        PointKind::Telemetry => "telemetry",
-        PointKind::Status => "status",
-        PointKind::Command => "command",
-        PointKind::Action => "action",
     }
 }

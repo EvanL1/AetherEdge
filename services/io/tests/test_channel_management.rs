@@ -23,13 +23,11 @@ use axum::{
     body::Body,
     http::{Request, StatusCode},
 };
-use http_body_util::BodyExt;
 use serde_json::json;
 use std::sync::Arc;
+use support::{ADMIN_ACCESS_TOKEN, TEST_JWT_SECRET};
 use tower::ServiceExt;
 
-const TEST_JWT_SECRET: &str = "0123456789abcdef0123456789abcdef";
-const ADMIN_ACCESS_TOKEN: &str = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyX2lkIjo3LCJyb2xlIjoiQWRtaW4iLCJ0eXBlIjoiYWNjZXNzIiwiaWF0IjoxNzAwMDAwMDAwLCJleHAiOjQxMDI0NDQ4MDB9.JtjQvDBo7j0bLOxwed6yC9-M9qFCloc4H2Dt0LjzF9E";
 const TEST_REQUEST_ID: &str = "018f0000-0000-7000-8000-000000000051";
 
 /// Create test SQLite database with required schema
@@ -38,8 +36,8 @@ async fn create_test_database() -> Result<sqlx::SqlitePool> {
         .max_connections(1)
         .connect("sqlite::memory:")
         .await?;
-    common::test_utils::schema::init_io_schema(&pool).await?;
-    common::test_utils::schema::init_automation_schema(&pool).await?;
+    common::schema::init_io_schema(&pool).await?;
+    common::schema::init_automation_schema(&pool).await?;
     sqlx::query(
         "CREATE TABLE IF NOT EXISTS json_point_mappings (\
              id INTEGER PRIMARY KEY AUTOINCREMENT,\
@@ -109,40 +107,14 @@ async fn make_request(
     uri: &str,
     body: Option<serde_json::Value>,
 ) -> Result<(StatusCode, serde_json::Value)> {
-    let mut req_builder = Request::builder()
+    let req_builder = Request::builder()
         .method(method)
         .uri(uri)
         .header("authorization", format!("Bearer {ADMIN_ACCESS_TOKEN}"))
         .header("x-request-id", TEST_REQUEST_ID)
         .header("x-aether-confirmed", "true");
 
-    let body_bytes = if let Some(json_body) = body {
-        req_builder = req_builder.header("content-type", "application/json");
-        serde_json::to_vec(&json_body)?
-    } else {
-        Vec::new()
-    };
-
-    let request = req_builder.body(Body::from(body_bytes))?;
-
-    let response = app.clone().oneshot(request).await?;
-    let status = response.status();
-
-    let body_bytes = response.into_body().collect().await?.to_bytes();
-    let response_json: serde_json::Value = if body_bytes.is_empty() {
-        json!({})
-    } else {
-        match serde_json::from_slice(&body_bytes) {
-            Ok(json) => json,
-            Err(e) => {
-                eprintln!("JSON parse error on {} {}: {}", method, uri, e);
-                eprintln!("Response body: {:?}", std::str::from_utf8(&body_bytes));
-                return Err(e.into());
-            },
-        }
-    };
-
-    Ok((status, response_json))
+    support::send(app, req_builder, body).await
 }
 
 // ============================================================================

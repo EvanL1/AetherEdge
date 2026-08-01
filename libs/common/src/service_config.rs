@@ -26,18 +26,6 @@ use anyhow::{Context, Result};
 // Default configuration constants
 // ============================================================================
 
-/// Default Redis host address
-#[cfg(feature = "redis")]
-pub const DEFAULT_REDIS_HOST: &str = "127.0.0.1";
-
-/// Default Redis port
-#[cfg(feature = "redis")]
-pub const DEFAULT_REDIS_PORT: u16 = 6379;
-
-/// Default Redis connection URL
-#[cfg(feature = "redis")]
-pub const DEFAULT_REDIS_URL: &str = "redis://127.0.0.1:6379";
-
 /// Default API bind host (listen on all interfaces)
 /// Internal service APIs are host-local by default. The authenticated API
 /// gateway opts into a public bind independently.
@@ -78,28 +66,30 @@ pub fn automation_url() -> String {
     env::var(ENV_AUTOMATION_URL).unwrap_or_else(|_| DEFAULT_AUTOMATION_URL.to_string())
 }
 
-// ============================================================================
-// Redis routing keys (for cross-service data routing)
-// ============================================================================
-
-/// Redis routing keys for data flow between services
+/// Build the socket address a service listens on.
 ///
-/// These keys are used for routing data between communication service (io)
-/// and model calculation service (automation). They enable bidirectional data flow:
-/// - Forward: measurements from devices → model calculations (c2m)
-/// - Reverse: control actions from models → devices (m2c)
-#[cfg(feature = "redis")]
-pub struct RedisRoutingKeys;
+/// A bare IPv6 literal is bracketed first. `format!("{host}:{port}")` cannot
+/// express an IPv6 address — `::1:6007` is not valid syntax — so a service
+/// configured with `API_HOST=::1` would fail to parse before it ever reached
+/// the listener.
+pub fn bind_address(host: &str, port: u16) -> anyhow::Result<std::net::SocketAddr> {
+    let literal = if host.contains(':') && !host.starts_with('[') {
+        format!("[{host}]:{port}")
+    } else {
+        format!("{host}:{port}")
+    };
+    literal
+        .parse()
+        .map_err(|error| anyhow::anyhow!("invalid bind address {literal}: {error}"))
+}
 
-#[cfg(feature = "redis")]
-impl RedisRoutingKeys {
-    /// Channel to Model routing table: "route:c2m"
-    /// Maps io channel keys to automation instance keys for measurements/signals
-    pub const CHANNEL_TO_MODEL: &'static str = "route:c2m";
-
-    /// Model to Channel routing table: "route:m2c"
-    /// Maps automation action keys to io channel keys for control/adjustment commands
-    pub const MODEL_TO_CHANNEL: &'static str = "route:m2c";
+/// Read `name` from the environment, falling back to `default` when the
+/// variable is unset or does not parse.
+pub fn env_or<T: FromStr>(name: &str, default: T) -> T {
+    env::var(name)
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(default)
 }
 
 // ============================================================================
@@ -147,24 +137,6 @@ pub struct ApiConfig {
 
     /// Listen port (no default - set by service-specific config)
     pub port: u16,
-}
-
-// ============================================================================
-// Redis configuration
-// ============================================================================
-
-/// Redis connection configuration
-#[cfg(feature = "redis")]
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(JsonSchema))]
-pub struct RedisConfig {
-    /// Redis connection URL
-    #[serde(default = "default_redis_url")]
-    pub url: String,
-
-    /// Whether Redis is enabled
-    #[serde(default = "crate::serde_helpers::bool_true")]
-    pub enabled: bool,
 }
 
 // ============================================================================
@@ -220,11 +192,6 @@ fn default_api_host() -> String {
     DEFAULT_API_HOST.to_string()
 }
 
-#[cfg(feature = "redis")]
-fn default_redis_url() -> String {
-    env::var("REDIS_URL").unwrap_or_else(|_| DEFAULT_REDIS_URL.to_string())
-}
-
 fn default_log_level() -> String {
     env::var("RUST_LOG").unwrap_or_else(|_| "info".to_string())
 }
@@ -250,16 +217,6 @@ fn default_max_files() -> u32 {
 // ============================================================================
 // Default implementations
 // ============================================================================
-
-#[cfg(feature = "redis")]
-impl Default for RedisConfig {
-    fn default() -> Self {
-        Self {
-            url: default_redis_url(),
-            enabled: true,
-        }
-    }
-}
 
 impl Default for LoggingConfig {
     fn default() -> Self {
@@ -388,30 +345,16 @@ pub enum ValidationLevel {
 /// Core trait for configuration validation
 pub trait ConfigValidator: Send + Sync {
     /// Validate syntax (YAML/CSV format)
-    fn validate_syntax(&self) -> Result<ValidationResult> {
-        let mut result = ValidationResult::new(ValidationLevel::Syntax);
-        result.add_warning("Syntax validation not implemented for this config type".to_string());
-        Ok(result)
-    }
+    fn validate_syntax(&self) -> Result<ValidationResult>;
 
     /// Validate schema (required fields, types)
-    fn validate_schema(&self) -> Result<ValidationResult> {
-        let mut result = ValidationResult::new(ValidationLevel::Schema);
-        result.add_warning("Schema validation not implemented for this config type".to_string());
-        Ok(result)
-    }
+    fn validate_schema(&self) -> Result<ValidationResult>;
 
     /// Validate business rules
     fn validate_business(&self) -> Result<ValidationResult>;
 
     /// Validate runtime environment
-    fn validate_runtime(&self) -> Result<ValidationResult> {
-        let mut result = ValidationResult::new(ValidationLevel::Runtime);
-        result.add_warning(
-            "Runtime validation not applicable for configuration management".to_string(),
-        );
-        Ok(result)
-    }
+    fn validate_runtime(&self) -> Result<ValidationResult>;
 
     /// Perform full validation up to specified level
     fn validate(&self, up_to_level: ValidationLevel) -> Result<ValidationResult> {
@@ -569,83 +512,6 @@ impl<T: DeserializeOwned + ConfigValidator> ConfigValidator for GenericValidator
     }
 }
 
-/// Helper validation functions
-pub mod helpers {
-    use super::*;
-
-    /// Validate port number range
-    pub fn validate_port(port: u16, service: &str) -> Result<()> {
-        if port < 1024 {
-            return Err(anyhow::anyhow!(
-                "{} port {} is in privileged range (< 1024)",
-                service,
-                port
-            ));
-        }
-        Ok(())
-    }
-
-    /// Validate IP address format
-    pub fn validate_ip(ip: &str) -> Result<()> {
-        use std::net::IpAddr;
-        ip.parse::<IpAddr>()
-            .map_err(|_| anyhow::anyhow!("Invalid IP address: {}", ip))?;
-        Ok(())
-    }
-
-    /// Check if a port is available for binding
-    pub fn check_port_available(port: u16) -> Result<()> {
-        use std::net::TcpListener;
-
-        match TcpListener::bind(("127.0.0.1", port)) {
-            Ok(_) => Ok(()),
-            Err(e) => Err(anyhow::anyhow!("Port {} is not available: {}", port, e)),
-        }
-    }
-
-    /// Test Redis connection
-    #[cfg(feature = "redis")]
-    pub async fn test_redis_connection(url: &str) -> Result<()> {
-        use redis::aio::MultiplexedConnection;
-        use redis::cmd;
-
-        let client =
-            redis::Client::open(url).map_err(|e| anyhow::anyhow!("Invalid Redis URL: {}", e))?;
-
-        let mut con: MultiplexedConnection = client
-            .get_multiplexed_tokio_connection()
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to connect to Redis: {}", e))?;
-
-        let _: String = cmd("PING")
-            .query_async(&mut con)
-            .await
-            .map_err(|e| anyhow::anyhow!("Redis ping failed: {}", e))?;
-
-        Ok(())
-    }
-
-    /// Check database file accessibility
-    pub fn check_database_access(db_path: &std::path::Path) -> Result<()> {
-        if !db_path.exists() {
-            return Err(anyhow::anyhow!(
-                "Database file not found: {}",
-                db_path.display()
-            ));
-        }
-
-        let metadata = std::fs::metadata(db_path)?;
-        if metadata.permissions().readonly() {
-            return Err(anyhow::anyhow!(
-                "Database file is read-only: {}",
-                db_path.display()
-            ));
-        }
-
-        Ok(())
-    }
-}
-
 // ============================================================================
 // Validation implementations for common configs
 // ============================================================================
@@ -680,38 +546,17 @@ impl ApiConfig {
 
     /// Validate port availability (runtime check)
     pub fn validate_runtime(&self, result: &mut ValidationResult) {
-        if let Err(e) = helpers::check_port_available(self.port) {
+        if let Err(e) = check_port_available(self.port) {
             result.add_error(format!("Port {} not available: {}", self.port, e));
         }
     }
 }
 
-#[cfg(feature = "redis")]
-impl RedisConfig {
-    /// Validate Redis configuration
-    pub fn validate(&self, result: &mut ValidationResult) {
-        if self.url.is_empty() {
-            result.add_error("Redis URL cannot be empty".to_string());
-        } else if !self.url.starts_with("redis://")
-            && !self.url.starts_with("rediss://")
-            && !self.url.starts_with("unix://")
-            && !self.url.starts_with("redis+unix://")
-        {
-            result.add_warning(
-                "Redis URL should start with redis://, rediss://, unix://, or redis+unix://"
-                    .to_string(),
-            );
-        }
-    }
-
-    /// Validate Redis connectivity (runtime check)
-    #[cfg(feature = "redis")]
-    pub async fn validate_runtime(&self, result: &mut ValidationResult) {
-        if self.enabled
-            && let Err(e) = helpers::test_redis_connection(&self.url).await
-        {
-            result.add_error(format!("Redis connection failed: {}", e));
-        }
+/// Reports whether the port can still be bound on loopback.
+fn check_port_available(port: u16) -> Result<()> {
+    match std::net::TcpListener::bind(("127.0.0.1", port)) {
+        Ok(_) => Ok(()),
+        Err(e) => Err(anyhow::anyhow!("Port {} is not available: {}", port, e)),
     }
 }
 
