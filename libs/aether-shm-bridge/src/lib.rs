@@ -52,7 +52,7 @@ pub use manifest::{
 };
 #[cfg(unix)]
 pub use point_watch::PointWatchPublisher;
-pub use read_topology::{ShmReadTopologyGeneration, ShmReadTopologyHandle};
+pub use read_topology::ShmReadTopologyGeneration;
 pub use runtime::{ShmRuntimeConfig, ShmWriterGeneration, ShmWriterHandle};
 pub use topology_commit::{
     TopologyPublicationCommit, TopologyPublicationGuard, begin_topology_publication,

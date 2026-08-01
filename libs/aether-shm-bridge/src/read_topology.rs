@@ -5,7 +5,6 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use aether_ports::{PortError, PortErrorKind, PortResult};
-use arc_swap::ArcSwap;
 
 use crate::topology_commit::{
     TopologyPublicationCommit, acquire_authority_pair, acquire_topology_authority,
@@ -238,32 +237,6 @@ impl ShmReadTopologyGeneration {
     #[must_use]
     pub fn health_writer_generation(&self) -> u64 {
         self.health_writer_generation.load(Ordering::Acquire)
-    }
-}
-
-/// Atomically replaceable read-side topology generation.
-pub struct ShmReadTopologyHandle {
-    current: ArcSwap<ShmReadTopologyGeneration>,
-}
-
-impl ShmReadTopologyHandle {
-    /// Creates a handle, typically with a lazy startup generation.
-    #[must_use]
-    pub fn new(initial: Arc<ShmReadTopologyGeneration>) -> Self {
-        Self {
-            current: ArcSwap::new(initial),
-        }
-    }
-
-    /// Pins one coherent generation for an entire logical read operation.
-    #[must_use]
-    pub fn load(&self) -> Arc<ShmReadTopologyGeneration> {
-        self.current.load_full()
-    }
-
-    /// Validates and publishes a complete replacement generation.
-    pub fn publish(&self, candidate: Arc<ShmReadTopologyGeneration>) -> PortResult<()> {
-        candidate.with_validated_authority(|| self.current.store(candidate.clone()))
     }
 }
 
