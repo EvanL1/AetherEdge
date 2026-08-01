@@ -363,4 +363,4 @@ aether --json doctor
 ## 联系支持
 
 - **Issues**: https://github.com/EvanL1/AetherEdge/issues
-- **文档**: https://docs.aetheriot.dev
+- **文档**: https://docs.aetheriot.ai

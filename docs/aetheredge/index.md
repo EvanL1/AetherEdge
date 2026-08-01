@@ -33,6 +33,6 @@ migration.
 
 Start by choosing the matching [user journey](../overview/user-journeys.md),
 then follow [Getting Started](../guides/getting-started.md) for a safe-empty
-runtime or the [Agent Quickstart](https://docs.aetheriot.dev/agent-quickstart/)
+runtime or the [Agent Quickstart](https://docs.aetheriot.ai/agent-quickstart/)
 for a read-only assistant workflow. Existing deployments can use the
 [migration guide](../migration/aetheriot-to-aetheredge.md).

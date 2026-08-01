@@ -274,7 +274,7 @@ print_operator_next_steps() {
     echo "  3. Confirm that channels, instances, and rules are empty."
     echo "  4. Create one disabled channel, map its points, and prove read-only data."
     echo "  5. Enable hardware or behavior only after review and explicit confirmation."
-    echo "  Guide: https://docs.aetheriot.dev/overview/user-journeys/"
+    echo "  Guide: https://docs.aetheriot.ai/overview/user-journeys/"
 }
 
 yaml_escape_double_quoted_string() {

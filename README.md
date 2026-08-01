@@ -6,7 +6,10 @@
 [![Version](https://img.shields.io/badge/version-0.0.1-yellow.svg)](https://github.com/EvanL1/AetherEdge/releases)
 [![Status](https://img.shields.io/badge/status-beta-orange.svg)](https://github.com/EvanL1/AetherEdge/releases)
 
-**Documentation:** [docs.aetheriot.dev](https://docs.aetheriot.dev/) ·
+**Product site:** [aetheriot.ai](https://aetheriot.ai/) ·
+**Developer site:** [aetheriot.dev](https://aetheriot.dev/)
+
+**Documentation:** [docs.aetheriot.ai](https://docs.aetheriot.ai/) ·
 [Getting started](docs/guides/getting-started.md) ·
 [User journeys](docs/overview/user-journeys.md) ·
 [Connect devices](docs/guides/connect-devices.md) ·

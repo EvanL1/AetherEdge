@@ -869,7 +869,7 @@ assert_contains "$BARE_METAL_INSTALLER" 'AETHER_ALLOW_PUBLIC_REGISTRATION'
 assert_contains "$BARE_METAL_INSTALLER" 'Change the bootstrap administrator password immediately'
 for installer in "$DOCKER_INSTALLER" "$BARE_METAL_INSTALLER"; do
     assert_contains "$installer" 'prove the safe-empty runtime before commissioning hardware'
-    assert_contains "$installer" 'https://docs.aetheriot.dev/overview/user-journeys/'
+    assert_contains "$installer" 'https://docs.aetheriot.ai/overview/user-journeys/'
 done
 
 echo "Testing user-facing Docker paths match the installed layout..."
