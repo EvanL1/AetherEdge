@@ -1,7 +1,7 @@
 //! IEC 60870-5-104 protocol adapter.
 //!
 //! This module provides the `Iec104Channel` adapter that integrates
-//! `voltage_iec104` with the protocol layer's `Protocol` and `EventDrivenProtocol` traits.
+//! `voltage_iec104` with the protocol layer's `ChannelRuntime` trait.
 //!
 //! IEC 104 is an event-driven protocol - data is received via spontaneous
 //! transmissions from the controlled station (RTU/substation).
@@ -379,7 +379,7 @@ impl Iec104ParamsConfig {
 /// IEC 104 channel adapter.
 ///
 /// This struct wraps a `voltage_iec104::Iec104Client` and implements
-/// the protocol layer's `Protocol`, `ProtocolClient`, and `EventDrivenProtocol` traits.
+/// the protocol layer's `ChannelRuntime` trait.
 ///
 /// Note: This adapter follows the "protocol layer separated from storage" design.
 /// The channel returns DataBatch via events; the service layer handles persistence.

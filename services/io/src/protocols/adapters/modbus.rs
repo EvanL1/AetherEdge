@@ -1,7 +1,7 @@
 //! Modbus protocol adapter.
 //!
 //! This module provides the `ModbusChannel` adapter that integrates
-//! `voltage_modbus` with the protocol layer's `Protocol` and `ProtocolClient` traits.
+//! `voltage_modbus` with the protocol layer's `ChannelRuntime` trait.
 //!
 //! # Module structure
 //!
@@ -60,7 +60,7 @@ const DEFAULT_POLLING_INTERVAL_MS: u64 = 1000;
 /// Modbus channel adapter.
 ///
 /// Wraps a `voltage_modbus` client and implements the protocol layer's
-/// `Protocol` and `ProtocolClient` traits. Pure protocol implementation
+/// `ChannelRuntime` trait. Pure protocol implementation
 /// that handles device communication — data storage belongs to the service layer.
 pub struct ModbusChannel {
     config: ModbusChannelConfig,

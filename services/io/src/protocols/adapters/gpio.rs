@@ -64,8 +64,7 @@ use crate::protocols::core::metadata::{
     DriverMetadata, HasMetadata, ParameterMetadata, ParameterType,
 };
 use crate::protocols::core::traits::{
-    AdjustmentCommand, CommunicationMode, ConnectionState, ControlCommand, Diagnostics,
-    PointFailure, PollResult, WriteResult,
+    ConnectionState, ControlCommand, Diagnostics, PointFailure, PollResult, WriteResult,
 };
 use crate::protocols::runtime::ChannelRuntime;
 use aether_core::PointType;
@@ -902,10 +901,6 @@ impl GpioChannel {
     fn name(&self) -> &'static str {
         "GPIO"
     }
-
-    fn supported_modes(&self) -> &[CommunicationMode] {
-        &[CommunicationMode::Polling]
-    }
 }
 
 // Helper methods for GpioChannel
@@ -1490,13 +1485,10 @@ mod tests {
         gpio.connect().await.unwrap();
 
         // Write to DO pins
-        ProtocolClient::write_control(
-            &mut gpio,
-            &[
-                ControlCommand::latching(101, true),
-                ControlCommand::latching(102, false),
-            ],
-        )
+        gpio.write_control(&[
+            ControlCommand::latching(101, true),
+            ControlCommand::latching(102, false),
+        ])
         .await
         .unwrap();
 
@@ -1535,13 +1527,10 @@ mod tests {
         let result = gpio.poll_once().await;
         assert!(result.data.is_empty());
 
-        ProtocolClient::write_control(
-            &mut gpio,
-            &[
-                ControlCommand::latching(101, true),
-                ControlCommand::latching(102, true),
-            ],
-        )
+        gpio.write_control(&[
+            ControlCommand::latching(101, true),
+            ControlCommand::latching(102, true),
+        ])
         .await
         .unwrap();
 

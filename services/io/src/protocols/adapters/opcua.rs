@@ -1,7 +1,7 @@
 //! OPC UA protocol adapter.
 //!
 //! This module provides the `OpcUaChannel` adapter that integrates
-//! `async-opcua` with the protocol layer's `Protocol`, `ProtocolClient`, and `EventDrivenProtocol` traits.
+//! `async-opcua` with the protocol layer's `ChannelRuntime` trait.
 //!
 //! OPC UA supports both polling and subscription (event-driven) modes.
 //! This adapter primarily uses the subscription mode for real-time data updates.
@@ -722,7 +722,7 @@ fn make_node_id_key(namespace_index: u16, identifier: &str) -> String {
 /// OPC UA channel adapter.
 ///
 /// This struct wraps an `async-opcua` client and implements
-/// the protocol layer's `Protocol`, `ProtocolClient`, and `EventDrivenProtocol` traits.
+/// the protocol layer's `ChannelRuntime` trait.
 ///
 /// Note: This adapter follows the "protocol layer separated from storage" design.
 /// The channel emits DataEvent::DataUpdate events; the service layer handles persistence.

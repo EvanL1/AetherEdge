@@ -20,8 +20,8 @@ use crate::protocols::core::metadata::{
 };
 use crate::protocols::core::point::TransformConfig;
 use crate::protocols::core::traits::{
-    AdjustmentCommand, CommunicationMode, ConnectionState, ControlCommand, DataEvent,
-    DataEventReceiver, DataEventSender, Diagnostics, PollResult, WriteResult, data_event_channel,
+    CommunicationMode, ConnectionState, DataEvent, DataEventReceiver, DataEventSender, Diagnostics,
+    PollResult, data_event_channel,
 };
 use crate::protocols::runtime::ChannelRuntime;
 
@@ -395,24 +395,16 @@ impl HasMetadata for J1939Client {
 }
 
 impl J1939Client {
+    /// Asserted by `test_client_creation`; no runtime caller.
+    #[cfg_attr(not(test), allow(dead_code))]
     fn name(&self) -> &'static str {
         "J1939"
     }
 
+    /// Asserted by `test_client_creation`; no runtime caller.
+    #[cfg_attr(not(test), allow(dead_code))]
     fn supported_modes(&self) -> &[CommunicationMode] {
         &[CommunicationMode::EventDriven]
-    }
-
-    fn supports_client(&self) -> bool {
-        true
-    }
-
-    fn supports_server(&self) -> bool {
-        false
-    }
-
-    fn version(&self) -> &'static str {
-        "SAE J1939-21"
     }
 }
 
@@ -423,35 +415,112 @@ impl ChannelRuntime for J1939Client {
     }
 
     async fn connect(&mut self) -> Result<()> {
-        ProtocolClient::connect(self).await
+        let state = ConnectionState::from(self.connection_state.load(Ordering::Acquire));
+        let has_transport = self.socket.is_some()
+            || self
+                .receive_handle
+                .as_ref()
+                .is_some_and(|handle| !handle.is_finished());
+        if state == ConnectionState::Connected && has_transport {
+            return Ok(());
+        }
+        if let Some(handle) = self.receive_handle.take() {
+            handle.abort();
+        }
+        self.socket = None;
+        self.connection_state
+            .store(ConnectionState::Connecting.into(), Ordering::Release);
+
+        let can_interface = self.config.device.clone();
+        let socket = CanSocket::open(&can_interface).map_err(|error| {
+            self.connection_state
+                .store(ConnectionState::Error.into(), Ordering::Release);
+            GatewayError::Connection(format!(
+                "Failed to open CAN interface {can_interface}: {error}"
+            ))
+        })?;
+        self.socket = Some(socket);
+        self.connection_state
+            .store(ConnectionState::Connected.into(), Ordering::Release);
+
+        // Notify the runtime without blocking the receive path.
+        let _ = self
+            .event_tx
+            .try_send(DataEvent::ConnectionChanged(ConnectionState::Connected));
+
+        Ok(())
     }
 
     async fn disconnect(&mut self) -> Result<()> {
-        ProtocolClient::disconnect(self).await
+        if let Some(handle) = self.receive_handle.take() {
+            handle.abort();
+        }
+        self.socket = None;
+
+        self.connection_state
+            .store(ConnectionState::Disconnected.into(), Ordering::Release);
+
+        // Notify the runtime without blocking the receive path.
+        let _ = self
+            .event_tx
+            .try_send(DataEvent::ConnectionChanged(ConnectionState::Disconnected));
+
+        Ok(())
     }
 
     async fn poll_once(&mut self) -> PollResult {
-        ProtocolClient::poll_once(self).await
+        PollResult::success(DataBatch::new())
     }
 
     fn take_event_receiver(&mut self) -> Option<DataEventReceiver> {
-        EventDrivenProtocol::take_event_receiver(self)
+        self.event_rx.take()
     }
 
     async fn start_events(&mut self) -> Result<()> {
-        EventDrivenProtocol::start(self).await
+        if self
+            .receive_handle
+            .as_ref()
+            .is_some_and(|handle| !handle.is_finished())
+        {
+            return Ok(());
+        }
+        if let Some(handle) = self.receive_handle.take() {
+            handle.abort();
+        }
+        let socket = self.socket.take().ok_or(GatewayError::NotConnected)?;
+        self.start_receive_task(socket);
+        Ok(())
     }
 
     async fn stop_events(&mut self) -> Result<()> {
-        EventDrivenProtocol::stop(self).await
+        // Stop the receive task
+        if let Some(handle) = self.receive_handle.take() {
+            handle.abort();
+        }
+        Ok(())
     }
 
     async fn diagnostics(&self) -> Result<Diagnostics> {
-        Protocol::diagnostics(self).await
+        let (spn_count, pgn_count) = database_stats();
+
+        Ok(Diagnostics {
+            protocol: "J1939".to_string(),
+            connection_state: ConnectionState::from(self.connection_state.load(Ordering::Acquire)),
+            read_count: self.read_count.load(Ordering::Relaxed),
+            write_count: 0,
+            error_count: self.error_count.load(Ordering::Relaxed),
+            last_error: self.last_error.load().as_ref().map(|s| (**s).clone()),
+            extra: serde_json::json!({
+                "device": self.config.device,
+                "source_address": format!("0x{:02X}", self.config.source_address),
+                "spn_count": spn_count,
+                "pgn_count": pgn_count,
+            }),
+        })
     }
 
     fn connection_state(&self) -> ConnectionState {
-        Protocol::connection_state(self)
+        ConnectionState::from(self.connection_state.load(Ordering::Acquire))
     }
 }
 

@@ -1074,7 +1074,7 @@ pub struct Dl645ChannelConfig {
 
 /// DL/T 645 channel adapter.
 ///
-/// This implements the `ProtocolClient` trait for DL/T 645-2007 protocol.
+/// This implements the `ChannelRuntime` trait for DL/T 645-2007 protocol.
 /// The channel supports reading data from intelligent electricity meters
 /// but does not support control or adjustment commands.
 pub struct Dl645Channel {

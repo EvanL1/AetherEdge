@@ -355,7 +355,7 @@ pub struct Aether485ChannelConfig {
 
 /// Aether-485 channel adapter.
 ///
-/// Implements `ProtocolClient` + `ChannelRuntime` for the company's private
+/// Implements `ChannelRuntime` for the company's private
 /// RS-485 protocol. Polling-based — sends CMD 0x01 queries to each configured
 /// device on the bus and collects power readings (mW).
 pub struct Aether485Channel {

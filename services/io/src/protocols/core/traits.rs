@@ -1,18 +1,17 @@
-//! Core traits for protocol implementations.
+//! Shared vocabulary for protocol adapters.
 //!
-//! This module defines the fundamental traits that all protocols must implement.
+//! This module owns the types every adapter exchanges with the runtime —
+//! connection state, communication mode, poll results, diagnostics and the
+//! bounded event channel. It declares no trait.
 //!
-//! # Trait Hierarchy
+//! Adapters implement exactly one trait, [`ChannelRuntime`], declared in
+//! `crate::protocols::runtime`. The layered `ProtocolCapabilities` /
+//! `Protocol` / `ProtocolClient` / `EventDrivenProtocol` hierarchy this module
+//! used to describe was removed: nothing ever called through it, every adapter
+//! reached the runtime through `ChannelRuntime` alone, and the extra traits
+//! only forced each adapter to write its methods out twice.
 //!
-//! ```text
-//! Layer 1: Basic Capabilities (stateless queries)
-//! ├── ProtocolCapabilities  // metadata: name, modes, version
-//! └── Protocol              // connection_state, diagnostics
-//!
-//! Layer 2: Core Operations (single responsibility)
-//! ├── ProtocolClient        // connect, disconnect, poll_once, write_*
-//! └── EventDrivenProtocol   // bounded single-consumer event queue
-//! ```
+//! [`ChannelRuntime`]: crate::protocols::runtime::ChannelRuntime
 
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;

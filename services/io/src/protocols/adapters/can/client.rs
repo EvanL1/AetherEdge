@@ -17,8 +17,8 @@ use crate::protocols::core::error::{GatewayError, Result};
 use async_trait::async_trait;
 
 use crate::protocols::core::traits::{
-    AdjustmentCommand, CommunicationMode, ConnectionState, ControlCommand, DataEvent,
-    DataEventReceiver, DataEventSender, Diagnostics, PollResult, WriteResult, data_event_channel,
+    ConnectionState, DataEvent, DataEventReceiver, DataEventSender, Diagnostics, PollResult,
+    data_event_channel,
 };
 use crate::protocols::runtime::ChannelRuntime;
 
@@ -370,28 +370,6 @@ impl CanClient {
 // ============================================================================
 // Trait Implementations
 // ============================================================================
-
-impl CanClient {
-    fn name(&self) -> &'static str {
-        "CAN"
-    }
-
-    fn supported_modes(&self) -> &[CommunicationMode] {
-        &[CommunicationMode::EventDriven]
-    }
-
-    fn supports_client(&self) -> bool {
-        true
-    }
-
-    fn supports_server(&self) -> bool {
-        false
-    }
-
-    fn version(&self) -> &'static str {
-        "LYNK Protocol"
-    }
-}
 
 // ============================================================================
 // HasMetadata Implementation
