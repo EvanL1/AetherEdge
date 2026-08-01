@@ -46,12 +46,12 @@ impl AlarmNotification {
         let (message, value) = match recovery_value {
             Some(value) => (
                 format!(
-                    "{}已恢复: {} (不再满足 {} {})",
+                    "{} recovered: {} (no longer {} {})",
                     rule.rule_name, value, rule.operator, rule.value
                 ),
                 value,
             ),
-            None => (format!("{}已恢复: {}", rule.rule_name, reason), 0.0),
+            None => (format!("{} recovered: {}", rule.rule_name, reason), 0.0),
         };
         Self {
             alert_id,

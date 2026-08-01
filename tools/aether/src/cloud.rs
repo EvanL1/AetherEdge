@@ -21,7 +21,7 @@ use zeroize::Zeroizing;
 use crate::output;
 
 const MAX_ENROLLMENT_TOKEN_BYTES: u64 = 64 * 1024;
-const CLAIMED_MESSAGE: &str = "身份已配对，CloudLink 凭据尚未激活";
+const CLAIMED_MESSAGE: &str = "Identity claimed; CloudLink credentials not yet activated";
 
 /// AetherCloud identity commands.
 #[derive(Subcommand)]

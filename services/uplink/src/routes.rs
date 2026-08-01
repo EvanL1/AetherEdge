@@ -217,7 +217,7 @@ async fn health(State(state): State<Arc<AppState>>) -> Json<Value> {
     let mqtt_ok = state.mqtt_connected.load(Ordering::Relaxed);
     Json(json!({
         "success": mqtt_ok,
-        "message": if mqtt_ok { "MQTT 连接正常" } else { "MQTT 未连接" },
+        "message": if mqtt_ok { "MQTT connected" } else { "MQTT not connected" },
         "data": {
             "mqtt_connected": mqtt_ok,
             "product_sn":     state.device.product_sn,
@@ -651,13 +651,15 @@ async fn cert_delete(
 // Device sync
 // ============================================================================
 
-/// 主动向平台发送设备列表同步消息（inst-sync-reply）。
+/// Proactively sends the instance list sync message (inst-sync-reply) to the
+/// platform.
 ///
-/// msgId 自动设为当前毫秒级时间戳，数据从 automation 实时拉取。
+/// `msgId` is automatically set to the current millisecond timestamp; data is
+/// pulled live from automation.
 #[utoipa::path(post, path = "/netApi/inst-sync", tag = "MQTT",
     responses(
-        (status = 200, description = "已发布 inst-sync-reply"),
-        (status = 503, description = "MQTT 未连接或 automation 不可达"),
+        (status = 200, description = "inst-sync-reply published"),
+        (status = 503, description = "MQTT not connected or automation unreachable"),
     ))]
 async fn inst_sync_push(
     State(state): State<Arc<AppState>>,

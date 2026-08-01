@@ -47,7 +47,7 @@ transcript.
 On success, human output ends with:
 
 ```text
-身份已配对，CloudLink 凭据尚未激活
+Identity claimed; CloudLink credentials not yet activated
 ```
 
 For stable non-secret output, put the global JSON flag before the command:

@@ -459,7 +459,10 @@ async fn claimed_scope_is_idempotent_and_different_gateway_fails_before_prompt_o
     human_scope.retain(|argument| argument != "--token-stdin");
     let human = invoke_human(&workspace, human_scope, None).await;
     assert!(human.status.success());
-    assert!(String::from_utf8_lossy(&human.stdout).contains("身份已配对，CloudLink 凭据尚未激活"));
+    assert!(
+        String::from_utf8_lossy(&human.stdout)
+            .contains("Identity claimed; CloudLink credentials not yet activated")
+    );
 
     let mut other_scope = enroll_args(&server.uri(), OTHER_GATEWAY_ID);
     other_scope.retain(|argument| argument != "--token-stdin");
