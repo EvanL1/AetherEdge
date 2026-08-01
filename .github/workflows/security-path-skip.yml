@@ -1,0 +1,45 @@
+# RustSec Audit and Dependency Policy are required status checks on main, but
+# security.yml only runs them when a manifest, the lockfile, or its own
+# definition changes. A pull request that touches none of those paths never
+# reports those contexts, so branch protection blocks it forever while every
+# visible check is green.
+#
+# This workflow reports the same two contexts as trivially successful for the
+# complementary path set. Keep its `paths-ignore` list identical to the `paths`
+# list in security.yml, and keep the job names byte-identical to the ones there
+# — branch protection matches on the job name, not the workflow name.
+name: Supply Chain Security (path-skipped)
+
+on:
+  pull_request:
+    branches: [main, develop]
+    paths-ignore:
+      - "**/Cargo.toml"
+      - Cargo.lock
+      - deny.toml
+      - .github/workflows/rust-check.yml
+      - .github/workflows/security.yml
+
+permissions:
+  contents: read
+
+jobs:
+  cargo-audit:
+    name: RustSec Audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Report the audit as not applicable
+        run: |
+          echo "No manifest, lockfile, or dependency-policy path changed."
+          echo "security.yml owns this check when those paths change."
+
+  cargo-deny:
+    name: Dependency Policy
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Report the policy check as not applicable
+        run: |
+          echo "No manifest, lockfile, or dependency-policy path changed."
+          echo "security.yml owns this check when those paths change."
