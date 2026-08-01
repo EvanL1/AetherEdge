@@ -1070,6 +1070,7 @@ impl ChannelRuntime for GpioChannel {
         Ok(result.success_count)
     }
 
+    #[allow(clippy::disallowed_methods)] // json! macro
     async fn diagnostics(&self) -> Result<Diagnostics> {
         let input_count = self.config.input_pins().count();
         let output_count = self.config.output_pins().count();
@@ -1091,8 +1092,6 @@ impl ChannelRuntime for GpioChannel {
     fn connection_state(&self) -> ConnectionState {
         self.state
     }
-
-    #[allow(clippy::disallowed_methods)] // json! macro
 
     fn set_log_handler(&mut self, handler: Arc<dyn ChannelLogHandler>) {
         self.log_ctx.set_handler(handler);
