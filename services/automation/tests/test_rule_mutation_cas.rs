@@ -8,7 +8,6 @@ use std::sync::{Arc, Mutex};
 use aether_automation::infra::rule_mutation::SqliteRuleMutator;
 use aether_automation::infra::rule_runtime::RuleRuntimeCoordinator;
 use aether_automation::infra::runtime_topology::AutomationTopologyHandle;
-use aether_calc::MemoryStateStore;
 use aether_domain::PointKind;
 use aether_ports::{
     AutomationRuleMutator, AutomationRulesRevision, PortErrorKind, RevisionedRuleMutation,
@@ -34,7 +33,7 @@ async fn rules_pool(max_connections: u32) -> (tempfile::TempDir, sqlx::SqlitePoo
     (directory, pool)
 }
 
-fn scheduler(pool: &sqlx::SqlitePool) -> Arc<RuleScheduler<MemoryStateStore>> {
+fn scheduler(pool: &sqlx::SqlitePool) -> Arc<RuleScheduler> {
     Arc::new(RuleScheduler::new(
         Arc::new(MemoryRuleLiveState::new()),
         pool.clone(),

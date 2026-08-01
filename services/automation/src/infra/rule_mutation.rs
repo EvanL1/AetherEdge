@@ -2,7 +2,6 @@
 
 use std::sync::Arc;
 
-use aether_calc::StateStore;
 use aether_domain::RuleId;
 use aether_ports::{
     AutomationRuleMutator, AutomationRulesRevision, PortError, PortErrorKind, PortResult,
@@ -16,21 +15,21 @@ use sqlx::SqlitePool;
 use crate::infra::rule_runtime::{RuleRuntimeCoordinator, RuleRuntimeRefresh};
 
 /// Owns durable rule mutation and the corresponding scheduler refresh.
-pub struct SqliteRuleMutator<S: StateStore> {
+pub struct SqliteRuleMutator {
     pool: SqlitePool,
-    runtime: Arc<RuleRuntimeCoordinator<S>>,
+    runtime: Arc<RuleRuntimeCoordinator>,
 }
 
-impl<S: StateStore + 'static> SqliteRuleMutator<S> {
+impl SqliteRuleMutator {
     /// Creates the adapter over the rule database and active scheduler.
     #[must_use]
-    pub fn new(pool: SqlitePool, runtime: Arc<RuleRuntimeCoordinator<S>>) -> Self {
+    pub fn new(pool: SqlitePool, runtime: Arc<RuleRuntimeCoordinator>) -> Self {
         Self { pool, runtime }
     }
 }
 
 #[async_trait]
-impl<S: StateStore + 'static> AutomationRuleMutator for SqliteRuleMutator<S> {
+impl AutomationRuleMutator for SqliteRuleMutator {
     async fn mutate(&self, mutation: RuleMutation) -> PortResult<RuleMutationReceipt> {
         let revision = sqlx::query_scalar::<_, i64>(
             "SELECT revision FROM configuration_revisions WHERE scope = 'automation_rules'",

@@ -74,7 +74,7 @@ pub mod state;
 // Re-exports for convenience
 pub use error::{CalcError, Result};
 pub use evaluator::CalcEngine;
-pub use state::{MemoryStateStore, StateStore};
+pub use state::MemoryStateStore;
 
 // Re-export stateless functions for direct use
 pub use builtin_functions::{abs, clamp, max, min, round, scale, sign};

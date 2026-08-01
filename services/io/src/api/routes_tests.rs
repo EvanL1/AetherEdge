@@ -5062,25 +5062,9 @@ mod openapi_tests {
 
     #[test]
     fn test_openapi_http_operation_count_requires_router_parity_review() {
-        const HTTP_METHODS: [&str; 8] = [
-            "get", "post", "put", "delete", "patch", "options", "head", "trace",
-        ];
-
-        let spec = spec();
-        let operation_count = spec["paths"]
-            .as_object()
-            .expect("OpenAPI paths object")
-            .values()
-            .map(|path_item| {
-                HTTP_METHODS
-                    .iter()
-                    .filter(|method| path_item[**method].is_object())
-                    .count()
-            })
-            .sum::<usize>();
-
         assert_eq!(
-            operation_count, 53,
+            common::openapi_operation_count(&spec()),
+            53,
             "HTTP operation count changed; re-audit Router/OpenAPI parity before updating this guard"
         );
     }

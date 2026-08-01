@@ -133,19 +133,7 @@ impl AetherErrorTrait for AutomationError {
 
 impl From<AutomationError> for common::AppError {
     fn from(error: AutomationError) -> Self {
-        let status = common::status_for_error_category(error.category());
-        let mut error_info = common::ErrorInfo::new(error.to_string())
-            .with_code(status.as_u16())
-            .with_details(format!(
-                "error_code: {}, category: {:?}, retryable: {}",
-                error.error_code(),
-                error.category(),
-                error.is_retryable()
-            ));
-        if let Some(suggestion) = error.suggestion() {
-            error_info = error_info.with_suggestion(suggestion);
-        }
-        common::AppError::new(status, error_info)
+        common::app_error_from(&error)
     }
 }
 

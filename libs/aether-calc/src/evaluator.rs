@@ -8,7 +8,7 @@
 
 use crate::builtin_functions::{self, BuiltinFunctions};
 use crate::error::{CalcError, Result};
-use crate::state::StateStore;
+use crate::state::MemoryStateStore;
 use evalexpr::{ContextWithMutableFunctions, ContextWithMutableVariables, Value};
 use regex::Regex;
 use std::borrow::Cow;
@@ -55,18 +55,18 @@ fn stateful_regex(
 /// // With stateful functions (async)
 /// let energy = engine.evaluate("integrate(P)", &vars).await?;
 /// ```
-pub struct CalcEngine<S: StateStore> {
+pub struct CalcEngine {
     /// Built-in function executor
-    builtin: BuiltinFunctions<S>,
+    builtin: BuiltinFunctions,
 }
 
-impl<S: StateStore> CalcEngine<S> {
+impl CalcEngine {
     /// Create new CalcEngine
     ///
     /// # Arguments
     /// * `state_store` - State storage for stateful functions
     /// * `context` - Context identifier (e.g., rule_id, instance_id)
-    pub fn new(state_store: Arc<S>, context: impl Into<String>) -> Self {
+    pub fn new(state_store: Arc<MemoryStateStore>, context: impl Into<String>) -> Self {
         Self {
             builtin: BuiltinFunctions::new(state_store, context),
         }
@@ -76,7 +76,7 @@ impl<S: StateStore> CalcEngine<S> {
     ///
     /// Useful for direct access to stateful functions like period_delta
     /// when not using the formula string API.
-    pub fn builtin(&self) -> &BuiltinFunctions<S> {
+    pub fn builtin(&self) -> &BuiltinFunctions {
         &self.builtin
     }
 
@@ -455,10 +455,9 @@ impl<S: StateStore> CalcEngine<S> {
 #[allow(clippy::approx_constant)]
 mod tests {
     use super::*;
-    use crate::state::MemoryStateStore;
     use std::sync::Arc;
 
-    fn create_engine() -> CalcEngine<MemoryStateStore> {
+    fn create_engine() -> CalcEngine {
         let store = Arc::new(MemoryStateStore::new());
         CalcEngine::new(store, "test")
     }

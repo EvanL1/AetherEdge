@@ -5,7 +5,8 @@
 
 use crate::error::{CalcError, Result};
 use crate::state::{
-    IntegrateState, MovingAvgState, PeriodDeltaState, RateOfChangeState, StateStore, state_key,
+    IntegrateState, MemoryStateStore, MovingAvgState, PeriodDeltaState, RateOfChangeState,
+    state_key,
 };
 use chrono::{Datelike, Local, TimeZone, Utc};
 use std::sync::Arc;
@@ -14,18 +15,15 @@ use tracing::debug;
 /// Built-in function executor
 ///
 /// Handles execution of stateful and stateless built-in functions.
-///
-/// # Type Parameters
-/// * `S` - State store implementation (defaults to MemoryStateStore)
-pub struct BuiltinFunctions<S: StateStore> {
+pub struct BuiltinFunctions {
     /// State store for stateful functions
-    state_store: Arc<S>,
+    state_store: Arc<MemoryStateStore>,
     /// Context identifier (e.g., rule_id, instance_id)
     context: String,
 }
 
-impl<S: StateStore> BuiltinFunctions<S> {
-    pub fn new(state_store: Arc<S>, context: impl Into<String>) -> Self {
+impl BuiltinFunctions {
+    pub fn new(state_store: Arc<MemoryStateStore>, context: impl Into<String>) -> Self {
         Self {
             state_store,
             context: context.into(),
@@ -421,7 +419,6 @@ pub fn sign(value: f64) -> f64 {
 #[allow(clippy::approx_constant)]
 mod tests {
     use super::*;
-    use crate::state::MemoryStateStore;
     use std::sync::Arc;
 
     #[test]

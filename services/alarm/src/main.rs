@@ -36,15 +36,11 @@ async fn main() -> anyhow::Result<()> {
     let cfg = AlarmConfig::default();
 
     // ── Logging ──────────────────────────────────────────────────────────────
-    let service_info = common::service_bootstrap::ServiceInfo::new(
+    common::service_bootstrap::init_service(
         "aether-alarm",
         "Alarm monitoring service",
         cfg.api_port,
-    );
-    common::service_bootstrap::init_logging(&service_info, None)
-        .map_err(|e| anyhow::anyhow!("Failed to init logging: {}", e))?;
-    common::logging::enable_sighup_log_reopen();
-    common::service_bootstrap::print_startup_banner(&service_info);
+    )?;
 
     info!("aether-alarm starting on port {}", cfg.api_port);
     info!("SHM:   {}", cfg.shm_path);
@@ -53,13 +49,7 @@ async fn main() -> anyhow::Result<()> {
     info!("DB:    {}", cfg.db_path);
 
     // ── SQLite ────────────────────────────────────────────────────────────────
-    let db_pool = sqlx::sqlite::SqlitePoolOptions::new()
-        .max_connections(5)
-        .connect_with(common::bootstrap_database::sqlite_connect_options(
-            &cfg.db_path,
-        ))
-        .await
-        .map_err(|e| anyhow::anyhow!("SQLite connect failed: {} path={}", e, cfg.db_path))?;
+    let db_pool = common::bootstrap_database::open_service_pool(&cfg.db_path).await?;
 
     db::create_tables(&db_pool).await?;
 
@@ -163,22 +153,8 @@ async fn main() -> anyhow::Result<()> {
         .parse()
         .map_err(|e| anyhow::anyhow!("Invalid bind address: {}", e))?;
 
-    let socket = tokio::net::TcpSocket::new_v4()?;
-    socket.set_reuseaddr(true)?;
-    socket.bind(addr)?;
-    let listener = socket.listen(1024)?;
+    common::shutdown::serve_with_shutdown(addr, app, shutdown).await?;
 
-    info!("Listening on {}", addr);
-
-    axum::serve(listener, app)
-        .with_graceful_shutdown(async move {
-            common::shutdown::wait_for_shutdown().await;
-            info!("Shutdown signal received");
-            shutdown.cancel();
-        })
-        .await?;
-
-    common::logging::shutdown_logging_tasks().await;
     info!("alarm stopped");
     Ok(())
 }

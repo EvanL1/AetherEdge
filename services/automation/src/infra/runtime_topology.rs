@@ -183,14 +183,11 @@ impl AutomationTopologyGeneration {
 
     /// Rebuilds the transport-neutral rule index and publishes its canonical
     /// points through the service-owned SHM bitmap.
-    pub async fn rebuild_point_watch<S>(
+    pub async fn rebuild_point_watch(
         &self,
-        scheduler: &RuleScheduler<S>,
+        scheduler: &RuleScheduler,
         bitmap: Option<&SubscriptionBitmap>,
-    ) -> bool
-    where
-        S: aether_calc::StateStore + 'static,
-    {
+    ) -> bool {
         let (Ok(bindings), Some(bitmap)) = (self.measurement_route_bindings(), bitmap) else {
             return false;
         };

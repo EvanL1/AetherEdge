@@ -402,19 +402,9 @@ mod openapi_tests {
         assert!(!paths.contains_key("/api/instances/sync/all"));
         assert!(!paths.contains_key("/api/routing/instances/{id}"));
 
-        let operation_count = paths
-            .values()
-            .filter_map(|path| path.as_object())
-            .flat_map(|path| path.keys())
-            .filter(|method| {
-                matches!(
-                    method.as_str(),
-                    "get" | "put" | "post" | "delete" | "options" | "head" | "patch" | "trace"
-                )
-            })
-            .count();
         assert_eq!(
-            operation_count, 44,
+            common::openapi_operation_count(&document),
+            44,
             "OpenAPI operation count changed; re-audit Router parity before updating this contract"
         );
     }

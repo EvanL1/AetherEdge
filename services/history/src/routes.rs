@@ -267,31 +267,11 @@ mod openapi_tests {
                 "missing {method} {path}"
             );
         }
-        let operation_count = specification["paths"]
-            .as_object()
-            .expect("paths object")
-            .values()
-            .map(|item| {
-                item.as_object()
-                    .expect("path item")
-                    .keys()
-                    .filter(|method| {
-                        matches!(
-                            method.as_str(),
-                            "get"
-                                | "put"
-                                | "post"
-                                | "delete"
-                                | "patch"
-                                | "options"
-                                | "head"
-                                | "trace"
-                        )
-                    })
-                    .count()
-            })
-            .sum::<usize>();
-        assert_eq!(operation_count, 19, "Router/OpenAPI operation drift");
+        assert_eq!(
+            common::openapi_operation_count(&specification),
+            19,
+            "Router/OpenAPI operation drift"
+        );
     }
 
     #[test]

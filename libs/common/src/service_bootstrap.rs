@@ -85,6 +85,19 @@ pub fn init_logging(
     Ok(())
 }
 
+/// Initialize a service: logging, SIGHUP log reopen and the startup banner.
+///
+/// This is the shared prologue of every long-running AetherEdge service `main`.
+/// The [`ServiceInfo`] is not returned because no caller needs it after the
+/// banner has been printed.
+pub fn init_service(name: &str, description: &str, port: u16) -> anyhow::Result<()> {
+    let service = ServiceInfo::new(name, description, port);
+    init_logging(&service, None).map_err(|e| anyhow::anyhow!("Failed to init logging: {}", e))?;
+    crate::logging::enable_sighup_log_reopen();
+    print_startup_banner(&service);
+    Ok(())
+}
+
 /// Load environment variables in development mode
 ///
 /// In debug builds, reads .env file and sets environment variables.

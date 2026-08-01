@@ -5,7 +5,6 @@
 
 use std::sync::Arc;
 
-use aether_calc::MemoryStateStore;
 use aether_rules::{RuleNode, RuleScheduler, RuleVariable, SchedulerStatus};
 use sqlx::SqlitePool;
 
@@ -13,12 +12,12 @@ use crate::error::AutomationError;
 
 pub struct RuleQueries {
     pool: SqlitePool,
-    scheduler: Arc<RuleScheduler<MemoryStateStore>>,
+    scheduler: Arc<RuleScheduler>,
 }
 
 impl RuleQueries {
     #[must_use]
-    pub fn new(pool: SqlitePool, scheduler: Arc<RuleScheduler<MemoryStateStore>>) -> Self {
+    pub fn new(pool: SqlitePool, scheduler: Arc<RuleScheduler>) -> Self {
         Self { pool, scheduler }
     }
 

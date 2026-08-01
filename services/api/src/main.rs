@@ -489,15 +489,7 @@ async fn main() -> anyhow::Result<()> {
     let cfg = GatewayConfig::from_env()?;
 
     // ── Logging ───────────────────────────────────────────────────────────────
-    let service_info = common::service_bootstrap::ServiceInfo::new(
-        "aether-api",
-        "API Gateway service",
-        cfg.api_port,
-    );
-    common::service_bootstrap::init_logging(&service_info, None)
-        .map_err(|e| anyhow::anyhow!("Failed to init logging: {}", e))?;
-    common::logging::enable_sighup_log_reopen();
-    common::service_bootstrap::print_startup_banner(&service_info);
+    common::service_bootstrap::init_service("aether-api", "API Gateway service", cfg.api_port)?;
 
     info!("aether-api starting on port {}", cfg.api_port);
     info!("SHM:   {}", cfg.shm_path);
@@ -506,18 +498,7 @@ async fn main() -> anyhow::Result<()> {
     info!("DB:    {}", cfg.db_path);
 
     // ── SQLite ────────────────────────────────────────────────────────────────
-    let db_dir = std::path::Path::new(&cfg.db_path)
-        .parent()
-        .unwrap_or_else(|| std::path::Path::new("."));
-    std::fs::create_dir_all(db_dir)?;
-
-    let db_pool = sqlx::sqlite::SqlitePoolOptions::new()
-        .max_connections(5)
-        .connect_with(common::bootstrap_database::sqlite_connect_options(
-            &cfg.db_path,
-        ))
-        .await
-        .map_err(|e| anyhow::anyhow!("SQLite connect failed: {} path={}", e, cfg.db_path))?;
+    let db_pool = common::bootstrap_database::open_service_pool(&cfg.db_path).await?;
 
     db::create_tables(&db_pool).await?;
     db::init_roles(&db_pool).await?;
@@ -607,22 +588,8 @@ async fn main() -> anyhow::Result<()> {
         .parse()
         .map_err(|e| anyhow::anyhow!("Invalid bind address: {}", e))?;
 
-    let socket = tokio::net::TcpSocket::new_v4()?;
-    socket.set_reuseaddr(true)?;
-    socket.bind(bind_addr)?;
-    let listener = socket.listen(1024)?;
+    common::shutdown::serve_with_shutdown(bind_addr, app, shutdown).await?;
 
-    info!("Listening on {}", bind_addr);
-
-    axum::serve(listener, app)
-        .with_graceful_shutdown(async move {
-            common::shutdown::wait_for_shutdown().await;
-            info!("Shutdown signal received");
-            shutdown.cancel();
-        })
-        .await?;
-
-    common::logging::shutdown_logging_tasks().await;
     info!("api stopped");
     Ok(())
 }
@@ -802,33 +769,6 @@ mod openapi_tests {
         serde_json::to_value(document).expect("serialize OpenAPI document")
     }
 
-    fn operation_count(specification: &serde_json::Value) -> usize {
-        specification["paths"]
-            .as_object()
-            .expect("paths object")
-            .values()
-            .map(|item| {
-                item.as_object()
-                    .expect("path item")
-                    .keys()
-                    .filter(|method| {
-                        matches!(
-                            method.as_str(),
-                            "get"
-                                | "put"
-                                | "post"
-                                | "delete"
-                                | "patch"
-                                | "options"
-                                | "head"
-                                | "trace"
-                        )
-                    })
-                    .count()
-            })
-            .sum()
-    }
-
     #[test]
     fn gateway_openapi_matches_always_mounted_routes_and_security() {
         let specification = json(ApiDoc::openapi());
@@ -889,7 +829,7 @@ mod openapi_tests {
             "conditional routes must not appear in the base document"
         );
         assert_eq!(
-            operation_count(&specification),
+            common::openapi_operation_count(&specification),
             38,
             "Router/OpenAPI operation drift"
         );
@@ -1082,7 +1022,7 @@ mod openapi_tests {
                 .is_some_and(|description| description.contains("commissioned resource"))
         );
         assert_eq!(
-            operation_count(&specification),
+            common::openapi_operation_count(&specification),
             41,
             "commissioned Router/OpenAPI drift"
         );

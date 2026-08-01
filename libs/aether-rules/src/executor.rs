@@ -13,7 +13,7 @@ use crate::types::{
     RuleVariable, RuleWires,
 };
 use crate::{RuleActionCommand, RuleActionCommandFacade};
-use aether_calc::{CalcEngine, MemoryStateStore, StateStore};
+use aether_calc::{CalcEngine, MemoryStateStore};
 use aether_domain::{CommandConstraints, InstanceId, PointId};
 use serde::Serialize;
 use std::borrow::Cow;
@@ -265,15 +265,15 @@ pub struct ConditionResult {
 ///
 /// Uses the authoritative SHM live-state view. Missing SHM data is missing;
 /// there is no network-store fallback.
-pub struct RuleExecutor<S: StateStore = MemoryStateStore> {
+pub struct RuleExecutor {
     live_state: Arc<dyn RuleLiveState>,
     /// State store for stateful calculation functions (integrate, moving_avg, etc.)
-    state_store: Arc<S>,
+    state_store: Arc<MemoryStateStore>,
     /// Governed logical-action facade installed by the composition root.
     action_commands: Option<Arc<dyn RuleActionCommandFacade>>,
 }
 
-impl RuleExecutor<MemoryStateStore> {
+impl RuleExecutor {
     /// Create with default MemoryStateStore
     pub fn new<L>(live_state: Arc<L>) -> Self
     where
@@ -285,11 +285,9 @@ impl RuleExecutor<MemoryStateStore> {
             action_commands: None,
         }
     }
-}
 
-impl<S: StateStore> RuleExecutor<S> {
     /// Create with custom state store
-    pub fn with_state_store<L>(live_state: Arc<L>, state_store: Arc<S>) -> Self
+    pub fn with_state_store<L>(live_state: Arc<L>, state_store: Arc<MemoryStateStore>) -> Self
     where
         L: RuleLiveState + 'static,
     {

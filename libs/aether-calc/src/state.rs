@@ -10,22 +10,10 @@ use tokio::sync::RwLock;
 
 use crate::error::Result;
 
-/// State storage trait for stateful functions
+/// In-memory state store for stateful functions
 ///
-/// Implementations may use in-memory or local embedded persistence. Network
-/// stores do not belong in the deterministic edge runtime.
-pub trait StateStore: Send + Sync {
-    /// Get state for a key
-    fn get(&self, key: &str) -> impl Future<Output = Result<Option<Vec<u8>>>> + Send;
-
-    /// Set state for a key
-    fn set(&self, key: &str, value: &[u8]) -> impl Future<Output = Result<()>> + Send;
-
-    /// Delete state for a key
-    fn delete(&self, key: &str) -> impl Future<Output = Result<()>> + Send;
-}
-
-/// In-memory state store for testing and simple use cases
+/// State lives in process memory. Network stores do not belong in the
+/// deterministic edge runtime.
 #[derive(Default)]
 pub struct MemoryStateStore {
     data: RwLock<HashMap<String, Vec<u8>>>,
@@ -35,10 +23,9 @@ impl MemoryStateStore {
     pub fn new() -> Self {
         Self::default()
     }
-}
 
-impl StateStore for MemoryStateStore {
-    fn get(&self, key: &str) -> impl Future<Output = Result<Option<Vec<u8>>>> + Send {
+    /// Get state for a key
+    pub fn get(&self, key: &str) -> impl Future<Output = Result<Option<Vec<u8>>>> + Send {
         let key = key.to_string();
         async move {
             let data = self.data.read().await;
@@ -46,7 +33,8 @@ impl StateStore for MemoryStateStore {
         }
     }
 
-    fn set(&self, key: &str, value: &[u8]) -> impl Future<Output = Result<()>> + Send {
+    /// Set state for a key
+    pub fn set(&self, key: &str, value: &[u8]) -> impl Future<Output = Result<()>> + Send {
         let key = key.to_string();
         let value = value.to_vec();
         async move {
@@ -56,7 +44,8 @@ impl StateStore for MemoryStateStore {
         }
     }
 
-    fn delete(&self, key: &str) -> impl Future<Output = Result<()>> + Send {
+    /// Delete state for a key
+    pub fn delete(&self, key: &str) -> impl Future<Output = Result<()>> + Send {
         let key = key.to_string();
         async move {
             let mut data = self.data.write().await;

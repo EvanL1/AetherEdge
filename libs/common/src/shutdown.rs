@@ -53,3 +53,37 @@ pub async fn wait_for_shutdown() {
         let _ = tokio::signal::ctrl_c().await;
     }
 }
+
+/// Bind `addr` with `SO_REUSEADDR` and serve `app` until shutdown.
+///
+/// The socket family follows `addr` so an IPv6 bind address stays usable.
+/// On shutdown the graceful-shutdown future cancels `shutdown` for the
+/// service's background tasks and then drains the logging writers.
+#[cfg(feature = "axum")]
+pub async fn serve_with_shutdown(
+    addr: std::net::SocketAddr,
+    app: axum::Router,
+    shutdown: tokio_util::sync::CancellationToken,
+) -> anyhow::Result<()> {
+    let socket = if addr.is_ipv4() {
+        tokio::net::TcpSocket::new_v4()?
+    } else {
+        tokio::net::TcpSocket::new_v6()?
+    };
+    socket.set_reuseaddr(true)?;
+    socket.bind(addr)?;
+    let listener = socket.listen(1024)?;
+
+    tracing::info!("Listening on {}", addr);
+
+    axum::serve(listener, app)
+        .with_graceful_shutdown(async move {
+            wait_for_shutdown().await;
+            tracing::info!("Shutdown signal received");
+            shutdown.cancel();
+        })
+        .await?;
+
+    crate::logging::shutdown_logging_tasks().await;
+    Ok(())
+}

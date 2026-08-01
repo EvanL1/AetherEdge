@@ -50,6 +50,22 @@ pub fn sqlite_connect_options(db_path: &str) -> SqliteConnectOptions {
         .busy_timeout(std::time::Duration::from_secs(5))
 }
 
+/// Open a service SQLite pool, creating the database's parent directory first.
+///
+/// Unlike [`setup_sqlite_pool`] this creates a missing database instead of
+/// failing, which is what the long-running services need on first start.
+pub async fn open_service_pool(db_path: &str) -> anyhow::Result<SqlitePool> {
+    if let Some(dir) = Path::new(db_path).parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+
+    SqlitePoolOptions::new()
+        .max_connections(5)
+        .connect_with(sqlite_connect_options(db_path))
+        .await
+        .map_err(|e| anyhow::anyhow!("SQLite connect failed: {e} path={db_path}"))
+}
+
 /// Setup SQLite database connection pool with FK enforcement enabled.
 pub async fn setup_sqlite_pool(db_path: &str) -> AetherResult<SqlitePool> {
     // Check if database file exists

@@ -74,11 +74,13 @@ pub use api_types::{
     ServiceStatus,
     SuccessResponse,
     TimeRange,
+    // Helpers
+    openapi_operation_count,
 };
 
 // Re-export AppError when axum feature is enabled
 #[cfg(feature = "axum")]
-pub use api_types::{AppError, status_for_error_category};
+pub use api_types::{AppError, app_error_from, status_for_error_category};
 
 // Bootstrap modules
 pub mod bootstrap_args;
