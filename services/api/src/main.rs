@@ -9,7 +9,6 @@
 //! - GET /api/v1/config – admin-only config checks/export; remote mutation is disabled
 //! - /api/v1/{io,automation,history,uplink,alarm}/* – authenticated application gateway
 
-use std::net::SocketAddr;
 use std::sync::Arc;
 
 use axum::{
@@ -584,9 +583,7 @@ async fn main() -> anyhow::Result<()> {
     // ── HTTP server ───────────────────────────────────────────────────────────
     let app = build_router(Arc::clone(&state));
 
-    let bind_addr: SocketAddr = format!("{}:{}", state.config.api_host, state.config.api_port)
-        .parse()
-        .map_err(|e| anyhow::anyhow!("Invalid bind address: {}", e))?;
+    let bind_addr = common::bind_address(&state.config.api_host, state.config.api_port)?;
 
     common::shutdown::serve_with_shutdown(bind_addr, app, shutdown).await?;
 

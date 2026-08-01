@@ -57,6 +57,8 @@ pub use service_config::{
     ValidationLevel,
     ValidationResult,
     automation_url,
+    // Listener address construction
+    bind_address,
     // Environment fallback helper
     env_or,
     // URL resolver functions

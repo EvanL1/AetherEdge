@@ -164,9 +164,7 @@ async fn main() -> anyhow::Result<()> {
         .layer(axum::extract::DefaultBodyLimit::max(1024 * 1024))
         .layer(cors);
 
-    let addr: std::net::SocketAddr = format!("{}:{}", env.api_host, env.api_port)
-        .parse()
-        .map_err(|e| anyhow::anyhow!("Invalid bind address: {}", e))?;
+    let addr = common::bind_address(&env.api_host, env.api_port)?;
 
     common::shutdown::serve_with_shutdown(addr, app, shutdown).await?;
 

@@ -7,7 +7,6 @@
 //! - Background monitoring loop (reads SHM, triggers/recovers alerts)
 //! - HTTP broadcasts to api (6005) and uplink (6006)
 
-use std::net::SocketAddr;
 use std::sync::Arc;
 
 use tokio_util::sync::CancellationToken;
@@ -149,9 +148,7 @@ async fn main() -> anyhow::Result<()> {
         ))
         .layer(axum::extract::DefaultBodyLimit::max(1024 * 1024));
 
-    let addr: SocketAddr = format!("{}:{}", cfg.api_host, cfg.api_port)
-        .parse()
-        .map_err(|e| anyhow::anyhow!("Invalid bind address: {}", e))?;
+    let addr = common::bind_address(&cfg.api_host, cfg.api_port)?;
 
     common::shutdown::serve_with_shutdown(addr, app, shutdown).await?;
 

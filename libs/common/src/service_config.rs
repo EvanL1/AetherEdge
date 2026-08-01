@@ -66,6 +66,23 @@ pub fn automation_url() -> String {
     env::var(ENV_AUTOMATION_URL).unwrap_or_else(|_| DEFAULT_AUTOMATION_URL.to_string())
 }
 
+/// Build the socket address a service listens on.
+///
+/// A bare IPv6 literal is bracketed first. `format!("{host}:{port}")` cannot
+/// express an IPv6 address — `::1:6007` is not valid syntax — so a service
+/// configured with `API_HOST=::1` would fail to parse before it ever reached
+/// the listener.
+pub fn bind_address(host: &str, port: u16) -> anyhow::Result<std::net::SocketAddr> {
+    let literal = if host.contains(':') && !host.starts_with('[') {
+        format!("[{host}]:{port}")
+    } else {
+        format!("{host}:{port}")
+    };
+    literal
+        .parse()
+        .map_err(|error| anyhow::anyhow!("invalid bind address {literal}: {error}"))
+}
+
 /// Read `name` from the environment, falling back to `default` when the
 /// variable is unset or does not parse.
 pub fn env_or<T: FromStr>(name: &str, default: T) -> T {

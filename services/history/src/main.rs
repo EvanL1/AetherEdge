@@ -9,7 +9,6 @@
 //! runtime settings are restored on restart and may still explicitly disable
 //! storage. The default profile requires only embedded SQLite and SHM.
 
-use std::net::SocketAddr;
 use std::sync::Arc;
 
 use tokio::sync::{Mutex, RwLock};
@@ -126,9 +125,7 @@ async fn main() -> anyhow::Result<()> {
         .layer(axum::extract::DefaultBodyLimit::max(1024 * 1024))
         .layer(cors);
 
-    let addr: SocketAddr = format!("{}:{}", env.api_host, env.api_port)
-        .parse()
-        .map_err(|e| anyhow::anyhow!("Invalid bind address: {}", e))?;
+    let addr = common::bind_address(&env.api_host, env.api_port)?;
 
     common::shutdown::serve_with_shutdown(addr, app, shutdown).await?;
 
