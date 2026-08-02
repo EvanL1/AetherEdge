@@ -62,10 +62,19 @@ impl Gb32960ParamsConfig {
         self.bind.parse::<std::net::SocketAddr>().map_err(|error| {
             GatewayError::Config(format!("invalid GB/T 32960 bind address: {error}"))
         })?;
-        if self.allowed_vins.is_empty() {
-            return Err(GatewayError::Config(
-                "GB/T 32960 allowed_vins must contain at least one VIN".to_owned(),
-            ));
+        // A channel carries one device connection, and a point on this channel
+        // names a report field with no VIN beside it. Two allow-listed vehicles
+        // would therefore write the same points, and the later report would
+        // silently overwrite the earlier one with another vehicle's readings.
+        // The field stays a list so per-point vehicle selection can relax this
+        // later without breaking configurations written today.
+        if self.allowed_vins.len() != 1 {
+            return Err(GatewayError::Config(format!(
+                "GB/T 32960 allowed_vins must name exactly one VIN, found {}; \
+                 points on a channel carry no VIN selector, so give each \
+                 vehicle its own channel",
+                self.allowed_vins.len()
+            )));
         }
         for vin in &self.allowed_vins {
             if vin.len() != 17 || !vin.bytes().all(|byte| byte.is_ascii_alphanumeric()) {
@@ -285,8 +294,9 @@ impl HasMetadata for Gb32960Channel {
                 .with_min_length(1),
                 ParameterMetadata::required(
                     "allowed_vins",
-                    "Allowed VINs",
-                    "Explicit allow-list of 17-character terminal VINs",
+                    "Allowed VIN",
+                    "The one 17-character VIN this channel accepts; give each \
+                     vehicle its own channel",
                     ParameterType::Array,
                 ),
             ],
@@ -1031,13 +1041,28 @@ mod tests {
     }
 
     #[test]
-    fn server_configuration_is_allow_listed_and_loopback_by_default() {
-        let missing: Gb32960ParamsConfig = serde_json::from_value(serde_json::json!({
-            "allowed_vins": []
-        }))
-        .expect("decode");
+    fn a_channel_accepts_exactly_one_vehicle() {
+        // Points name a report field and nothing else, so two allow-listed
+        // vehicles would write the same point IDs and the later report would
+        // overwrite the earlier one with another vehicle's readings.
+        let config = |vins: serde_json::Value| -> Gb32960ParamsConfig {
+            serde_json::from_value(serde_json::json!({ "allowed_vins": vins })).expect("decode")
+        };
+
+        let missing = config(serde_json::json!([]));
         assert_eq!(missing.bind, DEFAULT_BIND);
         assert!(missing.validate().is_err());
+
+        config(serde_json::json!([VIN]))
+            .validate()
+            .expect("one vehicle per channel is the supported shape");
+
+        let two = config(serde_json::json!([VIN, "LTEST000000000002"]));
+        let error = two.validate().expect_err("two vehicles must be refused");
+        assert!(
+            error.to_string().contains("its own channel"),
+            "the error must say what to do instead: {error}"
+        );
     }
 
     #[tokio::test]

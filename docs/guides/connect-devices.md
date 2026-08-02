@@ -161,6 +161,11 @@ an operator must deliberately choose a field-network listen address. GB/T
 The adapters reject unlisted or unauthenticated terminals before emitting
 data.
 
+Each of these channels carries exactly one vehicle. A point names a report
+field and nothing else, so two vehicles on one channel would write the same
+points and the later report would overwrite the earlier one. Configure one
+VIN or one terminal ID per channel, each on its own listen port.
+
 COMTRADE is a CFG/DAT file format, not a live channel. Inspect or normalize it
 offline without granting a file reader SHM write authority:
 

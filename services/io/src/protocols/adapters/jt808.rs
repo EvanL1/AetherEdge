@@ -66,10 +66,19 @@ impl Jt808ParamsConfig {
         self.bind.parse::<std::net::SocketAddr>().map_err(|error| {
             GatewayError::Config(format!("invalid JT/T 808 bind address: {error}"))
         })?;
-        if self.auth_tokens.is_empty() {
-            return Err(GatewayError::Config(
-                "JT/T 808 auth_tokens must contain at least one terminal".to_owned(),
-            ));
+        // A channel carries one device connection, and a point on this channel
+        // names a location field with no terminal beside it. Two configured
+        // terminals would therefore write the same points, and the later report
+        // would silently overwrite the earlier one with another vehicle's
+        // readings. The field stays a map so per-point terminal selection can
+        // relax this later without breaking configurations written today.
+        if self.auth_tokens.len() != 1 {
+            return Err(GatewayError::Config(format!(
+                "JT/T 808 auth_tokens must name exactly one terminal, found {}; \
+                 points on a channel carry no terminal selector, so give each \
+                 terminal its own channel",
+                self.auth_tokens.len()
+            )));
         }
         for (terminal, token) in &self.auth_tokens {
             if !matches!(terminal.len(), 12 | 20)
@@ -278,8 +287,9 @@ impl HasMetadata for Jt808Channel {
                 .with_min_length(1),
                 ParameterMetadata::required(
                     "auth_tokens",
-                    "Terminal tokens",
-                    "Map of terminal IDs to pre-provisioned authentication tokens",
+                    "Terminal token",
+                    "The one terminal ID this channel accepts, mapped to its \
+                     pre-provisioned token; give each terminal its own channel",
                     ParameterType::Object,
                 ),
             ],
@@ -1162,13 +1172,31 @@ mod tests {
     }
 
     #[test]
-    fn configuration_requires_preprovisioned_tokens() {
-        let config: Jt808ParamsConfig = serde_json::from_value(serde_json::json!({
-            "auth_tokens": {}
-        }))
-        .expect("config");
-        assert_eq!(config.bind, DEFAULT_BIND);
-        assert!(config.validate().is_err());
+    fn a_channel_accepts_exactly_one_terminal() {
+        // Points name a location field and nothing else, so two configured
+        // terminals would write the same point IDs and the later report would
+        // overwrite the earlier one with another vehicle's readings.
+        let config = |tokens: serde_json::Value| -> Jt808ParamsConfig {
+            serde_json::from_value(serde_json::json!({ "auth_tokens": tokens })).expect("config")
+        };
+
+        let missing = config(serde_json::json!({}));
+        assert_eq!(missing.bind, DEFAULT_BIND);
+        assert!(missing.validate().is_err());
+
+        config(serde_json::json!({"013800138000": "provisioned-token"}))
+            .validate()
+            .expect("one terminal per channel is the supported shape");
+
+        let two = config(serde_json::json!({
+            "013800138000": "provisioned-token",
+            "013800138001": "another-token"
+        }));
+        let error = two.validate().expect_err("two terminals must be refused");
+        assert!(
+            error.to_string().contains("its own channel"),
+            "the error must say what to do instead: {error}"
+        );
     }
 
     #[tokio::test]

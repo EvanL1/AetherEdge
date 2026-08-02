@@ -105,8 +105,8 @@ channels:
 | `bacnet_ip` | BACnet/IP 楼宇自控 | `host`；可选 `port`（默认 47808） |
 | `cjt188` | CJ/T 188 水表/气表/热量表 | `host` 或 `device` 二选一、`meter_type`, `meter_address` |
 | `iec101` | IEC 60870-5-101 串口主站 | `host` 或 `device` 二选一、链路地址与公共地址 |
-| `gb32960` | GB/T 32960 车辆上报服务 | `bind`, `allowed_vins` |
-| `jt808` | JT/T 808 定位终端服务 | `bind`, `auth_tokens` |
+| `gb32960` | GB/T 32960 车辆上报服务 | `bind`、`allowed_vins`（恰好一个 VIN） |
+| `jt808` | JT/T 808 定位终端服务 | `bind`、`auth_tokens`（恰好一个终端） |
 | `mqtt` | MQTT 发布/订阅 | `broker` |
 | `http` | HTTP 轮询/Webhook | `url`（轮询）或 `listen_path`（Webhook） |
 | `can` | CAN 总线 | `device` |

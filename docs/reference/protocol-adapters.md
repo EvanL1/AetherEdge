@@ -165,7 +165,7 @@ number that carries no quality meaning.
 ### GB/T 32960
 
 This adapter is a terminal-originated TCP server. It binds to loopback by
-default and refuses an empty VIN allow-list:
+default and accepts exactly one VIN:
 
 ```yaml
 - id: 23
@@ -197,7 +197,8 @@ of a mixed report.
 ### JT/T 808
 
 This adapter is also a terminal-originated TCP server. It binds to loopback by
-default and requires a pre-provisioned token for every accepted terminal:
+default and accepts exactly one terminal, which must present a pre-provisioned
+token:
 
 ```yaml
 - id: 24
@@ -229,8 +230,19 @@ satellite count.
 ### Dial-in server bounds
 
 GB/T 32960 and JT/T 808 are the only adapters that accept connections instead
-of opening them, so both apply the same fixed bounds to what an unknown peer
-can take:
+of opening them.
+
+Each channel carries exactly one vehicle: `allowed_vins` must name one VIN and
+`auth_tokens` must name one terminal. A point on these channels selects a
+report field and carries no vehicle selector beside it, so two vehicles on one
+channel would write the same point IDs and the later report would silently
+overwrite the earlier one with another vehicle's readings. Give each vehicle
+its own channel on its own listen port. Both fields stay collections so that
+per-point vehicle selection can relax this later without invalidating
+configurations written today.
+
+Both adapters also apply the same fixed bounds to what an unknown peer can
+take:
 
 - One channel holds at most 64 concurrent terminal connections. A peer past
   that limit is closed at accept and recorded in channel diagnostics.
