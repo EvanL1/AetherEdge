@@ -69,9 +69,9 @@ pub async fn init_roles(pool: &SqlitePool) -> Result<()> {
     if count == 0 {
         sqlx::query(
             "INSERT INTO roles (id, name_en, name_zh, description) VALUES
-             (1, 'Admin', '管理员', '系统管理员，拥有所有权限'),
-             (2, 'Engineer', '工程师', '工程师，可以进行设备操作和配置'),
-             (3, 'Viewer', '查看者', '只读用户，只能查看数据')",
+             (1, 'Admin', '管理员', 'System administrator with full access'),
+             (2, 'Engineer', '工程师', 'Engineer able to operate and configure devices'),
+             (3, 'Viewer', '查看者', 'Read-only user limited to viewing data')",
         )
         .execute(pool)
         .await?;

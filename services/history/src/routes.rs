@@ -606,9 +606,9 @@ async fn query_latest(
     tag = "Data",
     request_body = BatchQueryRequest,
     responses(
-        (status = 200, description = "批量历史数据", body = BatchHistoryResponse),
-        (status = 400, description = "请求参数错误"),
-        (status = 500, description = "查询失败"),
+        (status = 200, description = "Batch historical data", body = BatchHistoryResponse),
+        (status = 400, description = "Invalid request parameters"),
+        (status = 500, description = "Query failed"),
     )
 ))]
 async fn batch_query(
@@ -622,7 +622,7 @@ async fn batch_query(
     if req.series.is_empty() {
         return Err((
             StatusCode::BAD_REQUEST,
-            Json(json!({"success": false, "message": "series 列表不能为空"})),
+            Json(json!({"success": false, "message": "series list must not be empty"})),
         ));
     }
     if req.series.len() > MAX_SERIES {
@@ -630,7 +630,7 @@ async fn batch_query(
             StatusCode::BAD_REQUEST,
             Json(json!({
                 "success": false,
-                "message": format!("series 数量不能超过 {} 条，当前 {} 条", MAX_SERIES, req.series.len())
+                "message": format!("series count must not exceed {}, got {}", MAX_SERIES, req.series.len())
             })),
         ));
     }
@@ -638,19 +638,19 @@ async fn batch_query(
     let start_time = crate::models::parse_time(&req.start_time).map_err(|e| {
         (
             StatusCode::BAD_REQUEST,
-            Json(json!({"success": false, "message": format!("start_time 格式错误: {}", e)})),
+            Json(json!({"success": false, "message": format!("invalid start_time: {}", e)})),
         )
     })?;
     let end_time = crate::models::parse_time(&req.end_time).map_err(|e| {
         (
             StatusCode::BAD_REQUEST,
-            Json(json!({"success": false, "message": format!("end_time 格式错误: {}", e)})),
+            Json(json!({"success": false, "message": format!("invalid end_time: {}", e)})),
         )
     })?;
     if end_time <= start_time {
         return Err((
             StatusCode::BAD_REQUEST,
-            Json(json!({"success": false, "message": "end_time 必须晚于 start_time"})),
+            Json(json!({"success": false, "message": "end_time must be later than start_time"})),
         ));
     }
 

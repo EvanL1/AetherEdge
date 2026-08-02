@@ -281,7 +281,7 @@ async fn check_single_rule(state: Arc<AppState>, rule: crate::models::AlertRule)
                         alert.id,
                         &rule,
                         Some(current_value),
-                        "条件恢复",
+                        "condition recovered",
                     ))
                     .await;
                 send_alarm_count_broadcast(&state).await;

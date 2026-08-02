@@ -129,8 +129,10 @@ async fn connect_and_run(state: Arc<AppState>, shutdown: CancellationToken) -> a
     }
 
     let (client, mut event_loop) = AsyncClient::new(options, 64);
-    // ARM64 设备无硬件加速时 rustls RSA 握手可能超过默认 5s，调大连接超时避免误报
-    // NetworkOptions 是 rumqttc 0.24 设置连接超时的正确 API（不在 MqttOptions 上）
+    // On ARM64 devices without hardware acceleration, the rustls RSA handshake
+    // can exceed the 5s default, so the connection timeout is raised to avoid
+    // false failures. NetworkOptions is rumqttc 0.24's correct API for the
+    // connection timeout (it is not a field on MqttOptions).
     let mut network_options = NetworkOptions::new();
     network_options.set_connection_timeout(30);
     event_loop.set_network_options(network_options);
@@ -447,7 +449,7 @@ async fn handle_call_data(state: Arc<AppState>, payload: Bytes) {
     // Reply first, then trigger the upload so the cloud gets an ACK immediately.
     let reply = CommandReply {
         result: "success".to_string(),
-        message: "数据总召已启动".to_string(),
+        message: "full data upload started".to_string(),
         timestamp: Utc::now().timestamp(),
         msg_id,
         error: None,
@@ -469,14 +471,17 @@ async fn handle_call_alarm(state: Arc<AppState>, payload: Bytes) {
         .request_replay(&alarm_url, msg_id.as_deref(), Utc::now().timestamp())
         .await
     {
-        Ok(AlarmReplayOutcome::Accepted) => ("success".to_string(), "告警数据请求成功".to_string()),
+        Ok(AlarmReplayOutcome::Accepted) => (
+            "success".to_string(),
+            "alarm data request accepted".to_string(),
+        ),
         Ok(AlarmReplayOutcome::Rejected(status)) => {
-            let msg = format!("告警API返回状态码: {status}");
+            let msg = format!("alarm API returned status code: {status}");
             warn!("call-alarm: {}", msg);
             ("warning".to_string(), msg)
         },
         Err(e) => {
-            let msg = format!("告警API调用失败: {}", e);
+            let msg = format!("alarm API call failed: {}", e);
             warn!("call-alarm: {}", msg);
             ("fail".to_string(), msg)
         },

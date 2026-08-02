@@ -229,7 +229,7 @@ pub mod pattern_serde {
     }
 }
 
-/// 服务运行参数配置（`/hisApi/config`）
+/// Service runtime configuration (`/hisApi/config`).
 ///
 /// Controls collection frequency, write batch size, query limits, and
 /// SHM logical-series selectors. Storage backend connection parameters are
@@ -289,15 +289,17 @@ pub struct ServiceConfig {
 
     /// Logical series selectors using `*` and `?` glob syntax.
     ///
-    /// 接受两种格式（向下兼容旧的数组格式）：
+    /// Accepts two formats (backward compatible with the legacy array format):
     ///
-    /// **旧格式**（数组）：所有 pattern 使用全局 `collection_interval_secs`
+    /// **Legacy format** (array): every pattern uses the global
+    /// `collection_interval_secs`.
     /// ```json
     /// ["inst:*:M", "inst:*:A"]
     /// ```
     ///
-    /// **新格式**（对象）：可为每个 pattern 指定独立采集间隔（秒）；
-    /// `null`、`0` 或省略均表示使用全局默认值。
+    /// **New format** (object): each pattern may specify its own collection
+    /// interval in seconds; `null`, `0`, or omission all mean "use the
+    /// global default".
     /// ```json
     /// {"inst:*:M": null, "inst:4:M": 60}
     /// ```
@@ -306,7 +308,8 @@ pub struct ServiceConfig {
     /// Exclusion patterns (**regex syntax** — distinct from the glob syntax
     /// used in `subscribe_patterns`).
     ///
-    /// 命中任意一条正则的逻辑序列将被跳过，不采集。
+    /// A logical series matching any of these regexes is skipped and not
+    /// collected.
     pub exclude_patterns: Vec<String>,
 }
 

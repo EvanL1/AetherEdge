@@ -566,7 +566,7 @@ async fn get_rule(State(state): State<Arc<AppState>>, Path(id): Path<i64>) -> im
 /// written. After a successful update, the governed mutation adapter reconciles
 /// active monitoring state; if
 /// the rule's `enabled` flag flipped to false, its active alerts are
-/// resolved with reason "rule disabled" (stored as the Chinese literal "规则被禁用" in alert records).
+/// resolved with reason "rule disabled" (the literal broadcast in alert notifications).
 ///
 /// If the patch touches `service_type` / `data_type` / `point_id`, the
 /// resulting tuple is re-validated against the channel-online sentinel
@@ -668,7 +668,7 @@ async fn update_rule(
 /// Delete an alarm rule.
 ///
 /// Cascade behavior: any active alerts produced by this rule are first
-/// resolved with reason "rule deleted" (stored as the Chinese literal "规则被删除"; broadcast to the WebSocket so the UI
+/// resolved with reason "rule deleted" (the literal broadcast in alert notifications; sent to the WebSocket so the UI
 /// clears them), then the `alert_rule` row is removed. `alert_event` rows
 /// (the historical event log) are kept — they reference the rule by id
 /// only and survive deletion for audit.
@@ -740,7 +740,7 @@ async fn enable_rule(
 /// Disable a rule (set `enabled=false`).
 ///
 /// Stops the monitor from evaluating this rule on the next tick AND resolves
-/// any currently-active alerts produced by it (reason "rule disabled", stored as "规则被禁用"), so the
+/// any currently-active alerts produced by it (reason "rule disabled"), so the
 /// UI clears stale alerts immediately rather than waiting for them to age
 /// out. Convenience over PUT with `{"enabled": false}` plus the side effect.
 #[utoipa::path(patch, path = "/alarmApi/rules/{id}/disable", tag = "Rules",

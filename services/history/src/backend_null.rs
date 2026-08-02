@@ -59,7 +59,7 @@ impl StorageBackend for NullBackend {
         _end_time: DateTime<Utc>,
         _limit_per_series: i64,
     ) -> anyhow::Result<Vec<SeriesResult>> {
-        anyhow::bail!("存储后端未配置")
+        anyhow::bail!("storage backend not configured")
     }
 
     async fn cleanup_old_data(&self, _older_than_days: i32) -> anyhow::Result<u64> {

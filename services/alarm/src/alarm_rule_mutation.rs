@@ -144,7 +144,7 @@ impl SqliteAlarmRuleMutator {
                 created_at: existing.created_at,
                 updated_at: Utc::now().timestamp(),
             };
-            self.broadcast_resolved(&updated, &resolved, "规则被禁用")
+            self.broadcast_resolved(&updated, &resolved, "rule disabled")
                 .await;
         }
 
@@ -178,7 +178,7 @@ impl SqliteAlarmRuleMutator {
 
         rule.enabled = enabled;
         if !resolved.is_empty() {
-            self.broadcast_resolved(&rule, &resolved, "规则被禁用")
+            self.broadcast_resolved(&rule, &resolved, "rule disabled")
                 .await;
         }
         let kind = if enabled {
@@ -202,7 +202,7 @@ impl SqliteAlarmRuleMutator {
         transaction.commit().await.map_err(storage_error)?;
 
         if !resolved.is_empty() {
-            self.broadcast_resolved(&rule, &resolved, "规则被删除")
+            self.broadcast_resolved(&rule, &resolved, "rule deleted")
                 .await;
         }
         Ok(AlarmRuleMutationReceipt::new(
