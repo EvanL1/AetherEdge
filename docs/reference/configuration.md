@@ -1,7 +1,7 @@
 ---
 title: Configuration Reference
-description: YAML configuration schema, the sync pipeline, and environment variables
-updated: 2026-07-17
+description: YAML configuration schema, protocol channel authority, the sync pipeline, and environment variables
+updated: 2026-08-02
 ---
 
 # Configuration Reference
@@ -90,8 +90,8 @@ config.template/
 │                               # never inferred or edited by site setup
 ├── io/
 │   ├── io.yaml                 # Empty channel list until commissioning
-│   │                           # (modbus_tcp, modbus_rtu, can, mqtt, http,
-│   │                           # di_do, ...), enabled flag, per-protocol
+│   │                           # (modbus_tcp, bacnet_ip, iec101, cjt188,
+│   │                           # gb32960, jt808, ...), enabled flag, protocol
 │   │                           # connection parameters, per-channel logging
 │   └── <channel-id>/           # (expected by the syncer; not shipped in
 │       │                       # the template) One directory per channel,
@@ -244,6 +244,7 @@ configuration/audit database. SQLite `mode=ro` over the base Compose
 
 - [Getting Started](../guides/getting-started.md) — first setup and startup walkthrough
 - [Connect Devices](../guides/connect-devices.md) — channel and point configuration in practice
+- [Protocol Adapter Reference](protocol-adapters.md) — exact feature gates, runtime IDs, parameters, and mappings
 - [Writing Rules](../guides/writing-rules.md) — the rule JSON that lives under `automation/rules/`
 - [HTTP API](http-api.md) — the runtime API the synced configuration feeds
 - [System Architecture](../concepts/architecture.md) — where each service fits

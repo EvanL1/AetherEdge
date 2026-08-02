@@ -1,7 +1,7 @@
 ---
 title: AetherEdge User Journeys
 description: Choose the right product and follow the safe path from an empty edge runtime to a commissioned application
-updated: 2026-07-26
+updated: 2026-08-02
 ---
 
 # AetherEdge User Journeys
@@ -100,7 +100,10 @@ one channel. New channels are disabled by default. Before enabling one:
 
 Start with the protocol simulator when hardware is not yet
 available. Follow [Connect Devices](../guides/connect-devices.md) for the
-channel and routing workflow.
+channel and routing workflow, and consult the
+[Protocol Adapter Reference](../reference/protocol-adapters.md) for the exact
+feature, runtime ID, parameters, mapping schema, and implemented protocol
+slice.
 
 ## 4. Verify the read-only data path
 

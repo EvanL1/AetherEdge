@@ -13,6 +13,7 @@
 [快速开始](docs/guides/getting-started.md) ·
 [用户旅程](docs/overview/user-journeys.md) ·
 [连接设备](docs/guides/connect-devices.md) ·
+[协议适配器](docs/reference/protocol-adapters.md) ·
 [连接 AI](docs/guides/ai-assistants.md) · [English](README.md)
 
 **连接物理设备、证明数据链路、投运确定性行为——而不让云、浏览器或
@@ -107,7 +108,8 @@ AETHER_ACCESS_TOKEN='<signed access JWT>' aether channels create \
 
 启用前，需要声明物理点、映射协议地址、将必要的物理点绑定到 Domain Pack
 提供的逻辑 Instance，并检查未解决的映射。完整流程见
-[连接设备](docs/guides/connect-devices.md)。
+[连接设备](docs/guides/connect-devices.md)；精确的 Feature、Runtime ID、传输角色和
+映射矩阵见[协议适配器参考](docs/reference/protocol-adapters.md)。
 
 ### 4. 先证明观测，再添加控制
 

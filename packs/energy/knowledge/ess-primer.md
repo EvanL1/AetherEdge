@@ -79,11 +79,11 @@ A few point names are not self-explanatory: `Battery System` (%, `Battery.json`)
 | Nameplate data (rated power…) | Properties (P), static |
 | Field protocol (Modbus, IEC 104…) | Channel (one per device connection) |
 
-A product is a type; an instance is a device. Creating an instance from the `Battery` product gives it every P, M, and A point the template defines. Field data flows in through a channel (one per device connection) handled by io, which writes M points; control flows out through automation, which writes A points. The split is enforced by the architecture — see [Data Model](../concepts/data-model.md) for how instances and points are stored and addressed.
+A product is a type; an instance is a device. Creating an instance from the `Battery` product gives it every P, M, and A point the template defines. Field data flows in through a channel (one per device connection) handled by io, which writes M points; control flows out through automation, which writes A points. The split is enforced by the architecture — see [Data Model](../../../docs/concepts/data-model.md) for how instances and points are stored and addressed.
 
 ## Standard information models
 
-**Field protocols.** Standard IO supports Modbus TCP/RTU, IEC 60870-5-104, IEC 61850 (MMS), OPC UA, MQTT, HTTP, DL/T 645, CAN/J1939, GPIO, BLE, Zigbee, and Aether-485. Which adapters are compiled into a given binary is controlled by explicit Cargo features on IO; simulation remains an external tool.
+**Field protocols.** Standard IO supports Modbus TCP/RTU, IEC 60870-5-101/104, IEC 61850 (MMS), OPC UA, BACnet/IP, MQTT, HTTP, DL/T 645, CJ/T 188, GB/T 32960, JT/T 808, CAN/J1939, GPIO, BLE, Zigbee, and Aether-485. Which adapters are compiled into a given binary is controlled by explicit Cargo features on IO; simulation remains an external tool. COMTRADE is handled by the offline `aether comtrade` importer rather than advertised as a live IO channel.
 
 **SunSpec.** SunSpec discovery and model expansion are not shipped by the AetherEdge kernel. A deployment that needs them must use a downstream, statically composed Rust IO plugin. The plugin owns its model assets and returns canonical topology and samples through an accepted generic contract; it cannot write SHM or bypass governed commands directly.
 
@@ -92,4 +92,4 @@ A product is a type; an instance is a device. Creating an instance from the `Bat
 - [Product Models](product-models.md) — the full product template reference and how to define your own
 - [Control Strategies](control-strategies.md) — how rules drive A points to implement peak shaving, demand response, and other strategies
 - [Safe Operations](safe-operations.md) — operating limits and the guardrails around writes
-- [Data Model](../concepts/data-model.md) — how products, instances, and points are stored and addressed at runtime
+- [Data Model](../../../docs/concepts/data-model.md) — how products, instances, and points are stored and addressed at runtime

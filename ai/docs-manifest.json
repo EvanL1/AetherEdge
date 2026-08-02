@@ -1655,7 +1655,7 @@
       "path": "docs/guides/connect-devices.md",
       "canonical_url": "https://docs.aetheriot.ai/guides/connect-devices.md",
       "title": "Connect Devices",
-      "description": "Configure channels, choose protocols, and map device points to instances",
+      "description": "Commission protocol channels, inspect exact runtime availability, and map physical points to device instances",
       "locale": "en",
       "translation_of": null,
       "document_role": "agent-task",
@@ -2237,7 +2237,7 @@
       "path": "docs/reference/cli.md",
       "canonical_url": "https://docs.aetheriot.ai/reference/cli.md",
       "title": "CLI Reference",
-      "description": "Every aether command - services, sync, doctor, channels, rules, and more",
+      "description": "Every aether command, including services, protocol channels, COMTRADE inspection, sync, doctor, and rules",
       "locale": "en",
       "translation_of": null,
       "document_role": "reference",
@@ -2293,7 +2293,7 @@
       "path": "docs/reference/configuration.md",
       "canonical_url": "https://docs.aetheriot.ai/reference/configuration.md",
       "title": "Configuration Reference",
-      "description": "YAML configuration schema, the sync pipeline, and environment variables",
+      "description": "YAML configuration schema, protocol channel authority, the sync pipeline, and environment variables",
       "locale": "en",
       "translation_of": null,
       "document_role": "operations",
@@ -2447,6 +2447,34 @@
         "verify-tool-receipt",
         "verify-terminal-audit"
       ]
+    },
+    {
+      "id": "edge-docs-reference-protocol-adapters",
+      "path": "docs/reference/protocol-adapters.md",
+      "canonical_url": "https://docs.aetheriot.ai/reference/protocol-adapters.md",
+      "title": "Protocol Adapter Reference",
+      "description": "Exact AetherEdge IO feature gates, runtime protocol IDs, transport roles, point mappings, security boundaries, and implemented protocol slices",
+      "locale": "en",
+      "translation_of": null,
+      "document_role": "reference",
+      "agent_profiles": [
+        "coding-agent",
+        "operator-agent"
+      ],
+      "intents": [
+        "understand-edge-platform"
+      ],
+      "implementation_status": "partial",
+      "production_readiness": "not-applicable",
+      "context_sensitivity": "public",
+      "updated": "2026-08-02",
+      "priority": "core",
+      "media_type": "text/markdown",
+      "capability_refs": [],
+      "preconditions": [],
+      "recovery_route": null,
+      "human_escalation": null,
+      "verification": []
     },
     {
       "id": "edge-docs-roadmap-status",

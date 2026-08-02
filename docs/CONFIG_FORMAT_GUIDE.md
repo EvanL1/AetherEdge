@@ -2,6 +2,11 @@
 
 本文档说明 AetherEMS 使用的各种配置文件格式及其用途。
 
+> 本页是拆分前的兼容迁移资料，不是当前 AetherEdge 配置权威。当前 Channel 参数、
+> Runtime 协议 ID 与点位映射见
+> [Protocol Adapter Reference](./reference/protocol-adapters.md) 和
+> [Configuration Reference](./reference/configuration.md)。
+
 ## 概述
 
 AetherEMS 使用以下配置格式：
@@ -96,7 +101,12 @@ channels:
 | `iec104` | IEC 60870-5-104 | `host`, `port` |
 | `opcua` | OPC UA（当前仅匿名、无消息安全模式） | `endpoint_url` |
 | `di_do` | GPIO 数字 I/O | `driver`, `gpio_base_path` |
-| `dl645` | DL/T 645-2007 电表 | `device`, `baud_rate`, `address` |
+| `dl645` | DL/T 645-2007 电表 | `host` 或 `device` 二选一、`meter_address` |
+| `bacnet_ip` | BACnet/IP 楼宇自控 | `host`；可选 `port`（默认 47808） |
+| `cjt188` | CJ/T 188 水表/气表/热量表 | `host` 或 `device` 二选一、`meter_type`, `meter_address` |
+| `iec101` | IEC 60870-5-101 串口主站 | `host` 或 `device` 二选一、链路地址与公共地址 |
+| `gb32960` | GB/T 32960 车辆上报服务 | `bind`, `allowed_vins` |
+| `jt808` | JT/T 808 定位终端服务 | `bind`, `auth_tokens` |
 | `mqtt` | MQTT 发布/订阅 | `broker` |
 | `http` | HTTP 轮询/Webhook | `url`（轮询）或 `listen_path`（Webhook） |
 | `can` | CAN 总线 | `device` |

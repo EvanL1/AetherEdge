@@ -13,6 +13,7 @@
 [Getting started](docs/guides/getting-started.md) ·
 [User journeys](docs/overview/user-journeys.md) ·
 [Connect devices](docs/guides/connect-devices.md) ·
+[Protocol adapters](docs/reference/protocol-adapters.md) ·
 [Connect AI](docs/guides/ai-assistants.md) · [中文](README-CN.md)
 
 **Connect physical devices, prove the data path, and commission deterministic
@@ -117,7 +118,9 @@ AETHER_ACCESS_TOKEN='<signed access JWT>' aether channels create \
 Before enabling it, declare the physical points, map protocol addresses, bind
 the required points to a logical instance supplied by a Domain Pack, and review
 unresolved mappings. Follow [Connect Devices](docs/guides/connect-devices.md)
-for that complete workflow.
+for that complete workflow and the
+[Protocol Adapter Reference](docs/reference/protocol-adapters.md) for the exact
+feature, runtime ID, transport, and mapping matrix.
 
 ### 4. Prove observation before control
 

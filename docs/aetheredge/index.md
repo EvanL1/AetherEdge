@@ -11,6 +11,9 @@ and Rust SDK formerly published from the AetherIot repository name.
 - Embedded SQLite desired state, history, audit, and durable local outbox.
 - The `aether` CLI, governed HTTP and MCP application boundaries, Domain Packs,
   and the `aether-edge-sdk` facade.
+- Statically composed field-protocol adapters whose exact feature/runtime-ID
+  matrix and implementation boundaries are documented in the
+  [Protocol Adapter Reference](../reference/protocol-adapters.md).
 - A signed `v0.0.1` source, runtime, installer, CLI, and SDK release.
 
 ## Experimental today
@@ -33,6 +36,7 @@ migration.
 
 Start by choosing the matching [user journey](../overview/user-journeys.md),
 then follow [Getting Started](../guides/getting-started.md) for a safe-empty
-runtime or the [Agent Quickstart](https://docs.aetheriot.ai/agent-quickstart/)
+runtime, [Connect Devices](../guides/connect-devices.md) to commission a
+channel, or the [Agent Quickstart](https://docs.aetheriot.ai/agent-quickstart/)
 for a read-only assistant workflow. Existing deployments can use the
 [migration guide](../migration/aetheriot-to-aetheredge.md).
