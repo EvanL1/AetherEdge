@@ -91,6 +91,10 @@ define_io_protocol_features! {
         implies: [],
         adapters: [("aether_485", None)],
     },
+    "bacnet" => {
+        implies: [],
+        adapters: [("bacnet_ip", None)],
+    },
     "ble" => {
         implies: [],
         adapters: [("ble", None)],
@@ -98,6 +102,10 @@ define_io_protocol_features! {
     "can" => {
         implies: [],
         adapters: [("can", Some("linux"))],
+    },
+    "cjt188" => {
+        implies: [],
+        adapters: [("cjt188", None)],
     },
     "dl645" => {
         implies: [],
@@ -107,6 +115,10 @@ define_io_protocol_features! {
         implies: [],
         adapters: [("di_do", Some("linux"))],
     },
+    "gb32960" => {
+        implies: [],
+        adapters: [("gb32960", None)],
+    },
     "http" => {
         implies: [],
         adapters: [("http", None)],
@@ -115,6 +127,10 @@ define_io_protocol_features! {
         implies: [],
         adapters: [("iec104", None)],
     },
+    "iec101" => {
+        implies: [],
+        adapters: [("iec101", None)],
+    },
     "iec61850" => {
         implies: [],
         adapters: [("iec61850", None)],
@@ -122,6 +138,10 @@ define_io_protocol_features! {
     "j1939" => {
         implies: ["can"],
         adapters: [("j1939", Some("linux"))],
+    },
+    "jt808" => {
+        implies: [],
+        adapters: [("jt808", None)],
     },
     "modbus" => {
         implies: [],

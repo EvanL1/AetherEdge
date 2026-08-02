@@ -125,6 +125,7 @@ surface and deliberately does not carry this index or a project status report.
 - [Build applications with AI](docs/guides/build-applications-with-ai.md)
 - [Connect AI assistants](docs/guides/ai-assistants.md)
 - [Connect devices](docs/guides/connect-devices.md)
+- [Protocol adapters](docs/reference/protocol-adapters.md)
 - [HTTP API and Swagger](docs/reference/http-api.md)
 - [Deployment](docs/guides/deployment.md)
 - [Platform status and roadmap](docs/roadmap/status.md)

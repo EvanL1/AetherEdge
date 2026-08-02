@@ -16,7 +16,7 @@ Use the narrowest document that answers the task. The catalog covers every agent
 - [Change an AI-facing capability](https://github.com/EvanL1/AetherEdge/blob/main/ai/runbooks/change-capability.md): Read the authoritative AetherEdge resource at ai/runbooks/change-capability.md.
 - [Connect AI Assistants](https://docs.aetheriot.ai/guides/ai-assistants.md): Point Claude or any MCP client at aether mcp, and choose between read-only and write access
 - [Build Applications with AI](https://docs.aetheriot.ai/guides/build-applications-with-ai.md): Generate contract-first IoT applications without turning a Web UI or an AI agent into a second runtime authority
-- [Connect Devices](https://docs.aetheriot.ai/guides/connect-devices.md): Configure channels, choose protocols, and map device points to instances
+- [Connect Devices](https://docs.aetheriot.ai/guides/connect-devices.md): Commission protocol channels, inspect exact runtime availability, and map physical points to device instances
 - [Connect Data Processors](https://docs.aetheriot.ai/guides/data-processors.md): Declare data-processing tasks in domain packs and connect request-driven local or remote processors
 - [Connect AetherEdge to AetherCloud through AetherContracts](https://docs.aetheriot.ai/guides/edge-contracts-cloud.md): This agent task validates the current cross-repository integration path without claiming production CloudLink readiness. It starts with a safe local runtime, verifies the shared contract release, and then runs the available product…
 - [Getting Started](https://docs.aetheriot.ai/guides/getting-started.md): Install a safe-empty runtime, establish operator access, verify health, and choose the next commissioning step
@@ -29,7 +29,7 @@ Use the narrowest document that answers the task. The catalog covers every agent
 - [Migrate from AetherIot to AetherEdge](https://docs.aetheriot.ai/migration/aetheriot-to-aetheredge.md): The edge product and repository are renamed from AetherIot to AetherEdge. AetherIoT becomes the umbrella project name for AetherEdge, AetherCloud, and AetherContracts. This is a product-identity change, not a protocol or package namespace…
 - [Home Assistant integration extraction](https://docs.aetheriot.ai/migration/home-assistant-extraction.md): Migrate installations away from the retired in-kernel Home Assistant bridge
 - [Deployment topologies](https://docs.aetheriot.ai/overview/deployment-topologies.md): AetherIoT supports deployments that keep physical authority at the edge while adding cloud coordination only where it creates value.
-- [Configuration Reference](https://docs.aetheriot.ai/reference/configuration.md): YAML configuration schema, the sync pipeline, and environment variables
+- [Configuration Reference](https://docs.aetheriot.ai/reference/configuration.md): YAML configuration schema, protocol channel authority, the sync pipeline, and environment variables
 
 ## Safety and Governance
 
@@ -74,12 +74,13 @@ Use the narrowest document that answers the task. The catalog covers every agent
 - [AetherIoT platform overview](https://docs.aetheriot.ai/overview/platform.md): AetherIoT is the open-source, AI-native project identity for a family of interoperable products that turn human intent into governed, verifiable behavior across physical spaces. It is not a fourth runtime and does not own a separate wire…
 - [AetherEdge User Journeys](https://docs.aetheriot.ai/overview/user-journeys.md): Choose the right product and follow the safe path from an empty edge runtime to a commissioned application
 - [Repository documentation map](https://github.com/EvanL1/AetherEdge/blob/main/docs/README.md): Navigation for repository documentation, current authority records, compatibility notes, and historical material.
-- [CLI Reference](https://docs.aetheriot.ai/reference/cli.md): Every aether command - services, sync, doctor, channels, rules, and more
+- [CLI Reference](https://docs.aetheriot.ai/reference/cli.md): Every aether command, including services, protocol channels, COMTRADE inspection, sync, doctor, and rules
 - [Experimental CloudLink MQTT v1 edge contract](https://docs.aetheriot.ai/reference/cloudlink-mqtt-v1.md): This document describes the experimental CloudLink candidate. The public AetherContracts v0.1.0-alpha.3 release is the sole authority, and AetherEdge and AetherCloud commit the same digest-pinned consumer lock. The current claim is…
 - [Data Processing Contracts](https://docs.aetheriot.ai/reference/data-processing-contracts.md): Version 1 contracts for processing frames, requests, derived results, validation, and failure semantics
 - [AetherCloud Gateway enrollment](https://docs.aetheriot.ai/reference/gateway-enrollment.md): Generate and claim a local AetherEdge Gateway identity without implying an active CloudLink credential or session.
 - [HTTP API](https://docs.aetheriot.ai/reference/http-api.md): The single remote gateway, service-local OpenAPI, authentication, and compatibility conventions
 - [MCP Tools Reference](https://docs.aetheriot.ai/reference/mcp-tools.md): All MCP tools grouped by domain, with parameters and write-safety markers
+- [Protocol Adapter Reference](https://docs.aetheriot.ai/reference/protocol-adapters.md): Exact AetherEdge IO feature gates, runtime protocol IDs, transport roles, point mappings, security boundaries, and implemented protocol slices
 - [Legacy rule-monitor WebSocket API](https://github.com/EvanL1/AetherEdge/blob/main/docs/websocket-rule-monitor-api.md): Historical rule-monitoring interface retained for compatibility lookup.
 - [AetherEdge](https://github.com/EvanL1/AetherEdge/blob/main/README.md): Repository overview, current product status, installation paths, architecture boundaries, and development entry points.
 

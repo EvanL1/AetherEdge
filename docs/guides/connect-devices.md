@@ -1,7 +1,7 @@
 ---
 title: Connect Devices
-description: Configure channels, choose protocols, and map device points to instances
-updated: 2026-07-30
+description: Commission protocol channels, inspect exact runtime availability, and map physical points to device instances
+updated: 2026-08-02
 ---
 
 # Connect Devices
@@ -89,6 +89,11 @@ CAN or GPIO.
 | MQTT (`mqtt`) | no | event-driven, read-only JSON payload acquisition |
 | HTTP (`http`) | no | read-only HTTP JSON polling; the unified channel task owns scheduling |
 | DL/T 645-2007 (`dl645`) | no | smart meters over serial or TCP |
+| BACnet/IP (`bacnet`) | no | UDP ReadProperty/WriteProperty client; direct device address, not BACnet/SC or BBMD management |
+| CJ/T 188 (`cjt188`) | no | read-only household water/gas/heat meters over serial or a transparent TCP gateway |
+| IEC 60870-5-101 (`iec101`) | no | unbalanced-master general interrogation over serial or a transparent TCP gateway |
+| GB/T 32960 (`gb32960`) | no | event-driven vehicle terminal server; loopback by default and VIN allow-listed |
+| JT/T 808 (`jt808`) | no | event-driven positioning terminal server with pre-provisioned authentication tokens |
 | CAN (`can`) / J1939 (`j1939`) | CAN yes, J1939 no | Linux only; `j1939` implies `can` |
 | GPIO (`gpio`) | yes | Linux only |
 | BLE GATT (`ble`) | no | notification/poll acquisition plus governed GATT writes |
@@ -104,6 +109,10 @@ simulation protocol.
 The rule of thumb: **if a channel fails to create, check the feature gate
 first.** Channel activation reports that the protocol is unavailable in the
 current IO runtime build when its adapter was not composed.
+
+The complete feature-to-runtime-ID matrix, adapter-specific parameter
+examples, implemented protocol slices, and deliberate exclusions are in the
+[Protocol Adapter Reference](../reference/protocol-adapters.md).
 
 One statically composed, process-wide immutable factory registry owns
 discovery, strict parameters, point mapping validation, aliases, polling
@@ -130,6 +139,11 @@ union. Protocol runtimes do not own a SQLite pool or reload topology later.
 | BLE | `{"service_uuid":"180f","characteristic_uuid":"2a19","data_format":"uint16","notify":true}`. Notifications are T/S only; C/A use governed writes. |
 | Zigbee | T/S require `{"ieee_address":...,"endpoint":1,"cluster_id":1026,"attribute_id":0}`. C/A are rejected because the raw gateway transport has no correlated command acknowledgement yet. |
 | J1939 | T uses `{"spn":190}`. S additionally requires an explicit raw discrete value, for example `{"spn":110,"active_raw_value":130}`. |
+| BACnet/IP | `{"object_type":0,"object_instance":7,"property_id":85}`; optional `array_index` and governed-write `priority` (1–16). |
+| CJ/T 188 | T/S use `{"data_id":36895,"byte_offset":0,"data_type":"bcd_le","byte_length":4}`. `byte_length` (1–8) is required for BCD; fixed-width types are `u8`, `u16_le`, `u32_le`, `i16_le`, `i32_le`, and `f32_le`. C/A are rejected. |
+| IEC 101 | T/S use `{"ioa":100,"type_id":13}`. A `type_id` of `0` accepts any supported measurement ASDU for that IOA; C/A are rejected. |
+| GB/T 32960 | T/S select a decoded field, for example `{"field":"soc_percent"}` or `{"field":"drive_motor_speed_rpm","motor_index":0}`. C/A are rejected. |
+| JT/T 808 | T/S select a location-report field, for example `{"field":"speed_kmh"}` or `{"field":"acc_on"}`. C/A are rejected. |
 
 Scale, offset, and reverse come from the point row rather than being repeated
 inside these mapping objects. Unknown mapping fields fail closed. MQTT/HTTP
@@ -139,6 +153,32 @@ Raw TCP framing—there is no `gateway_type` selector for unimplemented ZNP or
 EZSP transports. The SHM acquisition boundary accepts only finite numeric or
 boolean T/S samples and canonical point quality; text, missing, and non-finite
 values never enter live state.
+
+GB/T 32960 and JT/T 808 are terminal-originated protocols, so their channels
+bind listeners instead of dialing devices. Their default binds are loopback;
+an operator must deliberately choose a field-network listen address. GB/T
+32960 requires `allowed_vins`, while JT/T 808 requires an `auth_tokens` map.
+The adapters reject unlisted or unauthenticated terminals before emitting
+data.
+
+Each of these channels carries exactly one vehicle. A point names a report
+field and nothing else, so two vehicles on one channel would write the same
+points and the later report would overwrite the earlier one. Configure one
+VIN or one terminal ID per channel, each on its own listen port.
+
+COMTRADE is a CFG/DAT file format, not a live channel. Inspect or normalize it
+offline without granting a file reader SHM write authority:
+
+```bash
+aether comtrade inspect --cfg disturbance.cfg
+aether comtrade export-csv --cfg disturbance.cfg --output disturbance.csv
+```
+
+The importer supports ASCII, BINARY, BINARY32, and FLOAT32 DAT records and
+applies each analog channel's `a`/`b` engineering conversion. HL7 is not an IO
+adapter: healthcare application messages must be translated by a downstream
+integration and enter AetherEdge through authenticated `aether-api`, preserving
+the repository's remote-application boundary.
 
 ## Mapping points to instances
 

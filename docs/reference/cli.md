@@ -1,7 +1,7 @@
 ---
 title: CLI Reference
-description: Every aether command - services, sync, doctor, channels, rules, and more
-updated: 2026-07-29
+description: Every aether command, including services, protocol channels, COMTRADE inspection, sync, doctor, and rules
+updated: 2026-08-02
 ---
 
 # CLI Reference
@@ -95,6 +95,34 @@ aether --json runtime-manifest --path ./runtime-manifest.json
 
 There is no full-distribution fallback: a missing, tampered, or incompatible
 manifest is an error even when `packs: []`.
+
+## aether comtrade
+
+Inspect an IEC/IEEE COMTRADE CFG/DAT pair or convert its samples to normalized
+CSV. These are local, read-only file parsing operations except for the explicit
+CSV output path; they do not create a live IO channel or write SHM.
+
+```text
+Usage: aether comtrade [OPTIONS] <COMMAND>
+
+Commands:
+  inspect     Validate and summarize a COMTRADE CFG file and optional DAT file
+  export-csv  Convert COMTRADE samples to a normalized CSV file
+```
+
+```bash
+aether comtrade inspect --cfg disturbance.cfg
+aether --json comtrade inspect --cfg disturbance.cfg --dat disturbance.dat
+aether comtrade export-csv \
+  --cfg disturbance.cfg \
+  --dat disturbance.dat \
+  --output disturbance.csv
+```
+
+When `--dat` is omitted, the command looks for the CFG path with a `.dat`
+suffix. Supported DAT formats are ASCII, BINARY, BINARY32, and FLOAT32. See
+[Protocol Adapter Reference](protocol-adapters.md#comtrade-files) for the file
+boundary and decoded output behavior.
 
 ## aether cloud
 
@@ -314,7 +342,7 @@ Usage: aether channels create [OPTIONS] --name <NAME> --protocol <PROTOCOL> --pa
 | Flag | Description |
 |------|-------------|
 | `--name <NAME>` | Channel name (must be unique) |
-| `--protocol <PROTOCOL>` | Protocol type (`modbus_tcp`, `modbus_rtu`, `di_do`, `can`) |
+| `--protocol <PROTOCOL>` | Runtime protocol ID advertised by the installed IO build |
 | `--params <PARAMS>` | Protocol parameters as JSON string (e.g. `'{"host":"192.168.1.10","port":502}'`) |
 | `--description <DESCRIPTION>` | Channel description |
 | `--enabled <ENABLED>` | Start channel immediately (default: false) [possible values: `true`, `false`] |
@@ -326,6 +354,11 @@ AETHER_ACCESS_TOKEN='<signed access JWT>' aether channels create \
   --name pcs-main --protocol modbus_tcp \
   --params '{"host":"192.168.1.10","port":502}' --confirmed
 ```
+
+The exact accepted IDs depend on the installed feature composition. Consult
+the checksummed runtime manifest and live protocol catalog, then use the
+[Protocol Adapter Reference](protocol-adapters.md) for adapter parameters and
+point mappings.
 
 ### channels update
 

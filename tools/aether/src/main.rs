@@ -6,6 +6,7 @@
 mod alarms;
 mod channels;
 mod cloud;
+mod comtrade;
 mod core;
 mod deploy_mode;
 mod doctor;
@@ -270,6 +271,13 @@ enum Commands {
         /// Explicit manifest file; defaults to <config-path>/runtime-manifest.json
         #[arg(long)]
         path: Option<PathBuf>,
+    },
+
+    /// Inspect or convert IEC/IEEE COMTRADE disturbance files
+    #[command(about = "Inspect COMTRADE CFG/DAT metadata or export samples to CSV")]
+    Comtrade {
+        #[command(subcommand)]
+        command: comtrade::ComtradeCommands,
     },
 
     /// Build or install data-only domain Pack artifacts
@@ -556,6 +564,9 @@ async fn run(cli: Cli) -> Result<()> {
                     manifest.protocols().len()
                 );
             }
+        },
+        Commands::Comtrade { command } => {
+            comtrade::run(command, json)?;
         },
         Commands::Packs { command } => {
             if host.is_some() {

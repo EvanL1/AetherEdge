@@ -1,7 +1,7 @@
 ---
 title: System Architecture
 description: Isolated edge services communicating over shared memory, per-consumer UDS events, SQLite, HTTP, and MQTT
-updated: 2026-07-30
+updated: 2026-08-02
 ---
 
 # System Architecture
@@ -50,7 +50,7 @@ used as tooling fallbacks when runtime configuration does not override them.
 
 | Service | Port | Role |
 |---------|------|------|
-| aether-io | 6001 | Communication service — explicitly compiled physical protocol drivers (Modbus, IEC 104, IEC 61850, OPC UA, MQTT, HTTP, DL/T 645, CAN/J1939, GPIO, BLE, Zigbee, Aether-485), channel management, sole writer of telemetry into shared memory |
+| aether-io | 6001 | Communication service — explicitly compiled physical protocol drivers (Modbus, IEC 101/104, IEC 61850, OPC UA, BACnet/IP, MQTT, HTTP, DL/T 645, CJ/T 188, GB/T 32960, JT/T 808, CAN/J1939, GPIO, BLE, Zigbee, Aether-485), channel management, sole writer of telemetry into shared memory |
 | aether-automation | 6002 | Model service — product definitions, device instances, rule engine execution |
 | aether-history | 6004 | Historical data service — embedded SQLite by default; optional PostgreSQL / TimescaleDB via `postgres-storage` |
 | aether-api | 6005 | API gateway — unified REST API, WebSocket push to browsers, JWT authentication |
