@@ -29,7 +29,7 @@ aether-store-local = { path = "../../libs/aether-store-local", features = ["sqli
 aether-sqlite-topology = { path = "../../libs/aether-sqlite-topology" }
 
 # Protocol libraries
-voltage_modbus = { version = "0.5.0", optional = true, features = ["rtu"] }
+voltage_modbus = { version = "0.7.2", optional = true, features = ["rtu"] }
 voltage_iec104 = { version = "0.1", optional = true }
 voltage_j1939 = { version = "0.1", optional = true }
 async-opcua = { version = "0.14", default-features = false, features = ["client"], optional = true }
