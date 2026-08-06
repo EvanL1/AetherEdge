@@ -61,9 +61,6 @@ pub mod gb32960;
 #[cfg(feature = "jt808")]
 pub mod jt808;
 
-#[cfg(feature = "aether_485")]
-pub mod aether_485;
-
 #[cfg(feature = "mqtt")]
 pub mod mqtt;
 

@@ -100,7 +100,7 @@ http-body-util = "0.1"
 hex = "0.4"
 
 [features]
-default = ["modbus", "gpio", "aether_485", "openapi", "iec61850", "can"]
+default = ["modbus", "gpio", "openapi", "iec61850", "can"]
 modbus = ["dep:voltage_modbus"]
 iec104 = ["dep:voltage_iec104"]
 opcua = ["dep:async-opcua"]
@@ -113,7 +113,6 @@ cjt188 = ["dep:tokio-serial"]  # CJ/T 188 household meter protocol over TCP or s
 iec101 = ["dep:tokio-serial"]  # IEC 60870-5-101 unbalanced master over serial or TCP gateway
 gb32960 = []  # GB/T 32960 vehicle telemetry TCP server
 jt808 = []  # JT/T 808 authenticated vehicle terminal TCP server
-aether_485 = ["dep:tokio-serial"]  # Aether-485 私有 RS-485 通信协议
 mqtt = ["dep:rumqttc", "dep:serde_json_path", "dep:url"]  # MQTT protocol (event-driven, JSON payload)
 http = ["dep:reqwest", "dep:serde_json_path"]  # HTTP protocol (polling JSON payload)
 ble = ["dep:btleplug"]  # BLE GATT protocol (hybrid: notify + read/write)

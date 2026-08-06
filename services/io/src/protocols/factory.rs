@@ -252,6 +252,15 @@ fn runtime_mapping(point: &Point) -> Result<Option<Value>> {
     }
 }
 
+#[cfg(any(
+    feature = "dl645",
+    feature = "cjt188",
+    feature = "iec101",
+    feature = "gb32960",
+    feature = "jt808",
+    all(feature = "j1939", target_os = "linux"),
+    all(feature = "gpio", target_os = "linux"),
+))]
 fn reject_mapped_points<'a>(
     protocol: &str,
     point_type: PointType,
@@ -398,13 +407,6 @@ fn validate_gpio_parameters(config: &ChannelConfig) -> Result<()> {
 fn validate_can_parameters(config: &ChannelConfig) -> Result<()> {
     let parameters: crate::protocols::adapters::can::CanChannelParamsConfig =
         decode_parameters(&config.parameters, "CAN")?;
-    parameters.validate().map_err(Into::into)
-}
-
-#[cfg(feature = "aether_485")]
-fn validate_aether_485_parameters(config: &ChannelConfig) -> Result<()> {
-    let parameters: crate::protocols::adapters::aether_485::Aether485ParamsConfig =
-        decode_parameters(&config.parameters, "Aether-485")?;
     parameters.validate().map_err(Into::into)
 }
 
@@ -1058,66 +1060,6 @@ fn build_gpio(config: &RuntimeChannelConfig) -> Result<Box<dyn ChannelRuntime>> 
     Ok(Box::new(GpioChannel::new(channel_config, config.id())))
 }
 
-#[cfg(feature = "aether_485")]
-fn build_aether_485(config: &RuntimeChannelConfig) -> Result<Box<dyn ChannelRuntime>> {
-    use crate::protocols::adapters::aether_485::{
-        Aether485Channel, Aether485ParamsConfig, PollTarget,
-    };
-
-    let parameters: Aether485ParamsConfig =
-        decode_parameters(&config.channel_config().parameters, "Aether-485")?;
-    parameters.validate()?;
-    reject_mapped_points(
-        "Aether-485",
-        PointType::Control,
-        config.control_points.iter().map(|point| &point.base),
-    )?;
-    reject_mapped_points(
-        "Aether-485",
-        PointType::Adjustment,
-        config.adjustment_points.iter().map(|point| &point.base),
-    )?;
-    let mut targets =
-        Vec::with_capacity(config.telemetry_points.len() + config.signal_points.len());
-    for point in &config.telemetry_points {
-        let Some(mapping) = runtime_mapping(&point.base)? else {
-            continue;
-        };
-        let mapping = crate::protocols::adapters::aether_485::parse_point_mapping(
-            &mapping,
-            PointType::Telemetry,
-        )
-        .map_err(|error| invalid_mapping(point.base.point_id, &error.to_string()))?;
-        targets.push(PollTarget {
-            point_id: point.base.point_id,
-            point_type: PointType::Telemetry,
-            device_id: mapping.device_id,
-            cmd: mapping.cmd,
-        });
-    }
-    for point in &config.signal_points {
-        let Some(mapping) = runtime_mapping(&point.base)? else {
-            continue;
-        };
-        let mapping = crate::protocols::adapters::aether_485::parse_point_mapping(
-            &mapping,
-            PointType::Signal,
-        )
-        .map_err(|error| invalid_mapping(point.base.point_id, &error.to_string()))?;
-        targets.push(PollTarget {
-            point_id: point.base.point_id,
-            point_type: PointType::Signal,
-            device_id: mapping.device_id,
-            cmd: mapping.cmd,
-        });
-    }
-    Ok(Box::new(Aether485Channel::new(
-        parameters.into_channel_config(),
-        config.id(),
-        targets,
-    )))
-}
-
 #[cfg(feature = "iec61850")]
 fn build_iec61850(config: &RuntimeChannelConfig) -> Result<Box<dyn ChannelRuntime>> {
     use crate::protocols::adapters::iec61850::{
@@ -1230,17 +1172,6 @@ fn validate_gpio_mapping(point_type: PointType, point_id: u32, mapping: &Value) 
 #[cfg(all(feature = "can", target_os = "linux"))]
 fn validate_can_mapping(point_type: PointType, point_id: u32, mapping: &Value) -> Result<()> {
     crate::protocols::adapters::can::config::parse_point_mapping(mapping, point_type, point_id)
-        .map(|_| ())
-        .map_err(|error| invalid_mapping(point_id, &error.to_string()))
-}
-
-#[cfg(feature = "aether_485")]
-fn validate_aether_485_mapping(
-    point_type: PointType,
-    point_id: u32,
-    mapping: &Value,
-) -> Result<()> {
-    crate::protocols::adapters::aether_485::parse_point_mapping(mapping, point_type)
         .map(|_| ())
         .map_err(|error| invalid_mapping(point_id, &error.to_string()))
 }
@@ -1633,27 +1564,6 @@ fn build_registry() -> ProtocolRegistry {
         ));
     }
 
-    #[cfg(feature = "aether_485")]
-    {
-        use crate::protocols::adapters::aether_485::Aether485Channel;
-        registry.register(ProtocolFactory::new(
-            ProtocolMetadata {
-                name: "aether_485",
-                display_name: "Aether-485",
-                description: "Aether private RS-485 protocol",
-                protocol_type: "aether_485",
-                drivers: vec![Aether485Channel::metadata()],
-                supports_points: true,
-            },
-            &["aether485", "v485"],
-            1_000,
-            &["device_id", "cmd"],
-            validate_aether_485_parameters,
-            validate_aether_485_mapping,
-            build_aether_485,
-        ));
-    }
-
     #[cfg(feature = "mqtt")]
     {
         use crate::protocols::adapters::mqtt::MqttChannel;
@@ -1773,11 +1683,14 @@ pub fn get_protocol_registry() -> &'static ProtocolRegistry {
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeSet;
+    #[cfg(any(feature = "dl645", feature = "iec104", feature = "opcua"))]
     use std::collections::HashMap;
 
     use super::*;
-    use crate::core::config::{ChannelCore, ChannelLoggingConfig, ControlPoint, Point};
+    #[cfg(any(feature = "dl645", feature = "iec104", feature = "opcua"))]
+    use crate::core::config::{ChannelCore, ChannelLoggingConfig};
 
+    #[cfg(any(feature = "dl645", feature = "iec104", feature = "opcua"))]
     fn config(protocol: &str, parameters: HashMap<String, Value>) -> ChannelConfig {
         ChannelConfig {
             core: ChannelCore {
@@ -1921,29 +1834,5 @@ mod tests {
                 ))
                 .is_err()
         );
-    }
-
-    #[cfg(feature = "aether_485")]
-    #[test]
-    fn runtime_builder_rejects_mappings_on_unsupported_point_planes() {
-        let registry = get_protocol_registry();
-        let factory = registry.factory("aether_485").expect("Aether-485 factory");
-        let mut runtime = RuntimeChannelConfig::from_base(config("aether_485", HashMap::new()));
-        runtime.control_points.push(ControlPoint {
-            base: Point {
-                point_id: 7,
-                signal_name: "unsupported-control".to_owned(),
-                description: None,
-                unit: None,
-                protocol_mappings: Some(r#"{"device_id":1,"cmd":2}"#.to_owned()),
-            },
-            reverse: false,
-            control_type: "latching".to_owned(),
-            on_value: 1,
-            off_value: 0,
-            pulse_duration_ms: None,
-        });
-
-        assert!(factory.build(&runtime).is_err());
     }
 }

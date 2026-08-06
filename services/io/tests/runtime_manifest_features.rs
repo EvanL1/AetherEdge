@@ -18,7 +18,6 @@ fn compiled_io_protocol_features() -> Vec<&'static str> {
         (cfg!(feature = "iec101"), "iec101"),
         (cfg!(feature = "gb32960"), "gb32960"),
         (cfg!(feature = "jt808"), "jt808"),
-        (cfg!(feature = "aether_485"), "aether_485"),
         (cfg!(feature = "mqtt"), "mqtt"),
         (cfg!(feature = "http"), "http"),
         (cfg!(feature = "ble"), "ble"),
@@ -69,10 +68,7 @@ fn manifest_protocols_match_the_io_binary_feature_set() {
     assert_eq!(protocols.contains("iec101"), cfg!(feature = "iec101"));
     assert_eq!(protocols.contains("gb32960"), cfg!(feature = "gb32960"));
     assert_eq!(protocols.contains("jt808"), cfg!(feature = "jt808"));
-    assert_eq!(
-        protocols.contains("aether_485"),
-        cfg!(feature = "aether_485")
-    );
+    assert!(!protocols.contains("aether_485"));
     assert_eq!(protocols.contains("iec61850"), cfg!(feature = "iec61850"));
     assert!(!protocols.contains("aether.cloudlink.integration.v1alpha1"));
     assert!(!protocols.contains("aether.cloudlink.integration-control.v1alpha1"));

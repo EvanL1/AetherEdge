@@ -439,7 +439,28 @@ fn io_err(e: io::Error) -> GatewayError {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
+    use tokio::net::TcpListener;
+
     use super::*;
+
+    /// Build a raw TPKT frame around `payload` (server-side test helper).
+    fn tpkt(payload: &[u8]) -> Vec<u8> {
+        let total = 4 + payload.len();
+        let mut buf = vec![TPKT_VER, 0x00, (total >> 8) as u8, total as u8];
+        buf.extend_from_slice(payload);
+        buf
+    }
+
+    /// Connect a Framer to an in-test TCP peer and return both ends.
+    async fn framer_pair() -> (Framer, TcpStream) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let address = listener.local_addr().expect("local address");
+        let client = TcpStream::connect(address).await.expect("connect");
+        let (server, _) = listener.accept().await.expect("accept");
+        (Framer::new(client), server)
+    }
 
     #[test]
     fn wrap_unwrap_roundtrip() {
@@ -457,5 +478,250 @@ mod tests {
         // COTP DT (3) + MMS_CONNECT_PAYLOAD = total COTP payload
         // Session header: 24 bytes, Presentation header: 67 bytes, ACSE: 20 bytes, MMS: 40 bytes
         assert_eq!(MMS_CONNECT_PAYLOAD.len(), 151); // 24 + 67 + 20 + 40
+    }
+
+    #[test]
+    fn ber_len_roundtrips_one_two_and_three_byte_forms() {
+        for len in [0usize, 1, 0x7F, 0x80, 0xFF, 0x100, 0x1234, 0xFFFF] {
+            let mut buf = Vec::new();
+            push_ber_len(&mut buf, len);
+            assert_eq!(buf.len(), ber_len_size(len), "encoded size for {len}");
+            assert_eq!(
+                parse_ber_len(&buf),
+                Some((len, buf.len())),
+                "roundtrip for {len}"
+            );
+        }
+    }
+
+    #[test]
+    fn parse_ber_len_rejects_empty_truncated_and_unsupported_forms() {
+        for buf in [
+            &[][..],
+            &[0x81],              // 2-byte form missing its length byte
+            &[0x82],              // 3-byte form missing both length bytes
+            &[0x82, 0x01],        // 3-byte form missing one length byte
+            &[0x80],              // indefinite length is not supported
+            &[0x83, 0, 0, 1][..], // 4-byte form is not supported
+        ] {
+            assert_eq!(parse_ber_len(buf), None, "{buf:02X?}");
+        }
+    }
+
+    #[test]
+    fn parse_tlv_returns_content_and_rest_and_rejects_wrong_tag_or_truncation() {
+        let buf = [0x30, 0x02, 0xAA, 0xBB, 0xCC];
+        let (rest, content) = parse_tlv(&buf, 0x30).expect("valid TLV");
+        assert_eq!(content, &[0xAA, 0xBB]);
+        assert_eq!(rest, &[0xCC]);
+
+        assert_eq!(parse_tlv(&buf, 0x31), None, "wrong tag");
+        assert_eq!(parse_tlv(&[], 0x30), None, "empty buffer");
+        assert_eq!(
+            parse_tlv(&[0x30, 0x05, 0x01], 0x30),
+            None,
+            "declared length beyond buffer"
+        );
+        assert_eq!(parse_tlv(&[0x30], 0x30), None, "missing length byte");
+    }
+
+    #[test]
+    fn wrap_data_pdu_emits_tpkt_cotp_session_and_presentation_layers() {
+        let mms = [0xA0, 0x03, 0x02, 0x01, 0x2A];
+        let frame = wrap_data_pdu(&mms);
+
+        // TPKT: version 3, reserved 0, big-endian total length == frame length.
+        assert_eq!(frame[0], TPKT_VER);
+        assert_eq!(frame[1], 0x00);
+        assert_eq!(
+            u16::from_be_bytes([frame[2], frame[3]]) as usize,
+            frame.len()
+        );
+        // COTP DT and Session DT are fixed byte sequences.
+        assert_eq!(&frame[4..7], &[0x02, 0xF0, 0x80]);
+        assert_eq!(&frame[7..11], &[0x01, 0x00, 0x01, 0x00]);
+        // The MMS PDU is carried verbatim at the tail.
+        assert!(frame.ends_with(&mms));
+    }
+
+    #[test]
+    fn wrap_unwrap_roundtrip_spans_ber_length_boundaries() {
+        // Sizes chosen to cross the 1-byte/2-byte/3-byte BER length borders in
+        // every presentation-layer header.
+        for size in [
+            0usize, 1, 120, 121, 122, 127, 128, 200, 255, 256, 1000, 4000,
+        ] {
+            let mms = vec![0x5A; size];
+            let frame = wrap_data_pdu(&mms);
+            assert_eq!(
+                u16::from_be_bytes([frame[2], frame[3]]) as usize,
+                frame.len(),
+                "TPKT length for payload size {size}"
+            );
+            let recovered = unwrap_data_pdu(&frame[4..])
+                .unwrap_or_else(|| panic!("unwrap failed for payload size {size}"));
+            assert_eq!(recovered, &mms[..], "payload size {size}");
+        }
+    }
+
+    #[test]
+    fn unwrap_data_pdu_rejects_missing_or_malformed_layers() {
+        let good: Vec<u8> = wrap_data_pdu(&[0xA0, 0x03, 0x02, 0x01, 0x01])[4..].to_vec();
+        assert!(
+            unwrap_data_pdu(&good).is_some(),
+            "baseline frame must parse"
+        );
+
+        assert_eq!(unwrap_data_pdu(&[]), None, "empty buffer");
+
+        let mut bad_cotp = good.clone();
+        bad_cotp[0] = 0x03;
+        assert_eq!(unwrap_data_pdu(&bad_cotp), None, "wrong COTP prefix");
+
+        let mut bad_session = good.clone();
+        bad_session[3] = 0xFF;
+        assert_eq!(unwrap_data_pdu(&bad_session), None, "wrong session prefix");
+
+        let mut bad_pres = good.clone();
+        bad_pres[7] = 0x62;
+        assert_eq!(unwrap_data_pdu(&bad_pres), None, "wrong presentation tag");
+
+        let mut bad_context = good.clone();
+        bad_context[13] = 0x04;
+        assert_eq!(unwrap_data_pdu(&bad_context), None, "wrong context id");
+
+        assert_eq!(
+            unwrap_data_pdu(&good[..good.len() - 1]),
+            None,
+            "truncated frame"
+        );
+    }
+
+    #[tokio::test]
+    async fn handshake_cotp_completes_on_connection_confirm() {
+        let (mut framer, mut server) = framer_pair().await;
+        // Pre-write the CC so the exchange needs no task coordination: the CR
+        // fits in the socket buffer and the reply is already queued.
+        server
+            .write_all(&tpkt(&[0x05, COTP_CC, 0x00, 0x00, 0x00, 0x00]))
+            .await
+            .expect("connection confirm");
+        framer.handshake_cotp().await.expect("handshake");
+    }
+
+    #[tokio::test]
+    async fn handshake_cotp_rejects_non_confirm_tpdu() {
+        let (mut framer, mut server) = framer_pair().await;
+        server
+            .write_all(&tpkt(&[0x05, COTP_CR, 0x00, 0x00, 0x00, 0x00]))
+            .await
+            .expect("bogus reply");
+        let error = framer.handshake_cotp().await.expect_err("must refuse CR");
+        assert!(
+            error.to_string().contains("expected COTP CC"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[tokio::test]
+    async fn recv_mms_rejects_bad_tpkt_version() {
+        let (mut framer, mut server) = framer_pair().await;
+        server
+            .write_all(&[0x02, 0x00, 0x00, 0x08, 1, 2, 3, 4])
+            .await
+            .expect("bad frame");
+        let error = framer.recv_mms().await.expect_err("must refuse version 2");
+        assert!(
+            error.to_string().contains("TPKT version"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[tokio::test]
+    async fn recv_mms_rejects_out_of_range_tpkt_length() {
+        for header in [[0x03, 0x00, 0x00, 0x00], [0x03, 0x00, 0x00, 0x03]] {
+            let (mut framer, mut server) = framer_pair().await;
+            server.write_all(&header).await.expect("bad frame");
+            let error = framer.recv_mms().await.expect_err("must refuse length");
+            assert!(
+                error.to_string().contains("out of range"),
+                "unexpected error for {header:02X?}: {error}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn recv_mms_errors_when_frame_is_not_a_data_pdu() {
+        let (mut framer, mut server) = framer_pair().await;
+        // Valid TPKT + COTP DT, but garbage where the session layer belongs.
+        server
+            .write_all(&tpkt(&[0x02, 0xF0, 0x80, 0xFF, 0xFF]))
+            .await
+            .expect("garbage frame");
+        let error = framer.recv_mms().await.expect_err("must refuse frame");
+        assert!(
+            error.to_string().contains("failed to unwrap"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[tokio::test]
+    async fn recv_mms_buffers_reports_and_returns_the_confirmed_response() {
+        let (mut framer, mut server) = framer_pair().await;
+        let report: &[u8] = &[0xA3, 0x03, 0xA0, 0x01, 0x00];
+        let response: &[u8] = &[0xA1, 0x03, 0x02, 0x01, 0x07];
+        server
+            .write_all(&wrap_data_pdu(report))
+            .await
+            .expect("report");
+        server
+            .write_all(&wrap_data_pdu(response))
+            .await
+            .expect("response");
+
+        let got = framer.recv_mms().await.expect("confirmed response");
+        assert_eq!(got, response, "reports must never mask responses");
+        assert_eq!(framer.take_pending_reports(), vec![report.to_vec()]);
+        assert!(
+            framer.take_pending_reports().is_empty(),
+            "take must drain the buffer"
+        );
+    }
+
+    #[tokio::test]
+    async fn drain_socket_returns_pending_then_socket_reports_and_stops() {
+        let (mut framer, mut server) = framer_pair().await;
+        let seeded = vec![0xA3, 0x01, 0x00];
+        framer.pending_reports.push(seeded.clone());
+
+        let wire: &[u8] = &[0xA3, 0x03, 0xA0, 0x01, 0x01];
+        server
+            .write_all(&wrap_data_pdu(wire))
+            .await
+            .expect("report");
+        // Let the loopback deliver before the 20 ms per-read window starts.
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        let pdus = framer.drain_socket().await;
+        assert_eq!(pdus, vec![seeded, wire.to_vec()]);
+        assert!(
+            framer.drain_socket().await.is_empty(),
+            "second drain must find nothing"
+        );
+    }
+
+    #[tokio::test]
+    async fn drain_socket_discards_confirmed_pdus_between_cycles() {
+        let (mut framer, mut server) = framer_pair().await;
+        server
+            .write_all(&wrap_data_pdu(&[0xA1, 0x03, 0x02, 0x01, 0x01]))
+            .await
+            .expect("stray confirmed PDU");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        assert!(
+            framer.drain_socket().await.is_empty(),
+            "a stray confirmed PDU between cycles is discarded, not reported"
+        );
     }
 }

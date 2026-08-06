@@ -1177,7 +1177,62 @@ fn finite_transformed_value(value: f64) -> std::result::Result<Value, &'static s
 
 #[cfg(test)]
 mod tests {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+
+    use super::transport::{push_ber_len, wrap_data_pdu};
     use super::*;
+
+    fn params(address: impl Into<String>) -> Iec61850ParamsConfig {
+        Iec61850ParamsConfig {
+            address: address.into(),
+            connect_timeout_ms: 2_000,
+            request_timeout_ms: 2_000,
+            reports: Vec::new(),
+        }
+    }
+
+    /// Encode one BER TLV (test helper mirroring the encoder conventions).
+    fn tlv(tag: u8, content: &[u8]) -> Vec<u8> {
+        let mut out = vec![tag];
+        push_ber_len(&mut out, content.len());
+        out.extend_from_slice(content);
+        out
+    }
+
+    /// Build a Read-Response PDU carrying one raw AccessResult.
+    fn read_response(access_result: &[u8]) -> Vec<u8> {
+        let list = tlv(0xA1, access_result);
+        let read = tlv(0xA4, &list);
+        let mut content = vec![0x02, 0x01, 0x01];
+        content.extend_from_slice(&read);
+        tlv(0xA1, &content)
+    }
+
+    /// Build an InformationReport PDU around the raw `listOfAccessResult` items.
+    fn report_pdu(items: &[u8]) -> Vec<u8> {
+        let mut info = tlv(0xA1, &[0x80, 0x03, b'R', b'P', b'T']);
+        info.extend_from_slice(&tlv(0xA0, items));
+        tlv(0xA3, &tlv(0xA0, &info))
+    }
+
+    /// Build a raw TPKT frame around `payload` (server-side test helper).
+    fn tpkt(payload: &[u8]) -> Vec<u8> {
+        let total = 4 + payload.len();
+        let mut buf = vec![0x03, 0x00, (total >> 8) as u8, total as u8];
+        buf.extend_from_slice(payload);
+        buf
+    }
+
+    /// Server side: read exactly one TPKT frame and return its payload.
+    async fn read_frame(stream: &mut TcpStream) -> Vec<u8> {
+        let mut hdr = [0u8; 4];
+        stream.read_exact(&mut hdr).await.expect("tpkt header");
+        let len = u16::from_be_bytes([hdr[2], hdr[3]]) as usize;
+        let mut payload = vec![0u8; len - 4];
+        stream.read_exact(&mut payload).await.expect("tpkt payload");
+        payload
+    }
 
     #[test]
     fn point_mapping_codec_is_strict_and_accepts_all_runtime_point_types() {
@@ -1256,5 +1311,392 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![3, 4, 5]
         );
+    }
+
+    #[test]
+    fn address_parse_accepts_both_reference_forms_and_rejects_plain_names() {
+        let mms = Iec61850Address::parse(" LD : GGIO1$MX$AnIn1$mag$f ").expect("mms form");
+        assert_eq!(
+            (mms.domain.as_str(), mms.item.as_str(), mms.ctrl_model),
+            ("LD", "GGIO1$MX$AnIn1$mag$f", 1)
+        );
+
+        let object = Iec61850Address::parse("simpleIOGenericIO/GGIO1.MX.AnIn1.mag.f")
+            .expect("object reference form");
+        assert_eq!(object.domain, "simpleIOGenericIO");
+        assert_eq!(object.item, "GGIO1$MX$AnIn1$mag$f", "dots become dollars");
+
+        assert!(Iec61850Address::parse("nodomainseparator").is_err());
+    }
+
+    #[test]
+    fn params_validate_enforces_nonblank_address_and_timing_bounds() {
+        let mut config = params("192.168.1.10:102");
+        config.connect_timeout_ms = 1;
+        config.request_timeout_ms = MAX_CHANNEL_TIMING_MS;
+        assert!(config.validate().is_ok(), "bounds are inclusive");
+
+        assert!(params("  ").validate().is_err(), "blank address");
+
+        let mut zero = params("h:102");
+        zero.connect_timeout_ms = 0;
+        assert!(zero.validate().is_err(), "zero timeout");
+
+        let mut oversized = params("h:102");
+        oversized.request_timeout_ms = MAX_CHANNEL_TIMING_MS + 1;
+        assert!(oversized.validate().is_err(), "timeout above the cap");
+    }
+
+    #[test]
+    fn ctlmodel_item_is_derived_from_co_paths_only() {
+        assert_eq!(
+            Iec61850Channel::derive_ctlmodel_item("GGIO1$CO$SPCSO2$Oper$ctlVal").as_deref(),
+            Some("GGIO1$CF$SPCSO2$ctlModel")
+        );
+        assert_eq!(
+            Iec61850Channel::derive_ctlmodel_item("GGIO1$ST$SPCSO2$stVal"),
+            None,
+            "non-control paths have no ctlModel"
+        );
+    }
+
+    #[test]
+    fn rcb_reference_splits_on_the_first_slash() {
+        assert_eq!(
+            Iec61850Channel::split_rcb_ref("LD/LLN0$BR$EventsBRCB"),
+            Some(("LD".to_owned(), "LLN0$BR$EventsBRCB".to_owned()))
+        );
+        assert_eq!(Iec61850Channel::split_rcb_ref("LLN0$BR$EventsBRCB"), None);
+    }
+
+    #[test]
+    fn channel_partitions_point_types_and_skips_report_covered_points() {
+        let mut config = params("127.0.0.1:102");
+        config.reports = vec![ReportConfig {
+            rcb_ref: "LD/LLN0$BR$EventsBRCB".to_owned(),
+            dataset_members: vec!["LD/GGIO1$ST$SPCSO1$stVal".to_owned()],
+        }];
+        let channel = Iec61850Channel::new(
+            "partition",
+            &config,
+            vec![
+                PointConfig::telemetry(1, Iec61850Address::new("LD", "GGIO1$MX$AnIn1$mag$f")),
+                PointConfig::signal(2, Iec61850Address::new("LD", "GGIO1$ST$SPCSO1$stVal")),
+                PointConfig::control(3, Iec61850Address::new("LD", "GGIO1$CO$SPCSO1$Oper$ctlVal")),
+                PointConfig::adjustment(
+                    4,
+                    Iec61850Address::new("LD", "GGIO1$CO$AnOut1$Oper$setMag$f"),
+                ),
+            ],
+        );
+
+        assert_eq!(channel.points.len(), 2, "only telemetry/signal are polled");
+        assert!(channel.ctrl_points.contains_key(&3));
+        assert!(channel.adj_points.contains_key(&4));
+        assert_eq!(channel.report_skip_set, HashSet::from([2]));
+        assert_eq!(channel.path_to_point.len(), 2);
+    }
+
+    #[test]
+    fn invoke_id_wraps_from_255_back_to_1_and_never_hits_0() {
+        let mut channel = Iec61850Channel::new("wrap", &params("127.0.0.1:102"), Vec::new());
+        channel.invoke_id = 255;
+        assert_eq!(channel.next_invoke_id(), 255);
+        assert_eq!(channel.next_invoke_id(), 1, "0 is skipped on wraparound");
+        assert_eq!(channel.next_invoke_id(), 2);
+    }
+
+    #[tokio::test]
+    async fn disconnected_channel_is_inert() {
+        let mut channel = Iec61850Channel::new(
+            "inert",
+            &params("127.0.0.1:102"),
+            vec![
+                PointConfig::telemetry(1, Iec61850Address::new("LD", "GGIO1$MX$AnIn1$mag$f")),
+                PointConfig::control(3, Iec61850Address::new("LD", "GGIO1$CO$SPCSO1$Oper$ctlVal")),
+                PointConfig::adjustment(
+                    4,
+                    Iec61850Address::new("LD", "GGIO1$CO$AnOut1$Oper$setMag$f"),
+                ),
+            ],
+        );
+
+        let result = channel.poll_once().await;
+        assert!(result.data.is_empty() && result.failures.is_empty());
+        assert_eq!(channel.write_control(&[(3, 1.0)]).await.expect("noop"), 0);
+        assert_eq!(
+            channel.write_adjustment(&[(4, 2.0)]).await.expect("noop"),
+            0
+        );
+        assert_eq!(channel.connection_state(), ConnectionState::Disconnected);
+
+        let diagnostics = channel.diagnostics().await.expect("diagnostics");
+        assert_eq!(diagnostics.protocol, "iec61850");
+        assert_eq!(diagnostics.connection_state, ConnectionState::Disconnected);
+        channel
+            .disconnect()
+            .await
+            .expect("disconnect is idempotent");
+    }
+
+    #[test]
+    fn mms_value_conversion_enforces_range_and_type_boundaries() {
+        assert_eq!(
+            mms_to_value(&MmsValue::Unsigned(i64::MAX as u64)).expect("fits"),
+            Value::Integer(i64::MAX)
+        );
+        assert!(
+            mms_to_value(&MmsValue::Unsigned(i64::MAX as u64 + 1)).is_err(),
+            "u64 above i64::MAX must not wrap"
+        );
+        assert!(mms_to_value(&MmsValue::Float32(f32::INFINITY)).is_err());
+        assert!(mms_to_value(&MmsValue::UtcTime([0; 8])).is_err());
+        assert!(
+            mms_to_value(&MmsValue::BitString {
+                bytes: vec![0xAA],
+                unused_bits: 0
+            })
+            .is_err()
+        );
+
+        let failure = convert_mms_point(
+            9,
+            PointType::Telemetry,
+            &MmsValue::Failure(13),
+            &TransformConfig::default(),
+            None,
+        )
+        .expect_err("a data-access error must not become a value");
+        assert_eq!(failure.point_id, 9);
+        assert!(failure.error.contains("error 13"), "{}", failure.error);
+
+        let overflow = convert_mms_point(
+            9,
+            PointType::Telemetry,
+            &MmsValue::Float64(2.0),
+            &TransformConfig::linear(f64::MAX, 0.0),
+            None,
+        )
+        .expect_err("a non-finite transform result must not enter live state");
+        assert!(overflow.error.contains("not finite"), "{}", overflow.error);
+
+        let timestamp = Utc
+            .timestamp_millis_opt(1_728_003_600_000)
+            .single()
+            .expect("valid timestamp");
+        let point = convert_mms_point(
+            7,
+            PointType::Signal,
+            &MmsValue::Boolean(true),
+            &TransformConfig::default(),
+            Some(timestamp),
+        )
+        .expect("boolean converts");
+        assert_eq!(point.value, Value::Bool(true));
+        assert_eq!(point.quality, PointQuality::Good);
+        assert_eq!(point.source_timestamp, Some(timestamp));
+    }
+
+    #[test]
+    fn report_pdus_map_dataset_values_to_points_and_flag_undecodable_values() {
+        let mut config = params("127.0.0.1:102");
+        config.reports = vec![ReportConfig {
+            rcb_ref: "LD/LLN0$BR$EventsBRCB".to_owned(),
+            dataset_members: vec![
+                "LD/GGIO1$ST$SPCSO1$stVal".to_owned(),
+                "LD/GGIO1$MX$AnIn1$mag$f".to_owned(),
+            ],
+        }];
+        let channel = Iec61850Channel::new(
+            "reports",
+            &config,
+            vec![
+                PointConfig::telemetry(1, Iec61850Address::new("LD", "GGIO1$MX$AnIn1$mag$f")),
+                PointConfig::signal(2, Iec61850Address::new("LD", "GGIO1$ST$SPCSO1$stVal")),
+            ],
+        );
+
+        let mut items = tlv(0x8A, b"Events");
+        items.extend_from_slice(&[0x84, 0x03, 0x06, 0x00, 0x00]); // OptFlds: none
+        items.extend_from_slice(&[0x84, 0x02, 0x06, 0xC0]); // include both of 2
+        items.extend_from_slice(&[0x83, 0x01, 0x01]); // SPCSO1 → TRUE
+        items.extend_from_slice(&tlv(0x8A, b"oops")); // AnIn1 → string: rejected
+
+        let result = channel.process_report_pdus(vec![vec![0xFF, 0x00], report_pdu(&items)]);
+
+        assert_eq!(result.data.len(), 1, "the garbage PDU is skipped silently");
+        let point = result.data.iter().next().expect("mapped point");
+        assert_eq!(point.id, 2);
+        assert_eq!(point.value, Value::Bool(true));
+        assert_eq!(
+            result
+                .failures
+                .iter()
+                .map(|failure| failure.point_id)
+                .collect::<Vec<_>>(),
+            vec![1]
+        );
+    }
+
+    #[test]
+    fn report_timestamp_becomes_the_source_timestamp() {
+        let mut config = params("127.0.0.1:102");
+        config.reports = vec![ReportConfig {
+            rcb_ref: "LD/LLN0$BR$EventsBRCB".to_owned(),
+            dataset_members: vec!["LD/GGIO1$ST$SPCSO1$stVal".to_owned()],
+        }];
+        let channel = Iec61850Channel::new(
+            "timestamps",
+            &config,
+            vec![PointConfig::signal(
+                2,
+                Iec61850Address::new("LD", "GGIO1$ST$SPCSO1$stVal"),
+            )],
+        );
+
+        let mut items = tlv(0x8A, b"Events");
+        items.extend_from_slice(&[0x84, 0x03, 0x06, 0x20, 0x00]); // OptFlds bit 2: timestamp
+        items.extend_from_slice(&[0x8C, 0x06, 0x00, 0x36, 0xEE, 0x80, 0x4E, 0x20]);
+        items.extend_from_slice(&[0x84, 0x02, 0x07, 0x80]); // include the only element
+        items.extend_from_slice(&[0x83, 0x01, 0x00]);
+
+        let result = channel.process_report_pdus(vec![report_pdu(&items)]);
+        assert!(result.failures.is_empty(), "{:?}", result.failures);
+        let point = result.data.iter().next().expect("mapped point");
+        assert_eq!(point.value, Value::Bool(false));
+        assert_eq!(
+            point.source_timestamp,
+            Utc.timestamp_millis_opt(1_728_003_600_000).single()
+        );
+    }
+
+    #[tokio::test]
+    async fn channel_handshakes_polls_and_controls_over_loopback_tcp() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let address = listener.local_addr().expect("local address").to_string();
+
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.expect("accept");
+            let write_success = {
+                let mut content = vec![0x02, 0x01, 0x02];
+                content.extend_from_slice(&tlv(0xA5, &[0x81, 0x00]));
+                tlv(0xA1, &content)
+            };
+            let replies: Vec<Vec<u8>> = vec![
+                tpkt(&[0x05, 0xD0, 0x00, 0x00, 0x00, 0x00]), // COTP CC
+                tpkt(&[0x02, 0xF0, 0x80]),                   // MMS initiate ack
+                wrap_data_pdu(&read_response(&[0x85, 0x01, 0x03])), // ctlModel probe → 3
+                wrap_data_pdu(&read_response(&[0x87, 0x05, 0x08, 0x41, 0x48, 0x00, 0x00])), // AnIn1 → 12.5
+                wrap_data_pdu(&write_success), // Oper write ok
+            ];
+            for reply in replies {
+                read_frame(&mut stream).await;
+                stream.write_all(&reply).await.expect("reply");
+            }
+        });
+
+        let mut channel = Iec61850Channel::new(
+            "loopback",
+            &params(address),
+            vec![
+                // Note: TransformConfig::default() (via PointConfig::telemetry)
+                // has scale 0.0 — the 1.0 default is serde-only — so pin an
+                // explicit identity transform to assert the polled value.
+                PointConfig::telemetry(1, Iec61850Address::new("LD", "GGIO1$MX$AnIn1$mag$f"))
+                    .with_transform(TransformConfig::linear(1.0, 0.0)),
+                PointConfig::control(2, Iec61850Address::new("LD", "GGIO1$CO$SPCSO1$Oper$ctlVal")),
+            ],
+        );
+
+        channel.connect().await.expect("connect");
+        assert_eq!(channel.connection_state(), ConnectionState::Connected);
+        assert_eq!(
+            channel.ctrl_points.get(&2).map(|entry| entry.ctrl_model),
+            Some(3),
+            "the ctlModel probe must overwrite the configured default"
+        );
+
+        let result = channel.poll_once().await;
+        assert!(result.failures.is_empty(), "{:?}", result.failures);
+        let point = result.data.iter().next().expect("polled point");
+        assert_eq!(point.id, 1);
+        assert_eq!(point.value, Value::Float(12.5));
+
+        assert_eq!(channel.write_control(&[(2, 1.0)]).await.expect("oper"), 1);
+        server.await.expect("scripted server finished");
+    }
+
+    #[tokio::test]
+    async fn connect_reports_protocol_error_when_server_rejects_cotp() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let address = listener.local_addr().expect("local address").to_string();
+        tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.expect("accept");
+            read_frame(&mut stream).await;
+            // Reply with a Connection Request instead of a Connection Confirm.
+            stream
+                .write_all(&tpkt(&[0x05, 0xE0, 0x00, 0x00, 0x00, 0x00]))
+                .await
+                .expect("reject");
+        });
+
+        let mut channel = Iec61850Channel::new("reject", &params(address), Vec::new());
+        let error = channel.connect().await.expect_err("handshake must fail");
+        assert!(
+            error.to_string().contains("COTP handshake"),
+            "unexpected error: {error}"
+        );
+        assert_eq!(channel.connection_state(), ConnectionState::Error);
+        assert!(
+            channel.framer.is_none(),
+            "no framer survives a failed connect"
+        );
+    }
+
+    #[tokio::test]
+    async fn poll_read_timeout_records_the_failure_and_disconnects() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let address = listener.local_addr().expect("local address").to_string();
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.expect("accept");
+            read_frame(&mut stream).await;
+            stream
+                .write_all(&tpkt(&[0x05, 0xD0, 0x00, 0x00, 0x00, 0x00]))
+                .await
+                .expect("cc");
+            read_frame(&mut stream).await;
+            stream
+                .write_all(&tpkt(&[0x02, 0xF0, 0x80]))
+                .await
+                .expect("initiate");
+            // Swallow the poll request and keep the socket open so the client
+            // hits its request timeout instead of seeing EOF.
+            read_frame(&mut stream).await;
+            tokio::time::sleep(Duration::from_secs(5)).await;
+        });
+
+        let mut config = params(address);
+        config.request_timeout_ms = 100;
+        let mut channel = Iec61850Channel::new(
+            "timeout",
+            &config,
+            vec![PointConfig::telemetry(
+                1,
+                Iec61850Address::new("LD", "GGIO1$MX$AnIn1$mag$f"),
+            )],
+        );
+
+        channel.connect().await.expect("connect");
+        let result = channel.poll_once().await;
+        assert!(result.data.is_empty());
+        assert_eq!(result.failures.len(), 1);
+        assert_eq!(result.failures[0].point_id, 1);
+        assert_eq!(result.failures[0].error, "read timeout");
+        assert_eq!(
+            channel.connection_state(),
+            ConnectionState::Disconnected,
+            "a timed-out channel must drop the connection for a clean reconnect"
+        );
+        server.abort();
     }
 }

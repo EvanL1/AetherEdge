@@ -1,7 +1,7 @@
 ---
 title: Protocol Adapter Reference
 description: Exact AetherEdge IO feature gates, runtime protocol IDs, transport roles, point mappings, security boundaries, and implemented protocol slices
-updated: 2026-08-02
+updated: 2026-08-06
 ---
 
 # Protocol Adapter Reference
@@ -18,37 +18,54 @@ directly.
 
 ## Composition matrix
 
-| Cargo feature | Runtime protocol ID | Transport role | Point types | Default build | Implemented slice |
-|---|---|---|---|---:|---|
-| `modbus` | `modbus_tcp`, `modbus_rtu` | TCP/serial client | T/S/C/A | yes | Modbus polling and governed writes |
-| `iec104` | `iec104` | TCP client | T/S/C/A | no | IEC 60870-5-104 client |
-| `iec61850` | `iec61850` | TCP/ISO client | T/S/C/A | yes | MMS client; see adapter-specific control constraints |
-| `opcua` | `opcua` | TCP client | T/S/C/A | no | Anonymous `SecurityPolicy::None` sessions only |
-| `bacnet` | `bacnet_ip` | UDP client | T/S/C/A | no | Direct ReadProperty/WriteProperty |
-| `dl645` | `dl645` | Serial or transparent TCP client | fixed telemetry set | no | DL/T 645-2007 meter reads |
-| `cjt188` | `cjt188` | Serial or transparent TCP client | T/S | no | CJ/T 188 data reads |
-| `iec101` | `iec101` | Serial or transparent TCP master | T/S | no | Unbalanced general interrogation |
-| `gb32960` | `gb32960` | TCP server | T/S | no | Allow-listed vehicle telemetry reports |
-| `jt808` | `jt808` | TCP server | T/S | no | Authenticated terminal location reports |
-| `mqtt` | `mqtt` | Broker subscriber | T/S | no | Read-only JSON payload acquisition |
-| `http` | `http` | HTTP polling client | T/S | no | Read-only JSON polling |
-| `can` | `can` | Linux SocketCAN reader | T/S | yes | Raw CAN frame decoding |
-| `j1939` | `j1939` | Linux SocketCAN reader | T/S | no | Compiled SPN decoder catalog; implies `can` |
-| `gpio` | `di_do` | Linux GPIO | S/C | yes | `gpiod` or legacy sysfs driver |
-| `ble` | `ble` | BLE GATT client | T/S/C/A | no | Polling/notifications and governed characteristic writes |
-| `zigbee` | `zigbee` | TCP gateway client | T/S | no | Aether Raw TCP framing, not ZNP or EZSP |
-| `aether_485` | `aether_485` | Serial client | T/S | yes | Aether private RS-485 acquisition protocol |
+| Cargo feature | Runtime protocol ID | Transport role | Point types | Default build | Evidence | Implemented slice |
+|---|---|---|---|---:|---|---|
+| `modbus` | `modbus_tcp`, `modbus_rtu` | TCP/serial client | T/S/C/A | yes | loopback | Modbus polling and governed writes |
+| `iec104` | `iec104` | TCP client | T/S/C/A | no | loopback | IEC 60870-5-104 client |
+| `iec61850` | `iec61850` | TCP/ISO client | T/S/C/A | yes | unit | MMS client; see adapter-specific control constraints |
+| `opcua` | `opcua` | TCP client | T/S/C/A | no | unit | Anonymous `SecurityPolicy::None` sessions only |
+| `bacnet` | `bacnet_ip` | UDP client | T/S/C/A | no | loopback | Direct ReadProperty/WriteProperty |
+| `dl645` | `dl645` | Serial or transparent TCP client | fixed telemetry set | no | unit | DL/T 645-2007 meter reads |
+| `cjt188` | `cjt188` | Serial or transparent TCP client | T/S | no | unit | CJ/T 188 data reads |
+| `iec101` | `iec101` | Serial or transparent TCP master | T/S | no | unit | Unbalanced general interrogation |
+| `gb32960` | `gb32960` | TCP server | T/S | no | loopback | Allow-listed vehicle telemetry reports |
+| `jt808` | `jt808` | TCP server | T/S | no | loopback | Authenticated terminal location reports |
+| `mqtt` | `mqtt` | Broker subscriber | T/S | no | unit | Read-only JSON payload acquisition |
+| `http` | `http` | HTTP polling client | T/S | no | loopback | Read-only JSON polling |
+| `can` | `can` | Linux SocketCAN reader | T/S | yes | unit | Raw CAN frame decoding |
+| `j1939` | `j1939` | Linux SocketCAN reader | T/S | no | unit | Compiled SPN decoder catalog; implies `can` |
+| `gpio` | `di_do` | Linux GPIO | S/C | yes | unit | `gpiod` or legacy sysfs driver |
+| `ble` | `ble` | BLE GATT client | T/S/C/A | no | unit | Polling/notifications and governed characteristic writes |
+| `zigbee` | `zigbee` | TCP gateway client | T/S | no | unit | Aether Raw TCP framing, not ZNP or EZSP |
 
 The default feature set remains industry-neutral:
 
 ```text
-modbus, gpio, aether_485, iec61850, can
+modbus, gpio, iec61850, can
 ```
 
 CAN, J1939, and GPIO are advertised only on Linux. Enabling a Cargo feature on
 another target does not create a false runtime capability. Build tooling
 derives the protocol list from the exact feature set and records it in the
 checksummed runtime manifest.
+
+## Evidence tiers
+
+The `Evidence` column reports how far each adapter's recorded verification
+currently goes. The tiers form a ladder; each includes the previous one:
+
+| Tier | Meaning |
+|---|---|
+| `unit` | Codec, parser, configuration, and factory logic under automated unit test. No live peer exchange. |
+| `loopback` | Automated message exchange against a local in-repository peer: a loopback TCP/UDP/HTTP test server or the protocol simulator. |
+| `real-device` | Verified against at least one physical vendor device, with the device model and firmware recorded. |
+| `field-proven` | Commissioned in a sustained real deployment with audit history. |
+
+No adapter currently claims `real-device` or `field-proven` in this
+repository. Those tiers are deployment-specific evidence and are upgraded per
+adapter only when that evidence is recorded. A tier describes the implemented
+software slice named in the matrix, never conformance to the whole protocol
+standard.
 
 ## New adapter configuration
 
@@ -307,10 +324,10 @@ COMTRADE time multiplier.
 
 ## Commissioning and verification
 
-Codec, parser, and factory tests cover the implemented software slices, and
-the inbound terminal servers also have loopback TCP tests. This evidence is
-not a substitute for a device profile, vendor point table, serial/electrical
-validation, or interoperability certification.
+The `Evidence` column in the composition matrix records each adapter's
+current verification tier. Even a `loopback` tier is not a substitute for a
+device profile, vendor point table, serial/electrical validation, or
+interoperability certification.
 
 Before enabling a physical channel:
 

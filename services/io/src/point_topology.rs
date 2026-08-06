@@ -1295,11 +1295,6 @@ mod tests {
                 }),
             ),
             (
-                "aether_485",
-                PointKind::Telemetry,
-                serde_json::json!({"device_id": 1, "cmd": 1}),
-            ),
-            (
                 "iec61850",
                 PointKind::Control,
                 serde_json::json!({

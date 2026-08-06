@@ -38,11 +38,10 @@ pub const SHIPPED_SERVICES: [&str; 6] = [
 /// MQTT and HTTP are intentionally absent: they are opt-in features and must
 /// never be advertised by the default artifact merely because an Energy Pack
 /// can use them.
-pub const DEFAULT_IO_PROTOCOL_FEATURES: [&str; 5] =
-    ["aether_485", "can", "gpio", "iec61850", "modbus"];
+pub const DEFAULT_IO_PROTOCOL_FEATURES: [&str; 4] = ["can", "gpio", "iec61850", "modbus"];
 
 /// Compatibility alias for release tooling.
-pub const SHIPPED_IO_PROTOCOL_FEATURES: [&str; 5] = DEFAULT_IO_PROTOCOL_FEATURES;
+pub const SHIPPED_IO_PROTOCOL_FEATURES: [&str; 4] = DEFAULT_IO_PROTOCOL_FEATURES;
 
 #[derive(Clone, Copy)]
 struct IoProtocolAdapter {
@@ -87,10 +86,6 @@ macro_rules! define_io_protocol_features {
 }
 
 define_io_protocol_features! {
-    "aether_485" => {
-        implies: [],
-        adapters: [("aether_485", None)],
-    },
     "bacnet" => {
         implies: [],
         adapters: [("bacnet_ip", None)],

@@ -13,7 +13,6 @@
     "aether-uplink"
   ],
   "cargo_features": [
-    "aether-io/aether_485",
     "aether-io/can",
     "aether-io/gpio",
     "aether-io/iec61850",
@@ -35,7 +34,6 @@
     "io.channel.reconcile"
   ],
   "protocols": [
-    "aether_485",
     "can",
     "di_do",
     "iec61850",
@@ -44,6 +42,6 @@
   ],
   "checksum": {
     "algorithm": "sha256",
-    "digest": "d2970bbf4acb7d276eeb9a7b0c208d4343f571d45206ad10721a08083414d473"
+    "digest": "ffdb014cf440dc636f8bba1a8105dd3acdbc797618d35b8fd62874f1996eb0b2"
   }
 }
