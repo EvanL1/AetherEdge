@@ -1015,14 +1015,13 @@ fn polling_adapters_keep_owner_local_state_unshared() {
         );
     }
 
-    for relative in ["services/io/src/protocols/adapters/dl645.rs"] {
-        let source = fs::read_to_string(root.join(relative))
-            .unwrap_or_else(|error| panic!("failed to read {relative}: {error}"));
-        assert!(
-            !source.contains("Arc<LogContext>"),
-            "{relative} restored an unshared logging allocation"
-        );
-    }
+    let relative = "services/io/src/protocols/adapters/dl645.rs";
+    let source = fs::read_to_string(root.join(relative))
+        .unwrap_or_else(|error| panic!("failed to read {relative}: {error}"));
+    assert!(
+        !source.contains("Arc<LogContext>"),
+        "{relative} restored an unshared logging allocation"
+    );
 }
 
 #[test]
