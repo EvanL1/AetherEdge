@@ -146,7 +146,7 @@ impl ByteOrder {
 }
 
 /// Data transformation: result = raw * scale + offset.
-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct TransformConfig {
     #[serde(default = "default_scale")]
     pub scale: f64,
@@ -164,6 +164,22 @@ pub struct TransformConfig {
 
 fn default_scale() -> f64 {
     1.0
+}
+
+/// Must stay the identity transform and agree with the serde field defaults:
+/// a derived `Default` would set `scale = 0.0` and silently zero every value
+/// built through `..TransformConfig::default()`.
+impl Default for TransformConfig {
+    fn default() -> Self {
+        Self {
+            scale: default_scale(),
+            offset: 0.0,
+            reverse: false,
+            deadband: None,
+            min_value: None,
+            max_value: None,
+        }
+    }
 }
 
 impl TransformConfig {
@@ -203,6 +219,17 @@ mod tests {
         let t = TransformConfig::linear(0.1, 10.0);
         assert_eq!(t.apply(100.0), 20.0); // 100 * 0.1 + 10 = 20
         assert_eq!(t.reverse_apply(20.0).unwrap(), 100.0);
+    }
+
+    #[test]
+    fn default_transform_is_the_identity_and_matches_serde_defaults() {
+        let constructed = TransformConfig::default();
+        assert_eq!(constructed.apply(42.5), 42.5);
+
+        let deserialized: TransformConfig = serde_json::from_str("{}").unwrap();
+        assert_eq!(deserialized.scale, constructed.scale);
+        assert_eq!(deserialized.offset, constructed.offset);
+        assert_eq!(deserialized.reverse, constructed.reverse);
     }
 
     #[test]
