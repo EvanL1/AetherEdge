@@ -47,8 +47,6 @@ members = [
     "libs/aether-calc",
     "libs/aether-config",
     "libs/aether-core",
-    # libs/aether-comlink removed - types moved to io
-    # libs/aether-protocols removed - protocols are now in io
     "libs/aether-routing",
     "libs/aether-runtime-catalog",
     "libs/aether-rules",
@@ -90,9 +88,6 @@ redundant-allocation = "deny"
 useless-conversion = "deny"
 
 [workspace.dependencies]
-# no_std compatible
-heapless = "0.8"
-
 # Async runtime
 tokio = { version = "1.35", default-features = true, features = ["full"] }
 tokio-util = { version = "0.7", features = ["codec"] }
@@ -145,9 +140,6 @@ zeroize = "1.8.2"
 # HTTP clients
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "multipart", "stream"] }
 
-# Configuration
-figment = { version = "0.10", features = ["yaml", "toml", "json", "env"] }
-
 # Utilities
 futures = "0.3"
 bytes = "1.12.1"
@@ -167,14 +159,10 @@ serde_json_path = "0.7"
 
 # Data structures and algorithms
 dashmap = { version = "6", features = ["serde"] }
-ahash = "0.8"
 rustc-hash = "2.1"
-parking_lot = "0.12"
-bytemuck = { version = "1", features = ["derive"] }
 
-# High-performance number formatting (Round 129: zero-allocation u32/f64 to string)
+# High-performance number formatting (zero-allocation integer to string)
 itoa = "1.0"
-ryu = "1.0"
 
 # Tower middleware
 tower = { version = "0.5", features = ["util"] }
@@ -182,11 +170,9 @@ tower-http = { version = "0.6", features = ["trace", "limit"] }
 
 # Dev dependencies
 criterion = { version = "0.5", features = ["html_reports"] }
-tracing-test = "0.2"
 
 # UI dependencies for CLI tools
 colored = "2.0"
-# indicatif = "0.17"  # removed - not currently used
 
 # Performance optimization profiles
 [profile.release]
