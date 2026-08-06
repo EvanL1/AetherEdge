@@ -33,11 +33,12 @@ The IO source tree also contains opt-in BACnet/IP, CJ/T 188,
 IEC 60870-5-101, GB/T 32960, and JT/T 808 adapter slices alongside the existing
 DL/T 645 implementation. COMTRADE CFG/DAT inspection and CSV normalization are
 offline CLI functions rather than an IO protocol. Across these slices there is
-codec and factory evidence, plus loopback TCP evidence for the two inbound
-terminal servers; device-vendor
+codec and factory evidence, plus loopback exchange evidence for BACnet/IP and
+the two inbound terminal servers; device-vendor
 interoperability and field commissioning remain deployment-specific evidence,
-not a repository-wide certification claim. See the
-[Protocol Adapter Reference](../reference/protocol-adapters.md).
+not a repository-wide certification claim. The
+[Protocol Adapter Reference](../reference/protocol-adapters.md) records each
+adapter's current evidence tier.
 
 **Experimental:** the Uplink-owned CloudLink MQTT v1 foundation,
 application-ACK-driven spool, AetherContracts alpha.3 consumption, and

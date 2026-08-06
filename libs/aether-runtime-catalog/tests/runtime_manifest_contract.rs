@@ -22,14 +22,8 @@ fn default_manifest_is_feature_exact_and_uses_the_live_capability_catalog() {
         .iter()
         .map(|descriptor| descriptor.name())
         .collect::<BTreeSet<_>>();
-    let expected_protocols = BTreeSet::from([
-        "aether_485",
-        "can",
-        "di_do",
-        "iec61850",
-        "modbus_rtu",
-        "modbus_tcp",
-    ]);
+    let expected_protocols =
+        BTreeSet::from(["can", "di_do", "iec61850", "modbus_rtu", "modbus_tcp"]);
 
     assert_eq!(
         manifest
@@ -77,6 +71,20 @@ fn retired_in_tree_sunspec_feature_is_rejected() {
     assert!(matches!(
         error,
         RuntimeManifestError::UnknownIoFeature { ref id } if id == "sunspec"
+    ));
+}
+
+#[test]
+fn retired_aether_485_feature_is_rejected() {
+    let error = KernelRuntimeManifest::from_io_features(
+        env!("CARGO_PKG_VERSION"),
+        "aarch64-unknown-linux-musl",
+        ["aether_485"],
+    )
+    .expect_err("the retired private Aether-485 adapter is no longer a kernel composition");
+    assert!(matches!(
+        error,
+        RuntimeManifestError::UnknownIoFeature { ref id } if id == "aether_485"
     ));
 }
 

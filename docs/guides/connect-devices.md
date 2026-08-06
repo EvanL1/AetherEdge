@@ -75,9 +75,9 @@ CSV tables next to the channel YAML and picked up by `aether sync`.
 IO advertises only protocols that the same binary can construct through its
 production composition root. Most are behind compile-time Cargo features
 (`services/io/Cargo.toml`), so a given binary usually contains only a subset.
-The default feature list selects Modbus, GPIO, Aether-485, IEC 61850, and CAN.
+The default feature list selects Modbus, GPIO, IEC 61850, and CAN.
 The production registry composes CAN and GPIO only on Linux: a Linux default
-build advertises all five, while a non-Linux default build does not advertise
+build advertises all four, while a non-Linux default build does not advertise
 CAN or GPIO.
 
 | Protocol | Selected by default | Platform notes |
@@ -98,7 +98,6 @@ CAN or GPIO.
 | GPIO (`gpio`) | yes | Linux only |
 | BLE GATT (`ble`) | no | notification/poll acquisition plus governed GATT writes |
 | Zigbee (`zigbee`) | no | Aether Raw TCP gateway framing only |
-| Aether-485 (`aether_485`) | yes | private RS-485 protocol |
 
 CAN, J1939, and GPIO are Linux-gated in the IO protocol factory registry
 (`services/io/src/protocols/factory.rs`), so selecting their Cargo features
