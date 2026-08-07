@@ -1,5 +1,16 @@
 use chrono::{DateTime, Utc};
 
+/// Upper bound for any day-denominated configuration value (100 years).
+///
+/// `chrono` panics when a `DateTime` +/- `Duration` leaves its representable
+/// range, and the workspace release profile sets `panic = "abort"`, so an
+/// unclamped value turns one request into a process kill. The persisted config
+/// would then reproduce the crash on every restart.
+pub const MAX_RANGE_DAYS: i64 = 36_500;
+
+/// Upper bound for page sizes so `(page - 1) * page_size` cannot overflow `i64`.
+pub const MAX_PAGE_SIZE_LIMIT: i64 = 100_000;
+
 // ── Core data types ───────────────────────────────────────────────────────────
 
 /// One measurement point ready to be written to storage.
@@ -335,15 +346,17 @@ impl ServiceConfig {
         self.collection_interval_secs = self.collection_interval_secs.max(1);
         self.flush_interval_secs = self.flush_interval_secs.max(1);
         self.batch_size = self.batch_size.max(1);
-        self.cleanup_older_than_days = self.cleanup_older_than_days.max(1);
-        self.default_page_size = self.default_page_size.max(1);
-        self.max_page_size = self.max_page_size.max(1);
-        self.max_time_range_days = self.max_time_range_days.max(1);
+        self.cleanup_older_than_days = self.cleanup_older_than_days.clamp(1, MAX_RANGE_DAYS as i32);
+        self.default_page_size = self.default_page_size.clamp(1, MAX_PAGE_SIZE_LIMIT);
+        self.max_page_size = self.max_page_size.clamp(1, MAX_PAGE_SIZE_LIMIT);
+        self.max_time_range_days = self.max_time_range_days.clamp(1, MAX_RANGE_DAYS);
     }
 }
 
 #[cfg(test)]
 mod config_tests {
+    use chrono::Duration;
+
     use super::*;
 
     #[test]
@@ -368,6 +381,56 @@ mod config_tests {
         assert_eq!(cfg.default_page_size, 1);
         assert_eq!(cfg.max_page_size, 1);
         assert_eq!(cfg.max_time_range_days, 1);
+    }
+
+    #[test]
+    fn normalize_clamps_day_ranges_that_would_overflow_chrono() {
+        let mut cfg = ServiceConfig {
+            cleanup_older_than_days: i32::MAX,
+            max_time_range_days: i64::MAX,
+            ..ServiceConfig::default()
+        };
+
+        cfg.normalize();
+
+        assert_eq!(cfg.max_time_range_days, MAX_RANGE_DAYS);
+        assert_eq!(cfg.cleanup_older_than_days, MAX_RANGE_DAYS as i32);
+    }
+
+    #[test]
+    fn clamped_day_ranges_survive_the_arithmetic_the_query_path_performs() {
+        let mut cfg = ServiceConfig {
+            cleanup_older_than_days: i32::MAX,
+            max_time_range_days: i64::MAX,
+            ..ServiceConfig::default()
+        };
+        cfg.normalize();
+
+        // These are exactly the operations dto.rs and the cleanup backends run;
+        // before clamping they panic and, under `panic = "abort"`, kill the process.
+        let now = Utc::now();
+        assert!(
+            now.checked_sub_signed(Duration::days(cfg.max_time_range_days))
+                .is_some()
+        );
+        assert!(
+            now.checked_sub_signed(Duration::days(i64::from(cfg.cleanup_older_than_days)))
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn normalize_clamps_page_sizes_so_offset_arithmetic_cannot_overflow() {
+        let mut cfg = ServiceConfig {
+            default_page_size: i64::MAX,
+            max_page_size: i64::MAX,
+            ..ServiceConfig::default()
+        };
+
+        cfg.normalize();
+
+        assert_eq!(cfg.max_page_size, MAX_PAGE_SIZE_LIMIT);
+        assert_eq!(cfg.default_page_size, MAX_PAGE_SIZE_LIMIT);
     }
 }
 

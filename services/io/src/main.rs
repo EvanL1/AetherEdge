@@ -36,6 +36,14 @@ use aether_shm_bridge::{
     point_watch_socket_from_shm, timestamp_ms,
 };
 
+/// Resolve the SHM snapshot period from `SHM_SNAPSHOT_INTERVAL`.
+///
+/// `tokio::time::interval` panics on a zero period and the release profile sets
+/// `panic = "abort"`, so an unclamped `0` would kill the IO service at startup.
+fn snapshot_interval(configured_secs: Option<u64>) -> Duration {
+    Duration::from_secs(configured_secs.unwrap_or(300).max(1))
+}
+
 #[tokio::main]
 async fn main() -> AetherResult<()> {
     // Parse arguments and initialize
@@ -137,11 +145,11 @@ async fn main() -> AetherResult<()> {
         let snapshot_path = std::env::var("SHM_SNAPSHOT_PATH")
             .map(std::path::PathBuf::from)
             .unwrap_or_else(|_| std::path::PathBuf::from("data/shm-snapshot.bin"));
-        let snapshot_interval = std::env::var("SHM_SNAPSHOT_INTERVAL")
-            .ok()
-            .and_then(|value| value.parse::<u64>().ok())
-            .map(Duration::from_secs)
-            .unwrap_or_else(|| Duration::from_secs(300));
+        let snapshot_interval = snapshot_interval(
+            std::env::var("SHM_SNAPSHOT_INTERVAL")
+                .ok()
+                .and_then(|value| value.parse::<u64>().ok()),
+        );
         let restore_on_start = std::env::var("SHM_RESTORE_ON_START")
             .map(|value| !value.eq_ignore_ascii_case("false"))
             .unwrap_or(true);
@@ -635,4 +643,27 @@ async fn main() -> AetherResult<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod snapshot_interval_tests {
+    use super::snapshot_interval;
+    use std::time::Duration;
+
+    #[test]
+    fn a_zero_configured_interval_is_clamped_instead_of_panicking() {
+        // `SHM_SNAPSHOT_INTERVAL=0` reached `tokio::time::interval`, which panics —
+        // fatal under the workspace release profile's `panic = "abort"`.
+        assert_eq!(snapshot_interval(Some(0)), Duration::from_secs(1));
+    }
+
+    #[test]
+    fn a_configured_interval_is_preserved() {
+        assert_eq!(snapshot_interval(Some(30)), Duration::from_secs(30));
+    }
+
+    #[test]
+    fn an_absent_setting_uses_the_default() {
+        assert_eq!(snapshot_interval(None), Duration::from_secs(300));
+    }
 }

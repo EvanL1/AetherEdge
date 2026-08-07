@@ -578,3 +578,30 @@ mod mapping_tests {
         }
     }
 }
+
+/// Turn a configured millisecond interval into a tick period.
+///
+/// `tokio::time::interval` panics on a zero period and the workspace release
+/// profile sets `panic = "abort"`, so a channel config carrying `0` would take
+/// the whole IO service down rather than just failing that channel.
+/// Only the Linux socket client drives a ticker; `test` keeps it reachable for
+/// the unit tests on every platform.
+#[cfg(any(target_os = "linux", test))]
+pub(crate) fn tick_period(configured_ms: u64) -> std::time::Duration {
+    std::time::Duration::from_millis(configured_ms.max(1))
+}
+
+#[cfg(test)]
+mod tick_period_tests {
+    use super::tick_period;
+
+    #[test]
+    fn a_zero_configured_interval_is_clamped_instead_of_panicking() {
+        assert_eq!(tick_period(0), std::time::Duration::from_millis(1));
+    }
+
+    #[test]
+    fn a_configured_interval_is_preserved() {
+        assert_eq!(tick_period(50), std::time::Duration::from_millis(50));
+    }
+}

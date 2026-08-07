@@ -37,6 +37,9 @@ use crate::config::EnvConfig;
 use crate::state::AppState;
 use crate::storage::StorageBackend;
 
+/// How long shutdown waits for the buffered points to reach storage.
+const FINAL_FLUSH_TIMEOUT_SECS: u64 = 15;
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     // ── Env config ────────────────────────────────────────────────────────────
@@ -110,7 +113,7 @@ async fn main() -> anyhow::Result<()> {
 
     // ── Background tasks ──────────────────────────────────────────────────────
     let shutdown = CancellationToken::new();
-    scheduler::spawn_all(Arc::clone(&state), shutdown.clone());
+    let background = scheduler::spawn_all(Arc::clone(&state), shutdown.clone());
 
     // ── HTTP server ───────────────────────────────────────────────────────────
     let cors = CorsLayer::new()
@@ -128,6 +131,12 @@ async fn main() -> anyhow::Result<()> {
     let addr = common::bind_address(&env.api_host, env.api_port)?;
 
     common::shutdown::serve_with_shutdown(addr, app, shutdown).await?;
+
+    // `serve_with_shutdown` only drains in-flight HTTP connections. Returning here
+    // would drop the runtime while the flush task is still writing its final batch.
+    background
+        .join_flush(std::time::Duration::from_secs(FINAL_FLUSH_TIMEOUT_SECS))
+        .await;
 
     Ok(())
 }

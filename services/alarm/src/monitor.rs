@@ -19,8 +19,17 @@ use crate::db;
 use crate::notification::{AlarmCountSnapshot, AlarmNotification};
 use crate::state::AppState;
 
+/// Turn the configured poll interval into a tick period.
+///
+/// `tokio::time::interval` panics on a zero period and the workspace release
+/// profile sets `panic = "abort"`, so an unclamped `DATA_FETCH_INTERVAL=0` would
+/// take the whole alarm service down at startup.
+fn monitor_interval(configured_secs: u64) -> Duration {
+    Duration::from_secs(configured_secs.max(1))
+}
+
 pub async fn run_monitor(state: Arc<AppState>, shutdown: CancellationToken) {
-    let interval = Duration::from_secs(state.config.data_fetch_interval);
+    let interval = monitor_interval(state.config.data_fetch_interval);
     info!(
         "Alarm monitor started (interval={}s)",
         state.config.data_fetch_interval
@@ -397,4 +406,21 @@ pub async fn manual_check_rule(
             "check_time": chrono::Utc::now().to_rfc3339(),
         },
     }))
+}
+
+#[cfg(test)]
+mod interval_tests {
+    use super::*;
+
+    #[test]
+    fn a_zero_configured_interval_is_clamped_instead_of_panicking() {
+        // `tokio::time::interval` panics on a zero period, and the release profile
+        // sets `panic = "abort"`, so `DATA_FETCH_INTERVAL=0` killed the service.
+        assert_eq!(monitor_interval(0), Duration::from_secs(1));
+    }
+
+    #[test]
+    fn a_configured_interval_is_preserved() {
+        assert_eq!(monitor_interval(30), Duration::from_secs(30));
+    }
 }
