@@ -14,6 +14,44 @@ use crate::models::{
 };
 use crate::storage::StorageBackend;
 
+/// Fan fetched rows back out to the requested series, in request order.
+///
+/// Looked up rather than removed: a request may legitimately name the same
+/// (`series_key`, `point_id`) twice, and consuming the entry left every repeat
+/// with an empty series — indistinguishable from "this point has no history".
+fn group_batch_rows(
+    series: &[(String, String)],
+    rows: &[(DateTime<Utc>, String, String, Option<f64>)],
+) -> Vec<SeriesResult> {
+    let mut grouped: std::collections::HashMap<(&str, &str), Vec<SeriesPoint>> =
+        std::collections::HashMap::new();
+    for (time, key, point_id, value) in rows {
+        grouped
+            .entry((key.as_str(), point_id.as_str()))
+            .or_default()
+            .push(SeriesPoint {
+                time: fmt_ts(time),
+                value: *value,
+            });
+    }
+
+    series
+        .iter()
+        .map(|(key, point_id)| {
+            let data = grouped
+                .get(&(key.as_str(), point_id.as_str()))
+                .cloned()
+                .unwrap_or_default();
+            SeriesResult {
+                series_key: key.clone(),
+                point_id: point_id.clone(),
+                count: data.len(),
+                data,
+            }
+        })
+        .collect()
+}
+
 pub struct PostgresBackend {
     pub pool: PgPool,
 }
@@ -257,33 +295,7 @@ impl StorageBackend for PostgresBackend {
         .fetch_all(&self.pool)
         .await?;
 
-        // Group fetched rows by (series_key, point_id), preserving the request order.
-        let mut map: std::collections::HashMap<(&str, &str), Vec<SeriesPoint>> =
-            std::collections::HashMap::new();
-        for (time, rk, pid, value) in &rows {
-            map.entry((rk.as_str(), pid.as_str()))
-                .or_default()
-                .push(SeriesPoint {
-                    time: fmt_ts(time),
-                    value: *value,
-                });
-        }
-
-        let results = series
-            .iter()
-            .map(|(k, p)| {
-                let data = map.remove(&(k.as_str(), p.as_str())).unwrap_or_default();
-                let count = data.len();
-                SeriesResult {
-                    series_key: k.clone(),
-                    point_id: p.clone(),
-                    count,
-                    data,
-                }
-            })
-            .collect();
-
-        Ok(results)
+        Ok(group_batch_rows(series, &rows))
     }
 
     async fn cleanup_old_data(&self, older_than_days: i32) -> anyhow::Result<u64> {
@@ -309,5 +321,261 @@ impl StorageBackend for PostgresBackend {
                 error!("PostgreSQL health check failed: {}", e);
                 false
             })
+    }
+}
+
+#[cfg(test)]
+mod batch_grouping_tests {
+    use super::*;
+
+    fn row(point_id: &str, value: f64) -> (DateTime<Utc>, String, String, Option<f64>) {
+        (
+            DateTime::<Utc>::from_timestamp(1_700_000_000, 0).expect("representable"),
+            "inst:1:M".to_string(),
+            point_id.to_string(),
+            Some(value),
+        )
+    }
+
+    fn requested(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
+        pairs
+            .iter()
+            .map(|(k, p)| ((*k).to_string(), (*p).to_string()))
+            .collect()
+    }
+
+    #[test]
+    fn each_requested_series_receives_its_rows() {
+        let series = requested(&[("inst:1:M", "7"), ("inst:1:M", "8")]);
+        let rows = vec![row("7", 1.0), row("8", 2.0)];
+
+        let results = group_batch_rows(&series, &rows);
+
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].count, 1);
+        assert_eq!(results[1].count, 1);
+    }
+
+    #[test]
+    fn a_repeated_series_item_is_answered_twice_not_emptied() {
+        // `map.remove` handed the rows to the first occurrence and left duplicates
+        // with an empty vector, so the same point looked both present and absent
+        // in one response. SQLite queries each item independently and does not.
+        let series = requested(&[("inst:1:M", "7"), ("inst:1:M", "7")]);
+        let rows = vec![row("7", 1.0)];
+
+        let results = group_batch_rows(&series, &rows);
+
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].count, 1);
+        assert_eq!(
+            results[1].count, 1,
+            "a duplicated request item must not read as 'no history for this point'"
+        );
+    }
+
+    #[test]
+    fn a_series_with_no_rows_is_reported_as_empty() {
+        let series = requested(&[("inst:1:M", "9")]);
+
+        let results = group_batch_rows(&series, &[]);
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].count, 0);
+    }
+}
+
+/// Integration coverage for the PostgreSQL backend.
+///
+/// Opt-in: these need a live server, so they are `#[ignore]`d and read their
+/// DSN from `AETHER_TEST_PG_DSN`. Run them with a throwaway server:
+///
+/// ```sh
+/// docker run -d --rm --name aether-pg-test -e POSTGRES_PASSWORD=aether-test \
+///     -e POSTGRES_DB=history -p 5432:5432 postgres:17-alpine
+/// AETHER_TEST_PG_DSN=postgres://postgres:aether-test@127.0.0.1:5432/history \
+///     cargo test -p aether-history --features postgres-storage --bins -- --ignored
+/// ```
+#[cfg(test)]
+mod postgres_integration_tests {
+    use super::*;
+    use crate::models::DataPoint;
+
+    /// Connect and hand back a backend owning a private, empty schema.
+    ///
+    /// One schema per test: these run concurrently and one of them drops its
+    /// table, which would otherwise pull the rest down with it.
+    async fn backend(schema: &'static str) -> PostgresBackend {
+        let dsn = std::env::var("AETHER_TEST_PG_DSN")
+            .expect("AETHER_TEST_PG_DSN must point at a disposable PostgreSQL server");
+
+        let admin = sqlx::postgres::PgPoolOptions::new()
+            .max_connections(1)
+            .connect(&dsn)
+            .await
+            .expect("connect to the test server");
+        for statement in [
+            format!("DROP SCHEMA IF EXISTS {schema} CASCADE"),
+            format!("CREATE SCHEMA {schema}"),
+        ] {
+            sqlx::query(&statement)
+                .execute(&admin)
+                .await
+                .expect("prepare a private schema");
+        }
+        admin.close().await;
+
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .max_connections(2)
+            .after_connect(move |conn, _meta| {
+                Box::pin(async move {
+                    sqlx::query(&format!("SET search_path TO {schema}"))
+                        .execute(conn)
+                        .await?;
+                    Ok(())
+                })
+            })
+            .connect(&dsn)
+            .await
+            .expect("connect to the test server");
+
+        let backend = PostgresBackend::new(pool);
+        backend.init_schema().await.expect("schema");
+        backend
+    }
+
+    fn point(series_key: &str, point_id: &str, value: f64, offset_secs: i64) -> DataPoint {
+        DataPoint {
+            time: DateTime::<Utc>::from_timestamp(1_700_000_000 + offset_secs, 0)
+                .expect("representable"),
+            series_key: series_key.to_string(),
+            point_id: point_id.to_string(),
+            value: Some(value),
+            string_value: None,
+        }
+    }
+
+    fn window() -> (DateTime<Utc>, DateTime<Utc>) {
+        (
+            DateTime::<Utc>::from_timestamp(1_600_000_000, 0).expect("representable"),
+            DateTime::<Utc>::from_timestamp(1_800_000_000, 0).expect("representable"),
+        )
+    }
+
+    #[tokio::test]
+    #[ignore = "requires a PostgreSQL server (AETHER_TEST_PG_DSN)"]
+    async fn history_survives_a_write_and_paged_read() {
+        let backend = backend("t_roundtrip").await;
+        let written = backend
+            .write_batch(vec![
+                point("inst:1:M", "7", 1.0, 0),
+                point("inst:1:M", "7", 2.0, 1),
+                point("inst:1:M", "7", 3.0, 2),
+            ])
+            .await
+            .expect("write");
+        assert_eq!(written, 3);
+
+        let (start_time, end_time) = window();
+        let (records, total) = backend
+            .query_range(&HistoryRangeQuery {
+                series_key: "inst:1:M".to_string(),
+                point_id: "7".to_string(),
+                start_time,
+                end_time,
+                page: 1,
+                page_size: 2,
+            })
+            .await
+            .expect("query");
+
+        assert_eq!(records.len(), 2, "page_size bounds the page");
+        assert_eq!(
+            total, 3,
+            "total counts every matching row, not just the page"
+        );
+        assert_eq!(records[0].source, "inst");
+    }
+
+    #[tokio::test]
+    #[ignore = "requires a PostgreSQL server (AETHER_TEST_PG_DSN)"]
+    async fn stats_report_type_codes_not_source_prefixes() {
+        // The PostgreSQL implementation used to take the *first* key segment here
+        // while SQLite took the last, so `data_types` returned sources on one
+        // backend and types on the other for the same request.
+        let backend = backend("t_stats").await;
+        backend
+            .write_batch(vec![
+                point("inst:1:M", "7", 1.0, 0),
+                point("inst:2:A", "8", 2.0, 1),
+                point("io:3:M", "9", 3.0, 2),
+            ])
+            .await
+            .expect("write");
+
+        let stats = backend.get_stats().await.expect("stats");
+
+        let mut data_types = stats.data_types;
+        data_types.sort();
+        assert_eq!(data_types, vec!["A".to_string(), "M".to_string()]);
+        assert_eq!(stats.total_points, 3);
+        assert_eq!(stats.channels.len(), 3);
+    }
+
+    #[tokio::test]
+    #[ignore = "requires a PostgreSQL server (AETHER_TEST_PG_DSN)"]
+    async fn a_repeated_batch_item_is_answered_twice() {
+        let backend = backend("t_batch_dup").await;
+        backend
+            .write_batch(vec![point("inst:1:M", "7", 1.0, 0)])
+            .await
+            .expect("write");
+
+        let (start_time, end_time) = window();
+        let series = vec![
+            ("inst:1:M".to_string(), "7".to_string()),
+            ("inst:1:M".to_string(), "7".to_string()),
+        ];
+        let results = backend
+            .query_batch(&series, start_time, end_time, 100)
+            .await
+            .expect("batch query");
+
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].count, 1);
+        assert_eq!(
+            results[1].count, 1,
+            "a duplicated request item must not read as 'no history for this point'"
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires a PostgreSQL server (AETHER_TEST_PG_DSN)"]
+    async fn an_unreadable_table_is_an_error_not_an_empty_history() {
+        // `query_range` swallowed its COUNT error into `total = 0`, which the
+        // handler turned into `has_more: false` — paginating clients stopped early.
+        let backend = backend("t_unreadable").await;
+        sqlx::query("DROP TABLE history")
+            .execute(&backend.pool)
+            .await
+            .expect("simulate an unreadable table");
+
+        let (start_time, end_time) = window();
+        let result = backend
+            .query_range(&HistoryRangeQuery {
+                series_key: "inst:1:M".to_string(),
+                point_id: "7".to_string(),
+                start_time,
+                end_time,
+                page: 1,
+                page_size: 10,
+            })
+            .await;
+        assert!(result.is_err(), "a failed read must propagate");
+
+        assert!(
+            backend.get_stats().await.is_err(),
+            "a failed stats read must propagate, not report an empty historian"
+        );
     }
 }

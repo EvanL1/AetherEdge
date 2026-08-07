@@ -1,0 +1,74 @@
+name: PostgreSQL Storage
+
+# The PostgreSQL history backend is an optional feature, so the main check runs
+# without a server and its tests stay `#[ignore]`d. That left the backend with
+# no automated coverage at all, which is where its defects accumulated. This
+# workflow provides the server those tests need.
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - Cargo.toml
+      - Cargo.lock
+      - rust-toolchain.toml
+      - workspace-hack/**
+      - services/history/**
+      - .github/actions/setup-rust-env/**
+      - .github/workflows/postgres-storage.yml
+  workflow_dispatch:
+  schedule:
+    - cron: '47 18 * * *'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: postgres-storage-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  postgres-backend:
+    name: PostgreSQL history backend
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    services:
+      postgres:
+        # Plain PostgreSQL: `backend_pg.rs` requires no TimescaleDB extension.
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: aether-test
+          POSTGRES_DB: history
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust environment
+        uses: ./.github/actions/setup-rust-env
+        with:
+          install-protoc: 'true'
+
+      - name: Lint the postgres-storage feature
+        run: >-
+          cargo clippy -p aether-history --features postgres-storage
+          --all-targets -- -D warnings
+
+      - name: Run PostgreSQL backend integration tests
+        env:
+          AETHER_TEST_PG_DSN: postgres://postgres:aether-test@127.0.0.1:5432/history
+        run: >-
+          cargo test -p aether-history --features postgres-storage --bins
+          postgres_integration_tests -- --ignored --nocapture

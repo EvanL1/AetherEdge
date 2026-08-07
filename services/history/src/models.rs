@@ -37,7 +37,7 @@ pub struct HistoryRecord {
 }
 
 /// One data point in a batch query response.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct SeriesPoint {
     pub time: String,
     pub value: Option<f64>,
