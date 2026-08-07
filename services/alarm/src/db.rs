@@ -747,17 +747,19 @@ pub struct AlarmCounts {
 }
 
 pub async fn get_active_alarm_counts(pool: &SqlitePool) -> Result<AlarmCounts> {
+    // Never degrade a failed read to zero: callers broadcast this to the API and
+    // uplink, so a swallowed error would announce "all clear" during an outage.
     let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM alert WHERE status = 'active'")
         .fetch_one(pool)
         .await
-        .unwrap_or(0);
+        .context("count active alerts")?;
 
     let rows: Vec<(i64, i64)> = sqlx::query_as(
         "SELECT warning_level, COUNT(*) FROM alert WHERE status = 'active' GROUP BY warning_level",
     )
     .fetch_all(pool)
     .await
-    .unwrap_or_default();
+    .context("count active alerts by level")?;
 
     let mut counts = AlarmCounts {
         total,
@@ -782,7 +784,7 @@ pub async fn get_statistics(pool: &SqlitePool) -> Result<serde_json::Value> {
             .bind(today_start_timestamp())
             .fetch_one(pool)
             .await
-            .unwrap_or(0);
+            .context("count today's alert events")?;
 
     Ok(serde_json::json!({
         "active_count": counts.total,
@@ -795,14 +797,111 @@ pub async fn get_statistics(pool: &SqlitePool) -> Result<serde_json::Value> {
     }))
 }
 
+/// Pick the first representable start-of-day, scanning forward from midnight.
+///
+/// Kept separate from the timezone lookup so the DST branches stay testable
+/// without depending on the host's configured zone.
+fn scan_day_start<F>(resolve: F, fallback: i64) -> i64
+where
+    F: Fn(u32) -> Option<i64>,
+{
+    (0..4).find_map(resolve).unwrap_or(fallback)
+}
+
+/// Local start-of-day as a Unix timestamp.
+///
+/// DST can make local midnight ambiguous (clocks fall back) or skip it entirely
+/// (clocks spring forward past it). `single()` rejected both, and the previous
+/// fallback used *now* — which collapsed "today" to a zero-length window and
+/// reported the day's event count as 0 on exactly those days.
 fn today_start_timestamp() -> i64 {
     let now = chrono::Local::now();
-    let Some(today) = now.date_naive().and_hms_opt(0, 0, 0) else {
-        return now.timestamp();
-    };
-    chrono::Local
-        .from_local_datetime(&today)
-        .single()
-        .map(|dt| dt.timestamp())
-        .unwrap_or_else(|| now.timestamp())
+    let today = now.date_naive();
+    scan_day_start(
+        |hour| {
+            let naive = today.and_hms_opt(hour, 0, 0)?;
+            chrono::Local
+                .from_local_datetime(&naive)
+                .earliest()
+                .map(|dt| dt.timestamp())
+        },
+        now.timestamp(),
+    )
+}
+
+#[cfg(test)]
+mod fail_closed_tests {
+    use super::*;
+
+    async fn pool_without_tables() -> SqlitePool {
+        sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("in-memory database")
+    }
+
+    #[tokio::test]
+    async fn unreadable_alert_table_is_an_error_not_zero_alarms() {
+        // Reporting 0 active alarms when the database is unreachable tells every
+        // consumer "all clear" during the exact window where that is least true.
+        let pool = pool_without_tables().await;
+
+        let result = get_active_alarm_counts(&pool).await;
+
+        assert!(
+            result.is_err(),
+            "a failed count must propagate, not be reported as zero alarms"
+        );
+    }
+
+    #[tokio::test]
+    async fn unreadable_event_table_is_an_error_not_zero_events() {
+        let pool = pool_without_tables().await;
+        sqlx::query("CREATE TABLE alert (status TEXT, warning_level INTEGER)")
+            .execute(&pool)
+            .await
+            .expect("only the alert table exists");
+
+        let result = get_statistics(&pool).await;
+
+        assert!(
+            result.is_err(),
+            "a failed today_events count must propagate, not be reported as zero"
+        );
+    }
+}
+
+#[cfg(test)]
+mod day_start_tests {
+    use super::scan_day_start;
+
+    #[test]
+    fn a_representable_midnight_is_used() {
+        assert_eq!(
+            scan_day_start(|hour| Some(1_000 + i64::from(hour)), 9_999),
+            1_000
+        );
+    }
+
+    #[test]
+    fn a_midnight_skipped_by_dst_falls_forward_to_the_next_hour() {
+        // Clocks springing forward past midnight made `single()` return None, and
+        // the old fallback used *now* — so "today" became a zero-length window and
+        // the day's event count read as 0.
+        let resolve = |hour: u32| {
+            if hour == 0 {
+                None
+            } else {
+                Some(1_000 + i64::from(hour))
+            }
+        };
+
+        assert_eq!(scan_day_start(resolve, 9_999), 1_001);
+    }
+
+    #[test]
+    fn an_entirely_unresolvable_day_uses_the_fallback() {
+        assert_eq!(scan_day_start(|_| None, 9_999), 9_999);
+    }
 }

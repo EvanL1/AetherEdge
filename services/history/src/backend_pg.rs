@@ -144,8 +144,7 @@ impl StorageBackend for PostgresBackend {
         .bind(query.end_time)
         .fetch_one(&self.pool)
         .await
-        .map(|(n,)| n)
-        .unwrap_or(0);
+        .map(|(n,)| n)?;
 
         let records = rows
             .into_iter()
@@ -196,13 +195,8 @@ impl StorageBackend for PostgresBackend {
             .fetch_one(&self.pool)
             .await?;
 
-        let channels = self.list_channels().await.unwrap_or_default();
-        let data_types: Vec<String> = channels
-            .iter()
-            .filter_map(|k| k.split(':').next().map(|s| s.to_string()))
-            .collect::<std::collections::HashSet<_>>()
-            .into_iter()
-            .collect();
+        let channels = self.list_channels().await?;
+        let data_types = crate::models::data_types_from_keys(&channels);
 
         Ok(DataStats {
             earliest_timestamp: earliest.as_ref().map(fmt_ts),

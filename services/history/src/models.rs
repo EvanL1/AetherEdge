@@ -479,6 +479,18 @@ pub fn source_from_key(key: &str) -> String {
     key.split(':').next().unwrap_or(key).to_string()
 }
 
+/// Distinct data-type codes carried by a set of logical series keys.
+///
+/// The type code is the *last* `:` segment — the first one is the source, which
+/// [`source_from_key`] already reports separately.
+pub fn data_types_from_keys(keys: &[String]) -> Vec<String> {
+    keys.iter()
+        .filter_map(|key| key.rsplit(':').next().map(String::from))
+        .collect::<std::collections::HashSet<_>>()
+        .into_iter()
+        .collect()
+}
+
 /// Parse various time string formats into `DateTime<Utc>`.
 pub fn parse_time(s: &str) -> anyhow::Result<DateTime<Utc>> {
     use chrono::NaiveDateTime;
@@ -513,4 +525,34 @@ pub fn parse_time(s: &str) -> anyhow::Result<DateTime<Utc>> {
     }
 
     anyhow::bail!("Unsupported time format: {}", s)
+}
+
+#[cfg(test)]
+mod key_derivation_tests {
+    use super::{data_types_from_keys, source_from_key};
+
+    #[test]
+    fn the_source_is_the_first_segment_and_the_data_type_is_the_last() {
+        // Both backends must agree: `GET /hisApi/data/range` returned the source
+        // list on PostgreSQL and the type list on SQLite for the same field.
+        assert_eq!(source_from_key("inst:1:M"), "inst");
+
+        let keys = vec![
+            "inst:1:M".to_string(),
+            "inst:2:A".to_string(),
+            "io:3:M".to_string(),
+        ];
+        let mut types = data_types_from_keys(&keys);
+        types.sort();
+
+        assert_eq!(types, vec!["A".to_string(), "M".to_string()]);
+    }
+
+    #[test]
+    fn a_key_without_separators_is_its_own_data_type() {
+        assert_eq!(
+            data_types_from_keys(&["plain".to_string()]),
+            vec!["plain".to_string()]
+        );
+    }
 }

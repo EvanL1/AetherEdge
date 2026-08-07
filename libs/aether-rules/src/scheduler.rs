@@ -207,6 +207,47 @@ struct ScheduledRule {
     onchange_state: OnChangeState,
 }
 
+/// Resolve a rule's trigger from its stored `trigger_config`.
+///
+/// Returns the trigger and whether the stored value was unparseable. An absent
+/// column is the documented legacy default; a *corrupt* one used to take the
+/// same silent path, quietly demoting the rule to a 1s interval.
+fn resolve_trigger(raw: Option<&str>, cooldown_ms: u64) -> (TriggerConfig, bool) {
+    let fallback = || TriggerConfig::Interval {
+        interval_ms: if cooldown_ms > 0 { cooldown_ms } else { 1_000 },
+    };
+
+    match raw {
+        None => (fallback(), false),
+        Some(json) => match serde_json::from_str(json) {
+            Ok(trigger) => (trigger, false),
+            Err(_) => (fallback(), true),
+        },
+    }
+}
+
+/// Carry per-rule scheduling state from the previous rule set into a freshly
+/// loaded one, matched by rule id.
+///
+/// A reload rebuilds every `ScheduledRule` from the database, which has no
+/// notion of cooldowns or last-seen values. Without this the state resets, so
+/// editing a single rule makes every rule immediately eligible to fire again.
+fn preserve_schedule_state(previous: &[ScheduledRule], loaded: &mut [ScheduledRule]) {
+    let mut carried: HashMap<i64, &ScheduledRule> = HashMap::with_capacity(previous.len());
+    for entry in previous {
+        carried.insert(entry.rule.id, entry);
+    }
+
+    for entry in loaded.iter_mut() {
+        let Some(prior) = carried.get(&entry.rule.id) else {
+            continue;
+        };
+        entry.last_execution = prior.last_execution;
+        entry.last_cooldown_start = prior.last_cooldown_start;
+        entry.onchange_state = prior.onchange_state.clone();
+    }
+}
+
 // Allow PointWatchDispatcher::rebuild_from_rules to iterate scheduled rules
 // without exposing the private ScheduledRule struct.
 impl crate::point_watch_dispatcher::RuleSubscriptionInfo for ScheduledRule {
@@ -359,23 +400,19 @@ impl RuleScheduler {
         let db_rules = repository::load_enabled_rules(&self.pool).await?;
         let count = db_rules.len();
 
-        let scheduled: Vec<ScheduledRule> = db_rules
+        let mut scheduled: Vec<ScheduledRule> = db_rules
             .into_iter()
             .map(|rule| {
-                // Parse trigger_config from database, fallback to cooldown_ms
-                let trigger = rule
-                    .trigger_config
-                    .as_ref()
-                    .and_then(|json| serde_json::from_str(json).ok())
-                    .unwrap_or_else(|| {
-                        // Fallback: use cooldown_ms as interval (minimum 1000ms)
-                        let interval_ms = if rule.cooldown_ms > 0 {
-                            rule.cooldown_ms
-                        } else {
-                            1000
-                        };
-                        TriggerConfig::Interval { interval_ms }
-                    });
+                let (trigger, corrupt) =
+                    resolve_trigger(rule.trigger_config.as_deref(), rule.cooldown_ms);
+                if corrupt {
+                    error!(
+                        rule_id = rule.id,
+                        rule_name = %rule.name,
+                        "Rule trigger_config is unparseable; falling back to the cooldown \
+                         interval. This rule is not running on its configured schedule."
+                    );
+                }
 
                 ScheduledRule {
                     rule: Arc::new(rule),
@@ -388,6 +425,7 @@ impl RuleScheduler {
             .collect();
 
         let mut rules = self.rules.write().await;
+        preserve_schedule_state(&rules, &mut scheduled);
         *rules = scheduled;
 
         info!("Rules: {} loaded", count);
@@ -1784,5 +1822,95 @@ mod tests {
             &snapshot,
             Instant::now()
         ));
+    }
+
+    #[test]
+    fn reloading_preserves_scheduling_state_for_rules_that_still_exist() {
+        // Replacing the whole vector reset every cooldown, so editing one rule
+        // made every rule immediately eligible to fire again.
+        let now = Instant::now();
+        let onchange = OnChangeState {
+            last_trigger: Some(now),
+            last_value: HashMap::from([("inst:1:M:7".to_string(), 42.0)]),
+        };
+
+        let previous = vec![ScheduledRule {
+            rule: Arc::new(create_test_rule(1, "kept", 60_000)),
+            trigger: TriggerConfig::default(),
+            last_execution: Some(now),
+            last_cooldown_start: Some(now),
+            onchange_state: onchange,
+        }];
+        let mut loaded = vec![
+            ScheduledRule {
+                rule: Arc::new(create_test_rule(1, "kept", 60_000)),
+                trigger: TriggerConfig::default(),
+                last_execution: None,
+                last_cooldown_start: None,
+                onchange_state: OnChangeState::default(),
+            },
+            ScheduledRule {
+                rule: Arc::new(create_test_rule(2, "added", 0)),
+                trigger: TriggerConfig::default(),
+                last_execution: None,
+                last_cooldown_start: None,
+                onchange_state: OnChangeState::default(),
+            },
+        ];
+
+        preserve_schedule_state(&previous, &mut loaded);
+
+        assert_eq!(
+            loaded[0].last_execution,
+            Some(now),
+            "a surviving rule must keep its cooldown across a reload"
+        );
+        assert_eq!(loaded[0].last_cooldown_start, Some(now));
+        assert_eq!(loaded[0].onchange_state.last_trigger, Some(now));
+        assert_eq!(
+            loaded[0].onchange_state.last_value.get("inst:1:M:7"),
+            Some(&42.0),
+            "OnChange baselines must survive too, or every point looks changed"
+        );
+        assert_eq!(
+            loaded[1].last_execution, None,
+            "a newly added rule starts fresh"
+        );
+    }
+
+    #[test]
+    fn an_absent_trigger_config_is_the_legacy_default_not_a_fault() {
+        let (trigger, corrupt) = resolve_trigger(None, 5_000);
+
+        assert!(!corrupt, "a NULL column is the documented legacy default");
+        let TriggerConfig::Interval { interval_ms } = trigger else {
+            panic!("legacy rules fall back to an interval trigger");
+        };
+        assert_eq!(interval_ms, 5_000);
+    }
+
+    #[test]
+    fn a_valid_trigger_config_is_parsed() {
+        let (trigger, corrupt) =
+            resolve_trigger(Some(r#"{"type":"interval","interval_ms":250}"#), 5_000);
+
+        assert!(!corrupt);
+        let TriggerConfig::Interval { interval_ms } = trigger else {
+            panic!("expected the configured interval trigger");
+        };
+        assert_eq!(interval_ms, 250);
+    }
+
+    #[test]
+    fn a_corrupt_trigger_config_is_reported_not_silently_treated_as_legacy() {
+        // `.ok()` collapsed "column is NULL" and "column is corrupt" into the same
+        // silent fallback, so a damaged rule quietly ran on a 1s interval instead.
+        let (trigger, corrupt) = resolve_trigger(Some("{not json"), 0);
+
+        assert!(corrupt, "unparseable stored config must be surfaced");
+        let TriggerConfig::Interval { interval_ms } = trigger else {
+            panic!("a corrupt config still falls back to an interval trigger");
+        };
+        assert_eq!(interval_ms, 1_000);
     }
 }

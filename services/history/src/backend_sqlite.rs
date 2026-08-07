@@ -1,7 +1,5 @@
 //! Embedded SQLite historical storage used by the default edge profile.
 
-use std::collections::HashSet;
-
 use async_trait::async_trait;
 use chrono::{DateTime, Duration, Utc};
 use sqlx::SqlitePool;
@@ -166,12 +164,7 @@ impl StorageBackend for SqliteHistoryBackend {
                 .fetch_one(&self.pool)
                 .await?;
         let channels = self.list_channels().await?;
-        let data_types = channels
-            .iter()
-            .filter_map(|key| key.rsplit(':').next().map(String::from))
-            .collect::<HashSet<_>>()
-            .into_iter()
-            .collect();
+        let data_types = crate::models::data_types_from_keys(&channels);
         Ok(DataStats {
             earliest_timestamp: earliest
                 .and_then(DateTime::<Utc>::from_timestamp_millis)

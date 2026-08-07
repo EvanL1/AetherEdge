@@ -767,27 +767,47 @@ async fn list_channels(
 /// duration. A continuously growing buffer depth indicates the backend
 /// write throughput is not keeping up with the collection rate.
 #[utoipa::path(get, path = "/hisApi/metrics", tag = "Meta",
-    responses((status = 200, description = "Runtime metrics (total points, channel count, buffer depth, etc.)")))]
-async fn metrics(State(state): State<Arc<AppState>>) -> Json<Value> {
+    responses(
+        (status = 200, description = "Runtime metrics (total points, channel count, buffer depth, etc.)"),
+        (status = 500, description = "Storage backend could not be read"),
+    ))]
+async fn metrics(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     let backend = state.storage.read().await.clone();
-    let stats = backend.get_stats().await.unwrap_or_else(|_| HistoryStats {
-        earliest_timestamp: None,
-        latest_timestamp: None,
-        total_points: 0,
-        channels: vec![],
-        data_types: vec![],
-    });
+    let stats = backend.get_stats().await;
+    let buffer_size = state.buffer.lock().await.len();
 
-    Json(json!({
+    metrics_response(stats, backend.name(), buffer_size)
+}
+
+/// Shape the metrics body.
+///
+/// A failed stats read is reported as a failure: answering `success: true` with
+/// `total_points: 0` made a broken backend look like an empty historian, which
+/// is precisely the signal an operator relies on this endpoint to distinguish.
+fn metrics_response(
+    stats: anyhow::Result<HistoryStats>,
+    backend_name: &str,
+    buffer_size: usize,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let stats = stats.map_err(|error| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"success": false, "message": error.to_string()})),
+        )
+    })?;
+
+    Ok(Json(json!({
         "success": true,
         "message": "OK",
         "data": {
             "total_points":  stats.total_points,
             "channel_count": stats.channels.len(),
-            "backend":       backend.name(),
-            "buffer_size":   state.buffer.lock().await.len(),
+            "backend":       backend_name,
+            "buffer_size":   buffer_size,
         }
-    }))
+    })))
 }
 
 // ============================================================================
@@ -1049,4 +1069,40 @@ fn replace_db_in_dsn(dsn: &str, new_db: &str) -> String {
         return url.to_string();
     }
     dsn.to_string()
+}
+
+#[cfg(test)]
+mod metrics_tests {
+    use super::*;
+
+    fn stats() -> HistoryStats {
+        HistoryStats {
+            earliest_timestamp: None,
+            latest_timestamp: None,
+            total_points: 42,
+            channels: vec!["inst:1:M".to_string()],
+            data_types: vec!["M".to_string()],
+        }
+    }
+
+    #[test]
+    fn a_readable_backend_reports_its_totals() {
+        let response = metrics_response(Ok(stats()), "sqlite", 7).expect("healthy backend");
+
+        assert_eq!(response.0["data"]["total_points"], 42);
+        assert_eq!(response.0["data"]["channel_count"], 1);
+        assert_eq!(response.0["data"]["buffer_size"], 7);
+    }
+
+    #[test]
+    fn an_unreadable_backend_is_an_error_not_a_successful_zero() {
+        // Reporting `success: true, total_points: 0` while storage is broken makes
+        // an outage indistinguishable from an empty historian.
+        let failure = Err(anyhow::anyhow!("connection refused"));
+
+        let (status, body) = metrics_response(failure, "postgres", 7).expect_err("failed backend");
+
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(body.0["success"], false);
+    }
 }
