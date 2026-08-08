@@ -1,4 +1,4 @@
-use std::collections::{BTreeSet, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::Path;
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Arc, RwLock};
@@ -17,7 +17,10 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
-use crate::live_values::GatewayValueSource;
+use aether_domain::PointQuality;
+use aether_shm_bridge::SlotSnapshot;
+
+use crate::live_values::{GatewayValueSource, quality_for_sample_age};
 
 // ── Subscription State ────────────────────────────────────────────────────────
 
@@ -51,20 +54,58 @@ struct ClientHandle {
     last_activity: Arc<AtomicI64>,
 }
 
+/// Grades every sample in a group so the payload cannot present a frozen
+/// reading as a live one.
+///
+/// The values and their timestamps were always both on the wire, but nothing
+/// said which timestamps still counted as current, so a disconnected channel
+/// looked exactly like a healthy one.
+fn quality_object(
+    samples: &BTreeMap<String, SlotSnapshot>,
+    now_ms: u64,
+    stale_after_ms: u64,
+) -> serde_json::Map<String, Value> {
+    samples
+        .iter()
+        .map(|(point_id, sample)| {
+            let age_ms = i64::try_from(now_ms).unwrap_or(i64::MAX)
+                - i64::try_from(sample.timestamp_ms()).unwrap_or(i64::MAX);
+            let label = match quality_for_sample_age(age_ms, stale_after_ms) {
+                PointQuality::Good => "good",
+                PointQuality::Uncertain => "uncertain",
+                PointQuality::Bad => "bad",
+                PointQuality::Unavailable => "unavailable",
+            };
+            (point_id.clone(), Value::String(label.to_owned()))
+        })
+        .collect()
+}
+
+/// Wall-clock milliseconds used to grade sample freshness.
+fn now_ms_for_grading() -> u64 {
+    u64::try_from(Utc::now().timestamp_millis()).unwrap_or(0)
+}
+
 // ── WebSocket Hub ─────────────────────────────────────────────────────────────
 
 pub struct WsHub {
     clients: DashMap<String, Arc<ClientHandle>>,
     live_values: Arc<dyn GatewayValueSource>,
     db: SqlitePool,
+    sample_stale_after_ms: u64,
 }
 
 impl WsHub {
-    pub fn new(live_values: Arc<dyn GatewayValueSource>, db: SqlitePool) -> Arc<Self> {
+    pub fn new(
+        live_values: Arc<dyn GatewayValueSource>,
+        db: SqlitePool,
+        sample_stale_after_ms: u64,
+    ) -> Arc<Self> {
         Arc::new(Self {
             clients: DashMap::new(),
             live_values,
             db,
+            sample_stale_after_ms,
         })
     }
 
@@ -411,12 +452,16 @@ async fn push_subscribed_data_to(hub: &Arc<WsHub>, client_ids: Vec<String>) {
                     })
                     .collect();
 
+                let quality_obj =
+                    quality_object(&samples, now_ms_for_grading(), hub.sample_stale_after_ms);
+
                 all_updates.push(json!({
                     "source": source,
                     "channel_id": channel_id,
                     "data_type": dt,
                     "values": values_obj,
                     "ts": ts_obj,
+                    "quality": quality_obj,
                 }));
             }
         }
@@ -925,6 +970,21 @@ fn error_msg(code: &str, message: &str, request_id: Option<&str>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_group_payload_grades_every_sample_it_reports() {
+        // A channel that stops responding leaves its last value in the slot.
+        // Without this map the frozen reading is indistinguishable from a live
+        // one, which is exactly how a disconnected device kept looking healthy.
+        let mut samples = BTreeMap::new();
+        samples.insert("1".to_owned(), SlotSnapshot::new(384.3, 1_000));
+        samples.insert("2".to_owned(), SlotSnapshot::new(12.5, 95_000));
+
+        let graded = quality_object(&samples, 100_000, 30_000);
+
+        assert_eq!(graded["1"], "uncertain");
+        assert_eq!(graded["2"], "good");
+    }
 
     async fn rule_history_pool() -> SqlitePool {
         let pool = sqlx::sqlite::SqlitePoolOptions::new()

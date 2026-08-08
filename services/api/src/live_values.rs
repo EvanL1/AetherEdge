@@ -7,7 +7,7 @@ use std::time::Duration;
 use aether_domain::{ChannelId, PointAddress, PointKind, PointQuality, PointSample, TimestampMs};
 #[cfg(test)]
 use aether_ports::ChannelHealthObservation;
-use aether_ports::{ChannelHealthSource, LiveState, PortError, PortErrorKind, PortResult};
+use aether_ports::{ChannelHealthSource, Clock, LiveState, PortError, PortErrorKind, PortResult};
 use aether_shm_bridge::{
     ChannelPointManifest, PhysicalPointAddress, PointWatchEvent, ShmReadTopologyGeneration,
     SlotSnapshot, SlotSource,
@@ -546,6 +546,8 @@ fn gateway_routing(snapshot: &SqliteLiveTopologySnapshot) -> Arc<GatewayRouting>
 pub fn build_data_processing_live_state(
     source: Arc<ShmGatewayValueSource>,
     addresses: &[PointAddress],
+    clock: Arc<dyn Clock>,
+    stale_after_ms: u64,
 ) -> anyhow::Result<Arc<dyn LiveState>> {
     let generation = source.current.load_full();
     let mut commissioned = HashSet::with_capacity(addresses.len());
@@ -573,12 +575,16 @@ pub fn build_data_processing_live_state(
     Ok(Arc::new(GatewayCommissionedLiveState {
         source,
         commissioned,
+        clock,
+        stale_after_ms,
     }))
 }
 
 struct GatewayCommissionedLiveState {
     source: Arc<ShmGatewayValueSource>,
     commissioned: HashSet<PointAddress>,
+    clock: Arc<dyn Clock>,
+    stale_after_ms: u64,
 }
 
 impl GatewayCommissionedLiveState {
@@ -621,16 +627,36 @@ impl GatewayCommissionedLiveState {
         &self,
         generation: &GatewayValueGeneration,
         address: PointAddress,
+        now_ms: u64,
     ) -> PortResult<Option<PointSample>> {
         let target = self.resolve_target(generation, address)?;
         Ok(generation.read_point(target)?.map(|sample| {
+            let age_ms = i64::try_from(now_ms).unwrap_or(i64::MAX)
+                - i64::try_from(sample.timestamp_ms()).unwrap_or(i64::MAX);
             PointSample::new(
                 address,
                 sample.value(),
                 TimestampMs::new(sample.timestamp_ms()),
-                PointQuality::Good,
+                quality_for_sample_age(age_ms, self.stale_after_ms),
             )
         }))
+    }
+}
+
+/// Grades a sample by how long ago the acquisition plane produced it.
+///
+/// A channel that stops responding leaves its last value in the SHM slot, so a
+/// read that reports only the number cannot be told apart from a live one. Age
+/// is the signal that separates them, and it is the reason this must never be
+/// answered with a constant.
+///
+/// A future-dated sample is clock skew between the writer and this process
+/// rather than staleness, so it stays `Good`.
+pub(crate) fn quality_for_sample_age(age_ms: i64, stale_after_ms: u64) -> PointQuality {
+    if age_ms.max(0).unsigned_abs() < stale_after_ms {
+        PointQuality::Good
+    } else {
+        PointQuality::Uncertain
     }
 }
 
@@ -638,11 +664,15 @@ impl GatewayCommissionedLiveState {
 impl LiveState for GatewayCommissionedLiveState {
     async fn read(&self, address: PointAddress) -> PortResult<Option<PointSample>> {
         let generation = self.source.current.load_full();
-        self.read_from(&generation, address)
+        let now_ms = self.clock.now()?.get();
+        self.read_from(&generation, address, now_ms)
     }
 
     async fn read_many(&self, addresses: &[PointAddress]) -> PortResult<Vec<Option<PointSample>>> {
         let generation = self.source.current.load_full();
+        // One reading of the clock so every point in a batch is graded against
+        // the same instant.
+        let now_ms = self.clock.now()?.get();
         let mut physical_owners = HashMap::with_capacity(addresses.len());
         for &address in addresses {
             let target = self.resolve_target(&generation, address)?;
@@ -659,7 +689,7 @@ impl LiveState for GatewayCommissionedLiveState {
         addresses
             .iter()
             .copied()
-            .map(|address| self.read_from(&generation, address))
+            .map(|address| self.read_from(&generation, address, now_ms))
             .collect()
     }
 }
@@ -673,7 +703,36 @@ mod tests {
     use aether_ports::{PortError, PortErrorKind, PortResult};
     use aether_shm_bridge::{ChannelPointManifest, PhysicalPointAddress, SlotSnapshot, SlotSource};
 
-    use super::{GatewayRouting, GatewayValueSource, NoChannelHealth, ShmGatewayValueSource};
+    use super::{
+        GatewayRouting, GatewayValueSource, NoChannelHealth, ShmGatewayValueSource,
+        quality_for_sample_age,
+    };
+    use aether_domain::PointQuality;
+
+    #[test]
+    fn a_sample_within_the_freshness_window_is_good() {
+        assert_eq!(quality_for_sample_age(0, 30_000), PointQuality::Good);
+        assert_eq!(quality_for_sample_age(29_999, 30_000), PointQuality::Good);
+    }
+
+    #[test]
+    fn a_sample_older_than_the_window_is_no_longer_reported_as_good() {
+        // A disconnected channel leaves its last value in place. Reporting that
+        // frozen number as Good is what made an outage look like normal data.
+        assert_eq!(
+            quality_for_sample_age(30_000, 30_000),
+            PointQuality::Uncertain
+        );
+        assert_eq!(
+            quality_for_sample_age(3_600_000, 30_000),
+            PointQuality::Uncertain
+        );
+    }
+
+    #[test]
+    fn a_future_dated_sample_is_skew_rather_than_staleness() {
+        assert_eq!(quality_for_sample_age(-5_000, 30_000), PointQuality::Good);
+    }
 
     struct StubSlots {
         slot_count: usize,
@@ -962,6 +1021,10 @@ mod tests {
         let data_processing = super::build_data_processing_live_state(
             Arc::clone(&source),
             &[commissioned_address, second_commissioned_address],
+            Arc::new(aether_store_local::ManualClock::new(
+                aether_domain::TimestampMs::new(0),
+            )),
+            u64::MAX,
         )
         .expect("commission Data Processing live state");
         assert_eq!(
