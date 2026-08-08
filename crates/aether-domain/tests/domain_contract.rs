@@ -115,6 +115,41 @@ fn point_sample_preserves_address_value_time_and_quality() {
 }
 
 #[test]
+fn a_sample_is_graded_by_age_so_a_frozen_value_cannot_pass_as_a_live_one() {
+    // A channel that stops responding leaves its last value in place. Age is
+    // the only thing that separates that reading from a current one, which is
+    // why no read surface may answer with a constant quality.
+    assert_eq!(PointQuality::for_sample_age(0, 30_000), PointQuality::Good);
+    assert_eq!(
+        PointQuality::for_sample_age(29_999, 30_000),
+        PointQuality::Good
+    );
+    assert_eq!(
+        PointQuality::for_sample_age(30_000, 30_000),
+        PointQuality::Uncertain
+    );
+    assert_eq!(
+        PointQuality::for_sample_age(86_400_000, 30_000),
+        PointQuality::Uncertain
+    );
+}
+
+#[test]
+fn a_future_dated_sample_is_writer_clock_skew_rather_than_staleness() {
+    assert_eq!(
+        PointQuality::for_sample_age(-5_000, 30_000),
+        PointQuality::Good
+    );
+}
+
+#[test]
+fn a_zero_freshness_window_grades_every_sample_uncertain_rather_than_dividing_by_it() {
+    // A misconfigured window must fail towards suspicion, never towards
+    // reporting an unknown-age reading as good.
+    assert_eq!(PointQuality::for_sample_age(0, 0), PointQuality::Uncertain);
+}
+
+#[test]
 fn acquired_samples_use_physical_channel_identity() {
     let address =
         ChannelPointAddress::new(ChannelId::new(17), PointKind::Telemetry, PointId::new(3))

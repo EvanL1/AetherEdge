@@ -175,6 +175,29 @@ pub enum PointQuality {
     Unavailable,
 }
 
+impl PointQuality {
+    /// Grades a sample by how long ago the acquisition plane produced it.
+    ///
+    /// A channel that stops responding leaves its last value in place, so a
+    /// read that reports only the number cannot be told apart from a live one.
+    /// Age is what separates them, which is why this must never be answered
+    /// with a constant.
+    ///
+    /// A future-dated sample is clock skew between the writer and the reader
+    /// rather than staleness, so it stays [`Self::Good`]. A zero window admits
+    /// nothing: a misconfigured freshness bound fails towards suspicion rather
+    /// than towards calling an unknown-age reading good.
+    #[must_use]
+    pub const fn for_sample_age(age_ms: i64, stale_after_ms: u64) -> Self {
+        let age = if age_ms < 0 { 0 } else { age_ms as u64 };
+        if age < stale_after_ms {
+            Self::Good
+        } else {
+            Self::Uncertain
+        }
+    }
+}
+
 /// One timestamped value read from or written to the live data plane.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PointSample {

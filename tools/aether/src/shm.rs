@@ -4,7 +4,7 @@
 //! shared memory data with zero-latency access.
 
 use aether_dataplane::SlotReader;
-use aether_domain::PointKind;
+use aether_domain::{PointKind, PointQuality};
 use aether_routing::{RoutingCache, load_routing_maps};
 #[cfg(test)]
 use aether_shm_bridge::PhysicalPointAddress;
@@ -530,11 +530,15 @@ async fn handle_single_command(cmd: ShmCommands, data_directory: &Path) -> Resul
         ShmCommands::Get { key } => {
             let reader = open_reader(data_directory).await?;
             let parsed = parse_key(&key)?;
-            let value = get_value(&reader, &parsed)?;
-            match value {
-                Some(v) => println!("{}", v),
-                None => println!("(nil)"),
-            }
+            let sample = get_sample(&reader, &parsed)?;
+            println!(
+                "{}",
+                render_sample(
+                    sample,
+                    chrono::Utc::now().timestamp_millis(),
+                    sample_stale_after_ms()
+                )
+            );
         },
         ShmCommands::Info => {
             print_raw_info(&open_raw_reader()?);
@@ -552,14 +556,49 @@ async fn handle_single_command(cmd: ShmCommands, data_directory: &Path) -> Resul
 
 /// Get value from shared memory
 pub(crate) fn get_value(reader: &ShmRuntimeView, key: &ShmKey) -> Result<Option<f64>> {
+    Ok(get_sample(reader, key)?.map(|(value, _)| value))
+}
+
+/// Reads a point's newest value together with the timestamp it was stamped at.
+///
+/// `get_value` alone cannot tell a live reading from one frozen by a channel
+/// that stopped answering, because both are the same number. Callers that show
+/// a value to a person need the timestamp too.
+pub(crate) fn get_sample(reader: &ShmRuntimeView, key: &ShmKey) -> Result<Option<(f64, u64)>> {
     let Some((channel_id, kind, point_id)) = reader.resolve_key(key) else {
         return Ok(None);
     };
     reader
         .reader
         .read_channel(channel_id, kind, point_id)
-        .map(|sample| sample.map(|sample| sample.value()))
+        .map(|sample| sample.map(|sample| (sample.value(), sample.timestamp_ms())))
         .with_context(|| format!("failed to read named SHM point {key}"))
+}
+
+/// Renders a value with the freshness of the sample it came from.
+///
+/// A frozen reading is the same number as a live one, so printing the number
+/// by itself is what let a dead device look healthy in `shm get` and `watch`.
+fn render_sample(sample: Option<(f64, u64)>, now_ms: i64, stale_after_ms: u64) -> String {
+    let Some((value, sample_ms)) = sample else {
+        return "(nil)".to_string();
+    };
+    let age_ms = now_ms - i64::try_from(sample_ms).unwrap_or(i64::MAX);
+    match PointQuality::for_sample_age(age_ms, stale_after_ms) {
+        PointQuality::Good => format!("{value}  [good, {age_ms}ms ago]"),
+        _ => format!("{}  [{}, {}ms ago]", value, "stale".red(), age_ms.max(0)),
+    }
+}
+
+/// Freshness bound shared with the read-side SHM adapters.
+///
+/// Reuses `SHM_WRITER_STALE_AFTER_MS` rather than adding a second dial, so
+/// every surface that grades a sample answers with one operator setting.
+fn sample_stale_after_ms() -> u64 {
+    std::env::var("SHM_WRITER_STALE_AFTER_MS")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(30_000)
 }
 
 fn print_raw_info(reader: &SlotReader) {
@@ -615,14 +654,21 @@ fn watch_key(reader: &ShmRuntimeView, key: &ShmKey, interval_ms: u64) -> Result<
 
     let interval = Duration::from_millis(interval_ms);
 
+    let stale_after_ms = sample_stale_after_ms();
+
     loop {
-        let value = get_value(reader, key)?;
+        let sample = get_sample(reader, key)?;
         let now = format_current_time();
 
-        match value {
-            Some(v) => println!("[{}] {}", now, v),
-            None => println!("[{}] (nil)", now),
-        }
+        println!(
+            "[{}] {}",
+            now,
+            render_sample(
+                sample,
+                chrono::Utc::now().timestamp_millis(),
+                stale_after_ms
+            )
+        );
 
         std::thread::sleep(interval);
     }
@@ -810,6 +856,31 @@ mod tests {
     use super::*;
     use std::collections::{BTreeSet, HashMap};
     use std::sync::Arc;
+
+    #[test]
+    fn a_fresh_reading_is_printed_with_its_age() {
+        let rendered = render_sample(Some((24.6, 95_000)), 100_000, 30_000);
+
+        assert!(rendered.contains("24.6"), "{rendered}");
+        assert!(rendered.contains("good"), "{rendered}");
+        assert!(rendered.contains("5000ms ago"), "{rendered}");
+    }
+
+    #[test]
+    fn a_frozen_reading_is_marked_stale_instead_of_looking_identical() {
+        // `shm watch` printed the bare number every second, so a dead device
+        // and a healthy one produced visually identical output forever.
+        let rendered = render_sample(Some((24.6, 95_000)), 300_000, 30_000);
+
+        assert!(rendered.contains("24.6"), "{rendered}");
+        assert!(rendered.contains("stale"), "{rendered}");
+        assert!(!rendered.contains("good"), "{rendered}");
+    }
+
+    #[test]
+    fn an_unwritten_point_still_reads_as_nil() {
+        assert_eq!(render_sample(None, 100_000, 30_000), "(nil)");
+    }
 
     use aether_dataplane::SlotWriter;
     use aether_domain::PointKind;
