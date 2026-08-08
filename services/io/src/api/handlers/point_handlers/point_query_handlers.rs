@@ -5,7 +5,7 @@
 use crate::api::routes::AppState;
 use crate::dto::{AppError, SuccessResponse};
 use aether_core::PointType;
-use aether_domain::PointKind;
+use aether_domain::{PointKind, PointQuality};
 use aether_shm_bridge::PhysicalPointAddress;
 use axum::{
     extract::{Path, Query, State},
@@ -82,6 +82,14 @@ pub async fn get_point_info_handler(
         .filter(|sample| sample.raw.is_finite())
         .map(|sample| sample.raw.to_string());
 
+    // A channel that stops responding leaves its last value in the slot, so
+    // value and timestamp alone are indistinguishable from a live reading.
+    let (quality, age_ms) = sample_freshness(
+        sample.map(|sample| sample.timestamp_ms),
+        chrono::Utc::now().timestamp_millis(),
+        sample_stale_after_ms(),
+    );
+
     Ok(Json(SuccessResponse::new(serde_json::json!({
         "channel_id": channel_id,
         "telemetry_type": point_type.as_str(),
@@ -89,8 +97,42 @@ pub async fn get_point_info_handler(
         "value": value,
         "timestamp": timestamp,
         "raw": raw_value,
-        "source": "shm"
+        "source": "shm",
+        "quality": quality,
+        "age_ms": age_ms,
     }))))
+}
+
+/// Grades the newest sample of a point and reports how old it is.
+///
+/// A slot that was never written has no age to report and is `unavailable`
+/// rather than merely stale: absent data and frozen data are different
+/// answers, and collapsing them would hide which one the caller is looking at.
+fn sample_freshness(
+    sample_ms: Option<u64>,
+    now_ms: i64,
+    stale_after_ms: u64,
+) -> (&'static str, Option<i64>) {
+    let Some(sample_ms) = sample_ms else {
+        return ("unavailable", None);
+    };
+    let age_ms = now_ms - i64::try_from(sample_ms).unwrap_or(i64::MAX);
+    let quality = PointQuality::for_sample_age(age_ms, stale_after_ms);
+    let name = match quality {
+        PointQuality::Good => "good",
+        PointQuality::Uncertain => "uncertain",
+        PointQuality::Bad => "bad",
+        PointQuality::Unavailable => "unavailable",
+    };
+    (name, Some(age_ms))
+}
+
+/// Freshness bound shared with the read-side SHM adapters.
+///
+/// Reuses `SHM_WRITER_STALE_AFTER_MS` rather than introducing a second dial,
+/// so every surface that grades a sample answers with one operator setting.
+fn sample_stale_after_ms() -> u64 {
+    common::env_or("SHM_WRITER_STALE_AFTER_MS", 30_000)
 }
 
 /// Get list of points for a channel, optionally filtered by type
@@ -422,6 +464,47 @@ pub async fn get_adjustment_point_config_handler(
 // ============================================================================
 // Tests
 // ============================================================================
+
+#[cfg(test)]
+mod freshness_tests {
+    use super::sample_freshness;
+
+    #[test]
+    fn a_sample_inside_the_window_is_good_and_reports_its_age() {
+        assert_eq!(
+            sample_freshness(Some(95_000), 100_000, 30_000),
+            ("good", Some(5_000))
+        );
+    }
+
+    #[test]
+    fn a_frozen_sample_stops_being_reported_as_good() {
+        // The value is still there and still finite; only its age says the
+        // device stopped answering.
+        assert_eq!(
+            sample_freshness(Some(95_000), 300_000, 30_000),
+            ("uncertain", Some(205_000))
+        );
+    }
+
+    #[test]
+    fn a_slot_that_was_never_written_is_unavailable_rather_than_stale() {
+        // Absent data and frozen data are different answers; collapsing them
+        // would hide which one the caller is looking at.
+        assert_eq!(
+            sample_freshness(None, 100_000, 30_000),
+            ("unavailable", None)
+        );
+    }
+
+    #[test]
+    fn a_writer_stamped_ahead_of_this_process_stays_good() {
+        assert_eq!(
+            sample_freshness(Some(105_000), 100_000, 30_000),
+            ("good", Some(-5_000))
+        );
+    }
+}
 
 #[cfg(test)]
 mod cache_tests {

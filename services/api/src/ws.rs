@@ -20,7 +20,7 @@ use tracing::{debug, error, info, warn};
 use aether_domain::PointQuality;
 use aether_shm_bridge::SlotSnapshot;
 
-use crate::live_values::{GatewayValueSource, quality_for_sample_age};
+use crate::live_values::{GatewayValueSource, sample_age_ms};
 
 // ── Subscription State ────────────────────────────────────────────────────────
 
@@ -68,9 +68,8 @@ fn quality_object(
     samples
         .iter()
         .map(|(point_id, sample)| {
-            let age_ms = i64::try_from(now_ms).unwrap_or(i64::MAX)
-                - i64::try_from(sample.timestamp_ms()).unwrap_or(i64::MAX);
-            let label = match quality_for_sample_age(age_ms, stale_after_ms) {
+            let age_ms = sample_age_ms(now_ms, sample.timestamp_ms());
+            let label = match PointQuality::for_sample_age(age_ms, stale_after_ms) {
                 PointQuality::Good => "good",
                 PointQuality::Uncertain => "uncertain",
                 PointQuality::Bad => "bad",
