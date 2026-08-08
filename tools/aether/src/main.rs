@@ -673,12 +673,15 @@ async fn sync_command(
             "desired_state_atomic": true,
             "configs": json_results,
             "runtime_activation": "on_next_service_start",
+            "unchecked": UNCHECKED_BY_OFFLINE_VALIDATION,
+            "unchecked_note": UNCHECKED_NOTE,
         }));
     } else {
         println!(
             "\n{} Desired configuration synced; start services to activate it.",
             "DONE".green()
         );
+        println!("{} {}", "NOTE".yellow(), UNCHECKED_NOTE);
     }
 
     Ok(())
@@ -881,13 +884,31 @@ async fn validate_command(
         output::print_success(serde_json::json!({
             "configs": json_results,
             "all_valid": true,
+            "unchecked": UNCHECKED_BY_OFFLINE_VALIDATION,
+            "unchecked_note": UNCHECKED_NOTE,
         }));
     } else {
-        println!("\n{} All configurations valid!", "SUCCESS".green());
+        println!(
+            "\n{} Configuration structure and references are valid.",
+            "SUCCESS".green()
+        );
+        println!("{} {}", "NOTE".yellow(), UNCHECKED_NOTE);
     }
 
     Ok(())
 }
+
+/// Checks an offline validation deliberately does not perform.
+///
+/// Protocol mapping schemas belong to the adapter that compiles them, and this
+/// tool holds no adapter. Reporting "all configurations valid" therefore
+/// asserted something that was never tested: a mapping with an out-of-range
+/// slave id or a function code that does not exist passed here and was refused
+/// the moment the channel was activated.
+const UNCHECKED_BY_OFFLINE_VALIDATION: [&str; 1] = ["protocol_mappings"];
+
+/// Explains where the unperformed checks actually run.
+const UNCHECKED_NOTE: &str = "Protocol mappings are not checked here; the owning protocol adapter validates them when a channel is activated.";
 
 async fn status_command(detailed: bool, db_path: &Path, json: bool) -> Result<()> {
     let db_file = db_path.join("aether.db");
