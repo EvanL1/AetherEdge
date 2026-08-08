@@ -107,6 +107,18 @@ A channel that stops responding leaves its last value in place, so `values`
 alone cannot distinguish a live reading from a frozen one — grade every point
 by its `quality` before acting on the number.
 
+Every governed mutation is recorded before it is reported as complete, and each
+service answers for its own trail at `GET /api/audit/events` — reachable
+through the gateway as `/io/api/audit/events` and
+`/automation/api/audit/events`. Filter by `request_id`, `actor_id`,
+`capability`, `outcome` (`rejected`, `attempted`, `succeeded`, `failed`),
+`since_ms`, and `until_ms`; page with `limit` (clamped to 1000) and `offset`.
+Events come back newest first, and `total` counts every match rather than the
+returned page. Rejected commands are recorded too, so a refused attempt is
+visible rather than absent. An unrecognised `outcome` is a 400 rather than an
+ignored filter, because silently widening an audit query answers a narrower
+question than the one asked.
+
 An access token may also carry a `scope` claim listing the permissions it may
 exercise. The role remains the ceiling and a scope only narrows it, so a scope
 never grants authority the role lacks. A token without the claim keeps

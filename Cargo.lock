@@ -1406,6 +1406,8 @@ name = "common"
 version = "0.0.1"
 dependencies = [
  "aether-core",
+ "aether-domain",
+ "aether-ports",
  "aether-schema-macro",
  "anyhow",
  "axum",

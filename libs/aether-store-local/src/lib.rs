@@ -19,7 +19,7 @@ use aether_ports::{PortError, PortErrorKind};
 
 pub use audit::MemoryAuditSink;
 #[cfg(feature = "sqlite-audit")]
-pub use audit::SqliteAuditSink;
+pub use audit::{SqliteAuditQuery, SqliteAuditSink};
 pub use clock::{ManualClock, SystemClock};
 pub use cloudlink_challenge_ledger::{
     CloudLinkChallengeLedgerError, CloudLinkChallengeReservation, CloudLinkPendingChallengeRequest,

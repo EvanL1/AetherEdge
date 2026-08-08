@@ -136,6 +136,7 @@ impl Fixture {
             ),
             Arc::new(ControlAuthenticator::new(JWT_SECRET, None).expect("authenticator")),
             physical_sink,
+            pool.clone(),
         ));
         let router = aether_automation::routes::create_routes(state);
         Self {

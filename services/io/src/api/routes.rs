@@ -98,6 +98,7 @@ impl AppState {
         crate::api::handlers::channel_handlers::get_channel_detail_handler,
         crate::api::handlers::channel_handlers::get_channel_status,
         crate::api::handlers::channel_handlers::list_all_points,
+        crate::api::handlers::audit_handlers::list_audit_events,
 
         // Control operations
         crate::api::handlers::control_handlers::control_channel,
@@ -347,6 +348,7 @@ fn create_api_routes_with_boundary(
         .route("/api/channels/list", get(list_channels))
         .route("/api/channels/search", get(search_channels))
         .route("/api/points", get(list_all_points))
+        .route("/api/audit/events", get(crate::api::handlers::audit_handlers::list_audit_events))
         .route("/api/channels/reconcile", post(reconcile_channels_handler))
         .route("/api/channels/{id}/reconcile", post(reconcile_channel_handler))
         .route("/api/channels/{id}", get(get_channel_detail_handler).put(update_channel_handler).delete(delete_channel_handler))

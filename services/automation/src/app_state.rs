@@ -39,10 +39,14 @@ pub struct AppState {
 
     /// Typed C/A command sink (concrete type for delayed configuration in main.rs).
     pub shm_dispatch: Arc<ShmDeviceCommandSink>,
+
+    /// Configuration database, which also holds this service's audit trail.
+    pub sqlite_pool: sqlx::SqlitePool,
 }
 
 impl AppState {
     /// Create new application state
+    #[allow(clippy::too_many_arguments)] // one parameter per composed collaborator
     pub fn new(
         config: Arc<AutomationConfig>,
         instance_manager: Arc<InstanceManager>,
@@ -52,6 +56,7 @@ impl AppState {
         instance_configuration_application: Arc<InstanceConfigurationApplication>,
         control_authenticator: Arc<ControlAuthenticator>,
         shm_dispatch: Arc<ShmDeviceCommandSink>,
+        sqlite_pool: sqlx::SqlitePool,
     ) -> Self {
         Self {
             config,
@@ -62,6 +67,7 @@ impl AppState {
             instance_configuration_application,
             control_authenticator,
             shm_dispatch,
+            sqlite_pool,
         }
     }
 }
