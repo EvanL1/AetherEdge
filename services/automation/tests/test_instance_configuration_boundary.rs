@@ -178,6 +178,7 @@ impl Fixture {
             Arc::clone(&self.application),
             Arc::new(ControlAuthenticator::new(JWT_SECRET, None).expect("authenticator")),
             physical_sink,
+            self.pool.clone(),
         ));
         axum::Router::new()
             .route(

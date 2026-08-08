@@ -186,6 +186,10 @@ pub fn create_routes(state: Arc<AppState>) -> Router {
         // Instance management API
         .route("/api/instances", get(list_instances).post(create_instance))
         .route(
+            "/api/audit/events",
+            get(crate::api::audit_handlers::list_audit_events),
+        )
+        .route(
             "/api/instances/revision",
             get(get_instance_configuration_revision),
         )

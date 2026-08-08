@@ -23,7 +23,9 @@ pub use alarm::{
     AlarmRuleMutation, AlarmRuleMutationKind, AlarmRuleMutationReceipt, AlarmRuleMutator,
     AlarmRulePatch, AlertResolutionReceipt, AlertResolver,
 };
-pub use audit::{AuditOutcome, AuditRecord, AuditSink};
+pub use audit::{
+    AuditOutcome, AuditQuery, AuditQueryFilter, AuditRecord, AuditSink, MAX_AUDIT_PAGE,
+};
 pub use automation::{
     ActionRoute, ActionRouteKey, ActionRoutingMutation, ActionRoutingMutationKind,
     ActionRoutingMutationReceipt, ActionRoutingRuntimeStatus, ActionRoutingTarget,

@@ -179,6 +179,7 @@ impl RoutingFixture {
             instance_configuration,
             authenticator,
             physical_sink,
+            self.pool.clone(),
         ));
         aether_automation::routes::create_routes(state)
     }

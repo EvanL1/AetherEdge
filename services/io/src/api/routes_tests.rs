@@ -5064,7 +5064,7 @@ mod openapi_tests {
     fn test_openapi_http_operation_count_requires_router_parity_review() {
         assert_eq!(
             common::openapi_operation_count(&spec()),
-            53,
+            54,
             "HTTP operation count changed; re-audit Router/OpenAPI parity before updating this guard"
         );
     }

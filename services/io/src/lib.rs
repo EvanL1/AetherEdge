@@ -23,6 +23,7 @@ pub mod api {
 
     pub mod handlers {
         pub mod admin_handlers;
+        pub mod audit_handlers;
         pub mod channel_handlers;
         pub mod channel_management_handlers;
         pub mod control_handlers;
