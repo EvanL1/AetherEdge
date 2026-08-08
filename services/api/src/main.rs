@@ -523,7 +523,11 @@ async fn main() -> anyhow::Result<()> {
     .await?;
 
     // ── App State ─────────────────────────────────────────────────────────────
-    let ws_hub = WsHub::new(live_values.clone(), db_pool.clone());
+    let ws_hub = WsHub::new(
+        live_values.clone(),
+        db_pool.clone(),
+        cfg.shm_writer_stale_after_ms,
+    );
     let service_client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(
             cfg.service_request_timeout_secs,

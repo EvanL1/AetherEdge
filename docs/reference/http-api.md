@@ -100,6 +100,18 @@ The gateway WebSocket is also authenticated. Its documented `?token=...`
 fallback is accepted only for an actual WebSocket upgrade; REST query-string
 tokens are rejected. WebSocket control writes are not supported.
 
+Each subscription update carries `values`, `ts`, and `quality`, keyed by point
+id. `quality` is `good` while the sample is newer than
+`SHM_WRITER_STALE_AFTER_MS` (30 s by default) and `uncertain` once it is not.
+A channel that stops responding leaves its last value in place, so `values`
+alone cannot distinguish a live reading from a frozen one — grade every point
+by its `quality` before acting on the number.
+
+An access token may also carry a `scope` claim listing the permissions it may
+exercise. The role remains the ceiling and a scope only narrows it, so a scope
+never grants authority the role lacks. A token without the claim keeps
+everything its role carries.
+
 The gateway requires an access JWT before forwarding any namespace request.
 The owning service then applies operation-specific authorization:
 

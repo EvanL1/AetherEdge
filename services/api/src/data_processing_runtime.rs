@@ -117,7 +117,12 @@ pub async fn build_data_processing_application(
     });
     let mut seen_addresses = std::collections::HashSet::new();
     addresses.retain(|address| seen_addresses.insert(*address));
-    let live_state: Arc<dyn LiveState> = build_data_processing_live_state(live_values, &addresses)?;
+    let live_state: Arc<dyn LiveState> = build_data_processing_live_state(
+        live_values,
+        &addresses,
+        Arc::new(SystemClock),
+        gateway.shm_writer_stale_after_ms,
+    )?;
     let audit = Arc::new(SqliteAuditSink::initialize(database.clone()).await?);
     let routes = pending
         .into_iter()

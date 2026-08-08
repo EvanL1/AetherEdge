@@ -71,7 +71,7 @@ pub(crate) async fn app_state_with_public_registration(
         allow_public_registration,
         ..GatewayConfig::default()
     };
-    let ws_hub = WsHub::new(Arc::new(EmptyGatewayValueSource), database.clone());
+    let ws_hub = WsHub::new(Arc::new(EmptyGatewayValueSource), database.clone(), 30_000);
 
     Arc::new(AppState {
         db: database,
