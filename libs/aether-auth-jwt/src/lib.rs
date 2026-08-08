@@ -14,11 +14,32 @@ const MIN_SECRET_BYTES: usize = 32;
 struct AccessClaims {
     user_id: i64,
     role: Option<String>,
+    /// Optional narrowing of the role's permissions.
+    ///
+    /// Absent means "whatever the role carries", which keeps every previously
+    /// issued token behaving exactly as before.
+    #[serde(default)]
+    scope: Option<Vec<String>>,
     #[serde(rename = "type")]
     token_type: String,
     exp: usize,
     iat: usize,
 }
+
+/// Command permissions an administrative role may hold.
+///
+/// Exported so the gateway gates on the same list the services enforce, rather
+/// than keeping a second copy that can drift out of agreement with this one.
+pub const ROLE_COMMAND_PERMISSIONS: [&str; 8] = [
+    "device.control",
+    "automation.rule.execute",
+    "automation.rule.manage",
+    "automation.routing.manage",
+    "automation.instance.manage",
+    "io.channel.manage",
+    "alarm.rule.manage",
+    "alarm.alert.resolve",
+];
 
 /// Verifies access JWTs issued by Aether's gateway authentication API.
 ///
@@ -74,9 +95,10 @@ impl AccessTokenAuthenticator {
             return Err(AuthenticationError::InvalidCredentials);
         }
 
-        Ok(actor_for_role(
+        Ok(actor_for_claims(
             &format!("user:{}", claims.user_id),
             claims.role.as_deref(),
+            claims.scope.as_deref(),
         ))
     }
 
@@ -130,21 +152,32 @@ impl AuthenticatedInvocation {
     }
 }
 
-fn actor_for_role(actor_id: &str, role: Option<&str>) -> Actor {
+/// Reports whether an optional token scope permits `permission`.
+///
+/// An absent scope means the token was never narrowed and keeps whatever its
+/// role carries. A present scope is an allow-list, so an empty one permits
+/// nothing.
+#[must_use]
+pub fn scope_allows(scope: Option<&[String]>, permission: &str) -> bool {
+    scope.is_none_or(|granted| granted.iter().any(|entry| entry == permission))
+}
+
+/// Derives the actor's permissions from its role and optional scope.
+///
+/// The role sets the ceiling and the scope may only narrow it. Treating scope
+/// as a grant instead of an intersection would let any token award itself
+/// command authority, which is the opposite of what it exists for.
+fn actor_for_claims(actor_id: &str, role: Option<&str>, scope: Option<&[String]>) -> Actor {
     let actor = Actor::new(actor_id);
-    if matches!(role, Some("Admin" | "Engineer")) {
-        actor
-            .with_permission("device.control")
-            .with_permission("automation.rule.execute")
-            .with_permission("automation.rule.manage")
-            .with_permission("automation.routing.manage")
-            .with_permission("automation.instance.manage")
-            .with_permission("io.channel.manage")
-            .with_permission("alarm.rule.manage")
-            .with_permission("alarm.alert.resolve")
-    } else {
-        actor
+    if !matches!(role, Some("Admin" | "Engineer")) {
+        return actor;
     }
+
+    ROLE_COMMAND_PERMISSIONS
+        .iter()
+        .copied()
+        .filter(|permission| scope_allows(scope, permission))
+        .fold(actor, |actor, permission| actor.with_permission(permission))
 }
 
 fn validate_secret(secret: &str) -> Result<(), AuthenticationError> {

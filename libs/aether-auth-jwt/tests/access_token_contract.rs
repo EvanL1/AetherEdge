@@ -75,6 +75,88 @@ fn viewer_refresh_and_malformed_credentials_never_gain_command_permissions() {
     );
 }
 
+#[derive(Serialize)]
+struct ScopedClaims<'a> {
+    user_id: i64,
+    role: &'a str,
+    scope: Vec<&'a str>,
+    #[serde(rename = "type")]
+    token_type: &'a str,
+    exp: usize,
+    iat: usize,
+}
+
+fn scoped_token(role: &str, scope: Vec<&str>) -> String {
+    encode(
+        &Header::new(Algorithm::HS256),
+        &ScopedClaims {
+            user_id: 17,
+            role,
+            scope,
+            token_type: "access",
+            exp: 4_102_444_800,
+            iat: 1,
+        },
+        &EncodingKey::from_secret(SECRET.as_bytes()),
+    )
+    .expect("encode scoped access token")
+}
+
+#[test]
+fn a_scope_narrows_an_administrative_token_to_the_listed_permissions() {
+    // "May read, and may resolve alarms, but may never control a device" is the
+    // identity an AI assistant needs. Without scope the only choices were full
+    // command authority or none, so every AI integration had to be handed a
+    // token that could stop a channel.
+    let authenticator = AccessTokenAuthenticator::new(SECRET).expect("valid secret");
+
+    let actor = authenticator
+        .authenticate(&format!(
+            "Bearer {}",
+            scoped_token("Admin", vec!["alarm.alert.resolve"])
+        ))
+        .expect("valid scoped access token");
+
+    assert!(actor.has_permission("alarm.alert.resolve"));
+    assert!(!actor.has_permission("device.control"));
+    assert!(!actor.has_permission("io.channel.manage"));
+}
+
+#[test]
+fn a_scope_never_grants_what_the_role_itself_lacks() {
+    // Scope narrows; it must not become a self-service escalation path for a
+    // token whose role was never trusted with command permissions.
+    let authenticator = AccessTokenAuthenticator::new(SECRET).expect("valid secret");
+
+    let actor = authenticator
+        .authenticate(&format!(
+            "Bearer {}",
+            scoped_token("Viewer", vec!["device.control", "io.channel.manage"])
+        ))
+        .expect("valid scoped access token");
+
+    assert!(!actor.has_permission("device.control"));
+    assert!(!actor.has_permission("io.channel.manage"));
+}
+
+#[test]
+fn an_empty_scope_is_a_read_only_token_rather_than_an_unrestricted_one() {
+    let authenticator = AccessTokenAuthenticator::new(SECRET).expect("valid secret");
+
+    let actor = authenticator
+        .authenticate(&format!("Bearer {}", scoped_token("Admin", Vec::new())))
+        .expect("valid scoped access token");
+
+    for permission in [
+        "device.control",
+        "automation.rule.execute",
+        "io.channel.manage",
+        "alarm.alert.resolve",
+    ] {
+        assert!(!actor.has_permission(permission), "granted {permission}");
+    }
+}
+
 #[test]
 fn unauthenticated_invocations_still_have_auditable_context_and_confirmation() {
     let authenticator = AccessTokenAuthenticator::new(SECRET).expect("valid secret");
