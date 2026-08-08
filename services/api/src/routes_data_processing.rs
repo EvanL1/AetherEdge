@@ -11,6 +11,7 @@ use aether_application::{
     Actor, ApplicationError, DATA_PROCESSING_AUDIT_FINALIZATION_TIMEOUT_MS,
     DataProcessingTaskSummary, RequestContext,
 };
+use aether_auth_jwt::scope_allows;
 use aether_data_processing::{MEDIA_TYPE, encode_derived_data};
 use aether_domain::{
     BindingIdentity, FeatureRole, FeatureValueType, ForecastOptions, HistoryAggregation,
@@ -717,13 +718,18 @@ fn request_context(
 ) -> Result<RequestContext, ApiError> {
     let request_id = request_id(headers)?;
     let mut actor = Actor::new(format!("user:{}", claims.user_id));
+    // The role sets the ceiling; a token scope may only narrow it further.
+    let scope = claims.scope.as_deref();
     if matches!(
         claims.role.as_deref(),
         Some("Viewer" | "Engineer" | "Admin")
-    ) {
+    ) && scope_allows(scope, "data_processing.read")
+    {
         actor = actor.with_permission("data_processing.read");
     }
-    if matches!(claims.role.as_deref(), Some("Engineer" | "Admin")) {
+    if matches!(claims.role.as_deref(), Some("Engineer" | "Admin"))
+        && scope_allows(scope, "data_processing.run")
+    {
         actor = actor.with_permission("data_processing.run");
     }
     Ok(RequestContext::new(
@@ -845,6 +851,7 @@ mod tests {
             username: "processing-test".to_owned(),
             role: Some(role.to_owned()),
             token_id: None,
+            scope: None,
             exp: usize::MAX,
             iat: 0,
             token_type: "access".to_owned(),

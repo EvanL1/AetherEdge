@@ -16,6 +16,12 @@ pub struct Claims {
     pub role: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub token_id: Option<String>,
+    /// Optional narrowing of the role's permissions.
+    ///
+    /// Absent means the token was never narrowed and keeps everything its role
+    /// carries, so tokens issued before scopes existed are unaffected.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope: Option<Vec<String>>,
     pub exp: usize,
     pub iat: usize,
     #[serde(rename = "type")]
@@ -50,6 +56,7 @@ pub fn create_access_token(
         username: user.username.clone(),
         role: Some(user.role.name_en.clone()),
         token_id: None,
+        scope: None,
         exp,
         iat: now,
         token_type: "access".to_string(),
@@ -78,6 +85,7 @@ pub fn create_refresh_token(
         username: user.username.clone(),
         role: None,
         token_id: Some(token_id.clone()),
+        scope: None,
         exp,
         iat: now as usize,
         token_type: "refresh".to_string(),

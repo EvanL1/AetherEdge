@@ -111,6 +111,7 @@ name = "aether-api"
 version = "0.0.1"
 dependencies = [
  "aether-application",
+ "aether-auth-jwt",
  "aether-data-processing",
  "aether-domain",
  "aether-http-data-processor",

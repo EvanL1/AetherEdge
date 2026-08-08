@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use aether_auth_jwt::{ROLE_COMMAND_PERMISSIONS, scope_allows};
 use axum::{
     Json, Router,
     body::{Body, to_bytes},
@@ -212,6 +213,16 @@ fn authorize_service_request(
     if !matches!(claims.role.as_deref(), Some("Engineer" | "Admin")) {
         return Err(GatewayAuthorizationError::MutationForbidden);
     }
+    // A scoped token keeps command authority only if its scope still lists at
+    // least one command permission. The downstream service remains the
+    // authority on which one applies; this gate exists so a token narrowed to
+    // reads is refused here instead of being forwarded to be rejected there.
+    if !ROLE_COMMAND_PERMISSIONS
+        .iter()
+        .any(|permission| scope_allows(claims.scope.as_deref(), permission))
+    {
+        return Err(GatewayAuthorizationError::MutationForbidden);
+    }
     if headers
         .get("x-aether-confirmed")
         .and_then(|value| value.to_str().ok())
@@ -379,6 +390,7 @@ mod tests {
             username: "gateway-test".to_owned(),
             role: Some(role.to_owned()),
             token_id: None,
+            scope: None,
             exp: usize::MAX,
             iat: 0,
             token_type: "access".to_owned(),
@@ -486,6 +498,53 @@ mod tests {
             "data/batch-query",
             &Method::POST,
             &headers,
+        )
+        .expect("read-only batch query must pass");
+    }
+
+    fn scoped_claims(role: &str, scope: Vec<&str>) -> Claims {
+        Claims {
+            scope: Some(scope.into_iter().map(str::to_owned).collect()),
+            ..claims(role)
+        }
+    }
+
+    #[test]
+    fn a_scope_without_command_permissions_cannot_pass_a_governed_mutation() {
+        let mut confirmed = HeaderMap::new();
+        confirmed.insert("x-aether-confirmed", "true".parse().expect("valid header"));
+
+        // Confirmation is asserted by the caller, so it is no obstacle to an AI
+        // client holding an administrative token. The scope is what has to stop
+        // it: narrowed away from every command permission, the mutation must be
+        // refused here rather than forwarded for the service to reject.
+        let forbidden = authorize_service_request(
+            &scoped_claims("Admin", vec!["data_processing.read"]),
+            ServiceName::Uplink,
+            "mqtt/config",
+            &Method::POST,
+            &confirmed,
+        )
+        .expect_err("read-only scope must not mutate");
+        assert_eq!(forbidden, GatewayAuthorizationError::MutationForbidden);
+
+        // A scope that still carries command authority keeps working.
+        authorize_service_request(
+            &scoped_claims("Admin", vec!["io.channel.manage"]),
+            ServiceName::Uplink,
+            "mqtt/config",
+            &Method::POST,
+            &confirmed,
+        )
+        .expect("command-scoped mutation must pass");
+
+        // Reads are never governed mutations, so a narrow scope keeps them.
+        authorize_service_request(
+            &scoped_claims("Viewer", vec!["data_processing.read"]),
+            ServiceName::History,
+            "data/batch-query",
+            &Method::POST,
+            &HeaderMap::new(),
         )
         .expect("read-only batch query must pass");
     }
