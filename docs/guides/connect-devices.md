@@ -134,6 +134,7 @@ union. Protocol runtimes do not own a SQLite pool or reload topology later.
 
 | Protocol | Accepted point mappings |
 |----------|-------------------------|
+| Modbus TCP/RTU | `{"slave_id":1,"function_code":3,"register_address":0}`. Those three are required; each accepts a number or its decimal string. `data_type` defaults to `uint16` and is case-insensitive (`bool`, `uint16`, `int16`, `uint32`, `int32`, `uint64`, `int64`, `float32`, `float64`, `string`); `byte_order` defaults to `ABCD` (also `DCBA`, `BADC`, `CDAB`, or the aliases `BE`, `LE`, `WORD_SWAP`, `BYTE_SWAP`); `bit_position` (0–15) extracts one bit from a register. Unknown fields are rejected. |
 | MQTT / HTTP | T uses `{"json_path":"$.value","data_type":"float"}` (`float` or `int`); S uses `{"json_path":"$.online","data_type":"bool"}`. C/A and string mappings are rejected. |
 | BLE | `{"service_uuid":"180f","characteristic_uuid":"2a19","data_format":"uint16","notify":true}`. Notifications are T/S only; C/A use governed writes. |
 | Zigbee | T/S require `{"ieee_address":...,"endpoint":1,"cluster_id":1026,"attribute_id":0}`. C/A are rejected because the raw gateway transport has no correlated command acknowledgement yet. |

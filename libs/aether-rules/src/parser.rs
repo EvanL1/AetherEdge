@@ -79,14 +79,19 @@ pub fn extract_rule_flow(full_json: &Value) -> Result<RuleFlow> {
                     "action-calculation" => extract_calculation_rule_node(data)?,
                     "action-periodDelta" => extract_period_delta_rule_node(data)?,
                     _ => {
-                        tracing::warn!("Unknown node: {}", inner_type);
-                        continue;
+                        return Err(RuleError::ParseError(format!(
+                            "node '{node_id}' has unrecognised data.type '{inner_type}'; \
+                             expected one of: function-switch, action-changeValue, \
+                             action-calculation, action-periodDelta"
+                        )));
                     },
                 }
             },
             _ => {
-                tracing::warn!("Unknown top node: {}", node_type);
-                continue;
+                return Err(RuleError::ParseError(format!(
+                    "node '{node_id}' has unrecognised type '{node_type}'; expected one of: \
+                     start, end, custom (with the node kind in data.type)"
+                )));
             },
         };
 
@@ -706,5 +711,131 @@ mod tests {
 
         assert_eq!(deserialized.start_node, "start");
         assert_eq!(deserialized.nodes.len(), 2);
+    }
+
+    #[test]
+    fn an_unrecognised_node_type_is_rejected_rather_than_dropped() {
+        // The parser used to `warn!` and `continue`, so a flow authored against
+        // the wrong vocabulary was accepted, stored, and only failed later at
+        // execution with "Node not found" — pointing at the wiring rather than
+        // at the node the author actually got wrong.
+        let flow = json!({
+            "nodes": [
+                {
+                    "id": "start",
+                    "type": "start",
+                    "data": { "config": { "wires": { "default": ["read_power"] } } }
+                },
+                { "id": "read_power", "type": "input", "data": { "label": "Read power" } },
+                { "id": "end", "type": "end" }
+            ],
+            "edges": []
+        });
+
+        let error = extract_rule_flow(&flow).expect_err("an unknown node type must fail the parse");
+
+        let message = error.to_string();
+        assert!(
+            message.contains("read_power"),
+            "the error must name the offending node, got: {message}"
+        );
+        assert!(
+            message.contains("input"),
+            "the error must name the unrecognised type, got: {message}"
+        );
+    }
+
+    #[test]
+    fn an_unrecognised_custom_node_subtype_is_rejected_rather_than_dropped() {
+        let flow = json!({
+            "nodes": [
+                {
+                    "id": "start",
+                    "type": "start",
+                    "data": { "config": { "wires": { "default": ["decide"] } } }
+                },
+                {
+                    "id": "decide",
+                    "type": "custom",
+                    "data": { "type": "switch", "config": {} }
+                },
+                { "id": "end", "type": "end" }
+            ],
+            "edges": []
+        });
+
+        let error = extract_rule_flow(&flow).expect_err("an unknown node subtype must fail");
+
+        let message = error.to_string();
+        assert!(
+            message.contains("decide") && message.contains("switch"),
+            "the error must name the node and its unrecognised subtype, got: {message}"
+        );
+    }
+
+    /// The worked example in `docs/guides/writing-rules.md`. Kept here verbatim
+    /// so the documented flow cannot drift away from what the parser accepts.
+    #[test]
+    fn the_documented_threshold_control_example_parses() {
+        let flow = json!({
+            "nodes": [
+                {
+                    "id": "start",
+                    "type": "start",
+                    "data": { "config": { "wires": { "default": ["check_power"] } } }
+                },
+                {
+                    "id": "check_power",
+                    "type": "custom",
+                    "data": {
+                        "type": "function-switch",
+                        "config": {
+                            "variables": [
+                                { "name": "X1", "instance": 1, "pointType": "measurement", "point_id": 0 }
+                            ],
+                            "rule": [
+                                {
+                                    "name": "out001",
+                                    "type": "default",
+                                    "rule": [
+                                        { "type": "variable", "variables": "X1", "operator": ">", "value": 400 }
+                                    ]
+                                }
+                            ],
+                            "wires": { "out001": ["open_breaker"] }
+                        }
+                    }
+                },
+                {
+                    "id": "open_breaker",
+                    "type": "custom",
+                    "data": {
+                        "type": "action-changeValue",
+                        "config": {
+                            "variables": [
+                                { "name": "Y1", "instance": 2, "pointType": "action", "point_id": 10 }
+                            ],
+                            "rule": [ { "Variables": "Y1", "value": 0 } ],
+                            "wires": { "default": ["end"] }
+                        }
+                    }
+                },
+                { "id": "end", "type": "end" }
+            ],
+            "edges": []
+        });
+
+        let parsed = extract_rule_flow(&flow).expect("the documented example must parse");
+
+        assert_eq!(parsed.start_node, "start");
+        assert_eq!(parsed.nodes.len(), 4, "every node must survive the parse");
+        assert!(matches!(
+            parsed.nodes.get("check_power"),
+            Some(RuleNode::Switch { .. })
+        ));
+        assert!(matches!(
+            parsed.nodes.get("open_breaker"),
+            Some(RuleNode::ChangeValue { .. })
+        ));
     }
 }

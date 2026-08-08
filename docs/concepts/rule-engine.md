@@ -99,9 +99,12 @@ one action, and suppresses re-execution until it elapses.
 ## Execution
 
 The executor walks the compact topology from the start node, following each
-node's wires: switch nodes evaluate condition branches and select an output
-wire, change nodes write a value to a point, calculation and period-delta nodes
-compute derived values, and the end node terminates the path.
+node's wires: `function-switch` nodes evaluate condition branches and select an
+output wire, `action-changeValue` nodes write a value to a point,
+`action-calculation` and `action-periodDelta` nodes compute derived values, and
+the end node terminates the path. Those four names are the wire format, carried
+in each node's `data.type`; [Writing rules](../guides/writing-rules.md) shows a
+complete document.
 
 Input variables are read through the SHM-backed `RuleLiveState`, and the reads
 are strict: if a variable's data is unavailable this cycle, the evaluation short-circuits rather
