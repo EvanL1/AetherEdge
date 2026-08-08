@@ -212,6 +212,20 @@ Usage: aether sync [OPTIONS]
 aether sync --dry-run
 ```
 
+Validation here covers configuration structure and references. It does **not**
+check protocol mappings: those schemas belong to the protocol adapter that
+compiles them, and the adapter validates them when a channel is activated. A
+mapping with an out-of-range `slave_id` or a function code that does not exist
+therefore passes `sync` and is refused at activation. Both the text and
+`--json` reports name this in `unchecked`, so a caller never has to infer it.
+
+`sync` refuses to run while a runtime owner is still live, so that an offline
+apply cannot race a service holding the same state. Ownership is decided by
+each service's runtime artefact — `aether-io` by its SHM writer heartbeat and
+`aether-automation` by its PointWatch socket — rather than by a well-known
+port, so it follows `AETHER_SHM_PATH` and detects a service whatever port it
+listens on.
+
 ## aether status
 
 Show current configuration status.
