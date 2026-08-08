@@ -684,23 +684,26 @@ async fn sync_command(
     Ok(())
 }
 
+/// Refuses an offline configuration apply while a runtime owner is still live.
+///
+/// Ownership is decided by each service's own runtime artefact rather than by
+/// a well-known TCP port. A port probe answered the wrong question in both
+/// directions: any unrelated process bound to 6001 made sync refuse forever,
+/// while a real `aether-io` listening on a different port went undetected and
+/// the guard waved through exactly the concurrent write it exists to prevent.
+/// Both artefacts here are derived from the same SHM path the services use, so
+/// the check follows a site's configuration instead of a compiled-in default.
 async fn ensure_configuration_owners_stopped() -> Result<()> {
+    let shm_path = aether_shm_bridge::default_shm_path();
     let mut running = Vec::new();
-    for (service, port) in [
-        ("aether-io", common::service_ports::IO_PORT),
-        ("aether-automation", common::service_ports::AUTOMATION_PORT),
-    ] {
-        let address = std::net::SocketAddr::from(([127, 0, 0, 1], port));
-        if tokio::time::timeout(
-            std::time::Duration::from_millis(300),
-            tokio::net::TcpStream::connect(address),
-        )
-        .await
-        .is_ok_and(|result| result.is_ok())
-        {
-            running.push(service);
-        }
+
+    if shm_writer_is_live(&shm_path) {
+        running.push("aether-io");
     }
+    if point_watch_listener_is_bound(&shm_path).await {
+        running.push("aether-automation");
+    }
+
     if running.is_empty() {
         Ok(())
     } else {
@@ -710,6 +713,34 @@ async fn ensure_configuration_owners_stopped() -> Result<()> {
         )
     }
 }
+
+/// Reports whether `aether-io` is still publishing SHM heartbeats.
+///
+/// An absent or unreadable SHM means no acquisition owner, which is the normal
+/// state on a fresh site and must not block the first sync.
+fn shm_writer_is_live(shm_path: &Path) -> bool {
+    aether_dataplane::SlotReader::open(shm_path)
+        .is_ok_and(|reader| reader.is_writer_alive(WRITER_LIVENESS_MS))
+}
+
+/// Reports whether `aether-automation` still holds its PointWatch socket.
+///
+/// A leftover socket file with nothing listening refuses the connection, so a
+/// crashed service does not keep configuration locked out.
+async fn point_watch_listener_is_bound(shm_path: &Path) -> bool {
+    let socket = std::env::var("AETHER_AUTOMATION_POINT_WATCH_SOCKET")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| aether_shm_bridge::point_watch_socket_from_shm(shm_path, "automation"));
+    tokio::time::timeout(
+        std::time::Duration::from_millis(300),
+        tokio::net::UnixStream::connect(&socket),
+    )
+    .await
+    .is_ok_and(|result| result.is_ok())
+}
+
+/// Heartbeat age beyond which the acquisition writer is treated as gone.
+const WRITER_LIVENESS_MS: u64 = 5_000;
 
 async fn validate_command(
     detailed: bool,
