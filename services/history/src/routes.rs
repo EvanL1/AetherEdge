@@ -8,7 +8,7 @@ use axum::{
     routing::{get, post},
 };
 use serde_json::{Value, json};
-use tracing::{error, info};
+use tracing::{error, info, warn};
 #[cfg(feature = "openapi")]
 use utoipa::{OpenApi, ToSchema};
 
@@ -517,8 +517,9 @@ async fn query_range(
     let page = query.page;
     let page_size = query.page_size;
 
+    let storage_enabled = state.storage_settings.read().await.enabled;
     let backend = state.storage.read().await.clone();
-    match backend.query_range(&query).await {
+    match disabled_storage_reads_empty(backend.query_range(&query).await, storage_enabled) {
         Ok((data, total)) => {
             let has_more = (page * page_size) < total;
             let data = data
@@ -542,6 +543,22 @@ async fn query_range(
                 Json(json!({"success": false, "message": e.to_string()})),
             ))
         },
+    }
+}
+
+/// Absorb read failures that only mean "storage is switched off".
+///
+/// `NullBackend` bails on every read, but it stands in for two different states:
+/// storage deliberately disabled through `PUT /hisApi/storage`, and an enabled
+/// backend that failed to connect. The first is the documented empty-set case;
+/// the second is a live outage and must keep surfacing as an error.
+fn disabled_storage_reads_empty(
+    result: anyhow::Result<(Vec<crate::models::HistoryRecord>, i64)>,
+    storage_enabled: bool,
+) -> anyhow::Result<(Vec<crate::models::HistoryRecord>, i64)> {
+    match result {
+        Err(_) if !storage_enabled => Ok((Vec::new(), 0)),
+        other => other,
     }
 }
 
@@ -843,6 +860,12 @@ async fn update_config(
     Json(new_cfg): Json<ServiceConfig>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     let new_cfg = crate::models::ServiceConfig::from(new_cfg);
+
+    // Hold the applied-config lock across the write so persisting and applying
+    // stay one step. Doing them separately let two concurrent PUTs land in the
+    // opposite order in SQLite and in memory, leaving the running config and the
+    // stored config disagreeing until the next restart.
+    let mut applied = state.config.write().await;
     if let Err(e) = db_config::save_config(&state.sqlite, &new_cfg).await {
         error!("Failed to save config: {}", e);
         return Err((
@@ -851,7 +874,8 @@ async fn update_config(
         ));
     }
 
-    *state.config.write().await = new_cfg;
+    *applied = new_cfg;
+    drop(applied);
 
     Ok(Json(
         json!({ "success": true, "message": "Config updated" }),
@@ -936,6 +960,10 @@ async fn update_storage(
     let disabling = !req.enabled;
     let new_ss = req.into_settings();
 
+    // Same one-step rule as update_config, and it additionally pins the settings
+    // against a concurrent reconnect: that handler re-reads them under this lock
+    // before installing a backend, so it cannot land mid-update.
+    let mut applied = state.storage_settings.write().await;
     if let Err(e) = db_config::save_storage(&state.sqlite, &new_ss).await {
         error!("Failed to persist storage config: {}", e);
         return Err((
@@ -950,7 +978,8 @@ async fn update_storage(
         info!("Storage disabled, writes stopped");
     }
 
-    *state.storage_settings.write().await = new_ss;
+    *applied = new_ss;
+    drop(applied);
 
     Ok(Json(json!({
         "success": true,
@@ -996,6 +1025,7 @@ async fn test_storage(
     responses(
         (status = 200, description = "Reconnected successfully"),
         (status = 400, description = "Storage not configured or not enabled"),
+        (status = 409, description = "Storage settings changed while connecting; retry"),
         (status = 500, description = "Reconnection failed"),
     ))]
 async fn reconnect_storage(
@@ -1026,8 +1056,30 @@ async fn reconnect_storage(
 
     match connect_storage_backend(&backend_type, &dsn).await {
         Ok(b) => {
-            info!("Storage backend '{}' reconnected", backend_type);
+            // Connecting takes seconds, and the settings we sampled may have moved
+            // on. Re-check them under the settings lock before installing: a slow
+            // reconnect that wins the race would silently keep writing history to
+            // the previous database while the API reports the new one.
+            let current = state.storage_settings.read().await;
+            if reconnect_snapshot_is_stale(
+                (enabled, &backend_type, &dsn),
+                (current.enabled, &current.backend, &current.url),
+            ) {
+                warn!(
+                    "Storage settings changed while connecting to '{}'; discarding the stale backend",
+                    backend_type
+                );
+                return Err((
+                    StatusCode::CONFLICT,
+                    Json(
+                        json!({"success": false, "message": "Storage settings changed while connecting. Call POST /hisApi/storage/reconnect again"}),
+                    ),
+                ));
+            }
             *state.storage.write().await = b;
+            drop(current);
+
+            info!("Storage backend '{}' reconnected", backend_type);
             Ok(Json(json!({
                 "success": true,
                 "message": format!("Connected to '{}' backend. Historical data collection started", backend_type)
@@ -1046,6 +1098,14 @@ async fn reconnect_storage(
 // ============================================================================
 // Helpers
 // ============================================================================
+
+/// Report whether the settings a reconnect started from have since changed.
+///
+/// Compared as (enabled, backend, dsn): any of the three moving means the
+/// backend we just built no longer matches what the service is configured for.
+fn reconnect_snapshot_is_stale(snapshot: (bool, &str, &str), current: (bool, &str, &str)) -> bool {
+    snapshot != current
+}
 
 /// Parse a PostgreSQL DSN back into (host, port, database, username) for the
 /// GET /hisApi/storage response.  Returns empty strings on parse failure.
@@ -1104,5 +1164,54 @@ mod metrics_tests {
 
         assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
         assert_eq!(body.0["success"], false);
+    }
+}
+
+#[cfg(test)]
+mod storage_control_tests {
+    use super::*;
+
+    #[test]
+    fn a_deliberately_disabled_backend_reads_as_an_empty_historian() {
+        // The query contract documents "empty set when no storage backend is
+        // configured — this is not an error condition", but NullBackend bails on
+        // every read, so callers saw a 500 for a perfectly normal state.
+        let failure = Err(anyhow::anyhow!("Storage backend not configured"));
+
+        let (records, total) =
+            disabled_storage_reads_empty(failure, false).expect("disabled storage reads empty");
+
+        assert!(records.is_empty());
+        assert_eq!(total, 0);
+    }
+
+    #[test]
+    fn a_degraded_but_enabled_backend_still_reports_its_failure() {
+        // Startup installs NullBackend when an *enabled* backend fails to connect.
+        // Answering "no data" there would hide a live outage behind a 200.
+        let failure = Err(anyhow::anyhow!("connection refused"));
+
+        assert!(disabled_storage_reads_empty(failure, true).is_err());
+    }
+
+    #[test]
+    fn a_reconnect_is_stale_once_its_settings_changed_underneath() {
+        // Connecting can take seconds; a concurrent PUT /hisApi/storage in that
+        // window means the backend we just built targets the wrong database.
+        let snapshot = (true, "postgres", "postgres://host/old");
+
+        assert!(reconnect_snapshot_is_stale(
+            snapshot,
+            (true, "postgres", "postgres://host/new")
+        ));
+        assert!(reconnect_snapshot_is_stale(
+            snapshot,
+            (false, "postgres", "postgres://host/old")
+        ));
+        assert!(reconnect_snapshot_is_stale(
+            snapshot,
+            (true, "sqlite", "postgres://host/old")
+        ));
+        assert!(!reconnect_snapshot_is_stale(snapshot, snapshot));
     }
 }
