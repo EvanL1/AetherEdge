@@ -505,9 +505,18 @@ Usage: aether channels points add [OPTIONS] --name <NAME> <CHANNEL_ID> <POINT_TY
 | `--scale <SCALE>` | Scale factor |
 | `--description <DESCRIPTION>` | Description |
 | `--data-type <DATA_TYPE>` | Data type (default: float32 for T/A, bool for S/C) |
+| `--protocol-mapping <JSON>` | Protocol address mapping; see [Connect devices](../guides/connect-devices.md) for each protocol's fields |
+| `--expected-revision <N>` | Channel revision this mutation expects, from the latest channel read |
+| `--confirmed` | Confirm the governed point-topology mutation |
+
+Point topology is fenced on the channel's revision, so `--expected-revision`
+and `--confirmed` are required exactly as they are for the channel lifecycle
+commands. Read the current revision with `aether channels get <id>`.
 
 ```bash
-aether channels points add 1001 T 101 --name voltage --unit V --scale 0.1
+aether channels points add 1001 T 101 --name voltage --unit V --scale 0.1 \
+  --protocol-mapping '{"slave_id":1,"function_code":3,"register_address":0}' \
+  --expected-revision 3 --confirmed
 ```
 
 ### channels points update
@@ -524,9 +533,13 @@ Usage: aether channels points update [OPTIONS] <CHANNEL_ID> <POINT_TYPE> <POINT_
 | `--unit <UNIT>` | Unit |
 | `--scale <SCALE>` | Scale factor |
 | `--description <DESCRIPTION>` | Description |
+| `--protocol-mapping <JSON>` | Replace the point's protocol address mapping |
+| `--expected-revision <N>` | Channel revision this mutation expects |
+| `--confirmed` | Confirm the governed point-topology mutation |
 
 ```bash
-aether channels points update 1001 T 101 --scale 0.01
+aether channels points update 1001 T 101 --scale 0.01 \
+  --expected-revision 4 --confirmed
 ```
 
 ### channels points remove
@@ -539,10 +552,13 @@ Usage: aether channels points remove [OPTIONS] <CHANNEL_ID> <POINT_TYPE> <POINT_
 
 | Flag | Description |
 |------|-------------|
-| `-f, --force` | Force deletion without confirmation |
+| `-f, --force` | Skip the interactive prompt |
+| `--expected-revision <N>` | Channel revision this mutation expects |
+| `--confirmed` | Confirm the governed point-topology mutation |
 
 ```bash
-aether channels points remove 1001 T 101 --force
+aether channels points remove 1001 T 101 --force \
+  --expected-revision 5 --confirmed
 ```
 
 ### channels points batch

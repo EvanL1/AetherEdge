@@ -147,6 +147,27 @@ pub enum ChannelCommands {
     },
 }
 
+/// Merge a `--protocol-mapping` argument into a point request body.
+///
+/// The service stores mappings as a JSON string, so the argument is validated
+/// here and re-encoded: a malformed mapping fails before the request is sent
+/// rather than surfacing as a deserialization error from the far side.
+fn attach_protocol_mapping(body: &mut Value, protocol_mapping: Option<&str>) -> Result<()> {
+    let Some(raw) = protocol_mapping else {
+        return Ok(());
+    };
+    let parsed: Value = serde_json::from_str(raw)
+        .map_err(|error| anyhow::anyhow!("--protocol-mapping is not valid JSON: {error}"))?;
+    let object = body
+        .as_object_mut()
+        .ok_or_else(|| anyhow::anyhow!("point request body must be a JSON object"))?;
+    object.insert(
+        "protocol_mappings".to_string(),
+        Value::String(serde_json::to_string(&parsed)?),
+    );
+    Ok(())
+}
+
 #[derive(Subcommand)]
 pub enum PointCommands {
     /// List all points for a channel
@@ -183,6 +204,16 @@ pub enum PointCommands {
         /// Data type (default: float32 for T/A, bool for S/C)
         #[arg(long)]
         data_type: Option<String>,
+        /// Protocol-specific address mapping, as JSON. Modbus example:
+        /// '{"slave_id":1,"function_code":3,"register_address":0}'
+        #[arg(long, value_name = "JSON")]
+        protocol_mapping: Option<String>,
+        /// Channel revision this mutation expects, from the latest channel read
+        #[arg(long)]
+        expected_revision: u64,
+        /// Confirm the governed point-topology mutation
+        #[arg(long)]
+        confirmed: bool,
     },
 
     /// Update a point
@@ -206,6 +237,15 @@ pub enum PointCommands {
         /// Description
         #[arg(long)]
         description: Option<String>,
+        /// Protocol-specific address mapping, as JSON
+        #[arg(long, value_name = "JSON")]
+        protocol_mapping: Option<String>,
+        /// Channel revision this mutation expects, from the latest channel read
+        #[arg(long)]
+        expected_revision: u64,
+        /// Confirm the governed point-topology mutation
+        #[arg(long)]
+        confirmed: bool,
     },
 
     /// Remove a point from a channel
@@ -220,6 +260,12 @@ pub enum PointCommands {
         /// Force deletion without confirmation
         #[arg(short, long)]
         force: bool,
+        /// Channel revision this mutation expects, from the latest channel read
+        #[arg(long)]
+        expected_revision: u64,
+        /// Confirm the governed point-topology mutation
+        #[arg(long)]
+        confirmed: bool,
     },
 
     /// Apply a batch of point create/update/delete operations from a JSON file
@@ -400,6 +446,9 @@ pub async fn handle_command(cmd: ChannelCommands, base_url: &str, json: bool) ->
                     scale,
                     description,
                     data_type,
+                    protocol_mapping,
+                    expected_revision,
+                    confirmed,
                 } => {
                     let data = pc
                         .add_point(
@@ -411,6 +460,9 @@ pub async fn handle_command(cmd: ChannelCommands, base_url: &str, json: bool) ->
                             scale,
                             description.as_deref(),
                             data_type.as_deref(),
+                            protocol_mapping.as_deref(),
+                            confirmed,
+                            expected_revision,
                         )
                         .await?;
                     if json {
@@ -432,6 +484,9 @@ pub async fn handle_command(cmd: ChannelCommands, base_url: &str, json: bool) ->
                     unit,
                     scale,
                     description,
+                    protocol_mapping,
+                    expected_revision,
+                    confirmed,
                 } => {
                     let data = pc
                         .update_point(
@@ -442,6 +497,9 @@ pub async fn handle_command(cmd: ChannelCommands, base_url: &str, json: bool) ->
                             unit.as_deref(),
                             scale,
                             description.as_deref(),
+                            protocol_mapping.as_deref(),
+                            confirmed,
+                            expected_revision,
                         )
                         .await?;
                     if json {
@@ -460,6 +518,8 @@ pub async fn handle_command(cmd: ChannelCommands, base_url: &str, json: bool) ->
                     point_type,
                     point_id,
                     force,
+                    expected_revision,
+                    confirmed,
                 } => {
                     if !force && !json {
                         println!(
@@ -475,7 +535,15 @@ pub async fn handle_command(cmd: ChannelCommands, base_url: &str, json: bool) ->
                             return Ok(());
                         }
                     }
-                    let data = pc.remove_point(channel_id, &point_type, point_id).await?;
+                    let data = pc
+                        .remove_point(
+                            channel_id,
+                            &point_type,
+                            point_id,
+                            confirmed,
+                            expected_revision,
+                        )
+                        .await?;
                     if json {
                         crate::output::print_success(&data);
                     } else {
@@ -1102,6 +1170,27 @@ impl PointClient {
         }
     }
 
+    /// Apply the governed point-topology contract: explicit confirmation plus
+    /// the compare-and-swap revision the service fences these mutations on.
+    fn governed_point_request(
+        &self,
+        request: reqwest::RequestBuilder,
+        confirmed: bool,
+        expected_revision: u64,
+    ) -> Result<reqwest::RequestBuilder> {
+        if !confirmed {
+            anyhow::bail!("point topology mutations require --confirmed");
+        }
+        if expected_revision == 0 {
+            anyhow::bail!("--expected-revision must be at least 1");
+        }
+        Ok(self
+            .apply_auth(request)?
+            .header("x-request-id", uuid::Uuid::new_v4().to_string())
+            .header("x-aether-confirmed", "true")
+            .header("x-aether-expected-revision", expected_revision.to_string()))
+    }
+
     #[allow(clippy::disallowed_methods, clippy::too_many_arguments)]
     async fn add_point(
         &self,
@@ -1113,13 +1202,16 @@ impl PointClient {
         scale: Option<f64>,
         description: Option<&str>,
         data_type: Option<&str>,
+        protocol_mapping: Option<&str>,
+        confirmed: bool,
+        expected_revision: u64,
     ) -> Result<Value> {
         let pt = point_type.to_uppercase();
         let default_data_type = match pt.as_str() {
             "S" | "C" => "bool",
             _ => "float32",
         };
-        let body = serde_json::json!({
+        let mut body = serde_json::json!({
             "point_id": point_id,
             "signal_name": signal_name,
             "unit": unit,
@@ -1129,16 +1221,16 @@ impl PointClient {
             "reverse": false,
             "description": description.unwrap_or("")
         });
+        attach_protocol_mapping(&mut body, protocol_mapping)?;
         let url = format!(
             "{}/api/channels/{}/{}/points/{}",
             self.base_url, channel_id, pt, point_id
         );
-        let request = self
-            .client
-            .post(&url)
-            .json(&body)
-            .header("x-aether-confirmed", "true");
-        let response = self.apply_auth(request)?.send().await?;
+        let request = self.client.post(&url).json(&body);
+        let response = self
+            .governed_point_request(request, confirmed, expected_revision)?
+            .send()
+            .await?;
         if response.status().is_success() {
             Ok(response.json().await?)
         } else {
@@ -1152,7 +1244,7 @@ impl PointClient {
         }
     }
 
-    #[allow(clippy::disallowed_methods)]
+    #[allow(clippy::disallowed_methods, clippy::too_many_arguments)]
     async fn update_point(
         &self,
         channel_id: u32,
@@ -1162,6 +1254,9 @@ impl PointClient {
         unit: Option<&str>,
         scale: Option<f64>,
         description: Option<&str>,
+        protocol_mapping: Option<&str>,
+        confirmed: bool,
+        expected_revision: u64,
     ) -> Result<Value> {
         let pt = point_type.to_uppercase();
         let mut body = serde_json::Map::new();
@@ -1177,19 +1272,20 @@ impl PointClient {
         if let Some(d) = description {
             body.insert("description".to_string(), serde_json::json!(d));
         }
-        if body.is_empty() {
+        let mut body = serde_json::Value::Object(body);
+        attach_protocol_mapping(&mut body, protocol_mapping)?;
+        if body.as_object().is_some_and(serde_json::Map::is_empty) {
             return Err(anyhow::anyhow!("No fields to update"));
         }
         let url = format!(
             "{}/api/channels/{}/{}/points/{}",
             self.base_url, channel_id, pt, point_id
         );
-        let request = self
-            .client
-            .put(&url)
-            .json(&serde_json::Value::Object(body))
-            .header("x-aether-confirmed", "true");
-        let response = self.apply_auth(request)?.send().await?;
+        let request = self.client.put(&url).json(&body);
+        let response = self
+            .governed_point_request(request, confirmed, expected_revision)?
+            .send()
+            .await?;
         if response.status().is_success() {
             Ok(response.json().await?)
         } else {
@@ -1208,17 +1304,19 @@ impl PointClient {
         channel_id: u32,
         point_type: &str,
         point_id: u32,
+        confirmed: bool,
+        expected_revision: u64,
     ) -> Result<Value> {
         let pt = point_type.to_uppercase();
         let url = format!(
             "{}/api/channels/{}/{}/points/{}",
             self.base_url, channel_id, pt, point_id
         );
-        let request = self
-            .client
-            .delete(&url)
-            .header("x-aether-confirmed", "true");
-        let response = self.apply_auth(request)?.send().await?;
+        let request = self.client.delete(&url);
+        let response = self
+            .governed_point_request(request, confirmed, expected_revision)?
+            .send()
+            .await?;
         if response.status().is_success() {
             Ok(response.json().await?)
         } else {
@@ -1273,12 +1371,12 @@ impl PointClient {
 #[cfg(test)]
 mod tests {
     use super::{
-        ChannelClient, ChannelCommands, PointClient, mutation_receipt_summary,
+        ChannelClient, ChannelCommands, PointClient, PointCommands, mutation_receipt_summary,
         reconciliation_receipt_summary,
     };
     use clap::Parser;
     use reqwest::Client;
-    use wiremock::matchers::{body_json, header, header_exists, method, path};
+    use wiremock::matchers::{body_json, body_partial_json, header, header_exists, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     #[derive(Parser)]
@@ -1361,6 +1459,79 @@ mod tests {
                 .expect("online channel mutations must require a CAS revision");
             assert!(error.to_string().contains("--expected-revision"), "{error}");
         }
+    }
+
+    #[test]
+    fn point_topology_mutations_require_the_same_revision_fence_as_channel_mutations() {
+        // The service fences point topology on `x-aether-expected-revision`
+        // exactly as it fences channel lifecycle. The CLI used to omit the flag
+        // entirely, so every documented `points` example returned 400 and the
+        // only way through was hand-rolled curl.
+        for args in [
+            vec![
+                "channels",
+                "points",
+                "add",
+                "1",
+                "T",
+                "0",
+                "--name",
+                "Power",
+                "--confirmed",
+            ],
+            vec![
+                "channels",
+                "points",
+                "update",
+                "1",
+                "T",
+                "0",
+                "--name",
+                "Power",
+                "--confirmed",
+            ],
+            vec!["channels", "points", "remove", "1", "T", "0", "--confirmed"],
+        ] {
+            let error = ChannelCli::try_parse_from(args)
+                .err()
+                .expect("point topology mutations must require a CAS revision");
+            assert!(error.to_string().contains("--expected-revision"), "{error}");
+        }
+    }
+
+    #[test]
+    fn adding_a_point_accepts_its_protocol_mapping() {
+        // Without this a Modbus point cannot be created through the CLI at all:
+        // the register address has nowhere to go.
+        let cli = ChannelCli::try_parse_from([
+            "channels",
+            "points",
+            "add",
+            "1",
+            "T",
+            "0",
+            "--name",
+            "Power",
+            "--expected-revision",
+            "3",
+            "--confirmed",
+            "--protocol-mapping",
+            r#"{"slave_id":1,"function_code":3,"register_address":0}"#,
+        ])
+        .expect("a point may carry its protocol mapping");
+
+        let ChannelCommands::Points {
+            command: PointCommands::Add {
+                protocol_mapping, ..
+            },
+        } = cli.command
+        else {
+            panic!("expected a points add command");
+        };
+        assert_eq!(
+            protocol_mapping.as_deref(),
+            Some(r#"{"slave_id":1,"function_code":3,"register_address":0}"#)
+        );
     }
 
     #[test]
@@ -2033,12 +2204,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn point_mutations_send_the_confirmed_header() {
+    async fn point_mutations_send_the_full_governed_contract() {
         let server = MockServer::start().await;
         for verb in ["POST", "PUT", "DELETE"] {
             Mock::given(method(verb))
                 .and(path("/api/channels/1001/T/points/5"))
                 .and(header("x-aether-confirmed", "true"))
+                .and(header("x-aether-expected-revision", "7"))
                 .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
                 .expect(1)
                 .mount(&server)
@@ -2051,14 +2223,90 @@ mod tests {
             access_token: None,
         };
         client
-            .add_point(1001, "T", 5, "voltage", "V", None, None, None)
+            .add_point(
+                1001, "T", 5, "voltage", "V", None, None, None, None, true, 7,
+            )
             .await
             .unwrap();
         client
-            .update_point(1001, "T", 5, Some("voltage"), None, None, None)
+            .update_point(
+                1001,
+                "T",
+                5,
+                Some("voltage"),
+                None,
+                None,
+                None,
+                None,
+                true,
+                7,
+            )
             .await
             .unwrap();
-        client.remove_point(1001, "T", 5).await.unwrap();
+        client.remove_point(1001, "T", 5, true, 7).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_protocol_mapping_reaches_the_service_as_an_encoded_string() {
+        // The service stores mappings as a JSON string, not a nested object —
+        // a distinction previously discoverable only by reading a 400 response.
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/api/channels/1001/T/points/5"))
+            .and(body_partial_json(serde_json::json!({
+                "protocol_mappings":
+                    r#"{"function_code":3,"register_address":0,"slave_id":1}"#
+            })))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let client = PointClient {
+            client: Client::new(),
+            base_url: server.uri(),
+            access_token: None,
+        };
+        client
+            .add_point(
+                1001,
+                "T",
+                5,
+                "power",
+                "kW",
+                None,
+                None,
+                None,
+                Some(r#"{"slave_id":1,"function_code":3,"register_address":0}"#),
+                true,
+                7,
+            )
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_malformed_protocol_mapping_fails_before_the_request_is_sent() {
+        let client = PointClient::new("http://127.0.0.1:1").unwrap();
+
+        let error = client
+            .add_point(
+                1,
+                "T",
+                0,
+                "power",
+                "kW",
+                None,
+                None,
+                None,
+                Some("{oops"),
+                true,
+                1,
+            )
+            .await
+            .expect_err("invalid mapping JSON must be rejected locally");
+
+        assert!(error.to_string().contains("not valid JSON"), "{error}");
     }
 
     #[tokio::test]
