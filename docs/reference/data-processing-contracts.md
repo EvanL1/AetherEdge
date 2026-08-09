@@ -235,13 +235,12 @@ explicitly declares that exact substitution before the frame is built.
 The aggregate does not replace per-sample quality. A processor validates both
 against the selected task and optional processor artifact manifest.
 
-The v1 wire contract can carry per-sample quality, but the current production
-sources do not preserve device-origin quality end to end. The embedded history
-table stores numeric observations without device quality, and the current SHM
-bridge labels accepted finite live values as `good`. Current commissioning can
-therefore enforce freshness, gaps, missingness, numeric constraints,
-provenance, and issue time, but deployments that require original device
-quality MUST add a quality-bearing source adapter.
+The v1 wire contract and SHM v5 live path preserve per-sample quality. Live
+reads combine stored source quality with freshness policy. The embedded history
+table still stores numeric observations without device quality, so historical
+or mixed history/live frames cannot claim complete source-quality fidelity.
+Deployments that require original quality for historical features MUST add a
+quality-bearing history source.
 
 Live tail is permitted only for a history feature whose commissioned
 aggregation is `Last`, where one instantaneous SHM value can validly replace

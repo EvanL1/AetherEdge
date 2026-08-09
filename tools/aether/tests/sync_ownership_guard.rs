@@ -43,7 +43,7 @@ fn an_unrelated_listener_on_the_default_port_no_longer_blocks_configuration() {
     let _squatter_port = squatter.local_addr().expect("squatter addr").port();
 
     let workspace = TempDir::new().expect("workspace");
-    let shm_path = workspace.path().join("absent-rtdb.shm");
+    let shm_path = workspace.path().join("absent-live-state.shm");
 
     let output = run_sync(&workspace, &shm_path);
 
@@ -76,7 +76,7 @@ fn a_bound_point_watch_socket_still_refuses_the_apply() {
     // race its in-memory desired state. The guard must catch this regardless of
     // which HTTP port that process happens to listen on.
     let workspace = TempDir::new().expect("workspace");
-    let shm_path = workspace.path().join("rtdb.shm");
+    let shm_path = workspace.path().join("live-state.shm");
     let socket = aether_shm_bridge::point_watch_socket_from_shm(&shm_path, "automation");
     if let Some(parent) = socket.parent() {
         std::fs::create_dir_all(parent).expect("socket directory");

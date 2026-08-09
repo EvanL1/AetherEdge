@@ -30,7 +30,7 @@ pub struct PointCrudResult {
     pub resulting_revision: u64,
 
     /// Terminal audit persistence state after the command was accepted.
-    pub completion_audit: crate::dto::ChannelCompletionAudit,
+    pub completion_audit: crate::api::dto::ChannelCompletionAudit,
 
     /// Point topology mutations are never safe for automatic retry.
     #[schema(default = false, example = false)]
@@ -139,7 +139,7 @@ pub struct PointBatchResult {
     #[schema(minimum = 1, maximum = 9223372036854775807_i64)]
     pub resulting_revision: u64,
 
-    pub completion_audit: crate::dto::ChannelCompletionAudit,
+    pub completion_audit: crate::api::dto::ChannelCompletionAudit,
 
     #[schema(default = false, example = false)]
     pub retryable: bool,

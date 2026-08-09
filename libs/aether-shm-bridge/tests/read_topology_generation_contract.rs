@@ -9,13 +9,24 @@ use aether_shm_bridge::{
 use arc_swap::ArcSwap;
 
 fn point_manifest(entries: &[(u32, [u32; 4])]) -> Arc<ChannelPointManifest> {
-    Arc::new(ChannelPointManifest::from_entries(entries.iter().copied()))
+    Arc::new(ChannelPointManifest::dense_test_fixture(
+        entries.iter().copied(),
+    ))
 }
 
 fn health_manifest(channel_ids: &[u32]) -> Arc<ChannelHealthManifest> {
-    Arc::new(ChannelHealthManifest::from_channel_ids(
+    Arc::new(ChannelHealthManifest::test_fixture(
         channel_ids.iter().copied(),
     ))
+}
+
+fn create_point_writer(
+    config: ShmRuntimeConfig,
+    manifest: Arc<ChannelPointManifest>,
+    snapshot: Option<&std::path::Path>,
+    publication_epoch: u64,
+) -> aether_ports::PortResult<ShmWriterHandle> {
+    ShmWriterHandle::create(config, manifest, snapshot, None, publication_epoch)
 }
 
 #[test]
@@ -27,19 +38,16 @@ fn validated_reader_generation_opens_only_when_both_planes_match() {
     let health = health_manifest(&[7]);
 
     let publication_epoch = 2;
-    let point_writer = ShmWriterHandle::create_published_at_epoch(
+    let point_writer = create_point_writer(
         ShmRuntimeConfig::new(&point_path, 32),
         Arc::clone(&points),
         None,
         publication_epoch,
     )
     .expect("publish point generation");
-    let health_writer = ShmChannelHealthWriterHandle::create_at_epoch(
-        &health_path,
-        Arc::clone(&health),
-        publication_epoch,
-    )
-    .expect("publish health generation");
+    let health_writer =
+        ShmChannelHealthWriterHandle::create(&health_path, Arc::clone(&health), publication_epoch)
+            .expect("publish health generation");
     commit_topology_publication(&point_path, &health_path, publication_epoch)
         .expect("commit topology publication");
     let now_ms = aether_shm_bridge::timestamp_ms();
@@ -86,7 +94,7 @@ fn publication_guard_allocates_after_durable_and_partial_plane_epochs() {
     let points = point_manifest(&[(7, [1, 0, 0, 0])]);
     let health = health_manifest(&[7]);
 
-    let point_writer = ShmWriterHandle::create_published_at_epoch(
+    let point_writer = create_point_writer(
         ShmRuntimeConfig::new(&point_path, 32),
         Arc::clone(&points),
         None,
@@ -94,12 +102,12 @@ fn publication_guard_allocates_after_durable_and_partial_plane_epochs() {
     )
     .expect("publish initial point generation");
     let _health_writer =
-        ShmChannelHealthWriterHandle::create_at_epoch(&health_path, Arc::clone(&health), 900)
+        ShmChannelHealthWriterHandle::create(&health_path, Arc::clone(&health), 900)
             .expect("publish initial health generation");
     commit_topology_publication(&point_path, &health_path, 900).expect("commit initial topology");
 
     point_writer
-        .rebuild_for_publication(points, 950)
+        .rebuild(points, 950)
         .expect("fault-inject a newer partial point publication");
 
     let mut publication =
@@ -119,7 +127,7 @@ fn durable_publication_epoch_cannot_be_reused() {
     let points = point_manifest(&[(7, [1, 0, 0, 0])]);
     let health = health_manifest(&[7]);
 
-    let point_writer = ShmWriterHandle::create_published_at_epoch(
+    let point_writer = create_point_writer(
         ShmRuntimeConfig::new(&point_path, 32),
         Arc::clone(&points),
         None,
@@ -127,22 +135,17 @@ fn durable_publication_epoch_cannot_be_reused() {
     )
     .expect("publish initial point generation");
     let health_writer =
-        ShmChannelHealthWriterHandle::create_at_epoch(&health_path, Arc::clone(&health), 1_000)
+        ShmChannelHealthWriterHandle::create(&health_path, Arc::clone(&health), 1_000)
             .expect("publish initial health generation");
     commit_topology_publication(&point_path, &health_path, 1_000).expect("commit initial topology");
 
     drop(point_writer);
     drop(health_writer);
-    let _restarted_point = ShmWriterHandle::create_published_at_epoch(
-        ShmRuntimeConfig::new(&point_path, 32),
-        points,
-        None,
-        1_000,
-    )
-    .expect("fault-inject a restarted point writer reusing the epoch");
-    let _restarted_health =
-        ShmChannelHealthWriterHandle::create_at_epoch(&health_path, health, 1_000)
-            .expect("fault-inject a restarted health writer reusing the epoch");
+    let _restarted_point =
+        create_point_writer(ShmRuntimeConfig::new(&point_path, 32), points, None, 1_000)
+            .expect("fault-inject a restarted point writer reusing the epoch");
+    let _restarted_health = ShmChannelHealthWriterHandle::create(&health_path, health, 1_000)
+        .expect("fault-inject a restarted health writer reusing the epoch");
 
     let error = commit_topology_publication(&point_path, &health_path, 1_000)
         .expect_err("the durable epoch must never be committed twice");
@@ -158,7 +161,7 @@ fn durable_publication_epoch_cannot_move_backwards() {
     let points = point_manifest(&[(7, [1, 0, 0, 0])]);
     let health = health_manifest(&[7]);
 
-    let point_writer = ShmWriterHandle::create_published_at_epoch(
+    let point_writer = create_point_writer(
         ShmRuntimeConfig::new(&point_path, 32),
         Arc::clone(&points),
         None,
@@ -166,22 +169,17 @@ fn durable_publication_epoch_cannot_move_backwards() {
     )
     .expect("publish initial point generation");
     let health_writer =
-        ShmChannelHealthWriterHandle::create_at_epoch(&health_path, Arc::clone(&health), 1_000)
+        ShmChannelHealthWriterHandle::create(&health_path, Arc::clone(&health), 1_000)
             .expect("publish initial health generation");
     commit_topology_publication(&point_path, &health_path, 1_000).expect("commit initial topology");
     drop(point_writer);
     drop(health_writer);
 
-    let _rolled_back_point = ShmWriterHandle::create_published_at_epoch(
-        ShmRuntimeConfig::new(&point_path, 32),
-        points,
-        None,
-        900,
-    )
-    .expect("fault-inject a lower point epoch");
-    let _rolled_back_health =
-        ShmChannelHealthWriterHandle::create_at_epoch(&health_path, health, 900)
-            .expect("fault-inject a lower health epoch");
+    let _rolled_back_point =
+        create_point_writer(ShmRuntimeConfig::new(&point_path, 32), points, None, 900)
+            .expect("fault-inject a lower point epoch");
+    let _rolled_back_health = ShmChannelHealthWriterHandle::create(&health_path, health, 900)
+        .expect("fault-inject a lower health epoch");
 
     let error = commit_topology_publication(&point_path, &health_path, 900)
         .expect_err("the durable epoch must be monotonic");
@@ -196,16 +194,15 @@ fn publication_epoch_exhaustion_and_aliased_planes_fail_before_commit() {
     let health_path = directory.path().join("health.shm");
     let points = point_manifest(&[(7, [1, 0, 0, 0])]);
     let health = health_manifest(&[7]);
-    let _point_writer = ShmWriterHandle::create_published_at_epoch(
+    let _point_writer = create_point_writer(
         ShmRuntimeConfig::new(&point_path, 32),
         points,
         None,
         u64::MAX - 1,
     )
     .expect("publish final allocatable point epoch");
-    let _health_writer =
-        ShmChannelHealthWriterHandle::create_at_epoch(&health_path, health, u64::MAX - 1)
-            .expect("publish final allocatable health epoch");
+    let _health_writer = ShmChannelHealthWriterHandle::create(&health_path, health, u64::MAX - 1)
+        .expect("publish final allocatable health epoch");
 
     let mut publication =
         begin_topology_publication(&point_path).expect("acquire publication authority");
@@ -230,19 +227,14 @@ fn partial_dual_plane_publication_is_never_accepted_as_a_reader_generation() {
     let new_points = point_manifest(&[(7, [1, 0, 0, 0]), (9, [1, 0, 0, 0])]);
     let new_health = health_manifest(&[7, 9]);
 
-    let point_writer = ShmWriterHandle::create_published_at_epoch(
-        ShmRuntimeConfig::new(&point_path, 32),
-        old_points,
-        None,
-        10,
-    )
-    .expect("publish old point generation");
-    let _health_writer =
-        ShmChannelHealthWriterHandle::create_at_epoch(&health_path, old_health, 10)
-            .expect("publish old health generation");
+    let point_writer =
+        create_point_writer(ShmRuntimeConfig::new(&point_path, 32), old_points, None, 10)
+            .expect("publish old point generation");
+    let _health_writer = ShmChannelHealthWriterHandle::create(&health_path, old_health, 10)
+        .expect("publish old health generation");
     commit_topology_publication(&point_path, &health_path, 10).expect("commit old topology");
     point_writer
-        .rebuild_for_publication(Arc::clone(&new_points), 12)
+        .rebuild(Arc::clone(&new_points), 12)
         .expect("publish only the new point plane");
 
     let error = ShmReadTopologyGeneration::open(
@@ -270,7 +262,7 @@ fn failed_candidate_validation_never_runs_the_publish_closure() {
     let old_health = health_manifest(&[7]);
     let new_points = point_manifest(&[(7, [1, 0, 0, 0]), (9, [1, 0, 0, 0])]);
     let new_health = health_manifest(&[7, 9]);
-    let point_writer = ShmWriterHandle::create_published_at_epoch(
+    let point_writer = create_point_writer(
         ShmRuntimeConfig::new(&point_path, 32),
         Arc::clone(&old_points),
         None,
@@ -278,7 +270,7 @@ fn failed_candidate_validation_never_runs_the_publish_closure() {
     )
     .expect("publish old point generation");
     let _health_writer =
-        ShmChannelHealthWriterHandle::create_at_epoch(&health_path, Arc::clone(&old_health), 20)
+        ShmChannelHealthWriterHandle::create(&health_path, Arc::clone(&old_health), 20)
             .expect("publish old health generation");
     commit_topology_publication(&point_path, &health_path, 20).expect("commit old topology");
     let initial = Arc::new(
@@ -293,7 +285,7 @@ fn failed_candidate_validation_never_runs_the_publish_closure() {
     let live = ArcSwap::new(initial);
 
     point_writer
-        .rebuild_for_publication(Arc::clone(&new_points), 22)
+        .rebuild(Arc::clone(&new_points), 22)
         .expect("publish only the new point plane");
     let candidate = Arc::new(
         ShmReadTopologyGeneration::new_lazy(
@@ -373,19 +365,16 @@ fn coordinated_reader_requires_a_committed_common_publication_epoch() {
     let health = health_manifest(&[7]);
     let publication_epoch = 42;
 
-    let _point_writer = ShmWriterHandle::create_published_at_epoch(
+    let _point_writer = create_point_writer(
         ShmRuntimeConfig::new(&point_path, 32),
         Arc::clone(&points),
         None,
         publication_epoch,
     )
     .expect("publish coordinated point generation");
-    let _health_writer = ShmChannelHealthWriterHandle::create_at_epoch(
-        &health_path,
-        Arc::clone(&health),
-        publication_epoch,
-    )
-    .expect("publish coordinated health generation");
+    let _health_writer =
+        ShmChannelHealthWriterHandle::create(&health_path, Arc::clone(&health), publication_epoch)
+            .expect("publish coordinated health generation");
 
     let uncommitted = ShmReadTopologyGeneration::open(
         ShmClientConfig::new(&point_path, points.layout_hash()),
@@ -417,7 +406,7 @@ fn matching_manifests_from_different_publication_epochs_are_rejected() {
     let points = point_manifest(&[(7, [1, 0, 0, 0])]);
     let health = health_manifest(&[7]);
 
-    let _point_writer = ShmWriterHandle::create_published_at_epoch(
+    let _point_writer = create_point_writer(
         ShmRuntimeConfig::new(&point_path, 32),
         Arc::clone(&points),
         None,
@@ -425,7 +414,7 @@ fn matching_manifests_from_different_publication_epochs_are_rejected() {
     )
     .expect("publish point epoch");
     let _health_writer =
-        ShmChannelHealthWriterHandle::create_at_epoch(&health_path, Arc::clone(&health), 102)
+        ShmChannelHealthWriterHandle::create(&health_path, Arc::clone(&health), 102)
             .expect("publish different health epoch");
 
     let commit_error = commit_topology_publication(&point_path, &health_path, 102)
@@ -452,24 +441,21 @@ fn stale_commit_witness_is_rejected_after_one_plane_is_republished() {
     let health = health_manifest(&[7]);
     let committed_epoch = 200;
 
-    let point_writer = ShmWriterHandle::create_published_at_epoch(
+    let point_writer = create_point_writer(
         ShmRuntimeConfig::new(&point_path, 32),
         Arc::clone(&points),
         None,
         committed_epoch,
     )
     .expect("publish point generation");
-    let _health_writer = ShmChannelHealthWriterHandle::create_at_epoch(
-        &health_path,
-        Arc::clone(&health),
-        committed_epoch,
-    )
-    .expect("publish health generation");
+    let _health_writer =
+        ShmChannelHealthWriterHandle::create(&health_path, Arc::clone(&health), committed_epoch)
+            .expect("publish health generation");
     commit_topology_publication(&point_path, &health_path, committed_epoch)
         .expect("commit initial topology");
 
     point_writer
-        .rebuild_for_publication(Arc::clone(&points), 202)
+        .rebuild(Arc::clone(&points), 202)
         .expect("republish only point plane");
     let error = ShmReadTopologyGeneration::open(
         ShmClientConfig::new(&point_path, points.layout_hash()),
@@ -497,13 +483,9 @@ fn lazy_generation_cannot_read_a_point_plane_before_dual_plane_commit() {
         health,
     )
     .expect("compose lazy generation");
-    let point_writer = ShmWriterHandle::create_published_at_epoch(
-        ShmRuntimeConfig::new(&point_path, 32),
-        points,
-        None,
-        300,
-    )
-    .expect("publish point only");
+    let point_writer =
+        create_point_writer(ShmRuntimeConfig::new(&point_path, 32), points, None, 300)
+            .expect("publish point only");
     point_writer
         .generation()
         .expect("point generation")
@@ -525,7 +507,7 @@ fn retained_generation_cannot_reconnect_across_a_same_layout_epoch_change() {
     let health_path = directory.path().join("health.shm");
     let points = point_manifest(&[(7, [1, 0, 0, 0])]);
     let health = health_manifest(&[7]);
-    let point_writer = ShmWriterHandle::create_published_at_epoch(
+    let point_writer = create_point_writer(
         ShmRuntimeConfig::new(&point_path, 32),
         Arc::clone(&points),
         None,
@@ -533,7 +515,7 @@ fn retained_generation_cannot_reconnect_across_a_same_layout_epoch_change() {
     )
     .expect("publish initial point generation");
     let health_writer =
-        ShmChannelHealthWriterHandle::create_at_epoch(&health_path, Arc::clone(&health), 400)
+        ShmChannelHealthWriterHandle::create(&health_path, Arc::clone(&health), 400)
             .expect("publish initial health generation");
     commit_topology_publication(&point_path, &health_path, 400).expect("commit initial topology");
     let generation = ShmReadTopologyGeneration::open(
@@ -547,10 +529,10 @@ fn retained_generation_cannot_reconnect_across_a_same_layout_epoch_change() {
     .expect("open initial topology");
 
     point_writer
-        .rebuild_for_publication(Arc::clone(&points), 402)
+        .rebuild(Arc::clone(&points), 402)
         .expect("republish same point manifest");
     health_writer
-        .rebuild_for_publication(health, 402)
+        .rebuild(health, 402)
         .expect("republish same health manifest");
     commit_topology_publication(&point_path, &health_path, 402)
         .expect("commit replacement topology");
@@ -577,19 +559,16 @@ fn retained_generation_rejects_a_committed_writer_pair_that_reuses_its_epoch() {
     let points = point_manifest(&[(7, [1, 0, 0, 0])]);
     let health = health_manifest(&[7]);
     let publication_epoch = 450;
-    let point_writer = ShmWriterHandle::create_published_at_epoch(
+    let point_writer = create_point_writer(
         ShmRuntimeConfig::new(&point_path, 32),
         Arc::clone(&points),
         None,
         publication_epoch,
     )
     .expect("publish initial point generation");
-    let health_writer = ShmChannelHealthWriterHandle::create_at_epoch(
-        &health_path,
-        Arc::clone(&health),
-        publication_epoch,
-    )
-    .expect("publish initial health generation");
+    let health_writer =
+        ShmChannelHealthWriterHandle::create(&health_path, Arc::clone(&health), publication_epoch)
+            .expect("publish initial health generation");
     commit_topology_publication(&point_path, &health_path, publication_epoch)
         .expect("commit initial topology");
     let generation = ShmReadTopologyGeneration::open(
@@ -602,7 +581,7 @@ fn retained_generation_rejects_a_committed_writer_pair_that_reuses_its_epoch() {
     drop(point_writer);
     drop(health_writer);
 
-    let _replacement_point = ShmWriterHandle::create_published_at_epoch(
+    let _replacement_point = create_point_writer(
         ShmRuntimeConfig::new(&point_path, 32),
         points,
         None,
@@ -610,7 +589,7 @@ fn retained_generation_rejects_a_committed_writer_pair_that_reuses_its_epoch() {
     )
     .expect("fault-inject a replacement point writer that reused the epoch");
     let _replacement_health =
-        ShmChannelHealthWriterHandle::create_at_epoch(&health_path, health, publication_epoch)
+        ShmChannelHealthWriterHandle::create(&health_path, health, publication_epoch)
             .expect("fault-inject a replacement health writer that reused the epoch");
     std::fs::remove_file(topology_commit_path_from_shm(&point_path))
         .expect("fault-inject loss of the durable epoch floor");
@@ -633,19 +612,16 @@ fn retained_generation_rejects_an_uncommitted_writer_restart_that_reuses_its_epo
     let points = point_manifest(&[(7, [1, 0, 0, 0])]);
     let health = health_manifest(&[7]);
     let publication_epoch = 500;
-    let point_writer = ShmWriterHandle::create_published_at_epoch(
+    let point_writer = create_point_writer(
         ShmRuntimeConfig::new(&point_path, 32),
         Arc::clone(&points),
         None,
         publication_epoch,
     )
     .expect("publish initial point generation");
-    let _health_writer = ShmChannelHealthWriterHandle::create_at_epoch(
-        &health_path,
-        Arc::clone(&health),
-        publication_epoch,
-    )
-    .expect("publish initial health generation");
+    let _health_writer =
+        ShmChannelHealthWriterHandle::create(&health_path, Arc::clone(&health), publication_epoch)
+            .expect("publish initial health generation");
     commit_topology_publication(&point_path, &health_path, publication_epoch)
         .expect("commit initial topology");
     let generation = ShmReadTopologyGeneration::open(
@@ -658,7 +634,7 @@ fn retained_generation_rejects_an_uncommitted_writer_restart_that_reuses_its_epo
     .expect("open initial topology");
     drop(point_writer);
 
-    let replacement = ShmWriterHandle::create_published_at_epoch(
+    let replacement = create_point_writer(
         ShmRuntimeConfig::new(&point_path, 32),
         points,
         None,
@@ -687,7 +663,7 @@ fn topology_commit_recovers_a_stale_staging_file_without_accumulating_orphans() 
     let points = point_manifest(&[(7, [1, 0, 0, 0])]);
     let health = health_manifest(&[7]);
     let publication_epoch = 700;
-    let _point_writer = ShmWriterHandle::create_published_at_epoch(
+    let _point_writer = create_point_writer(
         ShmRuntimeConfig::new(&point_path, 32),
         points,
         None,
@@ -695,7 +671,7 @@ fn topology_commit_recovers_a_stale_staging_file_without_accumulating_orphans() 
     )
     .expect("publish point generation");
     let _health_writer =
-        ShmChannelHealthWriterHandle::create_at_epoch(&health_path, health, publication_epoch)
+        ShmChannelHealthWriterHandle::create(&health_path, health, publication_epoch)
             .expect("publish health generation");
     let commit_path = topology_commit_path_from_shm(&point_path);
     let commit_name = commit_path
@@ -726,19 +702,16 @@ fn truncated_commit_witness_fails_closed_without_authorizing_matching_planes() {
     let points = point_manifest(&[(7, [1, 0, 0, 0])]);
     let health = health_manifest(&[7]);
     let publication_epoch = 800;
-    let _point_writer = ShmWriterHandle::create_published_at_epoch(
+    let _point_writer = create_point_writer(
         ShmRuntimeConfig::new(&point_path, 32),
         Arc::clone(&points),
         None,
         publication_epoch,
     )
     .expect("publish point generation");
-    let _health_writer = ShmChannelHealthWriterHandle::create_at_epoch(
-        &health_path,
-        Arc::clone(&health),
-        publication_epoch,
-    )
-    .expect("publish health generation");
+    let _health_writer =
+        ShmChannelHealthWriterHandle::create(&health_path, Arc::clone(&health), publication_epoch)
+            .expect("publish health generation");
     commit_topology_publication(&point_path, &health_path, publication_epoch)
         .expect("commit topology");
     std::fs::write(topology_commit_path_from_shm(&point_path), b"torn")

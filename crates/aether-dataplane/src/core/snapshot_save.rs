@@ -1,150 +1,201 @@
-//! Tear-resistant SHM snapshot serialization (writer side).
-//!
-//! Pure-infra: takes raw mmap bytes + slot count, produces a snapshot
-//! file at the given path. Knows nothing about channels, point types,
-//! instances, or routing. `core::snapshot_load` validates and reads the
-//! format back; re-deriving business semantics from those slots is the
-//! caller's job, not this module's.
-//!
-//! # Why per-slot seqlock-aware serialization
-//!
-//! Earlier versions did a raw `memcpy` of the mmap region. If the
-//! writer was mid-update through a seqlock at snapshot time, the
-//! snapshot captured torn bytes (new value + old raw, or seq=odd
-//! mid-write) and preserved them across restart — a stale or
-//! impossible reading would then be restored to SHM and propagate to
-//! every reader until overwritten by the next live write.
-//!
-//! Now each slot is read via `try_load_consistent()`. Torn reads
-//! (writer concurrently mid-update) become unwritten-NaN sentinels in
-//! the snapshot file. The header bytes are still copied verbatim;
-//! header atomics are byte-stable so a `memcpy` of a 64-byte aligned
-//! region is safe.
+//! Tear-resistant snapshot serialization independent from the live mmap ABI.
 
-use crate::core::header::slot_offset;
+use std::ffi::OsString;
+use std::fs::{File, OpenOptions};
+use std::io::{BufWriter, Write};
+use std::path::{Path, PathBuf};
+
+use crate::core::header::{calculate_file_size, slot_offset};
 use crate::core::slot::{PointSlot, SLOT_UNWRITTEN_BITS};
+use crate::core::snapshot_format::{
+    SLOT_ABSENT, SLOT_PAYLOAD_SIZE, SLOT_PRESENT, SNAPSHOT_HEADER_SIZE, SnapshotHeader,
+};
 use crate::{DataplaneError, DataplaneResult};
 
-/// Write a SHM mmap region as a snapshot file, using tear-resistant
-/// per-slot serialization.
+/// Writes one atomic snapshot without flushing the live mmap.
 ///
-/// The file is written atomically: data is first written to
-/// `<path>.tmp` and then renamed.
+/// Each slot is captured through its seqlock. A concurrently-mutating slot is
+/// recorded as absent rather than persisting torn data. The staging inode is
+/// flushed before rename and the containing directory is flushed afterwards,
+/// making the replacement durable across a crash once this function returns.
 pub(crate) fn save_snapshot_impl(
     mmap_data: &[u8],
     slot_count: usize,
-    path: &std::path::Path,
+    layout_hash: u64,
+    path: &Path,
     label: &str,
 ) -> DataplaneResult<()> {
-    use std::io::Write;
-
-    let required_len = slot_count
-        .checked_mul(std::mem::size_of::<PointSlot>())
-        .and_then(|slots_len| slot_offset().checked_add(slots_len))
-        .ok_or_else(|| {
-            DataplaneError::InvalidLayout(format!(
-                "snapshot length overflow for slot_count={slot_count}"
-            ))
-        })?;
-    if mmap_data.len() < required_len {
+    let physical_slot_count = u32::try_from(slot_count).map_err(|_| {
+        DataplaneError::InvalidLayout(format!("snapshot slot_count {slot_count} exceeds u32::MAX"))
+    })?;
+    let required_len = calculate_file_size(physical_slot_count);
+    if mmap_data.len() != required_len {
         return Err(DataplaneError::InvalidLayout(format!(
-            "snapshot source mmap too small: len={} slot_count={slot_count}",
+            "snapshot source mmap length mismatch: have {} bytes, need {required_len} for slot_count={slot_count}",
             mmap_data.len()
         )));
     }
 
-    let temp_path = path.with_extension("tmp");
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|source| {
-            DataplaneError::io(format!("create snapshot directory {parent:?}"), source)
-        })?;
-    }
-
-    let mut file = std::fs::File::create(&temp_path).map_err(|source| {
-        DataplaneError::io(format!("create temporary snapshot {temp_path:?}"), source)
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    std::fs::create_dir_all(parent).map_err(|source| {
+        DataplaneError::io(format!("create snapshot directory {parent:?}"), source)
     })?;
 
-    // Header: verbatim copy.
-    file.write_all(&mmap_data[..slot_offset()])
+    let staging_path = staging_path(path);
+    let file = OpenOptions::new()
+        .create(true)
+        .truncate(true)
+        .write(true)
+        .open(&staging_path)
+        .map_err(|source| {
+            DataplaneError::io(
+                format!("create temporary snapshot {staging_path:?}"),
+                source,
+            )
+        })?;
+    let mut cleanup = StagingCleanup::new(staging_path.clone());
+    let mut output = BufWriter::new(file);
+    let header = SnapshotHeader::new(physical_slot_count, layout_hash);
+    output
+        .write_all(&header.encode())
         .map_err(|source| DataplaneError::io("write snapshot header", source))?;
 
-    // Slots: seqlock-aware per-slot read; torn reads become unwritten
-    // sentinels in the snapshot.
-    // SAFETY: bounds checked above; PointSlot is repr(C, align(32)).
+    // SAFETY: exact source length was checked above; the live slot array begins
+    // at a 32-byte-aligned offset and contains exactly `slot_count` PointSlots.
     let slots_ptr = unsafe { mmap_data.as_ptr().add(slot_offset()) as *const PointSlot };
-    let mut torn = 0usize;
-    for i in 0..slot_count {
-        // SAFETY: i < slot_count, mmap covers slot_count slots.
-        let slot = unsafe { &*slots_ptr.add(i) };
-        let bytes = match slot.try_load_consistent() {
-            Some((value, raw, ts)) => slot_snapshot_bytes(value, raw, ts),
+    let mut torn = 0_usize;
+    let mut absent = 0_usize;
+    let mut data_size = SNAPSHOT_HEADER_SIZE;
+    for slot_index in 0..slot_count {
+        // SAFETY: slot_index is bounded by the validated physical slot count.
+        let slot = unsafe { &*slots_ptr.add(slot_index) };
+        match slot.try_load_consistent() {
             None => {
                 torn += 1;
-                slot_unwritten_bytes()
+                absent += 1;
+                output
+                    .write_all(&[SLOT_ABSENT])
+                    .map_err(|source| DataplaneError::io("write absent snapshot slot", source))?;
+                data_size += 1;
             },
-        };
-        file.write_all(&bytes)
-            .map_err(|source| DataplaneError::io("write snapshot slot", source))?;
+            Some((value, raw, _timestamp_ms, _quality_code))
+                if value.to_bits() == SLOT_UNWRITTEN_BITS
+                    && raw.to_bits() == SLOT_UNWRITTEN_BITS =>
+            {
+                absent += 1;
+                output
+                    .write_all(&[SLOT_ABSENT])
+                    .map_err(|source| DataplaneError::io("write absent snapshot slot", source))?;
+                data_size += 1;
+            },
+            Some((value, raw, timestamp_ms, quality_code)) => {
+                if !value.is_finite() || !raw.is_finite() {
+                    return Err(DataplaneError::InvalidLayout(format!(
+                        "cannot snapshot slot {slot_index} with non-finite present data"
+                    )));
+                }
+                let record = present_slot_bytes(value, raw, timestamp_ms, quality_code);
+                output
+                    .write_all(&record)
+                    .map_err(|source| DataplaneError::io("write present snapshot slot", source))?;
+                data_size += record.len();
+            },
+        }
     }
 
-    file.flush()
-        .map_err(|source| DataplaneError::io("flush snapshot file", source))?;
-    file.sync_all()
-        .map_err(|source| DataplaneError::io("sync snapshot file", source))?;
+    output
+        .flush()
+        .map_err(|source| DataplaneError::io("flush buffered snapshot", source))?;
+    output
+        .get_ref()
+        .sync_all()
+        .map_err(|source| DataplaneError::io("sync temporary snapshot file", source))?;
+    drop(output);
 
-    std::fs::rename(&temp_path, path).map_err(|source| {
+    std::fs::rename(&staging_path, path).map_err(|source| {
         DataplaneError::io(
-            format!("rename temporary snapshot {temp_path:?} to {path:?}"),
+            format!("rename temporary snapshot {staging_path:?} to {path:?}"),
             source,
         )
     })?;
+    cleanup.commit();
+    sync_parent_directory(parent)?;
 
-    let data_size = slot_offset() + slot_count * std::mem::size_of::<PointSlot>();
     if torn > 0 {
         tracing::warn!(
-            "{} snapshot saved with {} torn slot(s) elided as unwritten: {:?}, size={} bytes, slots={}",
+            "{} snapshot saved with {} contended slot(s) recorded absent: {:?}, size={} bytes, slots={}, absent={}",
             label,
             torn,
             path,
             data_size,
-            slot_count
+            slot_count,
+            absent
         );
     } else {
         tracing::info!(
-            "{} snapshot saved: {:?}, size={} bytes, slots={}",
+            "{} snapshot saved: {:?}, size={} bytes, slots={}, absent={}",
             label,
             path,
             data_size,
-            slot_count
+            slot_count,
+            absent
         );
     }
     Ok(())
 }
 
-/// Encode a known-consistent slot as 32 bytes matching `PointSlot`'s
-/// `#[repr(C)]` layout: value_bits(u64) | timestamp(u64) | raw_bits(u64) |
-/// seq(u32) | dirty(u32). `seq` is written as 2 (even, "value committed"),
-/// `dirty` as 0. Native-endian bytes match the in-memory representation
-/// that restore loads directly.
-fn slot_snapshot_bytes(value: f64, raw: f64, ts: u64) -> [u8; 32] {
-    let mut out = [0u8; 32];
-    out[0..8].copy_from_slice(&value.to_bits().to_ne_bytes());
-    out[8..16].copy_from_slice(&ts.to_ne_bytes());
-    out[16..24].copy_from_slice(&raw.to_bits().to_ne_bytes());
-    out[24..28].copy_from_slice(&2u32.to_ne_bytes());
-    out[28..32].copy_from_slice(&0u32.to_ne_bytes());
-    out
+fn present_slot_bytes(
+    value: f64,
+    raw: f64,
+    timestamp_ms: u64,
+    quality_code: u32,
+) -> [u8; 1 + SLOT_PAYLOAD_SIZE] {
+    let mut bytes = [0_u8; 1 + SLOT_PAYLOAD_SIZE];
+    bytes[0] = SLOT_PRESENT;
+    bytes[1..9].copy_from_slice(&value.to_bits().to_le_bytes());
+    bytes[9..17].copy_from_slice(&raw.to_bits().to_le_bytes());
+    bytes[17..25].copy_from_slice(&timestamp_ms.to_le_bytes());
+    bytes[25..29].copy_from_slice(&quality_code.to_le_bytes());
+    bytes
 }
 
-/// Encode an unwritten-sentinel slot for the snapshot file: NaN
-/// value_bits + NaN raw_bits + seq=0, dirty=0. Matches the layout
-/// produced by `PointSlot::new()` and is recognized by restore via
-/// the NaN sentinel filter.
-fn slot_unwritten_bytes() -> [u8; 32] {
-    let mut out = [0u8; 32];
-    out[0..8].copy_from_slice(&SLOT_UNWRITTEN_BITS.to_ne_bytes());
-    // timestamp = 0 (already)
-    out[16..24].copy_from_slice(&SLOT_UNWRITTEN_BITS.to_ne_bytes());
-    // seq = 0, dirty = 0 (already)
-    out
+fn staging_path(path: &Path) -> PathBuf {
+    let mut path_with_suffix: OsString = path.as_os_str().to_owned();
+    path_with_suffix.push(".tmp");
+    PathBuf::from(path_with_suffix)
+}
+
+fn sync_parent_directory(parent: &Path) -> DataplaneResult<()> {
+    File::open(parent)
+        .and_then(|directory| directory.sync_all())
+        .map_err(|source| DataplaneError::io(format!("sync snapshot directory {parent:?}"), source))
+}
+
+struct StagingCleanup {
+    path: PathBuf,
+    committed: bool,
+}
+
+impl StagingCleanup {
+    fn new(path: PathBuf) -> Self {
+        Self {
+            path,
+            committed: false,
+        }
+    }
+
+    fn commit(&mut self) {
+        self.committed = true;
+    }
+}
+
+impl Drop for StagingCleanup {
+    fn drop(&mut self) {
+        if !self.committed {
+            let _ = std::fs::remove_file(&self.path);
+        }
+    }
 }

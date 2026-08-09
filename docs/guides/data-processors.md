@@ -422,11 +422,12 @@ Before routing a task to a processor, verify that it:
 - proves that processor loss cannot block acquisition or deterministic safety
   behavior.
 
-The current SQLite history schema does not retain device-origin sample quality,
-and the current SHM bridge labels accepted finite live values as `good`.
-Freshness, gaps, missingness, numeric constraints, issue time, and provenance
-are enforced, but a deployment requiring end-to-end source-quality fidelity
-must commission a quality-bearing source adapter before production.
+SHM v5 retains device-origin quality for live samples and combines it with
+freshness policy. The current SQLite history schema still does not retain
+source quality, so historical and mixed frames cannot claim complete
+end-to-end quality fidelity. A deployment requiring original quality for
+historical features must commission a quality-bearing history source before
+production.
 
 ## Related pages
 

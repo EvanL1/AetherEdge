@@ -18,7 +18,7 @@ use aether_automation::{InstanceManager, ProductLoader};
 use aether_domain::{ChannelCommandAddress, ChannelId, InstanceId, PointId, PointKind};
 use aether_pack::ProductLibrary;
 use aether_ports::{
-    ActionRoute, ActionRouteKey, ActionRoutingMutation, AuditSink, AutomationActionRoutingMutator,
+    ActionRoute, ActionRouteKey, AuditSink, AutomationActionRoutingMutator,
     AutomationMeasurementRoutingMutator, CommandDispatcher, DeviceCommandSink,
     LogicalRoutingRevision, MeasurementRoute, MeasurementRouteKey, MeasurementRoutingMutation,
     PortErrorKind, RevisionedActionRoutingMutation,
@@ -566,20 +566,6 @@ async fn mutations_publish_the_committed_m2c_view_and_revoke_it_on_disable_or_de
     .await
     .expect("logical-routing head");
     assert_eq!(head, 5);
-}
-
-#[tokio::test]
-async fn legacy_rust_action_mutation_reads_the_current_head_and_uses_the_cas_path() {
-    let fixture = RoutingFixture::complete().await;
-
-    let receipt = fixture
-        .mutator
-        .mutate(ActionRoutingMutation::upsert(route(7, 1, 3, 5)))
-        .await
-        .expect("legacy Rust action mutation");
-
-    assert_eq!(receipt.resulting_revision(), revision(2));
-    assert!(receipt.runtime_status().is_published());
 }
 
 #[tokio::test]

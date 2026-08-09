@@ -146,11 +146,22 @@ async fn check_event_batch(
     while let Ok(event) = event_rx.try_recv() {
         events.push(event);
     }
-    let slots = events
-        .into_iter()
-        .filter_map(|event| state.live_values.validated_point_watch_slot(event))
-        .collect::<HashSet<_>>();
-    if slots.is_empty() {
+    let mut addresses = HashSet::new();
+    for event in events {
+        match state.live_values.validate_point_watch(event) {
+            Ok(Some(validated)) => {
+                addresses.insert(validated.address());
+            },
+            Ok(None) => {},
+            Err(error) => warn!(
+                channel_id = event.channel_id(),
+                point_id = event.point_id(),
+                slot = event.slot_index(),
+                "Alarm PointWatch SHM re-read rejected: {error}"
+            ),
+        }
+    }
+    if addresses.is_empty() {
         return;
     }
 
@@ -163,12 +174,12 @@ async fn check_event_batch(
     };
     let matching = rules
         .into_iter()
-        .filter(|rule| match state.live_values.watched_slot(rule) {
-            Ok(Some(slot)) => slots.contains(&slot),
+        .filter(|rule| match state.live_values.watched_address(rule) {
+            Ok(Some(address)) => addresses.contains(&address),
             Ok(None) => false,
             Err(error) => {
                 warn!(
-                    "Cannot resolve PointWatch slot for rule '{}': {error}",
+                    "Cannot resolve PointWatch address for rule '{}': {error}",
                     rule.rule_name
                 );
                 false
@@ -183,7 +194,7 @@ async fn check_event_batch(
 
 fn reconcile_point_watch_subscriptions(state: &AppState, rules: &[crate::models::AlertRule]) {
     let bitmap_path = bitmap_path_for_consumer(Path::new(&state.config.shm_path), "alarm");
-    let bitmap = match SubscriptionBitmap::open(&bitmap_path) {
+    let bitmap = match SubscriptionBitmap::open_or_create(&bitmap_path) {
         Ok(bitmap) => bitmap,
         Err(error) => {
             debug!(
@@ -196,7 +207,14 @@ fn reconcile_point_watch_subscriptions(state: &AppState, rules: &[crate::models:
     bitmap.clear_all();
     for rule in rules {
         match state.live_values.watched_slot(rule) {
-            Ok(Some(slot)) => bitmap.set_watched(slot),
+            Ok(Some(slot)) => {
+                if let Err(error) = bitmap.set_watched(slot) {
+                    warn!(
+                        "Cannot subscribe alarm rule '{}' to PointWatch slot {slot}: {error}",
+                        rule.rule_name
+                    );
+                }
+            },
             Ok(None) => {},
             Err(error) => warn!(
                 "Cannot subscribe alarm rule '{}' to PointWatch: {error}",

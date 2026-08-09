@@ -2,8 +2,8 @@
 
 //! Single-point CRUD handlers (Create, Update, Delete)
 
+use crate::api::dto::{AppError, SuccessResponse};
 use crate::api::routes::AppState;
-use crate::dto::{AppError, SuccessResponse};
 use crate::point_topology::{
     PointDefinitionMutation, PointKind, PointMutation, PointPatchMutation, PointTopologyAcceptance,
     PointTopologyMutation, PointTopologyMutationResult,
@@ -209,7 +209,7 @@ fn parse_update_request(payload: serde_json::Value) -> Result<PointUpdateRequest
 pub async fn create_telemetry_point_handler(
     Path((channel_id, point_id)): Path<(u32, u32)>,
     State(state): State<AppState>,
-    Query(reload_query): Query<crate::dto::AutoReloadQuery>,
+    Query(reload_query): Query<crate::api::dto::AutoReloadQuery>,
     Extension(boundary): Extension<PointTopologyHttpBoundary>,
     headers: HeaderMap,
     Json(payload): Json<serde_json::Value>,
@@ -267,7 +267,7 @@ pub async fn create_telemetry_point_handler(
 pub async fn create_signal_point_handler(
     Path((channel_id, point_id)): Path<(u32, u32)>,
     State(state): State<AppState>,
-    Query(reload_query): Query<crate::dto::AutoReloadQuery>,
+    Query(reload_query): Query<crate::api::dto::AutoReloadQuery>,
     Extension(boundary): Extension<PointTopologyHttpBoundary>,
     headers: HeaderMap,
     Json(payload): Json<serde_json::Value>,
@@ -307,7 +307,7 @@ async fn create_ca_point_inner(
     point_type: &str,
     point_id: u32,
     state: AppState,
-    reload_query: crate::dto::AutoReloadQuery,
+    reload_query: crate::api::dto::AutoReloadQuery,
     boundary: PointTopologyHttpBoundary,
     headers: HeaderMap,
     payload: serde_json::Value,
@@ -371,7 +371,7 @@ async fn create_ca_point_inner(
 pub async fn create_control_point_handler(
     Path((channel_id, point_id)): Path<(u32, u32)>,
     State(state): State<AppState>,
-    Query(reload_query): Query<crate::dto::AutoReloadQuery>,
+    Query(reload_query): Query<crate::api::dto::AutoReloadQuery>,
     Extension(boundary): Extension<PointTopologyHttpBoundary>,
     headers: HeaderMap,
     Json(payload): Json<serde_json::Value>,
@@ -415,7 +415,7 @@ pub async fn create_control_point_handler(
 pub async fn create_adjustment_point_handler(
     Path((channel_id, point_id)): Path<(u32, u32)>,
     State(state): State<AppState>,
-    Query(reload_query): Query<crate::dto::AutoReloadQuery>,
+    Query(reload_query): Query<crate::api::dto::AutoReloadQuery>,
     Extension(boundary): Extension<PointTopologyHttpBoundary>,
     headers: HeaderMap,
     Json(payload): Json<serde_json::Value>,
@@ -451,7 +451,7 @@ pub(super) async fn update_point_handler_inner(
     point_type: &str,
     point_id: u32,
     state: AppState,
-    reload_query: crate::dto::AutoReloadQuery,
+    reload_query: crate::api::dto::AutoReloadQuery,
     boundary: PointTopologyHttpBoundary,
     headers: HeaderMap,
     update: PointUpdateRequest,
@@ -502,17 +502,16 @@ pub(super) async fn update_point_handler_inner(
 /// Delete a point of any type.
 ///
 /// Removes the row from the corresponding `{type}_points` table and clears the
-/// associated `protocol_mappings`. **The corresponding SHM slot becomes idle** (not
-/// immediately reclaimed, to keep `routing_hash` stable and reduce automation rebuild
-/// storms). If the point is the target of a M2C routing entry, that route becomes
-/// stale but is not cascade-deleted — orphaned routing entries must be cleaned up
-/// separately.
+/// associated `protocol_mappings`. The exact SHM manifest is rebuilt without
+/// the deleted address. If the point is the target of a M2C routing entry,
+/// that route becomes stale but is not cascade-deleted — orphaned routing
+/// entries must be cleaned up separately.
 pub(super) async fn delete_point_handler_inner(
     channel_id: u32,
     point_type: &str,
     point_id: u32,
     state: AppState,
-    reload_query: crate::dto::AutoReloadQuery,
+    reload_query: crate::api::dto::AutoReloadQuery,
     boundary: PointTopologyHttpBoundary,
     headers: HeaderMap,
 ) -> Result<Json<SuccessResponse<PointCrudResult>>, AppError> {
@@ -564,7 +563,7 @@ pub(super) async fn delete_point_handler_inner(
 pub async fn update_telemetry_point_handler(
     Path((channel_id, point_id)): Path<(u32, u32)>,
     State(state): State<AppState>,
-    Query(reload_query): Query<crate::dto::AutoReloadQuery>,
+    Query(reload_query): Query<crate::api::dto::AutoReloadQuery>,
     Extension(boundary): Extension<PointTopologyHttpBoundary>,
     headers: HeaderMap,
     Json(payload): Json<serde_json::Value>,
@@ -603,7 +602,7 @@ pub async fn update_telemetry_point_handler(
 pub async fn update_signal_point_handler(
     Path((channel_id, point_id)): Path<(u32, u32)>,
     State(state): State<AppState>,
-    Query(reload_query): Query<crate::dto::AutoReloadQuery>,
+    Query(reload_query): Query<crate::api::dto::AutoReloadQuery>,
     Extension(boundary): Extension<PointTopologyHttpBoundary>,
     headers: HeaderMap,
     Json(payload): Json<serde_json::Value>,
@@ -642,7 +641,7 @@ pub async fn update_signal_point_handler(
 pub async fn update_control_point_handler(
     Path((channel_id, point_id)): Path<(u32, u32)>,
     State(state): State<AppState>,
-    Query(reload_query): Query<crate::dto::AutoReloadQuery>,
+    Query(reload_query): Query<crate::api::dto::AutoReloadQuery>,
     Extension(boundary): Extension<PointTopologyHttpBoundary>,
     headers: HeaderMap,
     Json(payload): Json<serde_json::Value>,
@@ -681,7 +680,7 @@ pub async fn update_control_point_handler(
 pub async fn update_adjustment_point_handler(
     Path((channel_id, point_id)): Path<(u32, u32)>,
     State(state): State<AppState>,
-    Query(reload_query): Query<crate::dto::AutoReloadQuery>,
+    Query(reload_query): Query<crate::api::dto::AutoReloadQuery>,
     Extension(boundary): Extension<PointTopologyHttpBoundary>,
     headers: HeaderMap,
     Json(payload): Json<serde_json::Value>,
@@ -720,7 +719,7 @@ pub async fn update_adjustment_point_handler(
 pub async fn delete_telemetry_point_handler(
     Path((channel_id, point_id)): Path<(u32, u32)>,
     State(state): State<AppState>,
-    Query(reload_query): Query<crate::dto::AutoReloadQuery>,
+    Query(reload_query): Query<crate::api::dto::AutoReloadQuery>,
     Extension(boundary): Extension<PointTopologyHttpBoundary>,
     headers: HeaderMap,
 ) -> Result<Json<SuccessResponse<PointCrudResult>>, AppError> {
@@ -754,7 +753,7 @@ pub async fn delete_telemetry_point_handler(
 pub async fn delete_signal_point_handler(
     Path((channel_id, point_id)): Path<(u32, u32)>,
     State(state): State<AppState>,
-    Query(reload_query): Query<crate::dto::AutoReloadQuery>,
+    Query(reload_query): Query<crate::api::dto::AutoReloadQuery>,
     Extension(boundary): Extension<PointTopologyHttpBoundary>,
     headers: HeaderMap,
 ) -> Result<Json<SuccessResponse<PointCrudResult>>, AppError> {
@@ -788,7 +787,7 @@ pub async fn delete_signal_point_handler(
 pub async fn delete_control_point_handler(
     Path((channel_id, point_id)): Path<(u32, u32)>,
     State(state): State<AppState>,
-    Query(reload_query): Query<crate::dto::AutoReloadQuery>,
+    Query(reload_query): Query<crate::api::dto::AutoReloadQuery>,
     Extension(boundary): Extension<PointTopologyHttpBoundary>,
     headers: HeaderMap,
 ) -> Result<Json<SuccessResponse<PointCrudResult>>, AppError> {
@@ -822,7 +821,7 @@ pub async fn delete_control_point_handler(
 pub async fn delete_adjustment_point_handler(
     Path((channel_id, point_id)): Path<(u32, u32)>,
     State(state): State<AppState>,
-    Query(reload_query): Query<crate::dto::AutoReloadQuery>,
+    Query(reload_query): Query<crate::api::dto::AutoReloadQuery>,
     Extension(boundary): Extension<PointTopologyHttpBoundary>,
     headers: HeaderMap,
 ) -> Result<Json<SuccessResponse<PointCrudResult>>, AppError> {

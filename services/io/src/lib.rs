@@ -72,15 +72,10 @@ pub mod runtime {
     pub mod test_utils;
 
     // Re-export common types
-    pub use lifecycle::{
-        shutdown_handler, shutdown_services, start_cleanup_task, wait_for_shutdown,
-    };
+    pub use lifecycle::{shutdown_handler, shutdown_services, start_cleanup_task};
     pub use reconnect::{ReconnectHelper, ReconnectPolicy};
 }
 
-// Private compatibility alias for HTTP modules during the namespace migration.
-// Internal runtime modules are forbidden from depending on this name.
-use crate::api::dto;
 pub use channel_mutator::{ChannelRuntimeLifecycle, SqliteChannelMutator};
 
 // Re-export commonly used types
@@ -91,7 +86,7 @@ pub use core::bootstrap::ServiceArgs;
 pub use core::channels::{ChannelManager, RuntimeChannelConfig};
 
 // Re-export runtime helpers for convenience
-pub use runtime::{shutdown_services, wait_for_shutdown};
+pub use runtime::shutdown_services;
 
 #[cfg(test)]
 pub use runtime::test_utils;

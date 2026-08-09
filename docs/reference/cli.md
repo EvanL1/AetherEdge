@@ -308,14 +308,13 @@ Usage: aether channels status [OPTIONS] <CHANNEL_ID>
 aether channels status 1001
 ```
 
-### channels reload
+### channels reconcile
 
-Reconcile every channel runtime from authoritative desired state. The command
-name is retained for compatibility, but it calls the canonical governed
-`POST /api/channels/reconcile` endpoint rather than the legacy reload route.
+Reconcile every channel runtime from authoritative desired state through the
+canonical governed `POST /api/channels/reconcile` endpoint.
 
 ```
-Usage: aether channels reload [OPTIONS] --confirmed
+Usage: aether channels reconcile [OPTIONS] --confirmed
 ```
 
 | Flag | Description |
@@ -323,7 +322,7 @@ Usage: aether channels reload [OPTIONS] --confirmed
 | `--confirmed` | Explicitly confirm this high-risk runtime reconciliation; requires `AETHER_ACCESS_TOKEN` |
 
 ```bash
-AETHER_ACCESS_TOKEN='<signed access JWT>' aether channels reload --confirmed
+AETHER_ACCESS_TOKEN='<signed access JWT>' aether channels reconcile --confirmed
 ```
 
 The receipt reports the sanitized desired-state observation and runtime
@@ -458,7 +457,7 @@ runtime projection after desired state has committed. Preserve `request_id`,
 inspect `resulting_revision` and `reconciliation_required`, and do not
 automatically retry the non-idempotent command. Update, delete, enable, and
 disable require the revision returned by the latest channel read and fail
-before HTTP when it is absent. `channels reload` is the sixth
+before HTTP when it is absent. `channels reconcile` is the sixth
 governed channel command and maps separately to `io.channel.reconcile` while
 requiring the same `io.channel.manage` permission, explicit confirmation,
 Bearer token, UUID request ID, and audit policy.

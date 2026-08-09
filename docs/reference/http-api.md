@@ -164,12 +164,18 @@ closed-loop confirmation.
 
 For channel commissioning, SQLite desired configuration and the active
 protocol runtime are deliberately distinct. Existing-resource mutations may
-document an optional `x-aether-expected-revision` compare-and-set guard. An
+proceed only with the required `x-aether-expected-revision` compare-and-set
+guard obtained from the latest channel read. A missing revision is rejected
+instead of being upgraded to the current database head. An
 accepted response can report an activation-pending or degraded runtime
 projection after desired state has committed; reconcile by `request_id` and
 `resulting_revision` rather than automatically repeating the non-idempotent
 mutation. The exact headers, receipt fields, and per-operation status codes are
 defined by the I/O OpenAPI document.
+
+Automation-rule mutation bodies likewise require `expected_revision` from the
+latest rule query ETag or `x-aether-configuration-revision`. The service never
+substitutes its current head for a caller that omitted the revision.
 
 ## Response compatibility
 

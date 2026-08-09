@@ -25,6 +25,15 @@ async fn pool() -> sqlx::SqlitePool {
     pool
 }
 
+fn create_point_writer(
+    config: ShmRuntimeConfig,
+    manifest: Arc<aether_shm_bridge::ChannelPointManifest>,
+    snapshot: Option<&std::path::Path>,
+    publication_epoch: u64,
+) -> aether_ports::PortResult<ShmWriterHandle> {
+    ShmWriterHandle::create(config, manifest, snapshot, None, publication_epoch)
+}
+
 async fn load_channel_point_manifest(
     pool: &sqlx::SqlitePool,
 ) -> anyhow::Result<aether_shm_bridge::ChannelPointManifest> {
@@ -98,7 +107,7 @@ async fn io_manifest_hash_matches_canonical_snapshot_for_sparse_status_points() 
 
     let io_manifest = load_channel_point_manifest(&pool)
         .await
-        .expect("io compatibility manifest");
+        .expect("io point manifest");
     let canonical = load_sqlite_shm_topology(&pool)
         .await
         .expect("canonical topology snapshot");
@@ -107,7 +116,18 @@ async fn io_manifest_hash_matches_canonical_snapshot_for_sparse_status_points() 
         io_manifest.layout_hash(),
         canonical.point_manifest().layout_hash()
     );
-    assert_eq!(io_manifest.counts().get(&7), Some(&[3, 2, 0, 0]));
+    assert_eq!(
+        io_manifest
+            .point_ids(7, PointKind::Telemetry)
+            .collect::<Vec<_>>(),
+        vec![2]
+    );
+    assert_eq!(
+        io_manifest
+            .point_ids(7, PointKind::Status)
+            .collect::<Vec<_>>(),
+        vec![1]
+    );
     assert_eq!(
         canonical
             .health_manifest()
@@ -129,7 +149,7 @@ async fn unchanged_topology_is_a_noop_and_preserves_live_values() {
             .expect("point manifest"),
     );
     let points = Arc::new(
-        ShmWriterHandle::create_published_at_epoch(
+        create_point_writer(
             ShmRuntimeConfig::new(dir.path().join("points.shm"), 64),
             Arc::clone(&point_manifest),
             None,
@@ -137,15 +157,11 @@ async fn unchanged_topology_is_a_noop_and_preserves_live_values() {
         )
         .expect("point writer"),
     );
-    let health_manifest = Arc::new(ChannelHealthManifest::from_channel_ids([1]));
+    let health_manifest = Arc::new(ChannelHealthManifest::test_fixture([1]));
     let health_path = dir.path().join("health.shm");
     let health = Arc::new(
-        ShmChannelHealthWriterHandle::create_at_epoch(
-            &health_path,
-            Arc::clone(&health_manifest),
-            10,
-        )
-        .expect("health writer"),
+        ShmChannelHealthWriterHandle::create(&health_path, Arc::clone(&health_manifest), 10)
+            .expect("health writer"),
     );
     commit_topology_publication(points.config().path(), &health_path, 10)
         .expect("commit initial topology");
@@ -159,6 +175,9 @@ async fn unchanged_topology_is_a_noop_and_preserves_live_values() {
     health
         .set_online(1, true, health_timestamp)
         .expect("health value");
+    health
+        .update_heartbeat(health_timestamp)
+        .expect("health heartbeat");
     let point_generation = points.generation().expect("point generation").generation();
     let health_generation = health.generation().expect("health generation");
     let projector = SqliteShmTopologyProjector::new(pool, Arc::clone(&points), Arc::clone(&health));
@@ -176,7 +195,7 @@ async fn unchanged_topology_is_a_noop_and_preserves_live_values() {
             .expect("same point generation")
             .read_slot(
                 point_manifest
-                    .slot_for(PhysicalPointAddress::from_legacy_raw(
+                    .slot_for(PhysicalPointAddress::from_raw_ids(
                         1,
                         PointKind::Telemetry,
                         0,
@@ -208,7 +227,7 @@ async fn topology_change_publishes_both_planes_and_preserves_only_health_interse
     let dir = tempfile::tempdir().expect("temporary SHM directory");
     let initial_points = Arc::new(load_channel_point_manifest(&pool).await.expect("manifest"));
     let points = Arc::new(
-        ShmWriterHandle::create_published_at_epoch(
+        create_point_writer(
             ShmRuntimeConfig::new(dir.path().join("points.shm"), 64),
             Arc::clone(&initial_points),
             None,
@@ -222,10 +241,10 @@ async fn topology_change_publishes_both_planes_and_preserves_only_health_interse
         .acquisition_writer()
         .commit_batch(&[sample(1, 0, 8.0)])
         .expect("old point value");
-    let initial_health = Arc::new(ChannelHealthManifest::from_channel_ids([1]));
+    let initial_health = Arc::new(ChannelHealthManifest::test_fixture([1]));
     let health_path = dir.path().join("health.shm");
     let health = Arc::new(
-        ShmChannelHealthWriterHandle::create_at_epoch(&health_path, initial_health, 20)
+        ShmChannelHealthWriterHandle::create(&health_path, initial_health, 20)
             .expect("health writer"),
     );
     commit_topology_publication(points.config().path(), &health_path, 20)
@@ -234,6 +253,9 @@ async fn topology_change_publishes_both_planes_and_preserves_only_health_interse
     health
         .set_online(1, true, health_timestamp)
         .expect("old health value");
+    health
+        .update_heartbeat(health_timestamp)
+        .expect("old health heartbeat");
     let old_point_generation = points.generation().expect("point generation").generation();
     let old_health_generation = health.generation().expect("health generation");
     let projector =
@@ -256,7 +278,7 @@ async fn topology_change_publishes_both_planes_and_preserves_only_health_interse
         .expect("current manifest");
     let current_generation = points.generation().expect("current point generation");
     let old_slot = current_points
-        .slot_for(PhysicalPointAddress::from_legacy_raw(
+        .slot_for(PhysicalPointAddress::from_raw_ids(
             1,
             PointKind::Telemetry,
             0,
@@ -275,7 +297,7 @@ async fn topology_change_publishes_both_planes_and_preserves_only_health_interse
         .commit_batch(&[sample(1, 1, 9.0)])
         .expect("new point is writable");
 
-    let current_health = Arc::new(ChannelHealthManifest::from_channel_ids([1, 2]));
+    let current_health = Arc::new(ChannelHealthManifest::test_fixture([1, 2]));
     let health_reader = ShmChannelHealthReader::new(
         ShmClientConfig::new(&health_path, current_health.layout_hash()),
         current_health,
@@ -299,8 +321,8 @@ async fn point_capacity_preflight_leaves_both_current_generations_untouched() {
     let dir = tempfile::tempdir().expect("temporary SHM directory");
     let manifest = Arc::new(load_channel_point_manifest(&pool).await.expect("manifest"));
     let points = Arc::new(
-        ShmWriterHandle::create_published_at_epoch(
-            ShmRuntimeConfig::new(dir.path().join("points.shm"), 4),
+        create_point_writer(
+            ShmRuntimeConfig::new(dir.path().join("points.shm"), 1),
             manifest,
             None,
             30,
@@ -308,9 +330,9 @@ async fn point_capacity_preflight_leaves_both_current_generations_untouched() {
         .expect("point writer"),
     );
     let health = Arc::new(
-        ShmChannelHealthWriterHandle::create_at_epoch(
+        ShmChannelHealthWriterHandle::create(
             dir.path().join("health.shm"),
-            Arc::new(ChannelHealthManifest::from_channel_ids([1])),
+            Arc::new(ChannelHealthManifest::test_fixture([1])),
             30,
         )
         .expect("health writer"),
@@ -334,47 +356,4 @@ async fn point_capacity_preflight_leaves_both_current_generations_untouched() {
         point_generation
     );
     assert_eq!(health.generation(), Some(health_generation));
-}
-
-#[tokio::test]
-async fn uncoordinated_matching_planes_are_republished_and_committed() {
-    let pool = pool().await;
-    insert_channel(&pool, 1).await;
-    insert_telemetry(&pool, 1, 0).await;
-    let directory = tempfile::tempdir().expect("temporary SHM directory");
-    let point_manifest = Arc::new(load_channel_point_manifest(&pool).await.expect("manifest"));
-    let point_path = directory.path().join("points.shm");
-    let health_path = directory.path().join("health.shm");
-    let points = Arc::new(
-        ShmWriterHandle::create_published(
-            ShmRuntimeConfig::new(&point_path, 64),
-            point_manifest,
-            None,
-        )
-        .expect("legacy point writer"),
-    );
-    let health = Arc::new(
-        ShmChannelHealthWriterHandle::create(
-            &health_path,
-            Arc::new(ChannelHealthManifest::from_channel_ids([1])),
-        )
-        .expect("legacy health writer"),
-    );
-    let old_point_generation = points.generation().expect("point generation").generation();
-    let old_health_generation = health.generation().expect("health generation");
-    let projector = SqliteShmTopologyProjector::new(pool, Arc::clone(&points), Arc::clone(&health));
-
-    let receipt = projector
-        .project()
-        .await
-        .expect("repair physical publication");
-
-    assert!(receipt.is_current());
-    assert!(receipt.changed());
-    assert!(receipt.publication_epoch().is_some_and(|epoch| epoch != 0));
-    assert_ne!(receipt.live_state_generation(), Some(old_point_generation));
-    assert_ne!(
-        receipt.channel_health_generation(),
-        Some(old_health_generation)
-    );
 }

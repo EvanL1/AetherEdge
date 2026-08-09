@@ -144,12 +144,13 @@ raw-value fields set to a quiet IEEE-754 NaN (the hardcoded bit pattern
 the sentinel with a finite double. This removes the historical ambiguity where
 a zero-initialized slot was indistinguishable from a genuine reading of 0.0.
 
-There is **no side-channel quality flag** in the cross-service data plane.
-The 32-byte `PointSlot` layout is value, timestamp, raw value, seqlock
-sequence, and dirty flag — nothing else. (io's protocol layer does track
-per-point quality codes internally in `services/io/src/protocols/core/`,
-but they never cross the SHM boundary.) The value is the data; consumers must
-check for NaN explicitly:
+SHM v5 stores acquisition quality in the same 32-byte `PointSlot`. The layout
+is value, timestamp, raw value, seqlock sequence, and quality code; there is no
+dirty flag. `ShmAcquisitionStateWriter` maps the canonical domain
+`PointQuality` into that field, and read adapters reject unknown codes rather
+than fabricating `good`. The NaN sentinel still answers the separate question
+of whether any sample has ever been written, so consumers must check for NaN
+explicitly:
 
 - SHM readers probe `PointSlot::is_unwritten()` or `f64::is_nan()` on the
   returned value.
@@ -159,8 +160,8 @@ check for NaN explicitly:
   would silently fire on missing data.
 
 The rule for every consumer is the same: absence of a valid finite value is a
-first-class outcome you must handle, not an error state recorded somewhere
-else.
+first-class outcome, while a present sample retains its source quality for the
+consumer's freshness and policy decisions.
 
 ## Consequences for UIs and agents
 

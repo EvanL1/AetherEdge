@@ -2,8 +2,8 @@
 
 //! Query handlers for point information, configuration, and unmapped points
 
+use crate::api::dto::{AppError, SuccessResponse};
 use crate::api::routes::AppState;
-use crate::dto::{AppError, SuccessResponse};
 use aether_core::PointType;
 use aether_domain::{PointKind, PointQuality};
 use aether_shm_bridge::PhysicalPointAddress;
@@ -81,7 +81,7 @@ pub async fn get_point_info_handler(
     };
     let sample = layout
         .manifest()
-        .slot_for(PhysicalPointAddress::from_legacy_raw(
+        .slot_for(PhysicalPointAddress::from_raw_ids(
             channel_id, kind, point_id,
         ))
         .and_then(|slot| layout.read_slot(slot));
@@ -158,7 +158,7 @@ fn sample_stale_after_ms() -> u64 {
         ("type" = Option<String>, Query, description = "Point type filter: T (telemetry), S (signal), C (control), A (adjustment)")
     ),
     responses(
-        (status = 200, description = "Points retrieved (grouped)", body = crate::dto::GroupedPoints,
+        (status = 200, description = "Points retrieved (grouped)", body = crate::api::dto::GroupedPoints,
             example = json!({
                 "success": true,
                 "data": {
@@ -195,7 +195,7 @@ pub async fn get_channel_points_handler(
     Path(channel_id): Path<u32>,
     Query(params): Query<std::collections::HashMap<String, String>>,
     State(state): State<AppState>,
-) -> Result<Json<SuccessResponse<crate::dto::GroupedPoints>>, AppError> {
+) -> Result<Json<SuccessResponse<crate::api::dto::GroupedPoints>>, AppError> {
     validate_channel_exists(&state.sqlite_pool, channel_id).await?;
     let type_filter = params.get("type").map(|s| s.as_str());
     let grouped = fetch_grouped_points(&state.sqlite_pool, channel_id, type_filter, false).await?;
@@ -214,7 +214,7 @@ pub async fn get_channel_points_handler(
         ("point_id" = u32, Path, description = "Point identifier")
     ),
     responses(
-        (status = 200, description = "Mapping retrieved successfully", body = crate::dto::PointMappingDetail),
+        (status = 200, description = "Mapping retrieved successfully", body = crate::api::dto::PointMappingDetail),
         (status = 400, description = "Invalid four-remote type (must be T, S, C, or A)"),
         (status = 404, description = "Channel or point not found in specified type")
     ),
@@ -223,7 +223,7 @@ pub async fn get_channel_points_handler(
 pub async fn get_point_mapping_with_type_handler(
     Path((channel_id, point_type, point_id)): Path<(u32, String, u32)>,
     State(state): State<AppState>,
-) -> Result<Json<SuccessResponse<crate::dto::PointMappingDetail>>, AppError> {
+) -> Result<Json<SuccessResponse<crate::api::dto::PointMappingDetail>>, AppError> {
     let table = point_type_to_table(&point_type)?;
     validate_channel_exists(&state.sqlite_pool, channel_id).await?;
 
@@ -255,11 +255,13 @@ pub async fn get_point_mapping_with_type_handler(
     let protocol_data = parse_protocol_mapping_json(protocol_mappings_json.as_deref())
         .unwrap_or_else(|| serde_json::Value::Object(serde_json::Map::new()));
 
-    Ok(Json(SuccessResponse::new(crate::dto::PointMappingDetail {
-        point_id,
-        signal_name,
-        protocol_data,
-    })))
+    Ok(Json(SuccessResponse::new(
+        crate::api::dto::PointMappingDetail {
+            point_id,
+            signal_name,
+            protocol_data,
+        },
+    )))
 }
 
 // ----------------------------------------------------------------------------
@@ -277,7 +279,7 @@ async fn get_point_config_handler_inner(
     point_type: &str,
     point_id: u32,
     state: AppState,
-) -> Result<Json<SuccessResponse<crate::dto::PointDefinition>>, AppError> {
+) -> Result<Json<SuccessResponse<crate::api::dto::PointDefinition>>, AppError> {
     let table = point_type_to_table(point_type)?;
     validate_channel_exists(&state.sqlite_pool, channel_id).await?;
 
@@ -319,17 +321,19 @@ async fn get_point_config_handler_inner(
             ))
         })?;
 
-    Ok(Json(SuccessResponse::new(crate::dto::PointDefinition {
-        point_id: pt_id,
-        signal_name,
-        scale,
-        offset,
-        unit,
-        data_type,
-        reverse,
-        description,
-        protocol_mapping: parse_protocol_mapping_json(pm_json.as_deref()),
-    })))
+    Ok(Json(SuccessResponse::new(
+        crate::api::dto::PointDefinition {
+            point_id: pt_id,
+            signal_name,
+            scale,
+            offset,
+            unit,
+            data_type,
+            reverse,
+            description,
+            protocol_mapping: parse_protocol_mapping_json(pm_json.as_deref()),
+        },
+    )))
 }
 
 // ============================================================================
@@ -347,7 +351,7 @@ async fn get_point_config_handler_inner(
         ("type" = Option<String>, Query, description = "Point type filter: T (telemetry), S (signal), C (control), A (adjustment)")
     ),
     responses(
-        (status = 200, description = "Unmapped points retrieved (grouped by type)", body = crate::dto::GroupedPoints,
+        (status = 200, description = "Unmapped points retrieved (grouped by type)", body = crate::api::dto::GroupedPoints,
             example = json!({
                 "success": true,
                 "data": {
@@ -377,7 +381,7 @@ pub async fn get_unmapped_points_handler(
     Path(channel_id): Path<u32>,
     Query(params): Query<std::collections::HashMap<String, String>>,
     State(state): State<AppState>,
-) -> Result<Json<SuccessResponse<crate::dto::GroupedPoints>>, AppError> {
+) -> Result<Json<SuccessResponse<crate::api::dto::GroupedPoints>>, AppError> {
     validate_channel_exists(&state.sqlite_pool, channel_id).await?;
     let type_filter = params.get("type").map(|s| s.as_str());
     let grouped = fetch_grouped_points(&state.sqlite_pool, channel_id, type_filter, true).await?;
@@ -397,7 +401,7 @@ pub async fn get_unmapped_points_handler(
         ("point_id" = u32, Path, description = "Telemetry point identifier")
     ),
     responses(
-        (status = 200, description = "Telemetry point configuration", body = crate::dto::PointDefinition),
+        (status = 200, description = "Telemetry point configuration", body = crate::api::dto::PointDefinition),
         (status = 404, description = "Channel or telemetry point not found")
     ),
     tag = "io"
@@ -405,7 +409,7 @@ pub async fn get_unmapped_points_handler(
 pub async fn get_telemetry_point_config_handler(
     Path((channel_id, point_id)): Path<(u32, u32)>,
     State(state): State<AppState>,
-) -> Result<Json<SuccessResponse<crate::dto::PointDefinition>>, AppError> {
+) -> Result<Json<SuccessResponse<crate::api::dto::PointDefinition>>, AppError> {
     get_point_config_handler_inner(channel_id, "T", point_id, state).await
 }
 
@@ -418,7 +422,7 @@ pub async fn get_telemetry_point_config_handler(
         ("point_id" = u32, Path, description = "Signal point identifier")
     ),
     responses(
-        (status = 200, description = "Signal point configuration", body = crate::dto::PointDefinition),
+        (status = 200, description = "Signal point configuration", body = crate::api::dto::PointDefinition),
         (status = 404, description = "Channel or signal point not found")
     ),
     tag = "io"
@@ -426,7 +430,7 @@ pub async fn get_telemetry_point_config_handler(
 pub async fn get_signal_point_config_handler(
     Path((channel_id, point_id)): Path<(u32, u32)>,
     State(state): State<AppState>,
-) -> Result<Json<SuccessResponse<crate::dto::PointDefinition>>, AppError> {
+) -> Result<Json<SuccessResponse<crate::api::dto::PointDefinition>>, AppError> {
     get_point_config_handler_inner(channel_id, "S", point_id, state).await
 }
 
@@ -439,7 +443,7 @@ pub async fn get_signal_point_config_handler(
         ("point_id" = u32, Path, description = "Control point identifier")
     ),
     responses(
-        (status = 200, description = "Control point configuration", body = crate::dto::PointDefinition),
+        (status = 200, description = "Control point configuration", body = crate::api::dto::PointDefinition),
         (status = 404, description = "Channel or control point not found")
     ),
     tag = "io"
@@ -447,7 +451,7 @@ pub async fn get_signal_point_config_handler(
 pub async fn get_control_point_config_handler(
     Path((channel_id, point_id)): Path<(u32, u32)>,
     State(state): State<AppState>,
-) -> Result<Json<SuccessResponse<crate::dto::PointDefinition>>, AppError> {
+) -> Result<Json<SuccessResponse<crate::api::dto::PointDefinition>>, AppError> {
     get_point_config_handler_inner(channel_id, "C", point_id, state).await
 }
 
@@ -460,7 +464,7 @@ pub async fn get_control_point_config_handler(
         ("point_id" = u32, Path, description = "Adjustment point identifier")
     ),
     responses(
-        (status = 200, description = "Adjustment point configuration", body = crate::dto::PointDefinition),
+        (status = 200, description = "Adjustment point configuration", body = crate::api::dto::PointDefinition),
         (status = 404, description = "Channel or adjustment point not found")
     ),
     tag = "io"
@@ -468,7 +472,7 @@ pub async fn get_control_point_config_handler(
 pub async fn get_adjustment_point_config_handler(
     Path((channel_id, point_id)): Path<(u32, u32)>,
     State(state): State<AppState>,
-) -> Result<Json<SuccessResponse<crate::dto::PointDefinition>>, AppError> {
+) -> Result<Json<SuccessResponse<crate::api::dto::PointDefinition>>, AppError> {
     get_point_config_handler_inner(channel_id, "A", point_id, state).await
 }
 

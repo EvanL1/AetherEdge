@@ -169,7 +169,7 @@ required component fails:
    last sync time.
 4. **Config files** — `global.yaml`, `io/io.yaml`,
    `automation/automation.yaml`, and `automation/instances.yaml` are present.
-5. **Shared memory** — the segment file `/dev/shm/aether-rtdb.shm` exists and
+5. **Shared memory** — the segment file `/dev/shm/aether-live-state.shm` exists and
    has a readable, valid data-plane header and a fresh IO-writer heartbeat.
    Missing, stale, truncated, symlinked, or invalid SHM is an error because it
    is the authoritative live-state plane. `AETHER_SHM_PATH` overrides the

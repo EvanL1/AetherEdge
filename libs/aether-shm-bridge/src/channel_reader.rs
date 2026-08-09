@@ -4,17 +4,15 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::{ChannelPointManifest, PhysicalPointAddress, SlotSnapshot, decode_point_quality};
 use aether_dataplane::{SlotIo, SlotReader};
 use aether_domain::PointKind;
 use aether_ports::{PortError, PortErrorKind, PortResult};
-use arc_swap::ArcSwap;
-
-use crate::{ChannelPointManifest, PhysicalPointAddress, SlotSnapshot};
 
 /// Read-only SHM mapping paired with the exact physical channel manifest.
 pub struct ShmChannelReader {
     reader: SlotReader,
-    manifest: Option<Arc<ChannelPointManifest>>,
+    manifest: Arc<ChannelPointManifest>,
     expected_generation: u64,
 }
 
@@ -25,14 +23,14 @@ impl ShmChannelReader {
         let header = reader.header();
         validate_stable_generation(header.writer_generation)?;
         if header.slot_count as usize != manifest.slot_count()
-            || header.routing_hash != manifest.layout_hash()
+            || header.layout_hash != manifest.layout_hash()
         {
             return Err(PortError::new(
                 PortErrorKind::Conflict,
                 format!(
                     "SHM layout does not match channel manifest: SHM slots={} hash=0x{:016x}, manifest slots={} hash=0x{:016x}",
                     header.slot_count,
-                    header.routing_hash,
+                    header.layout_hash,
                     manifest.slot_count(),
                     manifest.layout_hash()
                 ),
@@ -40,21 +38,8 @@ impl ShmChannelReader {
         }
         Ok(Self {
             reader,
-            manifest: Some(manifest),
+            manifest,
             expected_generation: header.writer_generation,
-        })
-    }
-
-    /// Opens the physical segment without channel metadata for diagnostics.
-    /// Channel-addressed reads are unavailable on this view.
-    pub fn open_raw(path: impl AsRef<Path>) -> PortResult<Self> {
-        let reader = SlotReader::open(path).map_err(map_dataplane_error)?;
-        let generation = SlotIo::generation(&reader);
-        validate_stable_generation(generation)?;
-        Ok(Self {
-            reader,
-            manifest: None,
-            expected_generation: generation,
         })
     }
 
@@ -65,13 +50,7 @@ impl ShmChannelReader {
         kind: PointKind,
         point_id: u32,
     ) -> PortResult<Option<SlotSnapshot>> {
-        let Some(manifest) = &self.manifest else {
-            return Err(PortError::new(
-                PortErrorKind::Unavailable,
-                "raw SHM reader has no channel manifest",
-            ));
-        };
-        let Some(slot) = manifest.slot_for(PhysicalPointAddress::from_legacy_raw(
+        let Some(slot) = self.manifest.slot_for(PhysicalPointAddress::from_raw_ids(
             channel_id, kind, point_id,
         )) else {
             return Ok(None);
@@ -81,13 +60,7 @@ impl ShmChannelReader {
 
     /// Reads one address from the typed physical manifest.
     pub fn read_physical(&self, address: PhysicalPointAddress) -> PortResult<Option<SlotSnapshot>> {
-        let Some(manifest) = &self.manifest else {
-            return Err(PortError::new(
-                PortErrorKind::Unavailable,
-                "raw SHM reader has no channel manifest",
-            ));
-        };
-        let Some(slot) = manifest.slot_for(address) else {
+        let Some(slot) = self.manifest.slot_for(address) else {
             return Ok(None);
         };
         self.read_physical_slot(slot)
@@ -120,32 +93,25 @@ impl ShmChannelReader {
             value.value,
             value.raw,
             value.timestamp_ms,
+            decode_point_quality(value.quality_code)?,
         )))
     }
 
-    /// Returns the paired manifest, if this is not a raw diagnostic view.
+    /// Returns the paired physical manifest.
     #[must_use]
-    pub fn manifest(&self) -> Option<&Arc<ChannelPointManifest>> {
-        self.manifest.as_ref()
+    pub const fn manifest(&self) -> &Arc<ChannelPointManifest> {
+        &self.manifest
     }
 
     /// Returns physical channel ids in deterministic order.
     pub fn channel_ids(&self) -> impl Iterator<Item = u32> + '_ {
-        self.manifest
-            .iter()
-            .flat_map(|manifest| manifest.counts().keys().copied())
+        self.manifest.channel_ids()
     }
 
     /// Returns the number of live physical slots.
     #[must_use]
     pub fn slot_count(&self) -> usize {
         self.reader.slot_count()
-    }
-
-    /// Returns the mapping capacity.
-    #[must_use]
-    pub fn max_slots(&self) -> u32 {
-        self.reader.max_slots()
     }
 
     /// Returns the writer generation captured by this mapping.
@@ -179,42 +145,6 @@ impl ShmChannelReader {
                 self.expected_generation
             ),
         ))
-    }
-}
-
-/// Atomically replaceable read mapping for long-lived consumers.
-pub struct ShmChannelReaderHandle {
-    current: ArcSwap<ShmChannelReader>,
-}
-
-impl ShmChannelReaderHandle {
-    /// Creates a handle over an initially validated reader.
-    #[must_use]
-    pub fn new(reader: Arc<ShmChannelReader>) -> Self {
-        Self {
-            current: ArcSwap::new(reader),
-        }
-    }
-
-    /// Publishes a newly validated mapping.
-    pub fn replace(&self, reader: Arc<ShmChannelReader>) {
-        self.current.store(reader);
-    }
-
-    /// Reads one typed physical channel point from the current generation.
-    pub fn read_channel(
-        &self,
-        channel_id: u32,
-        kind: PointKind,
-        point_id: u32,
-    ) -> PortResult<Option<SlotSnapshot>> {
-        self.current.load().read_channel(channel_id, kind, point_id)
-    }
-
-    /// Returns the current reader generation.
-    #[must_use]
-    pub fn generation(&self) -> u64 {
-        self.current.load().generation()
     }
 }
 

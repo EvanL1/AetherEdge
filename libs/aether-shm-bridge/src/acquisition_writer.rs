@@ -10,7 +10,7 @@ use aether_domain::AcquiredPointSample;
 use aether_ports::{PortError, PortErrorKind, PortResult};
 use async_trait::async_trait;
 
-use crate::{ChannelPointManifest, PhysicalPointAddress};
+use crate::{ChannelPointManifest, PhysicalPointAddress, encode_point_quality};
 
 /// Post-commit notification for acquisition writes.
 ///
@@ -33,8 +33,8 @@ pub trait AcquisitionCommitObserver: Send + Sync + 'static {
 ///
 /// The only data mutation exposed by this adapter is a validated batch of
 /// domain [`AcquiredPointSample`] values. Slot-indexed writes remain private;
-/// lifecycle operations expose only heartbeat, dirty-drain, and snapshot
-/// capabilities needed by the owning io composition root.
+/// lifecycle operations expose only heartbeat and snapshot capabilities
+/// needed by the owning io composition root.
 pub struct ShmAcquisitionStateWriter {
     writer: Arc<SlotWriter>,
     manifest: Arc<ChannelPointManifest>,
@@ -87,7 +87,7 @@ impl ShmAcquisitionStateWriter {
         if header.writer_generation == self.expected_generation
             && self.expected_generation != 0
             && self.expected_generation & 1 == 0
-            && header.routing_hash == expected_hash
+            && header.layout_hash == expected_hash
             && header.slot_count as usize == expected_slots
         {
             return Ok(());
@@ -98,7 +98,7 @@ impl ShmAcquisitionStateWriter {
                 "SHM generation mismatch: expected generation={} hash=0x{expected_hash:016x} slots={expected_slots}, found generation={} hash=0x{:016x} slots={}",
                 self.expected_generation,
                 header.writer_generation,
-                header.routing_hash,
+                header.layout_hash,
                 header.slot_count
             ),
         ))
@@ -142,8 +142,7 @@ impl ShmAcquisitionStateWriter {
                     ),
                 ));
             }
-            let physical =
-                PhysicalPointAddress::new(address.channel_id(), address.kind(), address.point_id());
+            let physical = PhysicalPointAddress::from(address);
             if !seen.insert(physical) {
                 return Err(PortError::new(
                     PortErrorKind::InvalidData,
@@ -172,8 +171,13 @@ impl ShmAcquisitionStateWriter {
         // Every slot was bounds-checked above, so these writes cannot fail and
         // no recoverable error can arise after the first mutation.
         for &(slot, sample) in &resolved {
-            self.writer
-                .set_direct(slot, sample.value(), sample.raw(), sample.timestamp().get());
+            self.writer.set_direct(
+                slot,
+                sample.value(),
+                sample.raw(),
+                sample.timestamp().get(),
+                encode_point_quality(sample.quality()),
+            );
         }
         if let Some(observer) = &self.observer {
             observer.before_authority_confirmation();
@@ -208,11 +212,6 @@ impl ShmAcquisitionStateWriter {
     #[must_use]
     pub fn slot_count(&self) -> usize {
         self.writer.slot_count()
-    }
-
-    /// Drains the process-local dirty-slot notification set.
-    pub fn take_dirty_slots(&self) -> Vec<usize> {
-        self.writer.take_dirty_slots()
     }
 
     /// Saves a tear-resistant snapshot of this writer generation.

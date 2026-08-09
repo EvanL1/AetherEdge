@@ -22,8 +22,12 @@ pub use aether_config::io::{
     // Table SQL constants
     ADJUSTMENT_POINTS_TABLE,
     AdjustmentPoint,
-    CHANNEL_REVISION_BUMP_TRIGGER,
-    CHANNEL_REVISION_EXHAUSTED_TRIGGER,
+    CHANNEL_ID_INSERT_GUARD_TRIGGER,
+    CHANNEL_ID_UPDATE_GUARD_TRIGGER,
+    CHANNEL_REVISION_DELETE_GUARD_TRIGGER,
+    CHANNEL_REVISION_INSERT_GUARD_TRIGGER,
+    CHANNEL_REVISION_STEP_GUARD_TRIGGER,
+    CHANNEL_REVISION_UPDATE_GUARD_TRIGGER,
     CHANNEL_ROUTING_TABLE,
     CHANNELS_TABLE,
     CONTROL_POINTS_TABLE,
@@ -40,7 +44,7 @@ pub use aether_config::io::{
     SqlInsertablePoint,
     TELEMETRY_POINTS_TABLE,
     TelemetryPoint,
-    install_channel_revision_triggers,
+    install_channel_revision_guards,
 };
 
 // Re-export common configuration types

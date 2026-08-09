@@ -5,7 +5,8 @@ use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
 use aether_shm_bridge::{
-    PointWatchEvent, PointWatchEventListener, SubscriptionBitmap, bitmap_path_for_consumer,
+    PhysicalPointAddress, PointWatchEvent, PointWatchEventListener, SubscriptionBitmap,
+    bitmap_path_for_consumer,
 };
 use axum::extract::ws::{Message, WebSocket};
 use chrono::Utc;
@@ -69,7 +70,14 @@ fn quality_object(
         .iter()
         .map(|(point_id, sample)| {
             let age_ms = sample_age_ms(now_ms, sample.timestamp_ms());
-            let label = match PointQuality::for_sample_age(age_ms, stale_after_ms) {
+            let freshness = PointQuality::for_sample_age(age_ms, stale_after_ms);
+            let effective = match sample.quality() {
+                PointQuality::Good => freshness,
+                PointQuality::Uncertain => PointQuality::Uncertain,
+                PointQuality::Bad => PointQuality::Bad,
+                PointQuality::Unavailable => PointQuality::Unavailable,
+            };
+            let label = match effective {
                 PointQuality::Good => "good",
                 PointQuality::Uncertain => "uncertain",
                 PointQuality::Bad => "bad",
@@ -292,14 +300,52 @@ impl WsHub {
             .collect()
     }
 
-    fn clients_watching(&self, changed_slots: &HashSet<usize>) -> Vec<String> {
+    fn subscription_addresses(&self, subscription: &Subscription) -> HashSet<PhysicalPointAddress> {
+        if subscription.source == "homepage" {
+            return subscription
+                .homepage_points
+                .iter()
+                .filter(|point| !point.formula.is_empty())
+                .filter_map(|point| {
+                    match self.live_values.watched_formula_address(&point.formula) {
+                        Ok(address) => address,
+                        Err(error) => {
+                            debug!(
+                                "Cannot resolve homepage PointWatch formula '{}': {error}",
+                                point.formula
+                            );
+                            None
+                        },
+                    }
+                })
+                .collect();
+        }
+        if subscription.source == "rule" {
+            return HashSet::new();
+        }
+        self.live_values
+            .watched_addresses(
+                &subscription.source,
+                &subscription.channels,
+                &subscription.data_types,
+            )
+            .unwrap_or_else(|error| {
+                debug!(
+                    "Cannot resolve PointWatch subscription '{}': {error}",
+                    subscription.source
+                );
+                HashSet::new()
+            })
+    }
+
+    fn clients_watching(&self, changed_addresses: &HashSet<PhysicalPointAddress>) -> Vec<String> {
         self.clients
             .iter()
             .filter_map(|client| {
                 let subscription = client.sub.read().ok()?;
-                self.subscription_slots(&subscription)
+                self.subscription_addresses(&subscription)
                     .iter()
-                    .any(|slot| changed_slots.contains(slot))
+                    .any(|address| changed_addresses.contains(address))
                     .then(|| client.key().clone())
             })
             .collect()
@@ -480,7 +526,7 @@ async fn push_subscribed_data_to(hub: &Arc<WsHub>, client_ids: Vec<String>) {
 }
 
 fn reconcile_point_watch_subscriptions(hub: &WsHub, bitmap_path: &Path) {
-    let bitmap = match SubscriptionBitmap::open(bitmap_path) {
+    let bitmap = match SubscriptionBitmap::open_or_create(bitmap_path) {
         Ok(bitmap) => bitmap,
         Err(error) => {
             debug!(
@@ -492,7 +538,9 @@ fn reconcile_point_watch_subscriptions(hub: &WsHub, bitmap_path: &Path) {
     };
     bitmap.clear_all();
     for slot in hub.all_subscription_slots() {
-        bitmap.set_watched(slot);
+        if let Err(error) = bitmap.set_watched(slot) {
+            warn!("Cannot subscribe API PointWatch slot {slot}: {error}");
+        }
     }
     debug!(
         "API Gateway PointWatch subscriptions reconciled: {} slot(s)",
@@ -507,23 +555,35 @@ async fn push_point_watch_batch(
     debounce_ms: u64,
     shutdown: &CancellationToken,
 ) {
-    let mut changed_slots = HashSet::new();
-    if let Some(slot) = hub.live_values.validated_point_watch_slot(first) {
-        changed_slots.insert(slot);
-    }
+    let mut events = vec![first];
     tokio::select! {
         _ = shutdown.cancelled() => return,
         _ = tokio::time::sleep(Duration::from_millis(debounce_ms)) => {}
     }
     while let Ok(event) = event_rx.try_recv() {
-        if let Some(slot) = hub.live_values.validated_point_watch_slot(event) {
-            changed_slots.insert(slot);
+        events.push(event);
+    }
+    let mut changed_addresses = HashSet::new();
+    for event in events {
+        match hub.live_values.validate_point_watch(event) {
+            Ok(Some(validated)) => {
+                changed_addresses.insert(validated.address());
+            },
+            Ok(None) => {},
+            Err(error) => {
+                debug!(
+                    channel_id = event.channel_id(),
+                    point_id = event.point_id(),
+                    slot = event.slot_index(),
+                    "API PointWatch SHM re-read rejected: {error}"
+                );
+            },
         }
     }
-    if changed_slots.is_empty() {
+    if changed_addresses.is_empty() {
         return;
     }
-    let clients = hub.clients_watching(&changed_slots);
+    let clients = hub.clients_watching(&changed_addresses);
     if !clients.is_empty() {
         debug!(
             "PointWatch woke {} API Gateway client subscription(s)",
@@ -976,8 +1036,14 @@ mod tests {
         // Without this map the frozen reading is indistinguishable from a live
         // one, which is exactly how a disconnected device kept looking healthy.
         let mut samples = BTreeMap::new();
-        samples.insert("1".to_owned(), SlotSnapshot::new(384.3, 1_000));
-        samples.insert("2".to_owned(), SlotSnapshot::new(12.5, 95_000));
+        samples.insert(
+            "1".to_owned(),
+            SlotSnapshot::new(384.3, 1_000, PointQuality::Good),
+        );
+        samples.insert(
+            "2".to_owned(),
+            SlotSnapshot::new(12.5, 95_000, PointQuality::Good),
+        );
 
         let graded = quality_object(&samples, 100_000, 30_000);
 

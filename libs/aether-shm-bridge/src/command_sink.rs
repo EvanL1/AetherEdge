@@ -130,10 +130,10 @@ impl ShmDeviceCommandSink {
         writer
             .validate_authoritative_path()
             .map_err(dataplane_port_error)?;
-        let header = writer.header().snapshot();
+        let header = writer.header();
         if writer.slot_count() != manifest.slot_count()
             || header.slot_count as usize != manifest.slot_count()
-            || header.routing_hash != manifest.layout_hash()
+            || header.layout_hash != manifest.layout_hash()
         {
             return Err(PortError::new(
                 PortErrorKind::Conflict,
@@ -378,8 +378,7 @@ impl DeviceCommandSink for ShmDeviceCommandSink {
         self.validate_authority(&generation, "before command mirror")?;
 
         let target = command.target();
-        let physical =
-            PhysicalPointAddress::new(target.channel_id(), target.kind(), target.point_id());
+        let physical = PhysicalPointAddress::from(target);
         let slot = generation.manifest.slot_for(physical).ok_or_else(|| {
             PortError::new(
                 PortErrorKind::NotFound,
@@ -392,6 +391,7 @@ impl DeviceCommandSink for ShmDeviceCommandSink {
             command.value(),
             command.value(),
             command.issued_at().get(),
+            crate::encode_point_quality(aether_domain::PointQuality::Good),
         );
         self.observer.after_shm_write(command, slot);
 
@@ -612,7 +612,7 @@ pub struct DeviceCommandFrame {
 }
 
 impl DeviceCommandFrame {
-    /// Fixed native-endian command wire size retained for IO compatibility.
+    /// Fixed native-endian command wire size for the local IO transport.
     pub const SIZE: usize = 56;
 
     fn new(

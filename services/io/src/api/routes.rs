@@ -136,7 +136,6 @@ impl AppState {
         crate::api::handlers::channel_management_handlers::delete_channel_handler,
         crate::api::handlers::channel_management_handlers::reconcile_channels_handler,
         crate::api::handlers::channel_management_handlers::reconcile_channel_handler,
-        crate::api::handlers::channel_management_handlers::reload_configuration_handler,
         crate::api::handlers::channel_management_handlers::reload_routing_handler,
 
         // Mapping management
@@ -160,43 +159,43 @@ impl AppState {
     ),
     components(
         schemas(
-            crate::dto::ServiceStatus,
-            crate::dto::ChannelStatusResponse,
-            crate::dto::ChannelStatusDto,
-            crate::dto::ChannelDetail,
-            crate::dto::ChannelRuntimeStatus,
-            crate::dto::PointCounts,
-            crate::dto::ChannelListQuery,
-            crate::dto::PaginatedResponse<crate::dto::ChannelStatusResponse>,
-            crate::dto::ChannelOperation,
-            crate::dto::ChannelOperationKind,
-            crate::dto::ChannelControlOperationResult,
-            crate::dto::ChannelControlResult,
-            crate::dto::ChannelControlResponse,
-            crate::dto::ChannelCreateRequest,
-            crate::dto::ChannelConfigUpdateRequest,
-            crate::dto::ChannelEnabledRequest,
-            crate::dto::ChannelMutationOperation,
-            crate::dto::ChannelRuntimeProjectionResult,
-            crate::dto::ChannelCompletionAuditState,
-            crate::dto::ChannelCompletionAudit,
-            crate::dto::ChannelMutationResult,
-            crate::dto::ChannelMutationResponse,
-            crate::dto::ChannelReconciliationScopeResult,
-            crate::dto::ChannelDesiredStateResult,
-            crate::dto::ChannelReconciliationItemResult,
-            crate::dto::ChannelReconciliationResult,
-            crate::dto::ChannelReconciliationResponse,
+            crate::api::dto::ServiceStatus,
+            crate::api::dto::ChannelStatusResponse,
+            crate::api::dto::ChannelStatusDto,
+            crate::api::dto::ChannelDetail,
+            crate::api::dto::ChannelRuntimeStatus,
+            crate::api::dto::PointCounts,
+            crate::api::dto::ChannelListQuery,
+            crate::api::dto::PaginatedResponse<crate::api::dto::ChannelStatusResponse>,
+            crate::api::dto::ChannelOperation,
+            crate::api::dto::ChannelOperationKind,
+            crate::api::dto::ChannelControlOperationResult,
+            crate::api::dto::ChannelControlResult,
+            crate::api::dto::ChannelControlResponse,
+            crate::api::dto::ChannelCreateRequest,
+            crate::api::dto::ChannelConfigUpdateRequest,
+            crate::api::dto::ChannelEnabledRequest,
+            crate::api::dto::ChannelMutationOperation,
+            crate::api::dto::ChannelRuntimeProjectionResult,
+            crate::api::dto::ChannelCompletionAuditState,
+            crate::api::dto::ChannelCompletionAudit,
+            crate::api::dto::ChannelMutationResult,
+            crate::api::dto::ChannelMutationResponse,
+            crate::api::dto::ChannelReconciliationScopeResult,
+            crate::api::dto::ChannelDesiredStateResult,
+            crate::api::dto::ChannelReconciliationItemResult,
+            crate::api::dto::ChannelReconciliationResult,
+            crate::api::dto::ChannelReconciliationResponse,
             common::ErrorInfo,
             common::ErrorResponse,
-            crate::dto::RoutingReloadResult,
-            crate::dto::PointDefinition,
-            crate::dto::GroupedPoints,
-            crate::dto::GroupedMappings,
-            crate::dto::PointMappingDetail,
-            crate::dto::PointMappingItem,
-            crate::dto::MappingBatchUpdateRequest,
-            crate::dto::MappingBatchUpdateResult,
+            crate::api::dto::RoutingReloadResult,
+            crate::api::dto::PointDefinition,
+            crate::api::dto::GroupedPoints,
+            crate::api::dto::GroupedMappings,
+            crate::api::dto::PointMappingDetail,
+            crate::api::dto::PointMappingItem,
+            crate::api::dto::MappingBatchUpdateRequest,
+            crate::api::dto::MappingBatchUpdateResult,
             // Point CRUD DTOs
             crate::api::handlers::point_handlers::PointCrudResult,
             crate::api::handlers::point_handlers::PointUpdateRequest,
@@ -210,13 +209,13 @@ impl AppState {
             crate::api::handlers::point_handlers::OperationStat,
             crate::api::handlers::point_handlers::PointBatchError,
             // Template schemas
-            crate::dto::TemplateListItem,
-            crate::dto::TemplateDetail,
-            crate::dto::CreateTemplateReq,
-            crate::dto::CreateTemplateFromChannelReq,
-            crate::dto::UpdateTemplateReq,
-            crate::dto::ApplyTemplateReq,
-            crate::dto::TemplateListQuery,
+            crate::api::dto::TemplateListItem,
+            crate::api::dto::TemplateDetail,
+            crate::api::dto::CreateTemplateReq,
+            crate::api::dto::CreateTemplateFromChannelReq,
+            crate::api::dto::UpdateTemplateReq,
+            crate::api::dto::ApplyTemplateReq,
+            crate::api::dto::TemplateListQuery,
             // Admin schemas
             common::admin_api::SetLogLevelRequest,
             common::admin_api::LogLevelResponse
@@ -252,34 +251,12 @@ impl utoipa::Modify for SecurityAddon {
                 ),
             );
         }
-        if let Some(operation) = openapi
-            .paths
-            .paths
-            .get_mut("/api/channels/reload")
-            .and_then(|path| path.post.as_mut())
-        {
-            operation.deprecated = Some(utoipa::openapi::Deprecated::True);
-        }
     }
 }
 
 #[cfg(feature = "openapi")]
 async fn openapi_document() -> axum::Json<utoipa::openapi::OpenApi> {
     axum::Json(IoApiDoc::openapi())
-}
-
-/// Create the API router over authoritative SHM and SQLite configuration.
-pub fn create_api_routes(
-    channel_manager: Arc<ChannelManager>,
-    sqlite_pool: sqlx::SqlitePool,
-) -> Router {
-    create_api_routes_with_boundary(
-        channel_manager,
-        sqlite_pool,
-        None,
-        ChannelManagementHttpBoundary::unavailable(),
-        PointTopologyHttpBoundary::unavailable(),
-    )
 }
 
 /// Creates routes with only the governed point-topology command composed.
@@ -360,7 +337,6 @@ fn create_api_routes_with_boundary(
         .route("/api/channels/{id}/unmapped-points", get(get_unmapped_points_handler))
         .route("/api/channels/{id}/mappings", get(get_channel_mappings_handler).put(update_channel_mappings_handler))
         .route("/api/channels/{channel_id}/{type}/points/{point_id}/mapping", get(get_point_mapping_with_type_handler))
-        .route("/api/channels/reload", post(reload_configuration_handler))
         .route("/api/routing/reload", post(reload_routing_handler))
         // Point CRUD routes - type-specific for all operations
         .route("/api/channels/{channel_id}/T/points/{point_id}",

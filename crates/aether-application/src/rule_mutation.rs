@@ -34,35 +34,16 @@ impl RuleMutationApplication {
         }
     }
 
-    /// Authorizes, audits, persists, and activates one rule mutation.
-    pub async fn mutate(
-        &self,
-        context: &RequestContext,
-        mutation: RuleMutation,
-    ) -> Result<RuleMutationAcceptance, ApplicationError> {
-        self.mutate_inner(context, PendingRuleMutation::Legacy(mutation))
-            .await
-    }
-
     /// Authorizes, audits, persists, and activates one revision-fenced rule mutation.
     pub async fn mutate_revisioned(
         &self,
         context: &RequestContext,
         command: RevisionedRuleMutation,
     ) -> Result<RuleMutationAcceptance, ApplicationError> {
-        self.mutate_inner(context, PendingRuleMutation::Revisioned(command))
-            .await
-    }
-
-    async fn mutate_inner(
-        &self,
-        context: &RequestContext,
-        command: PendingRuleMutation,
-    ) -> Result<RuleMutationAcceptance, ApplicationError> {
         let mutation = command.mutation();
         let kind = mutation.kind();
         let target = mutation.rule_id();
-        let mutation_detail = mutation_audit_detail(mutation, command.expected_revision());
+        let mutation_detail = mutation_audit_detail(mutation, command.expected_revision().get());
         if let Err(error) = self.policy.authorize(MANAGE_RULE_CAPABILITY, context) {
             self.record_audit(
                 context,
@@ -86,12 +67,7 @@ impl RuleMutationApplication {
         )
         .await?;
 
-        let result = match command {
-            PendingRuleMutation::Legacy(mutation) => self.mutator.mutate(mutation).await,
-            PendingRuleMutation::Revisioned(command) => {
-                self.mutator.mutate_revisioned(command).await
-            },
-        };
+        let result = self.mutator.mutate_revisioned(command).await;
         match result {
             Ok(receipt) => {
                 let runtime = receipt.runtime_status();
@@ -185,52 +161,8 @@ impl RuleMutationApplication {
     }
 }
 
-/// Carries a rule mutation that either arrived with a caller-supplied
-/// revision or came through the revisionless compatibility surface.
-///
-/// # Removal criteria
-///
-/// `Legacy` exists only for the published `AutomationRuleMutator::mutate`
-/// entry point, which third-party implementations may still call. No
-/// first-party route constructs it: `rule_routes` submits
-/// `RevisionedRuleMutation`, and the SQLite adapter services an old `mutate`
-/// by reading the current head and submitting the same CAS path. That
-/// prevents two simultaneous commits from sharing a head, but cannot detect
-/// an edit made since the caller's earlier read, so it is not strict
-/// optimistic concurrency.
-///
-/// Drop this variant, `RuleMutationApplication::mutate`, and the
-/// `AutomationRuleMutator::mutate` port method together, once:
-///
-/// 1. every browser client sends the revision exposed by rule `GET` ETags;
-/// 2. distribution telemetry reports no use of the revisionless shim for one
-///    stability window (the shim warns on every call in `rule_routes`); and
-/// 3. the compatibility contract tests are replaced by mandatory-revision
-///    tests.
-enum PendingRuleMutation {
-    Legacy(RuleMutation),
-    Revisioned(RevisionedRuleMutation),
-}
-
-impl PendingRuleMutation {
-    const fn mutation(&self) -> &RuleMutation {
-        match self {
-            Self::Legacy(mutation) => mutation,
-            Self::Revisioned(command) => command.mutation(),
-        }
-    }
-
-    const fn expected_revision(&self) -> Option<u64> {
-        match self {
-            Self::Legacy(_) => None,
-            Self::Revisioned(command) => Some(command.expected_revision().get()),
-        }
-    }
-}
-
-fn mutation_audit_detail(mutation: &RuleMutation, expected_revision: Option<u64>) -> String {
-    let expected =
-        expected_revision.map_or_else(|| "legacy".to_string(), |value| value.to_string());
+fn mutation_audit_detail(mutation: &RuleMutation, expected_revision: u64) -> String {
+    let expected = expected_revision.to_string();
     match mutation {
         RuleMutation::Create {
             name, description, ..

@@ -18,7 +18,10 @@ fn dry_run_json() -> serde_json::Value {
         .join("config.template");
 
     let output = Command::new(env!("CARGO_BIN_EXE_aether"))
-        .env("AETHER_SHM_PATH", workspace.path().join("absent-rtdb.shm"))
+        .env(
+            "AETHER_SHM_PATH",
+            workspace.path().join("absent-live-state.shm"),
+        )
         .args([
             "--json",
             "--config-path",

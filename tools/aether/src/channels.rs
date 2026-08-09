@@ -23,7 +23,7 @@ pub enum ChannelCommands {
 
     /// Reconcile all channel runtimes from authoritative desired state
     #[command(about = "Reconcile all channel runtimes from authoritative desired state")]
-    Reload {
+    Reconcile {
         /// Explicitly confirm this high-risk runtime reconciliation
         #[arg(long)]
         confirmed: bool,
@@ -315,7 +315,7 @@ pub async fn handle_command(cmd: ChannelCommands, base_url: &str, json: bool) ->
                 );
             }
         },
-        ChannelCommands::Reload { confirmed } => {
+        ChannelCommands::Reconcile { confirmed } => {
             let result = client.reconcile_channels(confirmed).await?;
             print_reconciliation_receipt(&result, json)?;
         },
@@ -1535,12 +1535,12 @@ mod tests {
     }
 
     #[test]
-    fn reload_requires_explicit_confirmation_in_the_cli_schema() {
-        let cli = ChannelCli::try_parse_from(["channels", "reload", "--confirmed"]).unwrap();
+    fn reconcile_requires_explicit_confirmation_in_the_cli_schema() {
+        let cli = ChannelCli::try_parse_from(["channels", "reconcile", "--confirmed"]).unwrap();
 
         match cli.command {
-            ChannelCommands::Reload { confirmed } => assert!(confirmed),
-            _ => panic!("expected reload command"),
+            ChannelCommands::Reconcile { confirmed } => assert!(confirmed),
+            _ => panic!("expected reconcile command"),
         }
     }
 

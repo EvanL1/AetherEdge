@@ -1,12 +1,12 @@
 //! Governed channel runtime reconciliation and routing reload handlers.
 
 use super::{ChannelManagementHttpBoundary, path_channel_id};
-use crate::api::routes::AppState;
-use crate::dto::{
+use crate::api::dto::{
     AppError, ChannelCompletionAudit, ChannelCompletionAuditState, ChannelDesiredStateResult,
     ChannelReconciliationItemResult, ChannelReconciliationResponse, ChannelReconciliationResult,
     ChannelReconciliationScopeResult, ChannelRuntimeProjectionResult, SuccessResponse,
 };
+use crate::api::routes::AppState;
 
 use aether_application::{ChannelReconciliationAcceptance, CompletionAuditStatus};
 use aether_ports::{
@@ -54,7 +54,7 @@ pub async fn reconcile_channels_handler(
     post,
     path = "/api/channels/{id}/reconcile",
     params(
-        ("id" = u32, Path, description = "Stable channel identifier below 10000", maximum = 9999),
+        ("id" = u32, Path, description = "Stable channel identifier in 1..9999", minimum = 1, maximum = 9999),
         ("x-request-id" = String, Header, format = "uuid", description = "Required UUID audit correlation ID; this is not an idempotency key"),
         ("x-aether-confirmed" = bool, Header, description = "Required explicit confirmation; must be true")
     ),
@@ -83,37 +83,6 @@ pub async fn reconcile_channel_handler(
         ChannelReconciliationScope::One(channel_id),
     )
     .await
-}
-
-/// Compatibility alias for full channel reconciliation.
-///
-/// New clients must use `POST /api/channels/reconcile`. This deprecated alias
-/// executes the same governed application command and has the same receipt.
-#[utoipa::path(
-    post,
-    path = "/api/channels/reload",
-    params(
-        ("x-request-id" = String, Header, format = "uuid", description = "Required UUID audit correlation ID; this is not an idempotency key"),
-        ("x-aether-confirmed" = bool, Header, description = "Required explicit confirmation; must be true")
-    ),
-    responses(
-        (status = 200, description = "Accepted non-idempotent full runtime reconciliation through the compatibility alias. Per-channel degradation and incomplete terminal audit remain accepted; do not retry automatically.", body = ChannelReconciliationResponse),
-        (status = 400, description = "Malformed request ID or invalid reconciliation scope", body = common::ErrorResponse),
-        (status = 403, description = "Missing/invalid Bearer token or io.channel.manage permission", body = common::ErrorResponse),
-        (status = 409, description = "Runtime reconciliation conflicts with current state", body = common::ErrorResponse),
-        (status = 422, description = "Explicit confirmation is missing or false", body = common::ErrorResponse),
-        (status = 503, description = "Mandatory pre-execution audit or reconciliation adapter is unavailable", body = common::ErrorResponse),
-        (status = 504, description = "Reconciliation adapter timed out", body = common::ErrorResponse),
-        (status = 500, description = "Permanent reconciliation adapter failure", body = common::ErrorResponse)
-    ),
-    security(("bearer_auth" = [])),
-    tag = "io"
-)]
-pub async fn reload_configuration_handler(
-    Extension(boundary): Extension<ChannelManagementHttpBoundary>,
-    headers: HeaderMap,
-) -> Result<Json<ChannelReconciliationResponse>, AppError> {
-    reconcile_scope(&boundary, &headers, ChannelReconciliationScope::All).await
 }
 
 async fn reconcile_scope(
@@ -231,14 +200,14 @@ const fn runtime_projection(
     post,
     path = "/api/routing/reload",
     responses(
-        (status = 200, description = "Routing cache reloaded successfully", body = crate::dto::RoutingReloadResult),
+        (status = 200, description = "Routing cache reloaded successfully", body = crate::api::dto::RoutingReloadResult),
         (status = 500, description = "Internal server error")
     ),
     tag = "io"
 )]
 pub async fn reload_routing_handler(
     State(state): State<AppState>,
-) -> Result<Json<SuccessResponse<crate::dto::RoutingReloadResult>>, AppError> {
+) -> Result<Json<SuccessResponse<crate::api::dto::RoutingReloadResult>>, AppError> {
     tracing::debug!("Reloading routing");
 
     let start_time = std::time::Instant::now();
@@ -265,7 +234,7 @@ pub async fn reload_routing_handler(
 
     let duration_ms = start_time.elapsed().as_millis() as u64;
 
-    let result = crate::dto::RoutingReloadResult {
+    let result = crate::api::dto::RoutingReloadResult {
         c2m_count,
         m2c_count,
         c2c_count,

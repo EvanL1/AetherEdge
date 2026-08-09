@@ -768,14 +768,24 @@ impl ConfigSyncer {
                     format!("Channel {channel_id} configuration payload cannot be encoded")
                 })?;
 
+            let initial_revision: i64 = sqlx::query_scalar(
+                "SELECT COALESCE((SELECT last_revision + 1 \
+                                  FROM channel_revision_tombstones \
+                                  WHERE channel_id = ?), 1)",
+            )
+            .bind(channel_id)
+            .fetch_one(&mut **tx)
+            .await?;
+
             sqlx::query(
-                "INSERT INTO channels (channel_id, name, protocol, enabled, config)
-                 VALUES (?, ?, ?, ?, ?)
+                "INSERT INTO channels (channel_id, name, protocol, enabled, config, revision)
+                 VALUES (?, ?, ?, ?, ?, ?)
                  ON CONFLICT(channel_id) DO UPDATE SET
                      name = excluded.name,
                      protocol = excluded.protocol,
                      enabled = excluded.enabled,
                      config = excluded.config,
+                     revision = channels.revision + 1,
                      updated_at = CURRENT_TIMESTAMP",
             )
             .bind(channel_id)
@@ -783,6 +793,7 @@ impl ConfigSyncer {
             .bind(&protocol)
             .bind(enabled)
             .bind(&config)
+            .bind(initial_revision)
             .execute(&mut **tx)
             .await?;
 

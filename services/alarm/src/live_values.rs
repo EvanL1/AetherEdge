@@ -79,9 +79,32 @@ pub trait AlarmValueSource: Send + Sync + 'static {
     /// Channel-health rules use a separate segment and return `None`.
     fn watched_slot(&self, rule: &AlertRule) -> PortResult<Option<usize>>;
 
-    /// Validates a PointWatch hint against the current typed manifest.
-    fn validated_point_watch_slot(&self, _event: PointWatchEvent) -> Option<usize> {
-        None
+    /// Resolves the typed physical address used to match a PointWatch hint.
+    /// Channel-health rules use a separate segment and return `None`.
+    fn watched_address(&self, _rule: &AlertRule) -> PortResult<Option<PhysicalPointAddress>> {
+        Ok(None)
+    }
+
+    /// Validates and re-reads a PointWatch hint from one pinned generation.
+    fn validate_point_watch(
+        &self,
+        _event: PointWatchEvent,
+    ) -> PortResult<Option<ValidatedPointWatchHint>> {
+        Ok(None)
+    }
+}
+
+/// PointWatch hint proven against and re-read from one immutable SHM view.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ValidatedPointWatchHint {
+    address: PhysicalPointAddress,
+}
+
+impl ValidatedPointWatchHint {
+    /// Returns the typed address carried by the validated hint.
+    #[must_use]
+    pub const fn address(self) -> PhysicalPointAddress {
+        self.address
     }
 }
 
@@ -202,6 +225,7 @@ impl ShmAlarmValueSource {
 
     /// Returns whether an event still names the current typed physical slot.
     #[must_use]
+    #[cfg(test)]
     pub fn accepts_point_watch_event(&self, event: PointWatchEvent) -> bool {
         let generation = self.current.load();
         event.matches_manifest(&generation.manifest)
@@ -236,7 +260,7 @@ impl AlarmValueGeneration {
             ("io", AlertRule::CHANNEL_ONLINE_DATA_TYPE) => {
                 ResolvedAlarmTarget::ChannelHealth(owner_id)
             },
-            ("io", data_type) => ResolvedAlarmTarget::Point(PhysicalPointAddress::from_legacy_raw(
+            ("io", data_type) => ResolvedAlarmTarget::Point(PhysicalPointAddress::from_raw_ids(
                 owner_id,
                 parse_point_kind(data_type)
                     .ok_or_else(|| invalid_rule_target(rule, "unsupported channel point type"))?,
@@ -263,6 +287,24 @@ impl AlarmValueGeneration {
         };
         Ok(Some(target))
     }
+
+    fn validate_point_watch(
+        &self,
+        event: PointWatchEvent,
+    ) -> PortResult<Option<ValidatedPointWatchHint>> {
+        if !event.matches_manifest(&self.manifest) {
+            return Ok(None);
+        }
+        let Some(kind) = event.point_kind() else {
+            return Ok(None);
+        };
+        let address =
+            PhysicalPointAddress::from_raw_ids(event.channel_id(), kind, event.point_id());
+        let Some(_sample) = self.read_point(address)? else {
+            return Ok(None);
+        };
+        Ok(Some(ValidatedPointWatchHint { address }))
+    }
 }
 
 enum ResolvedAlarmTarget {
@@ -282,6 +324,7 @@ impl AlarmValueSource for ShmAlarmValueSource {
                     SlotSnapshot::new(
                         if sample.online() { 1.0 } else { 0.0 },
                         sample.timestamp_ms(),
+                        aether_domain::PointQuality::Good,
                     )
                 })),
             None => Ok(None),
@@ -296,11 +339,20 @@ impl AlarmValueSource for ShmAlarmValueSource {
         }
     }
 
-    fn validated_point_watch_slot(&self, event: PointWatchEvent) -> Option<usize> {
-        if !self.accepts_point_watch_event(event) {
-            return None;
-        }
-        usize::try_from(event.slot_index()).ok()
+    fn watched_address(&self, rule: &AlertRule) -> PortResult<Option<PhysicalPointAddress>> {
+        let generation = self.current.load();
+        Ok(match generation.resolve_target(rule)? {
+            Some(ResolvedAlarmTarget::Point(target)) => Some(target),
+            Some(ResolvedAlarmTarget::ChannelHealth(_)) | None => None,
+        })
+    }
+
+    fn validate_point_watch(
+        &self,
+        event: PointWatchEvent,
+    ) -> PortResult<Option<ValidatedPointWatchHint>> {
+        let generation = self.current.load_full();
+        generation.validate_point_watch(event)
     }
 }
 
@@ -431,7 +483,9 @@ mod tests {
         ChannelPointManifest, PhysicalPointAddress, PointWatchEvent, SlotSnapshot, SlotSource,
     };
 
-    use super::{AlarmRouting, AlarmValueSource, NoChannelHealth, ShmAlarmValueSource};
+    use super::{
+        AlarmRouting, AlarmValueGeneration, AlarmValueSource, NoChannelHealth, ShmAlarmValueSource,
+    };
     use crate::models::AlertRule;
 
     struct StubSlots {
@@ -474,35 +528,38 @@ mod tests {
     }
 
     fn source() -> ShmAlarmValueSource {
-        let manifest = ChannelPointManifest::from_entries([(10, [2, 1, 0, 1]), (20, [1, 0, 1, 0])]);
+        let manifest =
+            ChannelPointManifest::dense_test_fixture([(10, [2, 1, 0, 1]), (20, [1, 0, 1, 0])]);
         let t_slot = manifest
-            .slot_for(PhysicalPointAddress::from_legacy_raw(
+            .slot_for(PhysicalPointAddress::from_raw_ids(
                 10,
                 PointKind::Telemetry,
                 1,
             ))
             .expect("telemetry slot");
         let a_slot = manifest
-            .slot_for(PhysicalPointAddress::from_legacy_raw(
-                10,
-                PointKind::Action,
-                0,
-            ))
+            .slot_for(PhysicalPointAddress::from_raw_ids(10, PointKind::Action, 0))
             .expect("action slot");
         let values = HashMap::from([
-            (t_slot, SlotSnapshot::new(42.5, 1_000)),
-            (a_slot, SlotSnapshot::new(7.0, 1_001)),
+            (
+                t_slot,
+                SlotSnapshot::new(42.5, 1_000, aether_domain::PointQuality::Good),
+            ),
+            (
+                a_slot,
+                SlotSnapshot::new(7.0, 1_001, aether_domain::PointQuality::Good),
+            ),
         ]);
         let routing = AlarmRouting::from_entries(
             [(
                 100,
                 5,
-                PhysicalPointAddress::from_legacy_raw(10, PointKind::Telemetry, 1),
+                PhysicalPointAddress::from_raw_ids(10, PointKind::Telemetry, 1),
             )],
             [(
                 100,
                 8,
-                PhysicalPointAddress::from_legacy_raw(10, PointKind::Action, 0),
+                PhysicalPointAddress::from_raw_ids(10, PointKind::Action, 0),
             )],
         );
 
@@ -596,29 +653,86 @@ mod tests {
             .watched_slot(&rule("io", 10, "T", 1))
             .expect("resolve watched slot")
             .expect("configured slot");
-        let valid = PointWatchEvent::new(
-            10,
-            PointKind::Telemetry,
-            1,
-            u64::try_from(slot).expect("slot fits in wire field"),
-            42.5,
-            42.5,
-            1_000,
-            1,
-        );
-        let stale = PointWatchEvent::new(
-            20,
-            PointKind::Telemetry,
-            0,
-            u64::try_from(slot).expect("slot fits in wire field"),
-            42.5,
-            42.5,
-            1_000,
-            1,
-        );
+        let valid = PointWatchEvent::new(10, PointKind::Telemetry, 1, slot)
+            .expect("slot fits in wire field");
+        let stale = PointWatchEvent::new(20, PointKind::Telemetry, 0, slot)
+            .expect("slot fits in wire field");
 
-        assert_eq!(source.validated_point_watch_slot(valid), Some(slot));
-        assert_eq!(source.validated_point_watch_slot(stale), None);
+        let validated = source
+            .validate_point_watch(valid)
+            .expect("read authoritative PointWatch sample")
+            .expect("valid hint");
+        assert_eq!(
+            validated.address(),
+            PhysicalPointAddress::from_raw_ids(10, PointKind::Telemetry, 1)
+        );
+        assert_eq!(
+            source
+                .validate_point_watch(stale)
+                .expect("reject stale typed hint"),
+            None
+        );
+    }
+
+    #[test]
+    fn validated_hint_address_cannot_be_reused_by_replacement_slot_zero() {
+        let old_address = PhysicalPointAddress::from_raw_ids(10, PointKind::Telemetry, 0);
+        let old_manifest =
+            ChannelPointManifest::compile([old_address], 1).expect("compile old one-slot manifest");
+        let source = ShmAlarmValueSource::new(
+            Arc::new(StubSlots {
+                slot_count: 1,
+                values: HashMap::from([(
+                    0,
+                    SlotSnapshot::new(10.0, 1_000, aether_domain::PointQuality::Good),
+                )]),
+            }),
+            Arc::new(old_manifest),
+            Arc::new(AlarmRouting::default()),
+            Arc::new(NoChannelHealth),
+        );
+        let old_event = PointWatchEvent::new(10, PointKind::Telemetry, 0, 0)
+            .expect("old slot fits the wire field");
+        let validated = source
+            .validate_point_watch(old_event)
+            .expect("validate old hint")
+            .expect("old sample exists");
+
+        let new_address = PhysicalPointAddress::from_raw_ids(20, PointKind::Telemetry, 0);
+        let new_manifest = Arc::new(
+            ChannelPointManifest::compile([new_address], 1)
+                .expect("compile replacement one-slot manifest"),
+        );
+        source.current.store(Arc::new(AlarmValueGeneration {
+            slots: Arc::new(StubSlots {
+                slot_count: 1,
+                values: HashMap::from([(
+                    0,
+                    SlotSnapshot::new(20.0, 2_000, aether_domain::PointQuality::Good),
+                )]),
+            }),
+            manifest: new_manifest,
+            routing: Arc::new(AlarmRouting::default()),
+            channel_health: Arc::new(NoChannelHealth),
+            topology: None,
+            digest: 1,
+        }));
+
+        let replacement_rule = rule("io", 20, "T", 0);
+        assert_eq!(
+            source
+                .watched_slot(&replacement_rule)
+                .expect("replacement slot"),
+            Some(0)
+        );
+        assert_eq!(
+            source
+                .watched_address(&replacement_rule)
+                .expect("replacement address"),
+            Some(new_address)
+        );
+        assert_eq!(validated.address(), old_address);
+        assert_ne!(validated.address(), new_address);
     }
 
     #[test]
@@ -753,14 +867,15 @@ mod tests {
         let first_epoch = 100;
         let first_publication =
             begin_topology_publication(&point_path).expect("begin initial publication");
-        let point_writer = ShmWriterHandle::create_published_at_epoch(
+        let point_writer = ShmWriterHandle::create(
             ShmRuntimeConfig::new(&point_path, 32),
             Arc::new(first.point_manifest().clone()),
+            None,
             None,
             first_epoch,
         )
         .expect("publish initial point plane");
-        let health_writer = ShmChannelHealthWriterHandle::create_at_epoch(
+        let health_writer = ShmChannelHealthWriterHandle::create(
             &health_path,
             Arc::new(first.health_manifest().clone()),
             first_epoch,
@@ -785,9 +900,17 @@ mod tests {
             .acquisition_writer()
             .commit_batch(&[first_sample])
             .expect("write initial point");
+        point_writer
+            .generation()
+            .expect("initial point generation")
+            .acquisition_writer()
+            .update_heartbeat(first_timestamp.get());
         health_writer
             .set_online(10, true, first_timestamp.get())
             .expect("write initial health");
+        health_writer
+            .update_heartbeat(first_timestamp.get())
+            .expect("write initial health heartbeat");
 
         let source = super::build_shm_alarm_source(&pool, &config)
             .await
@@ -812,7 +935,8 @@ mod tests {
                 .value(),
             1.0
         );
-        let old_event = PointWatchEvent::new(10, PointKind::Telemetry, 0, 0, 10.0, 10.0, 1_000, 1);
+        let old_event =
+            PointWatchEvent::new(10, PointKind::Telemetry, 0, 0).expect("initial PointWatch event");
         assert!(source.accepts_point_watch_event(old_event));
 
         for statement in [
@@ -832,7 +956,7 @@ mod tests {
         let partial_publication =
             begin_topology_publication(&point_path).expect("begin replacement publication");
         point_writer
-            .rebuild_for_publication(Arc::new(second.point_manifest().clone()), second_epoch)
+            .rebuild(Arc::new(second.point_manifest().clone()), second_epoch)
             .expect("publish replacement point plane");
         drop(partial_publication);
 
@@ -846,12 +970,15 @@ mod tests {
         let second_publication =
             begin_topology_publication(&point_path).expect("resume replacement publication");
         health_writer
-            .rebuild_for_publication(Arc::new(second.health_manifest().clone()), second_epoch)
+            .rebuild(Arc::new(second.health_manifest().clone()), second_epoch)
             .expect("publish replacement health plane");
         let second_timestamp = TimestampMs::new(aether_shm_bridge::timestamp_ms());
         health_writer
             .set_online(5, false, second_timestamp.get())
             .expect("write replacement health");
+        health_writer
+            .update_heartbeat(second_timestamp.get())
+            .expect("write replacement health heartbeat");
         let second_sample = AcquiredPointSample::new(
             ChannelPointAddress::new(ChannelId::new(5), PointKind::Telemetry, PointId::new(0))
                 .expect("replacement address"),
@@ -867,6 +994,11 @@ mod tests {
             .acquisition_writer()
             .commit_batch(&[second_sample])
             .expect("write replacement point");
+        point_writer
+            .generation()
+            .expect("replacement point generation")
+            .acquisition_writer()
+            .update_heartbeat(second_timestamp.get());
         second_publication
             .commit(&health_path, second_epoch)
             .expect("commit replacement publication");
@@ -889,15 +1021,11 @@ mod tests {
             0.0
         );
         assert!(!source.accepts_point_watch_event(old_event));
-        assert!(source.accepts_point_watch_event(PointWatchEvent::new(
-            5,
-            PointKind::Telemetry,
-            0,
-            0,
-            50.0,
-            50.0,
-            2_000,
-            1,
-        )));
+        assert!(
+            source.accepts_point_watch_event(
+                PointWatchEvent::new(5, PointKind::Telemetry, 0, 0)
+                    .expect("replacement PointWatch event")
+            )
+        );
     }
 }

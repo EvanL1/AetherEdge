@@ -9,31 +9,22 @@ use std::path::{Path, PathBuf};
 use crate::core::authority::AuthorityWriteGuard;
 use crate::{DataplaneError, DataplaneResult};
 
-/// Magic number for validation: "AETHER_" in ASCII.
-pub const SHARED_MAGIC: u64 = 0x564F4C544147455F;
-
-/// Default snapshot interval in seconds (5 minutes).
-pub const DEFAULT_SNAPSHOT_INTERVAL_SECS: u64 = 300;
-
 /// Default shared memory file path (Docker tmpfs mount point).
-///
-/// Kept for backward compatibility — prefer [`default_shm_path`] for
-/// intelligent path selection.
-pub const DEFAULT_SHM_PATH: &str = "/shm/rtdb/aether-rtdb.shm";
+const DEFAULT_SHM_PATH: &str = "/shm/aether/aether-live-state.shm";
 
 /// Get the default shared memory path with intelligent fallback.
 ///
 /// Priority:
 /// 1. `AETHER_SHM_PATH` environment variable (if set)
-/// 2. Docker tmpfs mount point `/shm/rtdb/aether-rtdb.shm` (if exists)
-/// 3. Linux RAM-backed tmpfs `/dev/shm/aether-rtdb.shm`
-/// 4. Fallback to `/tmp/aether-rtdb.shm` (macOS or other platforms)
+/// 2. Docker tmpfs mount point `/shm/aether/aether-live-state.shm` (if exists)
+/// 3. Linux RAM-backed tmpfs `/dev/shm/aether-live-state.shm`
+/// 4. Fallback to `/tmp/aether-live-state.shm` (macOS or other platforms)
 pub fn default_shm_path() -> PathBuf {
     if let Ok(path) = std::env::var("AETHER_SHM_PATH") {
         return PathBuf::from(path);
     }
 
-    let docker_path = Path::new("/shm/rtdb");
+    let docker_path = Path::new("/shm/aether");
     if docker_path.exists() {
         return PathBuf::from(DEFAULT_SHM_PATH);
     }
@@ -42,11 +33,11 @@ pub fn default_shm_path() -> PathBuf {
     {
         let dev_shm = Path::new("/dev/shm");
         if dev_shm.exists() {
-            return dev_shm.join("aether-rtdb.shm");
+            return dev_shm.join("aether-live-state.shm");
         }
     }
 
-    PathBuf::from("/tmp/aether-rtdb.shm")
+    PathBuf::from("/tmp/aether-live-state.shm")
 }
 
 /// Get current timestamp in milliseconds since UNIX epoch.
@@ -61,8 +52,8 @@ pub fn timestamp_ms() -> u64 {
 /// Compute the path for a per-generation SHM file given the canonical
 /// "current" path and a generation number.
 ///
-/// Convention: a base path of `/dev/shm/aether-rtdb.shm` with generation
-/// 42 yields `/dev/shm/aether-rtdb-42.shm`. The base path itself
+/// Convention: a base path of `/dev/shm/aether-live-state.shm` with generation
+/// 42 yields `/dev/shm/aether-live-state-42.shm`. The base path itself
 /// continues to refer to the "current" generation — atomic swaps land a
 /// freshly-created per-generation file at the base path via
 /// `rename(2)`, preserving the open file inode for any reader that
@@ -178,7 +169,7 @@ pub fn cleanup_orphan_generation_files(canonical: &Path) -> DataplaneResult<usiz
 /// The two paths must be on the same filesystem; otherwise `rename(2)`
 /// degrades to copy+unlink and loses atomicity. Both per-generation files
 /// and the canonical "current" file should live in the same SHM mount
-/// (typically `/dev/shm` or `/shm/rtdb`).
+/// (typically `/dev/shm` or `/shm/aether`).
 pub fn commit_generation_swap(staging_path: &Path, canonical_path: &Path) -> DataplaneResult<()> {
     let authority = AuthorityWriteGuard::acquire(canonical_path)?;
     commit_generation_swap_locked(staging_path, canonical_path, &authority)
@@ -211,8 +202,8 @@ mod tests {
 
     #[test]
     fn generation_path_appends_before_extension() {
-        let p = generation_file_path(Path::new("/dev/shm/aether-rtdb.shm"), 42);
-        assert_eq!(p, PathBuf::from("/dev/shm/aether-rtdb-42.shm"));
+        let p = generation_file_path(Path::new("/dev/shm/aether-live-state.shm"), 42);
+        assert_eq!(p, PathBuf::from("/dev/shm/aether-live-state-42.shm"));
     }
 
     #[test]
@@ -245,7 +236,7 @@ mod tests {
     #[test]
     fn commit_swap_renames_atomically() {
         let dir = tempfile::tempdir().unwrap();
-        let canonical = dir.path().join("aether-rtdb.shm");
+        let canonical = dir.path().join("aether-live-state.shm");
         let staging = generation_file_path(&canonical, 1);
 
         // Pre-populate canonical to simulate a "current" file already in
@@ -265,7 +256,7 @@ mod tests {
     #[test]
     fn cleanup_orphan_removes_matching_files_only() {
         let dir = tempfile::tempdir().unwrap();
-        let canonical = dir.path().join("aether-rtdb.shm");
+        let canonical = dir.path().join("aether-live-state.shm");
 
         // Plant a mix:
         //   - canonical itself (must be preserved)
@@ -273,10 +264,18 @@ mod tests {
         //   - a similar-prefix-but-not-numeric file (must be preserved)
         //   - a different-prefix file (must be preserved)
         std::fs::write(&canonical, b"current").unwrap();
-        std::fs::write(dir.path().join("aether-rtdb-1.shm"), b"orphan1").unwrap();
-        std::fs::write(dir.path().join("aether-rtdb-42.shm"), b"orphan42").unwrap();
-        std::fs::write(dir.path().join("aether-rtdb-999999.shm"), b"orphan_big").unwrap();
-        std::fs::write(dir.path().join("aether-rtdb-alpha.shm"), b"non-numeric").unwrap();
+        std::fs::write(dir.path().join("aether-live-state-1.shm"), b"orphan1").unwrap();
+        std::fs::write(dir.path().join("aether-live-state-42.shm"), b"orphan42").unwrap();
+        std::fs::write(
+            dir.path().join("aether-live-state-999999.shm"),
+            b"orphan_big",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("aether-live-state-alpha.shm"),
+            b"non-numeric",
+        )
+        .unwrap();
         std::fs::write(dir.path().join("aether-other.shm"), b"unrelated").unwrap();
 
         let removed = cleanup_orphan_generation_files(&canonical).unwrap();
@@ -284,7 +283,7 @@ mod tests {
 
         assert!(canonical.exists(), "canonical must be preserved");
         assert!(
-            dir.path().join("aether-rtdb-alpha.shm").exists(),
+            dir.path().join("aether-live-state-alpha.shm").exists(),
             "non-numeric suffix must not match"
         );
         assert!(
@@ -293,7 +292,9 @@ mod tests {
         );
         for n in [1u32, 42, 999999] {
             assert!(
-                !dir.path().join(format!("aether-rtdb-{n}.shm")).exists(),
+                !dir.path()
+                    .join(format!("aether-live-state-{n}.shm"))
+                    .exists(),
                 "orphan {n} should be removed"
             );
         }
@@ -303,14 +304,14 @@ mod tests {
     fn cleanup_orphan_returns_zero_when_dir_missing() {
         // Canonical path under a non-existent directory — read_dir errors
         // with NotFound, which the helper turns into Ok(0).
-        let canonical = std::path::PathBuf::from("/tmp/does-not-exist-step3/aether-rtdb.shm");
+        let canonical = std::path::PathBuf::from("/tmp/does-not-exist-step3/aether-live-state.shm");
         assert_eq!(cleanup_orphan_generation_files(&canonical).unwrap(), 0);
     }
 
     #[test]
     fn commit_swap_works_when_canonical_missing() {
         let dir = tempfile::tempdir().unwrap();
-        let canonical = dir.path().join("aether-rtdb.shm");
+        let canonical = dir.path().join("aether-live-state.shm");
         let staging = generation_file_path(&canonical, 1);
 
         std::fs::write(&staging, b"NEW").unwrap();

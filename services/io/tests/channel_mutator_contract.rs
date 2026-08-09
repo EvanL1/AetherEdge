@@ -376,7 +376,7 @@ async fn governed_physical_mutations_reject_zero_poll_interval_before_commit_or_
         .expect("valid enabled channel");
     let calls_before_update = runtime.calls();
     let update_error = mutator
-        .mutate(ChannelMutation::update_with_revision(
+        .mutate(ChannelMutation::update(
             ChannelId::new(37),
             ChannelRevision::new(1),
             ChannelPatch::new().with_parameters(poll_zero),
@@ -404,14 +404,15 @@ async fn governed_physical_mutations_reject_zero_poll_interval_before_commit_or_
         .expect("valid disabled channel");
     sqlx::query(
         "UPDATE channels \
-         SET config = '{\"parameters\":{\"host\":\"127.0.0.1\",\"port\":502,\"poll_interval_ms\":0}}' \
+         SET config = '{\"parameters\":{\"host\":\"127.0.0.1\",\"port\":502,\"poll_interval_ms\":0}}', \
+             revision = revision + 1 \
          WHERE channel_id = 38",
     )
     .execute(&pool)
     .await
-    .expect("stage invalid legacy desired state");
+    .expect("stage invalid revisioned desired state");
     let enable_error = mutator
-        .mutate(ChannelMutation::enable_with_revision(
+        .mutate(ChannelMutation::enable(
             ChannelId::new(38),
             ChannelRevision::new(2),
         ))
@@ -536,7 +537,7 @@ async fn auto_id_allocation_uses_lowest_free_identity_without_reusing_tombstones
         .await
         .expect("create identity that will be tombstoned");
     mutator
-        .mutate(ChannelMutation::delete_with_revision(
+        .mutate(ChannelMutation::delete(
             ChannelId::new(1),
             ChannelRevision::new(1),
         ))
@@ -560,16 +561,16 @@ async fn auto_id_allocation_uses_lowest_free_identity_without_reusing_tombstones
 }
 
 #[tokio::test]
-async fn explicit_zero_channel_identity_remains_compatible_while_auto_allocation_starts_at_one() {
+async fn explicit_zero_channel_identity_is_rejected_while_auto_allocation_starts_at_one() {
     let pool = test_pool().await;
     let runtime = Arc::new(FakeRuntime::default());
     let mutator = adapter(pool.clone(), runtime);
 
-    let explicit = mutator
+    let error = mutator
         .mutate(ChannelMutation::create(definition(0, false)))
         .await
-        .expect("explicit zero remains a valid historical identity");
-    assert_eq!(explicit.channel_id(), ChannelId::new(0));
+        .expect_err("explicit zero must be rejected");
+    assert_eq!(error.kind(), PortErrorKind::InvalidData);
     let automatic = mutator
         .mutate(ChannelMutation::create(auto_definition("automatic-one")))
         .await
@@ -647,7 +648,7 @@ async fn committed_activation_failure_is_an_accepted_degraded_projection() {
 }
 
 #[tokio::test]
-async fn revision_trigger_covers_legacy_updates_without_double_incrementing_cas_updates() {
+async fn unrevisioned_updates_are_rejected_and_cas_updates_advance_once() {
     let pool = test_pool().await;
     let runtime = Arc::new(FakeRuntime::default());
     let mutator = adapter(pool.clone(), runtime);
@@ -656,18 +657,26 @@ async fn revision_trigger_covers_legacy_updates_without_double_incrementing_cas_
         .await
         .expect("create channel");
 
-    sqlx::query("UPDATE channels SET name = 'legacy-writer' WHERE channel_id = 9")
+    let error = sqlx::query("UPDATE channels SET name = 'unrevisioned' WHERE channel_id = 9")
         .execute(&pool)
         .await
-        .expect("legacy update");
+        .expect_err("unrevisioned update must fail");
+    assert!(error.to_string().contains("requires explicit revision"));
+    sqlx::query(
+        "UPDATE channels SET name = 'revisioned-writer', revision = revision + 1 \
+         WHERE channel_id = 9 AND revision = 1",
+    )
+    .execute(&pool)
+    .await
+    .expect("revisioned external update");
     let revision: i64 = sqlx::query_scalar("SELECT revision FROM channels WHERE channel_id = 9")
         .fetch_one(&pool)
         .await
-        .expect("legacy revision");
+        .expect("external revision");
     assert_eq!(revision, 2);
 
     let stale = mutator
-        .mutate(ChannelMutation::update_with_revision(
+        .mutate(ChannelMutation::update(
             ChannelId::new(9),
             ChannelRevision::new(1),
             ChannelPatch::new().with_name("stale"),
@@ -677,7 +686,7 @@ async fn revision_trigger_covers_legacy_updates_without_double_incrementing_cas_
     assert_eq!(stale.kind(), PortErrorKind::Conflict);
 
     let receipt = mutator
-        .mutate(ChannelMutation::update_with_revision(
+        .mutate(ChannelMutation::update(
             ChannelId::new(9),
             ChannelRevision::new(2),
             ChannelPatch::new().with_name("governed-writer"),
@@ -693,7 +702,7 @@ async fn revision_trigger_covers_legacy_updates_without_double_incrementing_cas_
 }
 
 #[tokio::test]
-async fn revisionless_compatibility_updates_are_serialized_by_channel() {
+async fn concurrent_updates_with_one_expected_revision_have_one_winner() {
     let pool = test_pool().await;
     let runtime = Arc::new(FakeRuntime::default());
     let mutator = adapter(pool.clone(), runtime);
@@ -708,7 +717,8 @@ async fn revisionless_compatibility_updates_are_serialized_by_channel() {
             mutator
                 .mutate(ChannelMutation::update(
                     ChannelId::new(21),
-                    ChannelPatch::new().with_name("revisionless-a"),
+                    ChannelRevision::new(1),
+                    ChannelPatch::new().with_name("concurrent-a"),
                 ))
                 .await
         })
@@ -719,19 +729,31 @@ async fn revisionless_compatibility_updates_are_serialized_by_channel() {
             mutator
                 .mutate(ChannelMutation::update(
                     ChannelId::new(21),
-                    ChannelPatch::new().with_name("revisionless-b"),
+                    ChannelRevision::new(1),
+                    ChannelPatch::new().with_name("concurrent-b"),
                 ))
                 .await
         })
     };
 
-    first.await.expect("first task").expect("first update");
-    second.await.expect("second task").expect("second update");
+    let results = [
+        first.await.expect("first task"),
+        second.await.expect("second task"),
+    ];
+    assert_eq!(results.iter().filter(|result| result.is_ok()).count(), 1);
+    assert_eq!(
+        results
+            .iter()
+            .filter_map(|result| result.as_ref().err())
+            .filter(|error| error.kind() == PortErrorKind::Conflict)
+            .count(),
+        1
+    );
     let revision: i64 = sqlx::query_scalar("SELECT revision FROM channels WHERE channel_id = 21")
         .fetch_one(&pool)
         .await
         .expect("resulting revision");
-    assert_eq!(revision, 3);
+    assert_eq!(revision, 2);
 }
 
 #[tokio::test]
@@ -746,7 +768,7 @@ async fn enable_reconciles_runtime_drift_even_when_desired_value_is_unchanged() 
     runtime.set_active(10, false);
 
     let receipt = mutator
-        .mutate(ChannelMutation::enable_with_revision(
+        .mutate(ChannelMutation::enable(
             ChannelId::new(10),
             ChannelRevision::new(1),
         ))
@@ -772,7 +794,7 @@ async fn same_state_enable_rebuilds_a_present_but_stale_runtime_projection() {
         .expect("create enabled channel");
     runtime.set_runtime_name(18, "stale-runtime-name");
     let receipt = mutator
-        .mutate(ChannelMutation::enable_with_revision(
+        .mutate(ChannelMutation::enable(
             ChannelId::new(18),
             ChannelRevision::new(1),
         ))
@@ -800,7 +822,7 @@ async fn same_state_enable_rebuilds_a_present_but_stale_runtime_projection() {
 }
 
 #[tokio::test]
-async fn same_state_reconcile_reports_latest_desired_fact_when_legacy_writer_races() {
+async fn same_state_reconcile_reports_latest_desired_fact_when_revisioned_writer_races() {
     let pool = test_pool().await;
     let runtime = Arc::new(FakeRuntime::default());
     let mutator = Arc::new(adapter(pool.clone(), Arc::clone(&runtime)));
@@ -814,7 +836,7 @@ async fn same_state_reconcile_reports_latest_desired_fact_when_legacy_writer_rac
         let mutator = Arc::clone(&mutator);
         tokio::spawn(async move {
             mutator
-                .mutate(ChannelMutation::enable_with_revision(
+                .mutate(ChannelMutation::enable(
                     ChannelId::new(25),
                     ChannelRevision::new(1),
                 ))
@@ -824,10 +846,13 @@ async fn same_state_reconcile_reports_latest_desired_fact_when_legacy_writer_rac
     tokio::time::timeout(Duration::from_secs(2), pause.entered.notified())
         .await
         .expect("same-state activation reached pause");
-    sqlx::query("UPDATE channels SET name = 'external-new-name' WHERE channel_id = 25")
-        .execute(&pool)
-        .await
-        .expect("racing legacy desired update");
+    sqlx::query(
+        "UPDATE channels SET name = 'external-new-name', revision = revision + 1 \
+         WHERE channel_id = 25",
+    )
+    .execute(&pool)
+    .await
+    .expect("racing revisioned desired update");
     pause.release.notify_one();
 
     let receipt = tokio::time::timeout(Duration::from_secs(2), reconcile)
@@ -855,7 +880,7 @@ async fn same_state_reconcile_reports_latest_desired_fact_when_legacy_writer_rac
 }
 
 #[tokio::test]
-async fn create_reports_latest_desired_fact_when_legacy_writer_races_activation() {
+async fn create_reports_latest_desired_fact_when_revisioned_writer_races_activation() {
     let pool = test_pool().await;
     let runtime = Arc::new(FakeRuntime::default());
     let mutator = Arc::new(adapter(pool.clone(), Arc::clone(&runtime)));
@@ -872,10 +897,13 @@ async fn create_reports_latest_desired_fact_when_legacy_writer_races_activation(
     tokio::time::timeout(Duration::from_secs(2), pause.entered.notified())
         .await
         .expect("create activation reached pause");
-    sqlx::query("UPDATE channels SET name = 'external-create-name' WHERE channel_id = 27")
-        .execute(&pool)
-        .await
-        .expect("racing legacy desired update");
+    sqlx::query(
+        "UPDATE channels SET name = 'external-create-name', revision = revision + 1 \
+         WHERE channel_id = 27",
+    )
+    .execute(&pool)
+    .await
+    .expect("racing revisioned desired update");
     pause.release.notify_one();
 
     let receipt = tokio::time::timeout(Duration::from_secs(2), create)
@@ -901,7 +929,7 @@ async fn create_reports_latest_desired_fact_when_legacy_writer_races_activation(
 }
 
 #[tokio::test]
-async fn update_reports_latest_desired_fact_when_legacy_writer_races_activation() {
+async fn update_reports_latest_desired_fact_when_revisioned_writer_races_activation() {
     let pool = test_pool().await;
     let runtime = Arc::new(FakeRuntime::default());
     let mutator = Arc::new(adapter(pool.clone(), Arc::clone(&runtime)));
@@ -915,7 +943,7 @@ async fn update_reports_latest_desired_fact_when_legacy_writer_races_activation(
         let mutator = Arc::clone(&mutator);
         tokio::spawn(async move {
             mutator
-                .mutate(ChannelMutation::update_with_revision(
+                .mutate(ChannelMutation::update(
                     ChannelId::new(28),
                     ChannelRevision::new(1),
                     ChannelPatch::new().with_name("governed-update-name"),
@@ -926,10 +954,13 @@ async fn update_reports_latest_desired_fact_when_legacy_writer_races_activation(
     tokio::time::timeout(Duration::from_secs(2), pause.entered.notified())
         .await
         .expect("update activation reached pause");
-    sqlx::query("UPDATE channels SET name = 'external-update-name' WHERE channel_id = 28")
-        .execute(&pool)
-        .await
-        .expect("racing legacy desired update");
+    sqlx::query(
+        "UPDATE channels SET name = 'external-update-name', revision = revision + 1 \
+         WHERE channel_id = 28",
+    )
+    .execute(&pool)
+    .await
+    .expect("racing revisioned desired update");
     pause.release.notify_one();
 
     let receipt = tokio::time::timeout(Duration::from_secs(2), update)
@@ -955,7 +986,7 @@ async fn update_reports_latest_desired_fact_when_legacy_writer_races_activation(
 }
 
 #[tokio::test]
-async fn enable_reports_latest_desired_fact_when_legacy_writer_races_activation() {
+async fn enable_reports_latest_desired_fact_when_revisioned_writer_races_activation() {
     let pool = test_pool().await;
     let runtime = Arc::new(FakeRuntime::default());
     let mutator = Arc::new(adapter(pool.clone(), Arc::clone(&runtime)));
@@ -969,7 +1000,7 @@ async fn enable_reports_latest_desired_fact_when_legacy_writer_races_activation(
         let mutator = Arc::clone(&mutator);
         tokio::spawn(async move {
             mutator
-                .mutate(ChannelMutation::enable_with_revision(
+                .mutate(ChannelMutation::enable(
                     ChannelId::new(29),
                     ChannelRevision::new(1),
                 ))
@@ -979,10 +1010,13 @@ async fn enable_reports_latest_desired_fact_when_legacy_writer_races_activation(
     tokio::time::timeout(Duration::from_secs(2), pause.entered.notified())
         .await
         .expect("enable activation reached pause");
-    sqlx::query("UPDATE channels SET name = 'external-enable-name' WHERE channel_id = 29")
-        .execute(&pool)
-        .await
-        .expect("racing legacy desired update");
+    sqlx::query(
+        "UPDATE channels SET name = 'external-enable-name', revision = revision + 1 \
+         WHERE channel_id = 29",
+    )
+    .execute(&pool)
+    .await
+    .expect("racing revisioned desired update");
     pause.release.notify_one();
 
     let receipt = tokio::time::timeout(Duration::from_secs(2), enable)
@@ -1016,13 +1050,16 @@ async fn runtime_validation_blocks_enable_but_never_blocks_safe_disable() {
         .mutate(ChannelMutation::create(definition(23, true)))
         .await
         .expect("create enabled channel");
-    sqlx::query("UPDATE channels SET protocol = 'rejected' WHERE channel_id = 23")
-        .execute(&pool)
-        .await
-        .expect("inject adapter validation failure");
+    sqlx::query(
+        "UPDATE channels SET protocol = 'rejected', revision = revision + 1 \
+         WHERE channel_id = 23",
+    )
+    .execute(&pool)
+    .await
+    .expect("inject adapter validation failure");
 
     let disabled = mutator
-        .mutate(ChannelMutation::disable_with_revision(
+        .mutate(ChannelMutation::disable(
             ChannelId::new(23),
             ChannelRevision::new(2),
         ))
@@ -1036,7 +1073,7 @@ async fn runtime_validation_blocks_enable_but_never_blocks_safe_disable() {
     assert!(!runtime.is_active(23));
 
     let error = mutator
-        .mutate(ChannelMutation::enable_with_revision(
+        .mutate(ChannelMutation::enable(
             ChannelId::new(23),
             ChannelRevision::new(3),
         ))
@@ -1060,13 +1097,13 @@ async fn malformed_persisted_config_never_blocks_safe_disable() {
         .mutate(ChannelMutation::create(definition(30, true)))
         .await
         .expect("create enabled channel");
-    sqlx::query("UPDATE channels SET config = '{' WHERE channel_id = 30")
+    sqlx::query("UPDATE channels SET config = '{', revision = revision + 1 WHERE channel_id = 30")
         .execute(&pool)
         .await
-        .expect("inject malformed legacy config");
+        .expect("inject malformed revisioned config");
 
     let receipt = mutator
-        .mutate(ChannelMutation::disable_with_revision(
+        .mutate(ChannelMutation::disable(
             ChannelId::new(30),
             ChannelRevision::new(2),
         ))
@@ -1091,13 +1128,13 @@ async fn malformed_persisted_config_never_blocks_safe_delete() {
         .mutate(ChannelMutation::create(definition(31, true)))
         .await
         .expect("create enabled channel");
-    sqlx::query("UPDATE channels SET config = '{' WHERE channel_id = 31")
+    sqlx::query("UPDATE channels SET config = '{', revision = revision + 1 WHERE channel_id = 31")
         .execute(&pool)
         .await
-        .expect("inject malformed legacy config");
+        .expect("inject malformed revisioned config");
 
     let receipt = mutator
-        .mutate(ChannelMutation::delete_with_revision(
+        .mutate(ChannelMutation::delete(
             ChannelId::new(31),
             ChannelRevision::new(2),
         ))
@@ -1131,7 +1168,7 @@ async fn update_commits_desired_config_and_reports_runtime_reconcile_failure() {
     runtime.fail_next_ensure();
 
     let receipt = mutator
-        .mutate(ChannelMutation::update_with_revision(
+        .mutate(ChannelMutation::update(
             ChannelId::new(11),
             ChannelRevision::new(1),
             ChannelPatch::new().with_name("updated-channel"),
@@ -1163,7 +1200,7 @@ async fn update_merges_parameter_keys_replaces_logging_and_restores_typed_runtim
         .expect("create disabled channel");
 
     let receipt = mutator
-        .mutate(ChannelMutation::update_with_revision(
+        .mutate(ChannelMutation::update(
             ChannelId::new(17),
             ChannelRevision::new(1),
             ChannelPatch::new()
@@ -1195,7 +1232,7 @@ async fn update_merges_parameter_keys_replaces_logging_and_restores_typed_runtim
     assert!(config["logging"]["file"].is_null());
 
     let enabled = mutator
-        .mutate(ChannelMutation::enable_with_revision(
+        .mutate(ChannelMutation::enable(
             ChannelId::new(17),
             ChannelRevision::new(2),
         ))
@@ -1229,7 +1266,7 @@ async fn disable_fences_first_and_restores_runtime_when_database_rejects_commit(
     .expect("failure trigger");
 
     let error = mutator
-        .mutate(ChannelMutation::disable_with_revision(
+        .mutate(ChannelMutation::disable(
             ChannelId::new(12),
             ChannelRevision::new(1),
         ))
@@ -1267,7 +1304,7 @@ async fn disable_conflict_never_restores_stale_runtime_over_newer_disabled_desir
         let mutator = Arc::clone(&mutator);
         tokio::spawn(async move {
             mutator
-                .mutate(ChannelMutation::disable_with_revision(
+                .mutate(ChannelMutation::disable(
                     ChannelId::new(32),
                     ChannelRevision::new(1),
                 ))
@@ -1277,10 +1314,10 @@ async fn disable_conflict_never_restores_stale_runtime_over_newer_disabled_desir
     tokio::time::timeout(Duration::from_secs(2), pause.entered.notified())
         .await
         .expect("disable fence reached pause");
-    sqlx::query("UPDATE channels SET enabled = 0 WHERE channel_id = 32")
+    sqlx::query("UPDATE channels SET enabled = 0, revision = revision + 1 WHERE channel_id = 32")
         .execute(&pool)
         .await
-        .expect("newer legacy disable");
+        .expect("newer revisioned disable");
     pause.release.notify_one();
 
     let error = tokio::time::timeout(Duration::from_secs(2), disable)
@@ -1316,7 +1353,7 @@ async fn delete_conflict_never_restores_runtime_for_a_recreated_identity() {
         let mutator = Arc::clone(&mutator);
         tokio::spawn(async move {
             mutator
-                .mutate(ChannelMutation::delete_with_revision(
+                .mutate(ChannelMutation::delete(
                     ChannelId::new(33),
                     ChannelRevision::new(1),
                 ))
@@ -1326,14 +1363,20 @@ async fn delete_conflict_never_restores_runtime_for_a_recreated_identity() {
     tokio::time::timeout(Duration::from_secs(2), pause.entered.notified())
         .await
         .expect("delete fence reached pause");
+    sqlx::query(
+        "INSERT INTO channel_revision_tombstones (channel_id, last_revision) VALUES (33, 2)",
+    )
+    .execute(&pool)
+    .await
+    .expect("prepare external delete tombstone");
     sqlx::query("DELETE FROM channels WHERE channel_id = 33")
         .execute(&pool)
         .await
         .expect("external delete");
     sqlx::query(
-        "INSERT INTO channels (channel_id, name, protocol, enabled, config) \
+        "INSERT INTO channels (channel_id, name, protocol, enabled, config, revision) \
          VALUES (33, 'replacement', 'modbus_tcp', 0, \
-                 '{\"parameters\":{\"host\":\"127.0.0.1\",\"port\":502}}')",
+                 '{\"parameters\":{\"host\":\"127.0.0.1\",\"port\":502}}', 3)",
     )
     .execute(&pool)
     .await
@@ -1388,7 +1431,7 @@ async fn delete_refuses_action_routes_without_fencing_or_cascading_them() {
     let calls_before = runtime.calls();
 
     let error = mutator
-        .mutate(ChannelMutation::delete_with_revision(
+        .mutate(ChannelMutation::delete(
             ChannelId::new(13),
             ChannelRevision::new(1),
         ))
@@ -1440,7 +1483,7 @@ async fn delete_refuses_measurement_routes_without_fencing_or_cascading_them() {
     let calls_before = runtime.calls();
 
     let error = mutator
-        .mutate(ChannelMutation::delete_with_revision(
+        .mutate(ChannelMutation::delete(
             ChannelId::new(15),
             ChannelRevision::new(1),
         ))
@@ -1496,7 +1539,7 @@ async fn delete_is_atomic_for_owned_rows_and_leaves_no_runtime_zombie() {
     .expect("channel routing row");
 
     let receipt = mutator
-        .mutate(ChannelMutation::delete_with_revision(
+        .mutate(ChannelMutation::delete(
             ChannelId::new(14),
             ChannelRevision::new(1),
         ))
@@ -1535,7 +1578,7 @@ async fn delete_and_recreate_advances_revision_so_old_cas_tokens_cannot_hit_new_
     assert_eq!(created.resulting_revision(), ChannelRevision::new(1));
 
     let deleted = mutator
-        .mutate(ChannelMutation::delete_with_revision(
+        .mutate(ChannelMutation::delete(
             ChannelId::new(26),
             ChannelRevision::new(1),
         ))
@@ -1560,7 +1603,7 @@ async fn delete_and_recreate_advances_revision_so_old_cas_tokens_cannot_hit_new_
 
     for stale in [ChannelRevision::new(1), ChannelRevision::new(2)] {
         let error = mutator
-            .mutate(ChannelMutation::update_with_revision(
+            .mutate(ChannelMutation::update(
                 ChannelId::new(26),
                 stale,
                 ChannelPatch::new().with_name("must-not-hit-new-entity"),
@@ -1603,7 +1646,7 @@ async fn delete_database_failure_rolls_back_owned_rows_and_restores_runtime() {
     .expect("failure trigger");
 
     let error = mutator
-        .mutate(ChannelMutation::delete_with_revision(
+        .mutate(ChannelMutation::delete(
             ChannelId::new(22),
             ChannelRevision::new(1),
         ))
@@ -1639,7 +1682,7 @@ async fn fence_failure_prevents_disable_commit() {
     runtime.fail_next_fence();
 
     let error = mutator
-        .mutate(ChannelMutation::disable_with_revision(
+        .mutate(ChannelMutation::disable(
             ChannelId::new(15),
             ChannelRevision::new(1),
         ))
@@ -1665,13 +1708,37 @@ async fn exhausted_revision_fails_permanently_without_mutating_state() {
         .mutate(ChannelMutation::create(definition(16, false)))
         .await
         .expect("create channel");
-    sqlx::query("UPDATE channels SET revision = 9223372036854775807 WHERE channel_id = 16")
+    let stored: (String, String, bool, String) = sqlx::query_as(
+        "SELECT name, protocol, enabled, config FROM channels WHERE channel_id = 16",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("stored channel");
+    sqlx::query(
+        "INSERT INTO channel_revision_tombstones (channel_id, last_revision) VALUES (16, 2)",
+    )
+    .execute(&pool)
+    .await
+    .expect("prepare replacement tombstone");
+    sqlx::query("DELETE FROM channels WHERE channel_id = 16")
         .execute(&pool)
         .await
-        .expect("exhaust revision");
+        .expect("remove initial channel");
+    sqlx::query(
+        "INSERT INTO channels \
+         (channel_id, name, protocol, enabled, config, revision) \
+         VALUES (16, ?, ?, ?, ?, 9223372036854775807)",
+    )
+    .bind(stored.0)
+    .bind(stored.1)
+    .bind(stored.2)
+    .bind(stored.3)
+    .execute(&pool)
+    .await
+    .expect("stage exhausted revision");
 
     let error = mutator
-        .mutate(ChannelMutation::update_with_revision(
+        .mutate(ChannelMutation::update(
             ChannelId::new(16),
             ChannelRevision::new(i64::MAX as u64),
             ChannelPatch::new().with_name("must-not-commit"),
@@ -1765,10 +1832,13 @@ async fn bulk_reconciliation_uses_one_snapshot_generation_and_fences_revision_dr
     };
     pause.entered.notified().await;
 
-    sqlx::query("UPDATE channels SET name = 'latest-channel-8' WHERE channel_id = 8")
-        .execute(&pool)
-        .await
-        .expect("legacy desired-state update");
+    sqlx::query(
+        "UPDATE channels SET name = 'latest-channel-8', revision = revision + 1 \
+         WHERE channel_id = 8",
+    )
+    .execute(&pool)
+    .await
+    .expect("revisioned desired-state update");
     pause.release.notify_one();
 
     let receipt = reconcile
@@ -1911,7 +1981,7 @@ async fn single_reconciliation_and_mutation_share_the_channel_lifecycle_gate() {
         let adapter = Arc::clone(&adapter);
         tokio::spawn(async move {
             adapter
-                .mutate(ChannelMutation::update_with_revision(
+                .mutate(ChannelMutation::update(
                     ChannelId::new(12),
                     ChannelRevision::new(1),
                     ChannelPatch::new().with_name("latest-name"),

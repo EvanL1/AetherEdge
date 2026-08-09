@@ -99,9 +99,8 @@ impl ChannelRuntimeLifecycle for ChannelManager {
 
 /// Default SQLite implementation of [`ChannelMutator`].
 ///
-/// Compatibility mutations without a revision are still serialized by
-/// channel. Explicit revisions are also checked in SQL, preventing a staged
-/// legacy writer from being silently overwritten.
+/// Every existing-resource mutation carries an explicit revision and commits
+/// through a SQL compare-and-set.
 #[derive(Clone)]
 pub struct SqliteChannelMutator {
     pool: SqlitePool,
@@ -296,7 +295,7 @@ impl SqliteChannelMutator {
     async fn update(
         &self,
         channel_id: ChannelId,
-        expected_revision: Option<ChannelRevision>,
+        expected_revision: ChannelRevision,
         patch: ChannelPatch,
     ) -> PortResult<ChannelMutationReceipt> {
         validate_channel_id(channel_id)?;
@@ -350,7 +349,7 @@ impl SqliteChannelMutator {
     async fn set_enabled(
         &self,
         channel_id: ChannelId,
-        expected_revision: Option<ChannelRevision>,
+        expected_revision: ChannelRevision,
         enabled: bool,
     ) -> PortResult<ChannelMutationReceipt> {
         validate_channel_id(channel_id)?;
@@ -360,7 +359,7 @@ impl SqliteChannelMutator {
         let stored = load_channel(&self.pool, channel_id).await?;
         verify_expected_revision(expected_revision, stored.revision)?;
         // Safety shutdown must remain possible when a protocol was removed or
-        // a staged legacy writer left malformed activation configuration.
+        // persisted activation configuration is malformed.
         if enabled {
             let config = stored.to_config()?;
             self.runtime.validate(&config)?;
@@ -490,7 +489,7 @@ impl SqliteChannelMutator {
     async fn delete(
         &self,
         channel_id: ChannelId,
-        expected_revision: Option<ChannelRevision>,
+        expected_revision: ChannelRevision,
     ) -> PortResult<ChannelMutationReceipt> {
         validate_channel_id(channel_id)?;
         let lock = self.channel_lock(channel_id);
@@ -1222,8 +1221,8 @@ fn encode_config(config: &ChannelConfig) -> PortResult<String> {
 }
 
 fn validate_runtime_config(config: &ChannelConfig) -> PortResult<()> {
-    if config.id() >= MAX_CHANNEL_ID {
-        return Err(invalid("channel identity must be between 0 and 9999"));
+    if config.id() == 0 || config.id() >= MAX_CHANNEL_ID {
+        return Err(invalid("channel identity must be between 1 and 9999"));
     }
     crate::core::channels::validate_channel_config_for_runtime(config)
         .map_err(|_| invalid("channel parameters do not satisfy the IO runtime schema"))
@@ -1412,15 +1411,10 @@ async fn same_channel_entity(pool: &SqlitePool, initial: &StoredChannel) -> bool
     }
 }
 
-fn verify_expected_revision(
-    expected: Option<ChannelRevision>,
-    actual: ChannelRevision,
-) -> PortResult<()> {
-    if let Some(expected) = expected {
-        revision_i64(expected)?;
-        if expected != actual {
-            return Err(conflict("channel revision is stale"));
-        }
+fn verify_expected_revision(expected: ChannelRevision, actual: ChannelRevision) -> PortResult<()> {
+    revision_i64(expected)?;
+    if expected != actual {
+        return Err(conflict("channel revision is stale"));
     }
     Ok(())
 }
@@ -1453,8 +1447,8 @@ fn revision_i64(revision: ChannelRevision) -> PortResult<i64> {
 }
 
 fn validate_channel_id(channel_id: ChannelId) -> PortResult<()> {
-    if channel_id.get() >= MAX_CHANNEL_ID {
-        Err(invalid("channel identity must be less than 10000"))
+    if channel_id.get() == 0 || channel_id.get() >= MAX_CHANNEL_ID {
+        Err(invalid("channel identity must be between 1 and 9999"))
     } else {
         Ok(())
     }
@@ -1555,11 +1549,11 @@ mod tests {
 
     #[cfg(feature = "modbus")]
     #[test]
-    fn production_validator_keeps_explicit_zero_channel_identity_compatible() {
-        assert!(
+    fn production_validator_rejects_zero_channel_identity() {
+        let error =
             validate_runtime_config(&runtime_config(0, "modbus_tcp", modbus_tcp_parameters()))
-                .is_ok()
-        );
+                .expect_err("channel zero must be rejected");
+        assert_eq!(error.kind(), PortErrorKind::InvalidData);
     }
 
     #[cfg(feature = "modbus")]

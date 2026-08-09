@@ -9,7 +9,7 @@ use aether_domain::{
     ChannelCommandAddress, ChannelId, InstanceId, PointId, PointKind, TimestampMs,
 };
 use aether_ports::{
-    ActionRoute, ActionRouteKey, ActionRoutingMutation, ActionRoutingMutationReceipt, AuditOutcome,
+    ActionRoute, ActionRouteKey, ActionRoutingMutationReceipt, AuditOutcome,
     AutomationActionRoutingMutator, LogicalRoutingRevision, PortError, PortErrorKind, PortResult,
     RevisionedActionRoutingMutation,
 };
@@ -63,16 +63,6 @@ impl RecordingMutator {
 
 #[async_trait]
 impl AutomationActionRoutingMutator for RecordingMutator {
-    async fn mutate(
-        &self,
-        mutation: ActionRoutingMutation,
-    ) -> PortResult<ActionRoutingMutationReceipt> {
-        Err(PortError::new(
-            PortErrorKind::InvalidData,
-            format!("unexpected legacy mutation: {}", mutation.kind().as_str()),
-        ))
-    }
-
     async fn mutate_revisioned(
         &self,
         mutation: RevisionedActionRoutingMutation,

@@ -181,9 +181,13 @@ async fn make_request(
 
     let body = if governed_mutation {
         let mut body = body.unwrap_or_else(|| json!({}));
-        body.as_object_mut()
-            .expect("governed mutation body must be an object")
-            .insert("confirmed".to_string(), json!(true));
+        let object = body
+            .as_object_mut()
+            .expect("governed mutation body must be an object");
+        object.insert("confirmed".to_string(), json!(true));
+        object
+            .entry("expected_revision".to_string())
+            .or_insert_with(|| json!(1));
         Some(body)
     } else {
         body
@@ -234,11 +238,11 @@ async fn raw_mutation_request(
         request = request.header("authorization", format!("Bearer {}", access_token()));
     }
     let body = if method == "POST" && uri == "/api/rules" {
-        json!({ "name": "blocked", "confirmed": confirmed })
+        json!({ "name": "blocked", "expected_revision": 1, "confirmed": confirmed })
     } else if method == "PUT" {
-        json!({ "enabled": true, "confirmed": confirmed })
+        json!({ "enabled": true, "expected_revision": 1, "confirmed": confirmed })
     } else {
-        json!({ "confirmed": confirmed })
+        json!({ "expected_revision": 1, "confirmed": confirmed })
     };
     let response = app
         .clone()
@@ -344,6 +348,29 @@ async fn rules_http_exposes_revision_and_rejects_stale_explicit_cas() -> Result<
 }
 
 #[tokio::test]
+async fn rule_mutations_without_an_expected_revision_are_rejected_before_storage() -> Result<()> {
+    let (app, pool) =
+        create_test_app_with_audit(Arc::new(aether_store_local::MemoryAuditSink::new())).await?;
+    let request = Request::builder()
+        .method("POST")
+        .uri("/api/rules")
+        .header("content-type", "application/json")
+        .header("authorization", format!("Bearer {}", access_token()))
+        .header("x-request-id", uuid::Uuid::new_v4().to_string())
+        .body(Body::from(serde_json::to_vec(
+            &json!({"name": "missing-revision", "confirmed": true}),
+        )?))?;
+
+    let response = app.oneshot(request).await?;
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM rules")
+        .fetch_one(&pool)
+        .await?;
+    assert_eq!(count, 0);
+    Ok(())
+}
+
+#[tokio::test]
 async fn invalid_rule_update_rolls_back_the_revision_cas() -> Result<()> {
     let (app, pool) =
         create_test_app_with_audit(Arc::new(aether_store_local::MemoryAuditSink::new())).await?;
@@ -403,7 +430,8 @@ async fn test_list_rules_pagination() -> Result<()> {
     for i in 1..=5 {
         let create_req = json!({
             "name": format!("Test Rule {}", i),
-            "description": format!("Rule {} for pagination test", i)
+            "description": format!("Rule {} for pagination test", i),
+            "expected_revision": i
         });
         let (status, _) = make_request(&app, "POST", "/api/rules", Some(create_req)).await?;
         assert_eq!(status, StatusCode::OK);
@@ -476,8 +504,13 @@ async fn test_create_rule_sequential_ids() -> Result<()> {
     let id1 = body1["data"]["id"].as_i64().unwrap();
 
     // Create second rule
-    let (_, body2) =
-        make_request(&app, "POST", "/api/rules", Some(json!({"name": "Rule 2"}))).await?;
+    let (_, body2) = make_request(
+        &app,
+        "POST",
+        "/api/rules",
+        Some(json!({"name": "Rule 2", "expected_revision": 2})),
+    )
+    .await?;
     let id2 = body2["data"]["id"].as_i64().unwrap();
 
     // IDs should be sequential
@@ -546,7 +579,8 @@ async fn test_update_rule_name() -> Result<()> {
 
     // Update the rule
     let update_req = json!({
-        "name": "Updated Name"
+        "name": "Updated Name",
+        "expected_revision": 2
     });
     let (status, body) = make_request(
         &app,
@@ -577,7 +611,8 @@ async fn test_update_rule_priority() -> Result<()> {
 
     // Update priority
     let update_req = json!({
-        "priority": 50
+        "priority": 50,
+        "expected_revision": 2
     });
     let (status, _) = make_request(
         &app,
@@ -625,7 +660,7 @@ async fn test_update_rule_empty_body() -> Result<()> {
         &app,
         "PUT",
         &format!("/api/rules/{}", rule_id),
-        Some(json!({})),
+        Some(json!({"expected_revision": 2})),
     )
     .await?;
 
@@ -653,8 +688,13 @@ async fn test_delete_rule_success() -> Result<()> {
     let rule_id = create_body["data"]["id"].as_i64().unwrap();
 
     // Delete the rule
-    let (status, body) =
-        make_request(&app, "DELETE", &format!("/api/rules/{}", rule_id), None).await?;
+    let (status, body) = make_request(
+        &app,
+        "DELETE",
+        &format!("/api/rules/{}", rule_id),
+        Some(json!({"expected_revision": 2})),
+    )
+    .await?;
 
     assert_eq!(status, StatusCode::OK, "Response: {:?}", body);
     assert_eq!(body["data"]["status"], "OK");
@@ -690,7 +730,7 @@ async fn test_enable_disable_rule() -> Result<()> {
         &app,
         "POST",
         &format!("/api/rules/{}/enable", rule_id),
-        None,
+        Some(json!({"expected_revision": 2})),
     )
     .await?;
     assert_eq!(status, StatusCode::OK, "Response: {:?}", body);
@@ -704,7 +744,7 @@ async fn test_enable_disable_rule() -> Result<()> {
         &app,
         "POST",
         &format!("/api/rules/{}/disable", rule_id),
-        None,
+        Some(json!({"expected_revision": 3})),
     )
     .await?;
     assert_eq!(status, StatusCode::OK);

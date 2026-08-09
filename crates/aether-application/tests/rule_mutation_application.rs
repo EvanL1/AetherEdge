@@ -6,7 +6,7 @@ use aether_application::{
 use aether_domain::{RuleId, TimestampMs};
 use aether_ports::{
     AuditOutcome, AuditRecord, AuditSink, AutomationRuleMutator, AutomationRulesRevision,
-    PortError, PortErrorKind, PortResult, RevisionedRuleMutation, RuleMutation, RuleMutationKind,
+    PortError, PortErrorKind, PortResult, RevisionedRuleMutation, RuleMutationKind,
     RuleMutationReceipt,
 };
 use async_trait::async_trait;
@@ -18,13 +18,6 @@ struct RecordingMutator {
 
 #[async_trait]
 impl AutomationRuleMutator for RecordingMutator {
-    async fn mutate(&self, mutation: RuleMutation) -> PortResult<RuleMutationReceipt> {
-        Err(PortError::new(
-            PortErrorKind::InvalidData,
-            format!("unexpected legacy mutation: {}", mutation.kind().as_str()),
-        ))
-    }
-
     async fn mutate_revisioned(
         &self,
         mutation: RevisionedRuleMutation,

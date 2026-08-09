@@ -10,15 +10,15 @@ use tracing::{info, warn};
 
 // Import DDL constants from common (shared schema definitions)
 use common::schema::{
-    ACTION_ROUTING_TABLE, ADJUSTMENT_POINTS_TABLE, CHANNEL_REVISION_BUMP_TRIGGER,
-    CHANNEL_REVISION_DELETE_EXHAUSTED_TRIGGER, CHANNEL_REVISION_DELETE_TOMBSTONE_TRIGGER,
-    CHANNEL_REVISION_EXHAUSTED_TRIGGER, CHANNEL_REVISION_INSERT_ADVANCE_TRIGGER,
-    CHANNEL_REVISION_INSERT_GUARD_TRIGGER, CHANNEL_REVISION_TOMBSTONES_TABLE,
+    ACTION_ROUTING_TABLE, ADJUSTMENT_POINTS_TABLE, CHANNEL_ID_INSERT_GUARD_TRIGGER,
+    CHANNEL_ID_UPDATE_GUARD_TRIGGER, CHANNEL_REVISION_DELETE_GUARD_TRIGGER,
+    CHANNEL_REVISION_INSERT_GUARD_TRIGGER, CHANNEL_REVISION_STEP_GUARD_TRIGGER,
+    CHANNEL_REVISION_TOMBSTONES_TABLE, CHANNEL_REVISION_UPDATE_GUARD_TRIGGER,
     CHANNEL_TEMPLATES_TABLE, CHANNELS_TABLE, CONFIGURATION_REVISIONS_TABLE, CONTROL_POINTS_TABLE,
     INSTANCE_PROPERTIES_TABLE, INSTANCES_TABLE, LOGICAL_ROUTING_INTEGRITY_TRIGGER_NAMES,
-    LOGICAL_ROUTING_INTEGRITY_TRIGGERS, MEASUREMENT_ROUTING_TABLE, RULE_CHAINS_TABLE,
-    RULE_HISTORY_TABLE, SERVICE_CONFIG_TABLE, SIGNAL_POINTS_TABLE, SYNC_METADATA_TABLE,
-    TELEMETRY_POINTS_TABLE,
+    LOGICAL_ROUTING_INTEGRITY_TRIGGERS, MEASUREMENT_ROUTING_TABLE,
+    OBSOLETE_CHANNEL_REVISION_TRIGGER_NAMES, RULE_CHAINS_TABLE, RULE_HISTORY_TABLE,
+    SERVICE_CONFIG_TABLE, SIGNAL_POINTS_TABLE, SYNC_METADATA_TABLE, TELEMETRY_POINTS_TABLE,
 };
 
 use super::file_utils;
@@ -36,7 +36,7 @@ use super::file_utils;
 //   3. Add `if current < N { migrate_vN(&mut conn).await?; }` in run_migrations()
 
 /// Current schema structure version — increment when adding migrations
-pub(crate) const SCHEMA_VERSION: i32 = 12;
+pub(crate) const SCHEMA_VERSION: i32 = 13;
 
 /// Run pending schema migrations based on `PRAGMA user_version`
 ///
@@ -110,6 +110,12 @@ async fn run_migrations(pool: &SqlitePool) -> Result<()> {
         migrate_v12(&mut conn)
             .await
             .context("Migration v12 failed")?;
+    }
+
+    if current < 13 {
+        migrate_v13(&mut conn)
+            .await
+            .context("Migration v13 failed")?;
     }
 
     sqlx::query(&format!("PRAGMA user_version = {SCHEMA_VERSION}"))
@@ -1009,10 +1015,6 @@ async fn migrate_v8(conn: &mut sqlx::pool::PoolConnection<Sqlite>) -> Result<()>
 }
 
 /// v9: Add optimistic concurrency to authoritative channel configuration.
-///
-/// The trigger keeps legacy sync/import writers safe: an update that leaves
-/// `revision` unchanged receives exactly one automatic increment. Formal CAS
-/// writers set the next revision explicitly, so the trigger does not fire.
 async fn migrate_v9(conn: &mut sqlx::pool::PoolConnection<Sqlite>) -> Result<()> {
     if !sqlite_table_exists(conn, "channels").await? {
         info!("Migration v9: channels not yet created, deferring to current DDL");
@@ -1034,14 +1036,14 @@ async fn migrate_v9(conn: &mut sqlx::pool::PoolConnection<Sqlite>) -> Result<()>
         .execute(&mut *transaction)
         .await?;
     }
-    sqlx::query(CHANNEL_REVISION_EXHAUSTED_TRIGGER)
+    sqlx::query(CHANNEL_REVISION_UPDATE_GUARD_TRIGGER)
         .execute(&mut *transaction)
         .await?;
-    sqlx::query(CHANNEL_REVISION_BUMP_TRIGGER)
+    sqlx::query(CHANNEL_REVISION_STEP_GUARD_TRIGGER)
         .execute(&mut *transaction)
         .await?;
     transaction.commit().await?;
-    info!("Migration v9: channel revision CAS and compatibility trigger installed");
+    info!("Migration v9: channel revision CAS guards installed");
     Ok(())
 }
 
@@ -1049,8 +1051,7 @@ async fn migrate_v9(conn: &mut sqlx::pool::PoolConnection<Sqlite>) -> Result<()>
 ///
 /// This prevents a stale compare-and-set token for a deleted entity from
 /// matching a later entity that uses the same explicit channel identity.
-/// Legacy inserts are advanced beyond the tombstone by a compatibility
-/// trigger; formal writers supply that revision directly.
+/// Recreated rows must supply the next revision directly.
 async fn migrate_v10(conn: &mut sqlx::pool::PoolConnection<Sqlite>) -> Result<()> {
     if !sqlite_table_exists(conn, "channels").await? {
         info!("Migration v10: channels not yet created, deferring to current DDL");
@@ -1088,14 +1089,12 @@ async fn migrate_v10(conn: &mut sqlx::pool::PoolConnection<Sqlite>) -> Result<()
     for statement in [
         CHANNEL_REVISION_TOMBSTONES_TABLE,
         CHANNEL_REVISION_INSERT_GUARD_TRIGGER,
-        CHANNEL_REVISION_INSERT_ADVANCE_TRIGGER,
-        CHANNEL_REVISION_DELETE_EXHAUSTED_TRIGGER,
-        CHANNEL_REVISION_DELETE_TOMBSTONE_TRIGGER,
+        CHANNEL_REVISION_DELETE_GUARD_TRIGGER,
     ] {
         sqlx::query(statement).execute(&mut *transaction).await?;
     }
     transaction.commit().await?;
-    info!("Migration v10: channel revision tombstone and ABA guards installed");
+    info!("Migration v10: strict channel revision tombstone and ABA guards installed");
     Ok(())
 }
 
@@ -1158,6 +1157,37 @@ async fn migrate_v12(conn: &mut sqlx::pool::PoolConnection<Sqlite>) -> Result<()
             )),
         },
     }
+}
+
+/// v13: Remove automatic channel-revision repair and require governed writes.
+async fn migrate_v13(conn: &mut sqlx::pool::PoolConnection<Sqlite>) -> Result<()> {
+    if !sqlite_table_exists(conn, "channels").await? {
+        info!("Migration v13: channels not yet created, deferring to current DDL");
+        return Ok(());
+    }
+
+    let mut transaction = conn.begin().await?;
+    sqlx::query(CHANNEL_REVISION_TOMBSTONES_TABLE)
+        .execute(&mut *transaction)
+        .await?;
+    for trigger in OBSOLETE_CHANNEL_REVISION_TRIGGER_NAMES {
+        sqlx::query(&format!("DROP TRIGGER IF EXISTS {trigger}"))
+            .execute(&mut *transaction)
+            .await?;
+    }
+    for statement in [
+        CHANNEL_REVISION_UPDATE_GUARD_TRIGGER,
+        CHANNEL_REVISION_STEP_GUARD_TRIGGER,
+        CHANNEL_REVISION_INSERT_GUARD_TRIGGER,
+        CHANNEL_REVISION_DELETE_GUARD_TRIGGER,
+        CHANNEL_ID_INSERT_GUARD_TRIGGER,
+        CHANNEL_ID_UPDATE_GUARD_TRIGGER,
+    ] {
+        sqlx::query(statement).execute(&mut *transaction).await?;
+    }
+    transaction.commit().await?;
+    info!("Migration v13: strict channel revision guards installed");
+    Ok(())
 }
 
 async fn migrate_v12_in_transaction(conn: &mut SqliteConnection) -> Result<()> {
@@ -1647,27 +1677,31 @@ async fn create_indexes(pool: &SqlitePool) -> Result<()> {
 async fn create_triggers(pool: &SqlitePool) -> Result<()> {
     // Keep this helper self-contained: SQLite accepts a trigger that names a
     // missing table, but later schema rebuilds can then fail while reparsing
-    // that invalid trigger. This also makes legacy migration fixtures safe
-    // when they install the current trigger set before running migrations.
+    // that invalid trigger.
     sqlx::query(CHANNEL_REVISION_TOMBSTONES_TABLE)
         .execute(pool)
         .await?;
-    sqlx::query(CHANNEL_REVISION_EXHAUSTED_TRIGGER)
+    for trigger in OBSOLETE_CHANNEL_REVISION_TRIGGER_NAMES {
+        sqlx::query(&format!("DROP TRIGGER IF EXISTS {trigger}"))
+            .execute(pool)
+            .await?;
+    }
+    sqlx::query(CHANNEL_REVISION_UPDATE_GUARD_TRIGGER)
         .execute(pool)
         .await?;
-    sqlx::query(CHANNEL_REVISION_BUMP_TRIGGER)
+    sqlx::query(CHANNEL_REVISION_STEP_GUARD_TRIGGER)
         .execute(pool)
         .await?;
     sqlx::query(CHANNEL_REVISION_INSERT_GUARD_TRIGGER)
         .execute(pool)
         .await?;
-    sqlx::query(CHANNEL_REVISION_INSERT_ADVANCE_TRIGGER)
+    sqlx::query(CHANNEL_REVISION_DELETE_GUARD_TRIGGER)
         .execute(pool)
         .await?;
-    sqlx::query(CHANNEL_REVISION_DELETE_EXHAUSTED_TRIGGER)
+    sqlx::query(CHANNEL_ID_INSERT_GUARD_TRIGGER)
         .execute(pool)
         .await?;
-    sqlx::query(CHANNEL_REVISION_DELETE_TOMBSTONE_TRIGGER)
+    sqlx::query(CHANNEL_ID_UPDATE_GUARD_TRIGGER)
         .execute(pool)
         .await?;
 
@@ -1799,6 +1833,26 @@ mod tests {
         )
     "#;
 
+    async fn prepare_channel_delete(pool: &SqlitePool, channel_id: i64) -> Result<i64> {
+        let revision: i64 =
+            sqlx::query_scalar("SELECT revision FROM channels WHERE channel_id = ?")
+                .bind(channel_id)
+                .fetch_one(pool)
+                .await?;
+        let tombstone = revision
+            .checked_add(1)
+            .context("channel revision exhausted in test fixture")?;
+        sqlx::query(
+            "INSERT INTO channel_revision_tombstones (channel_id, last_revision) VALUES (?, ?) \
+             ON CONFLICT(channel_id) DO UPDATE SET last_revision = excluded.last_revision",
+        )
+        .bind(channel_id)
+        .bind(tombstone)
+        .execute(pool)
+        .await?;
+        Ok(tombstone)
+    }
+
     async fn legacy_json_mapping_pool() -> Result<SqlitePool> {
         let pool = SqlitePoolOptions::new()
             .max_connections(1)
@@ -1872,7 +1926,7 @@ mod tests {
             sqlx::query_scalar::<_, i64>("PRAGMA user_version")
                 .fetch_one(&pool)
                 .await?,
-            12
+            SCHEMA_VERSION as i64
         );
         let telemetry: String = sqlx::query_scalar(
             "SELECT protocol_mappings FROM telemetry_points \
@@ -2159,7 +2213,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn fresh_v10_database_installs_channel_revision_contract() -> Result<()> {
+    async fn fresh_database_installs_strict_channel_revision_contract() -> Result<()> {
         let workspace = TempDir::new()?;
         let database_file = workspace.path().join("aether.db");
         init_database(&database_file).await?;
@@ -2171,13 +2225,21 @@ mod tests {
 
         sqlx::query(
             "INSERT INTO channels (channel_id, name, protocol, enabled, config) \
-             VALUES (7, 'fresh-v10', 'modbus_tcp', 0, '{}')",
+             VALUES (7, 'fresh-current', 'modbus_tcp', 0, '{}')",
         )
         .execute(&pool)
         .await?;
-        sqlx::query("UPDATE channels SET name = 'legacy-write' WHERE channel_id = 7")
+        let error = sqlx::query("UPDATE channels SET name = 'unrevisioned' WHERE channel_id = 7")
             .execute(&pool)
-            .await?;
+            .await
+            .expect_err("unrevisioned update must fail");
+        assert!(error.to_string().contains("requires explicit revision"));
+        sqlx::query(
+            "UPDATE channels SET name = 'revisioned-write', revision = revision + 1 \
+             WHERE channel_id = 7 AND revision = 1",
+        )
+        .execute(&pool)
+        .await?;
         assert_eq!(
             sqlx::query_scalar::<_, i64>("SELECT revision FROM channels WHERE channel_id = 7")
                 .fetch_one(&pool)
@@ -2209,6 +2271,24 @@ mod tests {
                        'advance_channel_revision_on_recreate',\
                        'reject_exhausted_channel_revision_on_delete',\
                        'tombstone_channel_revision_on_delete'\
+                   )",
+            )
+            .fetch_one(&pool)
+            .await?,
+            0,
+            "automatic repair triggers must be absent"
+        );
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM sqlite_master \
+                 WHERE type = 'trigger' \
+                   AND name IN (\
+                       'require_channel_revision_on_update',\
+                       'require_next_channel_revision',\
+                       'require_fresh_channel_revision_on_recreate',\
+                       'require_channel_delete_tombstone',\
+                       'require_valid_channel_id_on_insert',\
+                       'require_valid_channel_id_on_update'\
                    )",
             )
             .fetch_one(&pool)
@@ -2964,6 +3044,7 @@ mod tests {
                 .execute(&pool)
                 .await?;
         }
+        prepare_channel_delete(&pool, 7).await?;
         sqlx::query("DELETE FROM channels WHERE channel_id = 7")
             .execute(&pool)
             .await?;
@@ -3021,9 +3102,19 @@ mod tests {
             2,
             "v10 must invalidate every token issued before tombstones existed"
         );
-        sqlx::query("UPDATE channels SET config = '{\"legacy\":true}' WHERE channel_id = 7")
-            .execute(&pool)
-            .await?;
+        let error = sqlx::query(
+            "UPDATE channels SET config = '{\"unrevisioned\":true}' WHERE channel_id = 7",
+        )
+        .execute(&pool)
+        .await
+        .expect_err("unrevisioned update must fail after migration");
+        assert!(error.to_string().contains("requires explicit revision"));
+        sqlx::query(
+            "UPDATE channels SET config = '{\"revisioned\":true}', revision = 3 \
+             WHERE channel_id = 7 AND revision = 2",
+        )
+        .execute(&pool)
+        .await?;
         assert_eq!(
             sqlx::query_scalar::<_, i64>("SELECT revision FROM channels WHERE channel_id = 7")
                 .fetch_one(&pool)
@@ -3044,6 +3135,7 @@ mod tests {
             "explicit CAS revision must not be incremented twice"
         );
 
+        assert_eq!(prepare_channel_delete(&pool, 7).await?, 5);
         sqlx::query("DELETE FROM channels WHERE channel_id = 7")
             .execute(&pool)
             .await?;
@@ -3056,8 +3148,8 @@ mod tests {
             5
         );
         sqlx::query(
-            "INSERT INTO channels (channel_id, name, protocol, enabled, config) \
-             VALUES (7, 'legacy-recreate', 'modbus_tcp', 0, '{}')",
+            "INSERT INTO channels (channel_id, name, protocol, enabled, config, revision) \
+             VALUES (7, 'revisioned-recreate', 'modbus_tcp', 0, '{}', 6)",
         )
         .execute(&pool)
         .await?;
@@ -3066,7 +3158,7 @@ mod tests {
                 .fetch_one(&pool)
                 .await?,
             6,
-            "legacy recreation must advance beyond the delete tombstone"
+            "recreation must explicitly advance beyond the delete tombstone"
         );
 
         Ok(())
@@ -3079,10 +3171,10 @@ mod tests {
             .connect("sqlite::memory:")
             .await?;
         sqlx::query(CHANNELS_TABLE).execute(&pool).await?;
-        sqlx::query(CHANNEL_REVISION_EXHAUSTED_TRIGGER)
+        sqlx::query(CHANNEL_REVISION_UPDATE_GUARD_TRIGGER)
             .execute(&pool)
             .await?;
-        sqlx::query(CHANNEL_REVISION_BUMP_TRIGGER)
+        sqlx::query(CHANNEL_REVISION_STEP_GUARD_TRIGGER)
             .execute(&pool)
             .await?;
         sqlx::query(
@@ -3121,6 +3213,7 @@ mod tests {
             2,
             "v10 must invalidate a token reused by a v9 delete/recreate cycle"
         );
+        assert_eq!(prepare_channel_delete(&pool, 7).await?, 3);
         sqlx::query("DELETE FROM channels WHERE channel_id = 7")
             .execute(&pool)
             .await?;
@@ -3133,8 +3226,8 @@ mod tests {
             3
         );
         sqlx::query(
-            "INSERT INTO channels (channel_id, name, protocol, enabled, config) \
-             VALUES (7, 'legacy-recreate', 'modbus_tcp', 0, '{}')",
+            "INSERT INTO channels (channel_id, name, protocol, enabled, config, revision) \
+             VALUES (7, 'revisioned-recreate', 'modbus_tcp', 0, '{}', 4)",
         )
         .execute(&pool)
         .await?;
@@ -3143,7 +3236,7 @@ mod tests {
                 .fetch_one(&pool)
                 .await?,
             4,
-            "legacy recreation must advance beyond the v10 tombstone"
+            "recreation must explicitly advance beyond the v10 tombstone"
         );
         assert_eq!(
             sqlx::query(

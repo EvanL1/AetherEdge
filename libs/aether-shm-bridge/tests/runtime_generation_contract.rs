@@ -1,5 +1,7 @@
 use std::collections::BTreeMap;
+use std::path::Path;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use aether_domain::{
@@ -12,10 +14,22 @@ use aether_shm_bridge::{
 };
 
 fn manifest(channel_id: u32) -> Arc<ChannelPointManifest> {
-    Arc::new(ChannelPointManifest::from_map(BTreeMap::from([(
-        channel_id,
-        [1, 1, 1, 1],
-    )])))
+    Arc::new(ChannelPointManifest::dense_test_fixture(BTreeMap::from([
+        (channel_id, [1, 1, 1, 1]),
+    ])))
+}
+
+fn next_epoch() -> u64 {
+    static NEXT_EPOCH: AtomicU64 = AtomicU64::new(1);
+    NEXT_EPOCH.fetch_add(1, Ordering::Relaxed)
+}
+
+fn create_handle(
+    config: ShmRuntimeConfig,
+    manifest: Arc<ChannelPointManifest>,
+    snapshot: Option<&Path>,
+) -> aether_ports::PortResult<ShmWriterHandle> {
+    ShmWriterHandle::create(config, manifest, snapshot, None, next_epoch())
 }
 
 fn sample(channel_id: u32, value: f64, timestamp_ms: u64) -> AcquiredPointSample {
@@ -40,7 +54,7 @@ fn published_generation_is_readable_through_the_typed_channel_adapter() {
     let directory = tempfile::tempdir().expect("temporary directory");
     let path = directory.path().join("aether.shm");
     let active_manifest = manifest(17);
-    let handle = ShmWriterHandle::create_published(
+    let handle = create_handle(
         ShmRuntimeConfig::new(&path, 64),
         Arc::clone(&active_manifest),
         None,
@@ -67,12 +81,13 @@ fn published_generation_is_readable_through_the_typed_channel_adapter() {
 fn canonical_rebuild_invalidates_retained_writers_and_publishes_one_coherent_generation() {
     let directory = tempfile::tempdir().expect("temporary directory");
     let path = directory.path().join("aether.shm");
-    let handle =
-        ShmWriterHandle::create_published(ShmRuntimeConfig::new(&path, 64), manifest(17), None)
-            .expect("publish initial generation");
+    let handle = create_handle(ShmRuntimeConfig::new(&path, 64), manifest(17), None)
+        .expect("publish initial generation");
     let stale = handle.generation().expect("initial generation");
 
-    handle.rebuild(manifest(23)).expect("rebuild generation");
+    handle
+        .rebuild(manifest(23), next_epoch())
+        .expect("rebuild generation");
 
     let stale_error = stale
         .acquisition_writer()
@@ -82,12 +97,7 @@ fn canonical_rebuild_invalidates_retained_writers_and_publishes_one_coherent_gen
 
     let current = handle.generation().expect("replacement generation");
     assert_eq!(
-        current
-            .manifest()
-            .counts()
-            .keys()
-            .copied()
-            .collect::<Vec<_>>(),
+        current.manifest().channel_ids().collect::<Vec<_>>(),
         vec![23]
     );
     current
@@ -102,18 +112,18 @@ fn canonical_rebuild_immediately_fences_a_retained_reader_without_inode_polling(
     let directory = tempfile::tempdir().expect("temporary directory");
     let path = directory.path().join("aether.shm");
     let active_manifest = manifest(17);
-    let handle = ShmWriterHandle::create_published(
+    let handle = create_handle(
         ShmRuntimeConfig::new(&path, 64),
         Arc::clone(&active_manifest),
         None,
     )
     .expect("publish initial generation");
-    handle
-        .generation()
-        .expect("initial generation")
-        .acquisition_writer()
+    let active_generation = handle.generation().expect("initial generation");
+    let active_writer = active_generation.acquisition_writer();
+    active_writer
         .commit_batch(&[sample(17, 12.5, aether_shm_bridge::timestamp_ms())])
         .expect("write initial value");
+    active_writer.update_heartbeat(aether_shm_bridge::timestamp_ms());
 
     let retained_reader = ReconnectingSlotSource::new(
         ShmClientConfig::new(&path, active_manifest.layout_hash())
@@ -130,7 +140,7 @@ fn canonical_rebuild_immediately_fences_a_retained_reader_without_inode_polling(
     );
 
     handle
-        .rebuild(active_manifest)
+        .rebuild(active_manifest, next_epoch())
         .expect("publish same-layout replacement");
 
     match retained_reader.read_slot(0) {
@@ -147,11 +157,11 @@ fn canonical_rebuild_immediately_fences_a_retained_reader_without_inode_polling(
 }
 
 #[test]
-fn canonical_rebuild_immediately_fences_the_compatibility_channel_reader() {
+fn canonical_rebuild_immediately_fences_a_retained_channel_reader() {
     let directory = tempfile::tempdir().expect("temporary directory");
     let path = directory.path().join("aether.shm");
     let active_manifest = manifest(17);
-    let handle = ShmWriterHandle::create_published(
+    let handle = create_handle(
         ShmRuntimeConfig::new(&path, 64),
         Arc::clone(&active_manifest),
         None,
@@ -174,12 +184,12 @@ fn canonical_rebuild_immediately_fences_the_compatibility_channel_reader() {
     );
 
     handle
-        .rebuild(active_manifest)
+        .rebuild(active_manifest, next_epoch())
         .expect("publish same-layout replacement");
 
     let error = retained
         .read_channel(17, PointKind::Telemetry, 0)
-        .expect_err("retained compatibility reader must reject the replaced inode");
+        .expect_err("retained reader must reject the replaced inode");
     assert!(error.is_retryable());
 }
 
@@ -188,18 +198,18 @@ fn writer_restart_immediately_fences_a_retained_reader_without_inode_polling() {
     let directory = tempfile::tempdir().expect("temporary directory");
     let path = directory.path().join("aether.shm");
     let active_manifest = manifest(17);
-    let first = ShmWriterHandle::create_published(
+    let first = create_handle(
         ShmRuntimeConfig::new(&path, 64),
         Arc::clone(&active_manifest),
         None,
     )
     .expect("publish initial generation");
-    first
-        .generation()
-        .expect("initial generation")
-        .acquisition_writer()
+    let active_generation = first.generation().expect("initial generation");
+    let active_writer = active_generation.acquisition_writer();
+    active_writer
         .commit_batch(&[sample(17, 12.5, aether_shm_bridge::timestamp_ms())])
         .expect("write initial value");
+    active_writer.update_heartbeat(aether_shm_bridge::timestamp_ms());
 
     let retained_reader = ReconnectingSlotSource::new(
         ShmClientConfig::new(&path, active_manifest.layout_hash())
@@ -216,9 +226,8 @@ fn writer_restart_immediately_fences_a_retained_reader_without_inode_polling() {
     );
     drop(first);
 
-    let _replacement =
-        ShmWriterHandle::create_published(ShmRuntimeConfig::new(&path, 64), active_manifest, None)
-            .expect("publish generation after writer restart");
+    let _replacement = create_handle(ShmRuntimeConfig::new(&path, 64), active_manifest, None)
+        .expect("publish generation after writer restart");
 
     match retained_reader.read_slot(0) {
         Ok(Some(replacement)) => assert!(
@@ -236,7 +245,7 @@ fn retained_generation_cannot_overwrite_snapshot_after_rebuild() {
     let canonical = directory.path().join("aether.shm");
     let snapshot = directory.path().join("aether.snapshot");
     let active_manifest = manifest(17);
-    let handle = ShmWriterHandle::create_published(
+    let handle = create_handle(
         ShmRuntimeConfig::new(&canonical, 64),
         Arc::clone(&active_manifest),
         None,
@@ -245,7 +254,7 @@ fn retained_generation_cannot_overwrite_snapshot_after_rebuild() {
     let stale = handle.generation().expect("initial generation");
 
     handle
-        .rebuild(Arc::clone(&active_manifest))
+        .rebuild(Arc::clone(&active_manifest), next_epoch())
         .expect("rebuild generation");
     handle
         .generation()
@@ -265,7 +274,7 @@ fn exact_manifest_snapshot_restores_without_relaxing_layout_identity() {
     let canonical = directory.path().join("aether.shm");
     let snapshot = directory.path().join("aether.snapshot");
     let active_manifest = manifest(17);
-    let first = ShmWriterHandle::create_published(
+    let first = create_handle(
         ShmRuntimeConfig::new(&canonical, 64),
         Arc::clone(&active_manifest),
         None,
@@ -279,7 +288,7 @@ fn exact_manifest_snapshot_restores_without_relaxing_layout_identity() {
     generation.save_snapshot(&snapshot).expect("save snapshot");
     drop(first);
 
-    let restored = ShmWriterHandle::create_published(
+    let restored = create_handle(
         ShmRuntimeConfig::new(&canonical, 64),
         Arc::clone(&active_manifest),
         Some(&snapshot),
@@ -296,7 +305,7 @@ fn exact_manifest_snapshot_restores_without_relaxing_layout_identity() {
     );
     assert!(restored.generation().is_some());
 
-    let mismatch = ShmWriterHandle::create_published(
+    let mismatch = create_handle(
         ShmRuntimeConfig::new(directory.path().join("other.shm"), 64),
         manifest(99),
         Some(&snapshot),
@@ -311,9 +320,8 @@ fn exact_manifest_snapshot_restores_without_relaxing_layout_identity() {
 fn runtime_configuration_rejects_capacity_smaller_than_the_manifest() {
     let directory = tempfile::tempdir().expect("temporary directory");
     let path = directory.path().join("aether.shm");
-    let error =
-        ShmWriterHandle::create_published(ShmRuntimeConfig::new(path, 1), manifest(17), None)
-            .expect_err("manifest contains aligned T/S/C/A slots beyond capacity");
+    let error = create_handle(ShmRuntimeConfig::new(path, 1), manifest(17), None)
+        .expect_err("manifest contains aligned T/S/C/A slots beyond capacity");
     assert!(error.to_string().contains("exceeds"));
 }
 
@@ -322,7 +330,7 @@ fn reader_reports_writer_liveness_from_the_physical_header() {
     let directory = tempfile::tempdir().expect("temporary directory");
     let path = directory.path().join("aether.shm");
     let active_manifest = manifest(17);
-    let handle = ShmWriterHandle::create_published(
+    let handle = create_handle(
         ShmRuntimeConfig::new(&path, 64),
         Arc::clone(&active_manifest),
         None,

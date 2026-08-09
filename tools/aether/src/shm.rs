@@ -1,4 +1,4 @@
-//! Shared Memory CLI - Interactive REPL for aether-rtdb
+//! Shared Memory CLI for the authoritative live-state plane.
 //!
 //! Provides a mysql-cli style interactive interface for reading/writing
 //! shared memory data with zero-latency access.
@@ -6,9 +6,10 @@
 use aether_dataplane::SlotReader;
 use aether_domain::{PointKind, PointQuality};
 use aether_routing::{RoutingCache, load_routing_maps};
-#[cfg(test)]
-use aether_shm_bridge::PhysicalPointAddress;
-use aether_shm_bridge::{ChannelPointManifest, ShmChannelReader, default_shm_path};
+use aether_shm_bridge::{
+    ChannelPointManifest, DEFAULT_MAX_SLOTS, PhysicalPointAddress, ShmChannelReader,
+    default_shm_path,
+};
 use anyhow::{Context, Result, bail};
 use clap::Subcommand;
 use colored::*;
@@ -389,15 +390,13 @@ impl ShmRuntimeView {
             };
             keys.insert(key.to_string(), key);
         }
-        if let Some(manifest) = self.reader.manifest() {
-            for (_, address) in manifest.iter_physical_points() {
-                let key = ShmKey::Channel {
-                    channel_id: address.channel_id().get(),
-                    point_type: model_point_type(address.kind()),
-                    point_id: address.point_id().get(),
-                };
-                keys.insert(key.to_string(), key);
-            }
+        for (_, address) in self.reader.manifest().iter_physical_points() {
+            let key = ShmKey::Channel {
+                channel_id: address.channel_id().get(),
+                point_type: model_point_type(address.kind()),
+                point_id: address.point_id().get(),
+            };
+            keys.insert(key.to_string(), key);
         }
         keys.into_values().collect()
     }
@@ -425,10 +424,6 @@ impl ShmRuntimeView {
 
     pub(crate) fn slot_count(&self) -> usize {
         self.reader.slot_count()
-    }
-
-    pub(crate) fn max_slots(&self) -> u32 {
-        self.reader.max_slots()
     }
 
     pub(crate) fn writer_heartbeat(&self) -> u64 {
@@ -463,28 +458,46 @@ fn model_point_type(kind: PointKind) -> PointType {
 }
 
 async fn load_channel_point_manifest(pool: &sqlx::SqlitePool) -> Result<ChannelPointManifest> {
-    let mut counts = BTreeMap::<u32, [u32; 4]>::new();
-    for (table, kind_index) in [
-        ("telemetry_points", 0_usize),
-        ("signal_points", 1),
-        ("control_points", 2),
-        ("adjustment_points", 3),
+    let mut addresses = Vec::new();
+    for (table, kind) in [
+        ("telemetry_points", PointKind::Telemetry),
+        ("signal_points", PointKind::Status),
+        ("control_points", PointKind::Command),
+        ("adjustment_points", PointKind::Action),
     ] {
         let query =
-            format!("SELECT channel_id, MAX(point_id) + 1 FROM {table} GROUP BY channel_id");
+            format!("SELECT channel_id, point_id FROM {table} ORDER BY channel_id, point_id");
         let rows = sqlx::query_as::<_, (i64, i64)>(&query)
             .fetch_all(pool)
             .await
-            .with_context(|| format!("failed to load channel layout from {table}"))?;
-        for (channel_id, point_count) in rows {
+            .with_context(|| format!("failed to load configured points from {table}"))?;
+        for (channel_id, point_id) in rows {
             let channel_id = u32::try_from(channel_id)
                 .with_context(|| format!("invalid channel id {channel_id} in {table}"))?;
-            let point_count = u32::try_from(point_count)
-                .with_context(|| format!("invalid point count {point_count} in {table}"))?;
-            counts.entry(channel_id).or_insert([0; 4])[kind_index] = point_count;
+            let point_id = u32::try_from(point_id)
+                .with_context(|| format!("invalid point id {point_id} in {table}"))?;
+            addresses.push(PhysicalPointAddress::from_raw_ids(
+                channel_id, kind, point_id,
+            ));
         }
     }
-    Ok(ChannelPointManifest::from_map(counts))
+    let max_slots = sqlx::query_scalar::<_, String>(
+        "SELECT value FROM service_config \
+         WHERE service_name = 'global' AND key = 'shared_memory.max_slots'",
+    )
+    .fetch_optional(pool)
+    .await
+    .ok()
+    .flatten()
+    .map(|value| {
+        value
+            .parse::<u32>()
+            .context("invalid shared_memory.max_slots value")
+    })
+    .transpose()?
+    .unwrap_or(DEFAULT_MAX_SLOTS);
+    ChannelPointManifest::compile(addresses, max_slots as usize)
+        .map_err(|error| anyhow::anyhow!(error.to_string()))
 }
 
 pub(crate) async fn open_reader(data_directory: &Path) -> Result<ShmRuntimeView> {
@@ -607,10 +620,9 @@ fn print_raw_info(reader: &SlotReader) {
     println!("{}", "=== Shared Memory Stats ===".bright_cyan());
     println!("Path:          {}", path.display());
     println!("Total Slots:   {}", reader.slot_count());
-    println!("Max Slots:     {}", reader.max_slots());
     let header = reader.header();
     println!("Generation:    {}", header.writer_generation);
-    println!("Layout Hash:   0x{:016x}", header.routing_hash);
+    println!("Layout Hash:   0x{:016x}", header.layout_hash);
     let heartbeat = reader.writer_heartbeat();
     let heartbeat_age = aether_dataplane::core::config::timestamp_ms().saturating_sub(heartbeat);
     let alive = reader.is_writer_alive(5000);
@@ -632,7 +644,6 @@ fn print_runtime_info(reader: &ShmRuntimeView) {
     );
     println!("Channels:      {}", reader.channel_ids().len());
     println!("Total Slots:   {}", reader.slot_count());
-    println!("Max Slots:     {}", reader.max_slots());
     println!("Generation:    {}", reader.generation());
     let heartbeat = reader.writer_heartbeat();
     let heartbeat_age = aether_dataplane::core::config::timestamp_ms().saturating_sub(heartbeat);
@@ -892,18 +903,17 @@ mod tests {
 
     fn typed_runtime_view() -> (tempfile::TempDir, ShmRuntimeView) {
         let directory = tempfile::tempdir().expect("create SHM fixture directory");
-        let shm_path = directory.path().join("aether-rtdb.shm");
-        let manifest = Arc::new(ChannelPointManifest::from_entries([(7, [1, 0, 0, 1])]));
-        let writer = SlotWriter::create(
-            &shm_path,
-            manifest.slot_count() as u32,
-            manifest.slot_count(),
-            manifest.layout_hash(),
-        )
-        .expect("create typed SHM fixture");
+        let shm_path = directory.path().join("aether-live-state.shm");
+        let manifest = Arc::new(ChannelPointManifest::dense_test_fixture([(
+            7,
+            [1, 0, 0, 1],
+        )]));
+        let writer =
+            SlotWriter::create(&shm_path, manifest.slot_count(), manifest.layout_hash(), 1)
+                .expect("create typed SHM fixture");
         writer.set_direct(
             manifest
-                .slot_for(PhysicalPointAddress::from_legacy_raw(
+                .slot_for(PhysicalPointAddress::from_raw_ids(
                     7,
                     PointKind::Telemetry,
                     0,
@@ -912,18 +922,16 @@ mod tests {
             12.5,
             125.0,
             100,
+            0,
         );
         writer.set_direct(
             manifest
-                .slot_for(PhysicalPointAddress::from_legacy_raw(
-                    7,
-                    PointKind::Action,
-                    0,
-                ))
+                .slot_for(PhysicalPointAddress::from_raw_ids(7, PointKind::Action, 0))
                 .expect("action slot"),
             7.5,
             75.0,
             101,
+            0,
         );
 
         let routing_cache = RoutingCache::from_maps(
@@ -982,16 +990,14 @@ mod tests {
     #[test]
     fn typed_view_rejects_manifest_that_does_not_match_shm_header() {
         let directory = tempfile::tempdir().expect("create SHM fixture directory");
-        let shm_path = directory.path().join("aether-rtdb.shm");
-        let actual = ChannelPointManifest::from_entries([(7, [1, 0, 0, 0])]);
-        let _writer = SlotWriter::create(
-            &shm_path,
-            actual.slot_count() as u32,
-            actual.slot_count(),
-            actual.layout_hash(),
-        )
-        .expect("create typed SHM fixture");
-        let mismatched = Arc::new(ChannelPointManifest::from_entries([(7, [2, 0, 0, 0])]));
+        let shm_path = directory.path().join("aether-live-state.shm");
+        let actual = ChannelPointManifest::dense_test_fixture([(7, [1, 0, 0, 0])]);
+        let _writer = SlotWriter::create(&shm_path, actual.slot_count(), actual.layout_hash(), 1)
+            .expect("create typed SHM fixture");
+        let mismatched = Arc::new(ChannelPointManifest::dense_test_fixture([(
+            7,
+            [2, 0, 0, 0],
+        )]));
 
         let result = ShmRuntimeView::open(&shm_path, mismatched, RoutingCache::default());
 
@@ -1063,18 +1069,14 @@ mod tests {
             .expect("insert measurement route");
         pool.close().await;
 
-        let manifest = ChannelPointManifest::from_entries([(7, [1, 0, 0, 0])]);
-        let shm_path = directory.path().join("aether-rtdb.shm");
-        let writer = SlotWriter::create(
-            &shm_path,
-            manifest.slot_count() as u32,
-            manifest.slot_count(),
-            manifest.layout_hash(),
-        )
-        .expect("create runtime SHM");
+        let manifest = ChannelPointManifest::dense_test_fixture([(7, [1, 0, 0, 0])]);
+        let shm_path = directory.path().join("aether-live-state.shm");
+        let writer =
+            SlotWriter::create(&shm_path, manifest.slot_count(), manifest.layout_hash(), 1)
+                .expect("create runtime SHM");
         writer.set_direct(
             manifest
-                .slot_for(PhysicalPointAddress::from_legacy_raw(
+                .slot_for(PhysicalPointAddress::from_raw_ids(
                     7,
                     PointKind::Telemetry,
                     0,
@@ -1083,6 +1085,7 @@ mod tests {
             48.0,
             480.0,
             200,
+            0,
         );
 
         let view = open_reader_at(&data_directory, &shm_path)

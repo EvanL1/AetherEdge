@@ -165,15 +165,23 @@ impl HistoryGeneration {
             ));
         }
 
-        let mut points = Vec::new();
-        for series in self.series.iter().filter(|series| {
-            selectors
-                .iter()
-                .any(|selector| selector.is_match(&series.logical_key))
-                && !exclude_regexes
+        let selected = self
+            .series
+            .iter()
+            .filter(|series| {
+                selectors
                     .iter()
-                    .any(|exclude| exclude.is_match(&series.logical_key))
-        }) {
+                    .any(|selector| selector.is_match(&series.logical_key))
+                    && !exclude_regexes
+                        .iter()
+                        .any(|exclude| exclude.is_match(&series.logical_key))
+            })
+            .collect::<Vec<_>>();
+        let slot_indices = selected
+            .iter()
+            .map(|series| series.slot)
+            .collect::<Vec<_>>();
+        for series in &selected {
             if series.slot >= slot_count {
                 return Err(PortError::new(
                     PortErrorKind::InvalidData,
@@ -183,7 +191,23 @@ impl HistoryGeneration {
                     ),
                 ));
             }
-            let Some(sample) = self.slots.read_slot(series.slot)? else {
+        }
+
+        let samples = self.slots.read_slots(&slot_indices)?;
+        if samples.len() != selected.len() {
+            return Err(PortError::new(
+                PortErrorKind::InvalidData,
+                format!(
+                    "history SHM batch returned {} samples for {} requested slots",
+                    samples.len(),
+                    selected.len()
+                ),
+            ));
+        }
+
+        let mut points = Vec::new();
+        for (series, sample) in selected.into_iter().zip(samples) {
+            let Some(sample) = sample else {
                 continue;
             };
             if sample.value().is_nan() {
@@ -412,6 +436,7 @@ fn series_glob_regex(pattern: &str) -> Result<Regex, regex::Error> {
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     use aether_domain::PointKind;
     use aether_shm_bridge::SlotSnapshot;
@@ -422,6 +447,7 @@ mod tests {
         slot_count: usize,
         values: HashMap<usize, SlotSnapshot>,
         fail_at: Option<usize>,
+        batch_reads: AtomicUsize,
     }
 
     impl SlotSource for StubSlots {
@@ -430,6 +456,24 @@ mod tests {
         }
 
         fn read_slot(&self, index: usize) -> PortResult<Option<SlotSnapshot>> {
+            Err(PortError::new(
+                PortErrorKind::Permanent,
+                format!("history must batch slot {index} reads"),
+            ))
+        }
+
+        fn read_slots(&self, indices: &[usize]) -> PortResult<Vec<Option<SlotSnapshot>>> {
+            self.batch_reads.fetch_add(1, Ordering::Relaxed);
+            indices
+                .iter()
+                .copied()
+                .map(|index| self.read_stub_slot(index))
+                .collect()
+        }
+    }
+
+    impl StubSlots {
+        fn read_stub_slot(&self, index: usize) -> PortResult<Option<SlotSnapshot>> {
             if self.fail_at == Some(index) {
                 return Err(PortError::new(
                     PortErrorKind::Unavailable,
@@ -487,16 +531,31 @@ mod tests {
 
     #[test]
     fn collection_reads_finite_samples_from_shm() {
+        let slots = Arc::new(StubSlots {
+            slot_count: 3,
+            values: HashMap::from([
+                (
+                    0,
+                    SlotSnapshot::new(42.5, 1_720_000_000_000, aether_domain::PointQuality::Good),
+                ),
+                (
+                    1,
+                    SlotSnapshot::new(
+                        f64::NAN,
+                        1_720_000_000_001,
+                        aether_domain::PointQuality::Good,
+                    ),
+                ),
+                (
+                    2,
+                    SlotSnapshot::new(7.0, 1_720_000_000_002, aether_domain::PointQuality::Good),
+                ),
+            ]),
+            fail_at: None,
+            batch_reads: AtomicUsize::new(0),
+        });
         let collector = ShmHistoryCollector::new(
-            Arc::new(StubSlots {
-                slot_count: 3,
-                values: HashMap::from([
-                    (0, SlotSnapshot::new(42.5, 1_720_000_000_000)),
-                    (1, SlotSnapshot::new(f64::NAN, 1_720_000_000_001)),
-                    (2, SlotSnapshot::new(7.0, 1_720_000_000_002)),
-                ]),
-                fail_at: None,
-            }),
+            Arc::clone(&slots),
             vec![
                 HistorySeries {
                     logical_key: "inst:1:M".to_string(),
@@ -528,6 +587,7 @@ mod tests {
         assert_eq!(points[0].series_key, "inst:1:M");
         assert_eq!(points[0].point_id, "100");
         assert_eq!(points[0].value, Some(42.5));
+        assert_eq!(slots.batch_reads.load(Ordering::Relaxed), 1);
     }
 
     #[test]
@@ -536,10 +596,25 @@ mod tests {
             Arc::new(StubSlots {
                 slot_count: 2,
                 values: HashMap::from([
-                    (0, SlotSnapshot::new(42.5, 1_720_000_000_000)),
-                    (1, SlotSnapshot::new(7.0, 1_720_000_000_001)),
+                    (
+                        0,
+                        SlotSnapshot::new(
+                            42.5,
+                            1_720_000_000_000,
+                            aether_domain::PointQuality::Good,
+                        ),
+                    ),
+                    (
+                        1,
+                        SlotSnapshot::new(
+                            7.0,
+                            1_720_000_000_001,
+                            aether_domain::PointQuality::Good,
+                        ),
+                    ),
                 ]),
                 fail_at: Some(1),
+                batch_reads: AtomicUsize::new(0),
             }),
             vec![
                 HistorySeries {
@@ -665,15 +740,16 @@ mod tests {
         let mut epoch = 10_000_u64;
         let publication =
             begin_topology_publication(&point_path).expect("begin initial History publication");
-        let mut point_writer = ShmWriterHandle::create_published_at_epoch(
+        let mut point_writer = ShmWriterHandle::create(
             ShmRuntimeConfig::new(&point_path, 64),
             Arc::new(initial.point_manifest().clone()),
+            None,
             None,
             epoch,
         )
         .expect("initial History point writer");
         write_history_soak_points(&point_writer, &initial, epoch);
-        let mut health_writer = ShmChannelHealthWriterHandle::create_at_epoch(
+        let mut health_writer = ShmChannelHealthWriterHandle::create(
             &health_path,
             Arc::new(initial.health_manifest().clone()),
             epoch,
@@ -804,9 +880,10 @@ mod tests {
             if (iteration + 1) % restart_interval == 0 {
                 drop(point_writer);
                 drop(health_writer);
-                point_writer = ShmWriterHandle::create_published_at_epoch(
+                point_writer = ShmWriterHandle::create(
                     ShmRuntimeConfig::new(&point_path, 64),
                     Arc::new(snapshot.point_manifest().clone()),
+                    None,
                     None,
                     epoch,
                 )
@@ -814,7 +891,7 @@ mod tests {
                 write_history_soak_points(&point_writer, &snapshot, epoch);
                 drop(publication);
                 assert_history_partial_publication_fails_closed(&collector, &pool, &config).await;
-                health_writer = ShmChannelHealthWriterHandle::create_at_epoch(
+                health_writer = ShmChannelHealthWriterHandle::create(
                     &health_path,
                     Arc::new(snapshot.health_manifest().clone()),
                     epoch,
@@ -822,13 +899,13 @@ mod tests {
                 .expect("restart History health writer");
             } else {
                 point_writer
-                    .rebuild_for_publication(Arc::new(snapshot.point_manifest().clone()), epoch)
+                    .rebuild(Arc::new(snapshot.point_manifest().clone()), epoch)
                     .expect("publish History point plane");
                 write_history_soak_points(&point_writer, &snapshot, epoch);
                 drop(publication);
                 assert_history_partial_publication_fails_closed(&collector, &pool, &config).await;
                 health_writer
-                    .rebuild_for_publication(Arc::new(snapshot.health_manifest().clone()), epoch)
+                    .rebuild(Arc::new(snapshot.health_manifest().clone()), epoch)
                     .expect("publish History health plane");
             }
             write_history_soak_health(&health_writer, &snapshot, epoch);

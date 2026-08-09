@@ -11,7 +11,6 @@ use aether_automation::infra::runtime_topology::AutomationTopologyHandle;
 use aether_domain::PointKind;
 use aether_ports::{
     AutomationRuleMutator, AutomationRulesRevision, PortErrorKind, RevisionedRuleMutation,
-    RuleMutation,
 };
 use aether_rules::{MemoryRuleLiveState, PointWatchDispatcher, RuleScheduler};
 use aether_shm_bridge::{
@@ -79,24 +78,6 @@ async fn concurrent_mutations_with_one_expected_revision_have_one_winner() {
 }
 
 #[tokio::test]
-async fn legacy_rust_rule_mutation_reads_the_current_head_and_uses_the_cas_path() {
-    let (_directory, pool) = rules_pool(1).await;
-    let runtime = Arc::new(RuleRuntimeCoordinator::new(scheduler(&pool)));
-    let mutator = SqliteRuleMutator::new(pool.clone(), runtime);
-
-    let receipt = mutator
-        .mutate(RuleMutation::create("legacy", None))
-        .await
-        .expect("legacy Rust rule mutation");
-
-    assert_eq!(
-        receipt.resulting_revision(),
-        AutomationRulesRevision::new(2)
-    );
-    assert!(!receipt.runtime_status().reconciliation_required());
-}
-
-#[tokio::test]
 async fn point_watch_publication_failure_is_gated_and_a_later_reload_recovers() {
     let (_database_directory, pool) = rules_pool(1).await;
     common::schema::init_automation_schema(&pool)
@@ -126,14 +107,15 @@ async fn point_watch_publication_failure_is_gated_and_a_later_reload_recovers() 
     let shm_directory = tempfile::tempdir().expect("SHM directory");
     let point_path = shm_directory.path().join("live.shm");
     let health_path = shm_directory.path().join("health.shm");
-    let _point_writer = ShmWriterHandle::create_published_at_epoch(
+    let _point_writer = ShmWriterHandle::create(
         ShmRuntimeConfig::new(&point_path, 32),
         Arc::new(snapshot.point_manifest().clone()),
+        None,
         None,
         50,
     )
     .expect("point generation");
-    let _health_writer = ShmChannelHealthWriterHandle::create_at_epoch(
+    let _health_writer = ShmChannelHealthWriterHandle::create(
         &health_path,
         Arc::new(snapshot.health_manifest().clone()),
         50,
@@ -177,23 +159,17 @@ async fn point_watch_publication_failure_is_gated_and_a_later_reload_recovers() 
         3,
         PointKind::Telemetry,
         5,
-        u64::try_from(
-            topology
-                .load()
-                .point_manifest()
-                .slot_for(aether_shm_bridge::PhysicalPointAddress::from_legacy_raw(
-                    3,
-                    PointKind::Telemetry,
-                    5,
-                ))
-                .expect("point slot"),
-        )
-        .expect("point slot fits event wire"),
-        20.0,
-        20.0,
-        1_000,
-        1,
-    );
+        topology
+            .load()
+            .point_manifest()
+            .slot_for(aether_shm_bridge::PhysicalPointAddress::from_raw_ids(
+                3,
+                PointKind::Telemetry,
+                5,
+            ))
+            .expect("point slot"),
+    )
+    .expect("point slot fits event wire");
 
     let gated = mutator
         .mutate_revisioned(RevisionedRuleMutation::create(

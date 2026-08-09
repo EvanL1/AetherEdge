@@ -138,14 +138,15 @@ impl ChannelConfig {
 /// The IO table DDL, re-exported from its owner.
 ///
 /// `common::schema` derives these from record structs and is the only source;
-/// this module keeps the historical `aether_config::io::*` paths working.
 /// The generated table DDL cannot carry sibling trigger statements, so schema
-/// setup paths must install the revision triggers immediately after creating
+/// setup paths must install the revision guards immediately after creating
 /// the channels table.
 pub use common::schema::{
-    ADJUSTMENT_POINTS_TABLE, CHANNEL_REVISION_BUMP_TRIGGER, CHANNEL_REVISION_EXHAUSTED_TRIGGER,
+    ADJUSTMENT_POINTS_TABLE, CHANNEL_ID_INSERT_GUARD_TRIGGER, CHANNEL_ID_UPDATE_GUARD_TRIGGER,
+    CHANNEL_REVISION_DELETE_GUARD_TRIGGER, CHANNEL_REVISION_INSERT_GUARD_TRIGGER,
+    CHANNEL_REVISION_STEP_GUARD_TRIGGER, CHANNEL_REVISION_UPDATE_GUARD_TRIGGER,
     CHANNEL_ROUTING_TABLE, CHANNELS_TABLE, CONTROL_POINTS_TABLE, SIGNAL_POINTS_TABLE,
-    TELEMETRY_POINTS_TABLE, install_channel_revision_triggers,
+    TELEMETRY_POINTS_TABLE, install_channel_revision_guards,
 };
 
 /// Channel-specific logging configuration

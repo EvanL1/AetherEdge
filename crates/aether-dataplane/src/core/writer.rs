@@ -1,7 +1,7 @@
 //! Pure-infra SHM writer.
 //!
-//! `SlotWriter` owns the mmap region, tracks dirty slots, and exposes
-//! slot-indexed I/O. It has no knowledge of channels, point types,
+//! `SlotWriter` owns the mmap region and exposes slot-indexed I/O. It has no
+//! knowledge of channels, point types,
 //! instances, or routing; that mapping belongs to the callers in
 //! `aether-shm-bridge`.
 //!
@@ -17,7 +17,7 @@ use memmap2::{MmapMut, MmapOptions};
 
 use crate::core::authority::{AuthorityReadGuard, AuthorityWriteGuard};
 use crate::core::header::{
-    HeaderSnapshot, UNIFIED_MAGIC, UNIFIED_VERSION, UnifiedHeader, calculate_file_size,
+    AETHER_SHM_MAGIC, HeaderSnapshot, SHM_LAYOUT_VERSION, ShmHeader, calculate_file_size,
     validate_mapping_layout,
 };
 use crate::core::reader::SlotReader;
@@ -58,39 +58,18 @@ impl BackingFileIdentity {
     }
 }
 
-// ========== Dirty bitmap helpers ==========
-
-#[inline]
-pub(crate) fn dirty_word_count(slot_count: usize) -> usize {
-    slot_count.div_ceil(u64::BITS as usize)
-}
-
-pub(crate) fn new_dirty_words(slot_count: usize) -> Vec<AtomicU64> {
-    (0..dirty_word_count(slot_count))
-        .map(|_| AtomicU64::new(0))
-        .collect()
-}
-
 // ========== SlotWriter ==========
 
 /// Pure-infra view of a SHM writer.
 ///
-/// Owns the mmap region and the process-local dirty bitmap. Provides
-/// slot-indexed read/write and snapshot save. **Does not understand any
+/// Owns the mmap region and provides slot-indexed read/write and snapshot
+/// save. **Does not understand any
 /// business concept** (channel, instance, point type, routing).
 pub struct SlotWriter {
     pub(crate) mmap: MmapMut,
     pub(crate) path: PathBuf,
-    pub(crate) max_slots: u32,
     pub(crate) slot_count: usize,
     backing_identity: BackingFileIdentity,
-    /// Process-local dirty slot bitmap for fast downstream mirror sync.
-    ///
-    /// PointSlot.dirty is shared across processes, but scanning it still
-    /// costs O(slots). This bitmap is set by this writer's `set_direct`
-    /// calls so io can drain changed slots in O(dirty_words +
-    /// dirty_slots), with periodic full scans as fallback.
-    pub(crate) dirty_words: Vec<AtomicU64>,
 }
 
 /// Rollback-safe invalidation of one writer generation before canonical swap.
@@ -117,7 +96,7 @@ impl Drop for GenerationInvalidation<'_> {
     fn drop(&mut self) {
         if !self.committed {
             self.writer
-                .header()
+                .header_atomic()
                 .writer_generation
                 .store(self.original_generation, Ordering::Release);
         }
@@ -131,32 +110,19 @@ impl SlotWriter {
     /// the physical data plane stores and exposes it without interpreting it.
     pub fn create(
         path: impl AsRef<Path>,
-        max_slots: u32,
-        slot_count: usize,
-        layout_hash: u64,
-    ) -> DataplaneResult<Self> {
-        Self::create_at_epoch(path, max_slots, slot_count, layout_hash, 0)
-    }
-
-    /// Creates and publishes a fresh slot-based SHM file carrying an opaque
-    /// cross-plane publication identity.
-    ///
-    /// Composition roots use a non-zero `publication_epoch` to correlate
-    /// independently mapped planes. A zero epoch preserves the diagnostic and
-    /// compatibility semantics of [`Self::create`].
-    pub fn create_at_epoch(
-        path: impl AsRef<Path>,
-        max_slots: u32,
         slot_count: usize,
         layout_hash: u64,
         publication_epoch: u64,
     ) -> DataplaneResult<Self> {
         let path = path.as_ref();
-        if slot_count > max_slots as usize {
-            return Err(DataplaneError::InvalidLayout(format!(
-                "slot_count {slot_count} exceeds declared max_slots {max_slots}"
-            )));
+        if publication_epoch == 0 {
+            return Err(DataplaneError::InvalidLayout(
+                "publication_epoch must be non-zero".to_string(),
+            ));
         }
+        let physical_slot_count = u32::try_from(slot_count).map_err(|_| {
+            DataplaneError::InvalidLayout(format!("slot_count {slot_count} exceeds u32::MAX"))
+        })?;
         if let Some(parent) = path.parent()
             && !parent.as_os_str().is_empty()
         {
@@ -172,7 +138,7 @@ impl SlotWriter {
             .truncate(true)
             .open(path)
             .map_err(|source| DataplaneError::io(format!("create SHM file {path:?}"), source))?;
-        let file_size = calculate_file_size(max_slots);
+        let file_size = calculate_file_size(physical_slot_count);
         file.set_len(file_size as u64)
             .map_err(|source| DataplaneError::io(format!("size SHM file {path:?}"), source))?;
 
@@ -183,26 +149,23 @@ impl SlotWriter {
         let mut mmap = unsafe { MmapOptions::new().len(file_size).map_mut(&file) }
             .map_err(|source| DataplaneError::io(format!("mmap SHM file {path:?}"), source))?;
         let generation = new_generation();
-        let header = UnifiedHeader {
-            magic: UNIFIED_MAGIC,
-            version: UNIFIED_VERSION,
-            max_slots,
-            slot_count: AtomicU32::new(slot_count as u32),
-            _pad: [0; 4],
-            last_update_ts: AtomicU64::new(0),
+        let header = ShmHeader {
+            magic: AETHER_SHM_MAGIC,
+            version: SHM_LAYOUT_VERSION,
+            slot_count: AtomicU32::new(physical_slot_count),
             writer_heartbeat: AtomicU64::new(0),
-            routing_hash: AtomicU64::new(layout_hash),
+            layout_hash: AtomicU64::new(layout_hash),
             writer_generation: AtomicU64::new(generation),
-            _reserved: publication_epoch.to_ne_bytes(),
+            publication_epoch,
+            _reserved: [0; 16],
         };
         // SAFETY: mmap bases are page-aligned, satisfying the header's 64-byte
         // alignment; the map is large enough by construction. `ptr::write`
         // initializes the complete `repr(C)` value before any shared reference
         // or reader exists.
-        unsafe { (mmap.as_mut_ptr() as *mut UnifiedHeader).write(header) };
+        unsafe { (mmap.as_mut_ptr() as *mut ShmHeader).write(header) };
 
-        let writer =
-            Self::from_mmap_with_file(mmap, path.to_path_buf(), max_slots, slot_count, &file)?;
+        let writer = Self::from_mmap_with_file(mmap, path.to_path_buf(), slot_count, &file)?;
         for index in 0..slot_count {
             writer.slot_at(index).init_unwritten();
         }
@@ -233,7 +196,7 @@ impl SlotWriter {
             .metadata()
             .map_err(|source| DataplaneError::io(format!("stat SHM file {path:?}"), source))?
             .len() as usize;
-        if file_len < std::mem::size_of::<UnifiedHeader>() {
+        if file_len < std::mem::size_of::<ShmHeader>() {
             return Err(DataplaneError::InvalidLayout(format!(
                 "SHM file {path:?} is shorter than its header"
             )));
@@ -244,35 +207,40 @@ impl SlotWriter {
         let mmap = unsafe { MmapOptions::new().map_mut(&file) }
             .map_err(|source| DataplaneError::io(format!("mmap SHM file {path:?}"), source))?;
         // SAFETY: mmap bases are page-aligned and the checked mapping contains
-        // a complete `UnifiedHeader`. No slot pointer is formed until all
+        // a complete `ShmHeader`. No slot pointer is formed until all
         // header-derived bounds have been validated below.
-        let header = unsafe { &*(mmap.as_ptr() as *const UnifiedHeader) };
-        if header.magic != UNIFIED_MAGIC {
+        let header = unsafe { &*(mmap.as_ptr() as *const ShmHeader) };
+        if header.magic != AETHER_SHM_MAGIC {
             return Err(DataplaneError::InvalidLayout(format!(
-                "SHM magic mismatch: expected {UNIFIED_MAGIC:#x}, got {:#x}",
+                "SHM magic mismatch: expected {AETHER_SHM_MAGIC:#x}, got {:#x}",
                 header.magic
             )));
         }
-        if header.version != UNIFIED_VERSION {
+        if header.version != SHM_LAYOUT_VERSION {
             return Err(DataplaneError::InvalidLayout(format!(
-                "SHM version mismatch: expected {UNIFIED_VERSION}, got {}",
+                "SHM version mismatch: expected {SHM_LAYOUT_VERSION}, got {}",
                 header.version
             )));
         }
 
         let snapshot = header.snapshot();
         let slot_count = snapshot.slot_count as usize;
-        validate_mapping_layout(mmap.len(), snapshot.max_slots, slot_count)?;
+        validate_mapping_layout(mmap.len(), slot_count)?;
         if slot_count != expected_slot_count {
             return Err(DataplaneError::InvalidLayout(format!(
                 "SHM slot_count mismatch: expected {expected_slot_count}, got {slot_count}"
             )));
         }
-        if snapshot.routing_hash != expected_layout_hash {
+        if snapshot.layout_hash != expected_layout_hash {
             return Err(DataplaneError::InvalidLayout(format!(
                 "SHM layout hash mismatch: expected {expected_layout_hash:#018x}, got {:#018x}",
-                snapshot.routing_hash
+                snapshot.layout_hash
             )));
+        }
+        if snapshot.publication_epoch == 0 {
+            return Err(DataplaneError::InvalidLayout(
+                "SHM publication epoch is zero".to_string(),
+            ));
         }
         if snapshot.writer_generation == 0 || snapshot.writer_generation & 1 != 0 {
             return Err(DataplaneError::InvalidLayout(format!(
@@ -281,13 +249,7 @@ impl SlotWriter {
             )));
         }
 
-        Self::from_mmap_with_file(
-            mmap,
-            path.to_path_buf(),
-            snapshot.max_slots,
-            slot_count,
-            &file,
-        )
+        Self::from_mmap_with_file(mmap, path.to_path_buf(), slot_count, &file)
     }
 
     /// Opens the stable canonical generation solely so a replacement can
@@ -319,47 +281,19 @@ impl SlotWriter {
         }
         drop(reader);
 
-        let writer = Self::open_existing(path, header.slot_count as usize, header.routing_hash)?;
+        let writer = Self::open_existing(path, header.slot_count as usize, header.layout_hash)?;
         writer.validate_authoritative_path()?;
         Ok(Some(writer))
-    }
-
-    /// Wraps an already-initialized mmap region after validating its bounds.
-    ///
-    /// The mmap is expected to:
-    /// - have a valid `UnifiedHeader` at offset 0 (magic, version, etc. set)
-    /// - have `slot_count` slots initialized to a known state (NaN sentinel
-    ///   for fresh, or restored live data)
-    /// - be at least `calculate_file_size(max_slots)` bytes long
-    pub fn from_mmap(
-        mmap: MmapMut,
-        path: PathBuf,
-        max_slots: u32,
-        slot_count: usize,
-    ) -> DataplaneResult<Self> {
-        let metadata = std::fs::metadata(&path).map_err(|source| {
-            DataplaneError::io(format!("stat SHM backing path {path:?}"), source)
-        })?;
-        Self::from_mmap_with_identity(
-            mmap,
-            path,
-            max_slots,
-            slot_count,
-            BackingFileIdentity::from_metadata(&metadata),
-        )
     }
 
     /// Wraps an mmap and records the identity of the exact file descriptor
     /// used to create it.
     ///
-    /// This is the race-free constructor for composition crates that build
-    /// their own mappings. Capturing identity from the open descriptor avoids
+    /// Capturing identity from the open descriptor avoids
     /// confusing a concurrently renamed canonical path with the mapped inode.
-    #[doc(hidden)]
-    pub fn from_mmap_with_file(
+    fn from_mmap_with_file(
         mmap: MmapMut,
         path: PathBuf,
-        max_slots: u32,
         slot_count: usize,
         file: &File,
     ) -> DataplaneResult<Self> {
@@ -369,7 +303,6 @@ impl SlotWriter {
         Self::from_mmap_with_identity(
             mmap,
             path,
-            max_slots,
             slot_count,
             BackingFileIdentity::from_metadata(&metadata),
         )
@@ -378,34 +311,36 @@ impl SlotWriter {
     fn from_mmap_with_identity(
         mmap: MmapMut,
         path: PathBuf,
-        max_slots: u32,
         slot_count: usize,
         backing_identity: BackingFileIdentity,
     ) -> DataplaneResult<Self> {
-        validate_mapping_layout(mmap.len(), max_slots, slot_count)?;
+        validate_mapping_layout(mmap.len(), slot_count)?;
         Ok(Self {
-            dirty_words: new_dirty_words(slot_count),
             mmap,
             path,
-            max_slots,
             slot_count,
             backing_identity,
         })
     }
 
-    /// Header reference. SAFETY: mmap starts with a valid UnifiedHeader.
+    /// Copies the current header into a read-only value snapshot.
     #[inline]
-    pub fn header(&self) -> &UnifiedHeader {
-        // SAFETY: mmap region starts with a valid UnifiedHeader.
-        // UnifiedHeader is #[repr(C, align(64))], mmap base is page-aligned.
-        unsafe { &*(self.mmap.as_ptr() as *const UnifiedHeader) }
+    pub fn header(&self) -> HeaderSnapshot {
+        self.header_atomic().snapshot()
+    }
+
+    #[inline]
+    fn header_atomic(&self) -> &ShmHeader {
+        // SAFETY: mmap region starts with a valid ShmHeader.
+        // ShmHeader is #[repr(C, align(64))], mmap base is page-aligned.
+        unsafe { &*(self.mmap.as_ptr() as *const ShmHeader) }
     }
 
     /// PointSlot at index. Panics if out of bounds (use `read_slot`/`write_slot`
     /// for fallible variants).
     #[inline]
     #[doc(hidden)]
-    pub fn slot_at(&self, index: usize) -> &PointSlot {
+    pub(crate) fn slot_at(&self, index: usize) -> &PointSlot {
         slot_io::slot_at(&self.mmap, self.slot_count, index)
     }
 
@@ -413,18 +348,6 @@ impl SlotWriter {
     /// Returns the number of live slots declared by the mapped header.
     pub fn slot_count(&self) -> usize {
         self.slot_count
-    }
-
-    #[inline]
-    /// Returns the maximum slot capacity of the mapped file.
-    pub fn max_slots(&self) -> u32 {
-        self.max_slots
-    }
-
-    #[inline]
-    /// Returns the canonical path backing this writer.
-    pub fn path(&self) -> &PathBuf {
-        &self.path
     }
 
     /// Confirms that this mapping still backs the file named by its published
@@ -464,13 +387,16 @@ impl SlotWriter {
             return Err(DataplaneError::InvalidPath(self.path.clone()));
         }
         self.validate_authoritative_path()?;
-        let generation = self.header().writer_generation.load(Ordering::Acquire);
+        let generation = self
+            .header_atomic()
+            .writer_generation
+            .load(Ordering::Acquire);
         if generation == 0 || generation & 1 != 0 {
             return Err(DataplaneError::InvalidLayout(format!(
                 "writer generation {generation} is not stable before canonical replacement"
             )));
         }
-        self.header()
+        self.header_atomic()
             .writer_generation
             .compare_exchange(
                 generation,
@@ -510,76 +436,63 @@ impl SlotWriter {
 
     /// Direct slot write — the hot path. Panics if `slot` is out of bounds.
     #[inline]
-    pub fn set_direct(&self, slot: usize, value: f64, raw: f64, timestamp_ms: u64) {
+    pub fn set_direct(
+        &self,
+        slot: usize,
+        value: f64,
+        raw: f64,
+        timestamp_ms: u64,
+        quality_code: u32,
+    ) {
         assert!(
             slot < self.slot_count,
             "set_direct: slot {} out of bounds (slot_count={})",
             slot,
             self.slot_count
         );
-        self.slot_at(slot).set(value, raw, timestamp_ms);
-        self.mark_dirty_slot(slot);
-        self.header()
-            .writer_heartbeat
-            .store(timestamp_ms, Ordering::Relaxed);
-    }
-
-    #[inline]
-    pub(crate) fn mark_dirty_slot(&self, slot: usize) {
-        let word_idx = slot / u64::BITS as usize;
-        let bit_idx = slot % u64::BITS as usize;
-        if let Some(word) = self.dirty_words.get(word_idx) {
-            word.fetch_or(1u64 << bit_idx, Ordering::Release);
-        }
-    }
-
-    /// Drain process-local dirty slots set by this writer.
-    pub fn take_dirty_slots(&self) -> Vec<usize> {
-        let mut slots = Vec::new();
-        for (word_idx, word) in self.dirty_words.iter().enumerate() {
-            let mut bits = word.swap(0, Ordering::AcqRel);
-            while bits != 0 {
-                let bit_idx = bits.trailing_zeros() as usize;
-                let slot = word_idx * u64::BITS as usize + bit_idx;
-                if slot < self.slot_count {
-                    slots.push(slot);
-                }
-                bits &= bits - 1;
-            }
-        }
-        slots
+        self.slot_at(slot)
+            .set(value, raw, timestamp_ms, quality_code);
     }
 
     /// Current writer generation (from header).
     pub fn generation(&self) -> u64 {
-        self.header().writer_generation.load(Ordering::Acquire)
+        self.header_atomic()
+            .writer_generation
+            .load(Ordering::Acquire)
     }
 
     /// Most recent heartbeat timestamp written by this writer.
     pub fn writer_heartbeat(&self) -> u64 {
-        self.header().writer_heartbeat.load(Ordering::Relaxed)
+        self.header_atomic()
+            .writer_heartbeat
+            .load(Ordering::Relaxed)
     }
 
     /// Update the writer heartbeat without writing a slot.
     pub fn update_heartbeat(&self, timestamp_ms: u64) {
-        self.header()
+        self.header_atomic()
             .writer_heartbeat
             .store(timestamp_ms, Ordering::Relaxed);
     }
 
-    /// Save a snapshot using tear-resistant per-slot serialization.
+    /// Saves a persistent snapshot through tear-resistant per-slot reads.
     ///
-    /// Flushes the mmap first so OS-buffered dirty pages are stable in the
-    /// backing file before the snapshot's tear-resistant per-slot read,
-    /// then delegates to `core::snapshot_save`. This makes the public
-    /// `SlotWriter::save_snapshot` self-contained — callers do not need
-    /// to remember to flush.
+    /// This deliberately does not flush the live mmap: snapshot consistency
+    /// comes from each slot's seqlock, while persistence applies only to the
+    /// independent snapshot file.
     pub fn save_snapshot(&self, path: &Path) -> DataplaneResult<()> {
-        self.flush()?;
-        let current_slot_count = self.header().slot_count.load(Ordering::Acquire) as usize;
+        let header = self.header();
+        let current_slot_count = header.slot_count as usize;
+        if current_slot_count != self.slot_count {
+            return Err(DataplaneError::InvalidLayout(format!(
+                "snapshot slot_count changed from {} to {current_slot_count}",
+                self.slot_count
+            )));
+        }
         crate::core::snapshot_save::save_snapshot_impl(
             &self.mmap,
             current_slot_count,
+            header.layout_hash,
             path,
             "SlotWriter",
         )
@@ -617,27 +530,27 @@ impl SlotIo for SlotWriter {
     }
 
     fn header(&self) -> HeaderSnapshot {
-        SlotWriter::header(self).snapshot()
+        SlotWriter::header(self)
     }
 }
 
 // ========== SlotIoWrite (mutating view) impl ==========
 
 impl SlotIoWrite for SlotWriter {
-    fn write_slot(&self, index: usize, value: f64, raw: f64, timestamp_ms: u64) -> bool {
+    fn write_slot(
+        &self,
+        index: usize,
+        value: f64,
+        raw: f64,
+        timestamp_ms: u64,
+        quality_code: u32,
+    ) -> bool {
         if index >= self.slot_count {
             return false;
         }
-        self.slot_at(index).set(value, raw, timestamp_ms);
-        self.mark_dirty_slot(index);
-        self.header()
-            .writer_heartbeat
-            .store(timestamp_ms, Ordering::Relaxed);
+        self.slot_at(index)
+            .set(value, raw, timestamp_ms, quality_code);
         true
-    }
-
-    fn take_dirty_slots(&self) -> Vec<usize> {
-        SlotWriter::take_dirty_slots(self)
     }
 }
 
@@ -649,7 +562,7 @@ mod generation_invalidation_tests {
     fn dropped_invalidation_restores_the_canonical_generation() {
         let directory = tempfile::tempdir().expect("temporary directory");
         let path = directory.path().join("live.shm");
-        let writer = SlotWriter::create(&path, 8, 1, 0xA37E).expect("published writer");
+        let writer = SlotWriter::create(&path, 1, 0xA37E, 1).expect("published writer");
         let stable_generation = writer.generation();
         let authority = AuthorityWriteGuard::acquire(&path).expect("replacement authority");
 

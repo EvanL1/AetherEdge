@@ -22,6 +22,15 @@ const EPOCH_BASE_ENV: &str = "AETHER_TOPOLOGY_STRESS_EPOCH_BASE";
 const CYCLES_ENV: &str = "AETHER_TOPOLOGY_STRESS_CYCLES";
 const TOPOLOGY_ENV: &str = "AETHER_TOPOLOGY_STRESS_TOPOLOGY";
 
+fn create_point_writer(
+    config: ShmRuntimeConfig,
+    manifest: Arc<ChannelPointManifest>,
+    snapshot: Option<&Path>,
+    publication_epoch: u64,
+) -> PortResult<ShmWriterHandle> {
+    ShmWriterHandle::create(config, manifest, snapshot, None, publication_epoch)
+}
+
 #[derive(Clone, Copy)]
 enum FixtureTopology {
     A,
@@ -56,7 +65,7 @@ impl FixtureTopology {
             Self::A => vec![(1, [2, 1, 0, 0])],
             Self::B => vec![(1, [1, 1, 0, 0]), (2, [1, 0, 0, 0])],
         };
-        Arc::new(ChannelPointManifest::from_entries(entries))
+        Arc::new(ChannelPointManifest::dense_test_fixture(entries))
     }
 
     fn health(self) -> Arc<ChannelHealthManifest> {
@@ -64,7 +73,7 @@ impl FixtureTopology {
             Self::A => &[1],
             Self::B => &[1, 2],
         };
-        Arc::new(ChannelHealthManifest::from_channel_ids(
+        Arc::new(ChannelHealthManifest::test_fixture(
             channels.iter().copied(),
         ))
     }
@@ -72,14 +81,14 @@ impl FixtureTopology {
     fn configured_points(self) -> Vec<PhysicalPointAddress> {
         match self {
             Self::A => vec![
-                PhysicalPointAddress::from_legacy_raw(1, PointKind::Telemetry, 0),
-                PhysicalPointAddress::from_legacy_raw(1, PointKind::Telemetry, 1),
-                PhysicalPointAddress::from_legacy_raw(1, PointKind::Status, 0),
+                PhysicalPointAddress::from_raw_ids(1, PointKind::Telemetry, 0),
+                PhysicalPointAddress::from_raw_ids(1, PointKind::Telemetry, 1),
+                PhysicalPointAddress::from_raw_ids(1, PointKind::Status, 0),
             ],
             Self::B => vec![
-                PhysicalPointAddress::from_legacy_raw(1, PointKind::Telemetry, 0),
-                PhysicalPointAddress::from_legacy_raw(1, PointKind::Status, 0),
-                PhysicalPointAddress::from_legacy_raw(2, PointKind::Telemetry, 0),
+                PhysicalPointAddress::from_raw_ids(1, PointKind::Telemetry, 0),
+                PhysicalPointAddress::from_raw_ids(1, PointKind::Status, 0),
+                PhysicalPointAddress::from_raw_ids(2, PointKind::Telemetry, 0),
             ],
         }
     }
@@ -108,7 +117,7 @@ fn helper_crashing_writer_process() {
         FixtureTopology::parse(&std::env::var(TOPOLOGY_ENV).expect("crash writer topology"));
     let epoch = required_u64(EPOCH_BASE_ENV);
     let publication = begin_topology_publication(&point_path).expect("begin partial publication");
-    let point = ShmWriterHandle::create_published_at_epoch(
+    let point = create_point_writer(
         ShmRuntimeConfig::new(&point_path, 64),
         topology.points(),
         None,
@@ -328,19 +337,16 @@ fn publish_cycles(point_path: &Path, health_path: &Path, epoch_base: u64, cycles
     let first_epoch = epoch_base;
     let first_publication =
         begin_topology_publication(point_path).expect("begin initial publication");
-    let point = ShmWriterHandle::create_published_at_epoch(
+    let point = create_point_writer(
         ShmRuntimeConfig::new(point_path, 64),
         first_topology.points(),
         None,
         first_epoch,
     )
     .expect("publish initial point plane");
-    let health = ShmChannelHealthWriterHandle::create_at_epoch(
-        health_path,
-        first_topology.health(),
-        first_epoch,
-    )
-    .expect("publish initial health plane");
+    let health =
+        ShmChannelHealthWriterHandle::create(health_path, first_topology.health(), first_epoch)
+            .expect("publish initial health plane");
     write_epoch_state(&point, &health, first_topology, first_epoch);
     first_publication
         .commit(health_path, first_epoch)
@@ -352,11 +358,11 @@ fn publish_cycles(point_path: &Path, health_path: &Path, epoch_base: u64, cycles
         let epoch = epoch_base + offset;
         let publication = begin_topology_publication(point_path).expect("begin publication");
         point
-            .rebuild_for_publication(topology.points(), epoch)
+            .rebuild(topology.points(), epoch)
             .expect("publish point plane");
         std::thread::sleep(Duration::from_micros(100));
         health
-            .rebuild_for_publication(topology.health(), epoch)
+            .rebuild(topology.health(), epoch)
             .expect("publish health plane");
         write_epoch_state(&point, &health, topology, epoch);
         publication
@@ -389,17 +395,20 @@ fn write_epoch_state(
             .expect("valid stress sample")
         })
         .collect::<Vec<_>>();
-    point
-        .generation()
-        .expect("point generation")
-        .acquisition_writer()
+    let point_generation = point.generation().expect("point generation");
+    let point_writer = point_generation.acquisition_writer();
+    point_writer
         .commit_batch(&samples)
         .expect("write epoch point state");
+    point_writer.update_heartbeat(timestamp_ms);
     for channel_id in topology.health().channel_ids() {
         health
             .set_online(channel_id, epoch & 1 != 0, timestamp_ms)
             .expect("write epoch health state");
     }
+    health
+        .update_heartbeat(timestamp_ms)
+        .expect("publish health writer heartbeat");
 }
 
 fn open_and_verify(

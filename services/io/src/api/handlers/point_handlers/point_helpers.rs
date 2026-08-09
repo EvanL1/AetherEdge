@@ -2,8 +2,8 @@
 
 //! Validation, reload, and query utility functions for point handlers
 
+use crate::api::dto::AppError;
 use crate::api::routes::AppState;
-use crate::dto::AppError;
 
 // ----------------------------------------------------------------------------
 // Point Type Resolution
@@ -53,7 +53,7 @@ pub(super) async fn fetch_point_definitions(
     table: &str,
     channel_id: u32,
     unmapped_only: bool,
-) -> Result<Vec<crate::dto::PointDefinition>, AppError> {
+) -> Result<Vec<crate::api::dto::PointDefinition>, AppError> {
     let unmapped_clause = if unmapped_only {
         " AND (protocol_mappings IS NULL \
               OR protocol_mappings = '' \
@@ -109,7 +109,7 @@ pub(super) async fn fetch_point_definitions(
                 } else {
                     parse_protocol_mapping_json(pm_json.as_deref())
                 };
-                crate::dto::PointDefinition {
+                crate::api::dto::PointDefinition {
                     point_id,
                     signal_name,
                     scale,
@@ -131,7 +131,7 @@ pub(super) async fn fetch_grouped_points(
     channel_id: u32,
     type_filter: Option<&str>,
     unmapped_only: bool,
-) -> Result<crate::dto::GroupedPoints, AppError> {
+) -> Result<crate::api::dto::GroupedPoints, AppError> {
     // Validate type filter if provided
     if let Some(filter) = type_filter {
         point_type_to_table(filter)?;
@@ -144,7 +144,7 @@ pub(super) async fn fetch_grouped_points(
         ("A", "adjustment_points"),
     ];
 
-    let mut grouped = crate::dto::GroupedPoints {
+    let mut grouped = crate::api::dto::GroupedPoints {
         telemetry: Vec::new(),
         signal: Vec::new(),
         control: Vec::new(),

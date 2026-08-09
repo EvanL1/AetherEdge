@@ -1384,6 +1384,7 @@ mod tests {
             .execute_watch_triggered(&crate::point_watch_dispatcher::WatchEvent {
                 rule_ids: vec![7],
                 channel_id: 10,
+                point_kind: aether_domain::PointKind::Telemetry,
                 point_id: 0,
                 value: 999.0,
                 raw: 999.0,

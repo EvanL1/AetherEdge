@@ -142,12 +142,25 @@ fn channel_mutation_request(
     uri: &str,
     body: Option<serde_json::Value>,
 ) -> Request<Body> {
-    let builder = Request::builder()
+    let expected_revision = (method != "POST").then_some("1");
+    channel_mutation_request_at_revision(method, uri, body, expected_revision)
+}
+
+fn channel_mutation_request_at_revision(
+    method: &str,
+    uri: &str,
+    body: Option<serde_json::Value>,
+    expected_revision: Option<&str>,
+) -> Request<Body> {
+    let mut builder = Request::builder()
         .uri(uri)
         .method(method)
         .header("authorization", format!("Bearer {}", admin_access_token()))
         .header("x-request-id", TEST_REQUEST_ID)
         .header("x-aether-confirmed", "true");
+    if let Some(expected_revision) = expected_revision {
+        builder = builder.header("x-aether-expected-revision", expected_revision);
+    }
     match body {
         Some(body) => builder
             .header("content-type", "application/json")
@@ -499,6 +512,37 @@ async fn channel_revision_header_is_forwarded_as_compare_and_set() {
         mutator.mutations()[0].expected_revision(),
         Some(ChannelRevision::new(7))
     );
+}
+
+#[tokio::test]
+async fn existing_channel_mutations_require_an_explicit_revision() {
+    let mutator = RecordingChannelMutator::successful(None);
+    let app = recording_channel_router(Arc::clone(&mutator)).await;
+    let requests = [
+        governed_channel_request(
+            "PUT",
+            "/api/channels/41",
+            Some(json!({"name": "missing revision"})),
+            true,
+            true,
+            None,
+        ),
+        governed_channel_request(
+            "PUT",
+            "/api/channels/41/enabled",
+            Some(json!({"enabled": true})),
+            true,
+            true,
+            None,
+        ),
+        governed_channel_request("DELETE", "/api/channels/41", None, true, true, None),
+    ];
+
+    for request in requests {
+        let response = app.clone().oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+    assert_eq!(mutator.mutation_count(), 0);
 }
 
 #[tokio::test]
@@ -932,7 +976,8 @@ async fn test_update_channel_returns_description() {
 
     // Update without description: should keep last description
     let body2 = serde_json::json!({ "parameters": {"poll_interval_ms": 1_000} });
-    let req2 = channel_mutation_request("PUT", "/api/channels/42", Some(body2));
+    let req2 =
+        channel_mutation_request_at_revision("PUT", "/api/channels/42", Some(body2), Some("2"));
     let resp2 = app.oneshot(req2).await.unwrap();
     assert_eq!(resp2.status(), StatusCode::OK);
     let bytes2 = resp2.into_body().collect().await.unwrap().to_bytes();
@@ -983,7 +1028,12 @@ async fn test_enable_disable_preserves_description() {
 
     // Disable
     let body2 = serde_json::json!({"enabled": false});
-    let req2 = channel_mutation_request("PUT", "/api/channels/77/enabled", Some(body2));
+    let req2 = channel_mutation_request_at_revision(
+        "PUT",
+        "/api/channels/77/enabled",
+        Some(body2),
+        Some("2"),
+    );
     let resp2 = app.oneshot(req2).await.unwrap();
     assert_eq!(resp2.status(), StatusCode::OK);
     let bytes2 = resp2.into_body().collect().await.unwrap().to_bytes();
@@ -1201,7 +1251,7 @@ async fn channel_queries_share_the_strict_stored_config_codec() {
         assert_eq!(response.status(), StatusCode::OK, "{path}");
     }
 
-    sqlx::query("UPDATE channels SET config = ? WHERE channel_id = 501")
+    sqlx::query("UPDATE channels SET config = ?, revision = revision + 1 WHERE channel_id = 501")
         .bind(r#"{"logging":"debug"}"#)
         .execute(&pool)
         .await
@@ -1510,7 +1560,7 @@ async fn test_update_mappings_invalid_function_code_for_t_400() {
 }
 
 #[tokio::test]
-async fn test_reload_compatibility_reconciles_disabled_channel_without_runtime() {
+async fn test_reconcile_disabled_channel_without_runtime() {
     // Build sqlite with channels table only and a disabled channel
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(1)
@@ -1535,7 +1585,7 @@ async fn test_reload_compatibility_reconciles_disabled_channel_without_runtime()
     );
     let app = create_test_api_with_pool(channel_manager, pool).await;
 
-    let req = governed_reconciliation_request("/api/channels/reload");
+    let req = governed_reconciliation_request("/api/channels/reconcile");
     let resp = app.oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
     let payload = extract_json(resp).await;
@@ -1644,6 +1694,7 @@ fn governed_channel_control_request(
     authenticated: bool,
     confirmed: bool,
     request_id: Option<&str>,
+    expected_revision: Option<&str>,
 ) -> Request<Body> {
     let mut request = Request::builder()
         .uri("/api/channels/1001/control")
@@ -1655,6 +1706,9 @@ fn governed_channel_control_request(
     }
     if let Some(request_id) = request_id {
         request = request.header("x-request-id", request_id);
+    }
+    if let Some(revision) = expected_revision {
+        request = request.header("x-aether-expected-revision", revision);
     }
     request
         .body(Body::from(
@@ -1678,10 +1732,10 @@ async fn channel_control_forwards_start_stop_and_restart_to_governed_application
     )
     .await;
 
-    for (operation, enabled, revision, projection) in [
-        ("start", Some(true), Some(1), "active"),
-        ("stop", Some(false), Some(1), "stopped"),
-        ("restart", Some(true), Some(9), "active"),
+    for (operation, expected_revision, enabled, resulting_revision, projection) in [
+        ("start", Some("1"), Some(true), Some(2), "active"),
+        ("stop", Some("2"), Some(false), Some(3), "stopped"),
+        ("restart", None, Some(true), Some(9), "active"),
     ] {
         let response = app
             .clone()
@@ -1690,6 +1744,7 @@ async fn channel_control_forwards_start_stop_and_restart_to_governed_application
                 true,
                 true,
                 Some(TEST_REQUEST_ID),
+                expected_revision,
             ))
             .await
             .unwrap();
@@ -1701,7 +1756,7 @@ async fn channel_control_forwards_start_stop_and_restart_to_governed_application
         assert_eq!(payload["data"]["operation"], operation);
         assert_eq!(
             payload["data"]["desired_revision"],
-            revision.map_or(serde_json::Value::Null, serde_json::Value::from)
+            resulting_revision.map_or(serde_json::Value::Null, serde_json::Value::from)
         );
         assert_eq!(
             payload["data"]["desired_enabled"],
@@ -1722,12 +1777,20 @@ async fn channel_control_forwards_start_stop_and_restart_to_governed_application
     );
     assert!(matches!(
         &mutations[0],
-        ChannelMutation::SetEnabled { enabled: true, .. }
+        ChannelMutation::SetEnabled {
+            expected_revision,
+            enabled: true,
+            ..
+        } if *expected_revision == ChannelRevision::new(1)
     ));
     assert_eq!(mutations[1].kind(), ChannelMutationKind::Disable);
     assert!(matches!(
         &mutations[1],
-        ChannelMutation::SetEnabled { enabled: false, .. }
+        ChannelMutation::SetEnabled {
+            expected_revision,
+            enabled: false,
+            ..
+        } if *expected_revision == ChannelRevision::new(2)
     ));
     assert_eq!(
         reconciler.scopes(),
@@ -1750,23 +1813,33 @@ async fn channel_control_requires_auth_confirmation_and_uuid_before_side_effects
 
     for (request, expected) in [
         (
-            governed_channel_control_request("start", false, true, Some(TEST_REQUEST_ID)),
+            governed_channel_control_request(
+                "start",
+                false,
+                true,
+                Some(TEST_REQUEST_ID),
+                Some("1"),
+            ),
             StatusCode::FORBIDDEN,
         ),
         (
-            governed_channel_control_request("stop", true, false, Some(TEST_REQUEST_ID)),
+            governed_channel_control_request("stop", true, false, Some(TEST_REQUEST_ID), Some("1")),
             StatusCode::UNPROCESSABLE_ENTITY,
         ),
         (
-            governed_channel_control_request("restart", true, true, None),
+            governed_channel_control_request("restart", true, true, None, None),
             StatusCode::BAD_REQUEST,
         ),
         (
-            governed_channel_control_request("start", true, true, Some("not-a-uuid")),
+            governed_channel_control_request("start", true, true, Some("not-a-uuid"), Some("1")),
             StatusCode::BAD_REQUEST,
         ),
         (
-            governed_channel_control_request("invalid", true, true, Some(TEST_REQUEST_ID)),
+            governed_channel_control_request("invalid", true, true, Some(TEST_REQUEST_ID), None),
+            StatusCode::BAD_REQUEST,
+        ),
+        (
+            governed_channel_control_request("start", true, true, Some(TEST_REQUEST_ID), None),
             StatusCode::BAD_REQUEST,
         ),
     ] {
@@ -1795,6 +1868,7 @@ async fn channel_control_terminal_audit_failure_is_accepted_and_sanitized() {
             true,
             true,
             Some(TEST_REQUEST_ID),
+            Some("1"),
         ))
         .await
         .unwrap();
@@ -1804,36 +1878,6 @@ async fn channel_control_terminal_audit_failure_is_accepted_and_sanitized() {
     assert_eq!(payload["data"]["retryable"], false);
     assert!(!payload.to_string().contains("terminal audit unavailable"));
     assert_eq!(mutator.mutation_count(), 1);
-}
-
-#[tokio::test]
-async fn legacy_router_fails_closed_for_channel_control() {
-    let channel_manager = Arc::new(
-        ChannelManager::new(
-            crate::test_utils::create_test_shm_handle(),
-            crate::test_utils::create_test_routing_cache(),
-        )
-        .unwrap(),
-    );
-    let app = create_api_routes(channel_manager, create_test_sqlite_pool().await);
-
-    for operation in ["start", "restart"] {
-        let response = app
-            .clone()
-            .oneshot(governed_channel_control_request(
-                operation,
-                true,
-                true,
-                Some(TEST_REQUEST_ID),
-            ))
-            .await
-            .unwrap();
-        assert_eq!(
-            response.status(),
-            StatusCode::SERVICE_UNAVAILABLE,
-            "{operation}"
-        );
-    }
 }
 
 // ========================================================================
@@ -1852,14 +1896,6 @@ async fn test_api_routes_with_shm() {
     let _app = create_test_api_routes(channel_manager).await;
     // Basic test to ensure the SHM-only route graph compiles.
     // Test passes if code compiles
-}
-
-#[test]
-fn test_api_routes_compile() {
-    // Verify the public route factory exposes only SHM-backed runtime state
-    // plus SQLite configuration.
-    use super::*;
-    let _ = create_api_routes as fn(Arc<ChannelManager>, sqlx::SqlitePool) -> Router;
 }
 
 // ========================================================================
@@ -1963,7 +1999,7 @@ async fn test_create_channel_handler_returns_response() {
     params.insert("host".to_string(), serde_json::json!("127.0.0.1"));
     params.insert("port".to_string(), serde_json::json!(502));
 
-    let request_body = crate::dto::ChannelCreateRequest {
+    let request_body = crate::api::dto::ChannelCreateRequest {
         channel_id: Some(2001),
         name: "Test Channel".to_string(),
         description: Some("Test Description".to_string()),
@@ -2025,7 +2061,7 @@ async fn test_update_channel_handler() {
     let mut params = HashMap::new();
     params.insert("timeout".to_string(), serde_json::json!(5000));
 
-    let request_body = crate::dto::ChannelConfigUpdateRequest {
+    let request_body = crate::api::dto::ChannelConfigUpdateRequest {
         name: Some("Updated Channel".to_string()),
         description: Some("Updated Description".to_string()),
         protocol: None,
@@ -2166,7 +2202,7 @@ async fn test_set_channel_enabled_handler() {
     );
     let app = create_test_api_routes(channel_manager).await;
 
-    let request_body = crate::dto::ChannelEnabledRequest { enabled: true };
+    let request_body = crate::api::dto::ChannelEnabledRequest { enabled: true };
 
     let request = channel_mutation_request(
         "PUT",
@@ -2195,7 +2231,7 @@ async fn test_set_channel_disabled() {
     );
     let app = create_test_api_routes(channel_manager).await;
 
-    let request_body = crate::dto::ChannelEnabledRequest { enabled: false };
+    let request_body = crate::api::dto::ChannelEnabledRequest { enabled: false };
 
     let request = channel_mutation_request(
         "PUT",
@@ -2211,27 +2247,6 @@ async fn test_set_channel_disabled() {
             || response.status() == StatusCode::NOT_FOUND
             || response.status() == StatusCode::INTERNAL_SERVER_ERROR
     );
-}
-
-#[tokio::test]
-async fn legacy_router_fails_closed_for_channel_reconciliation() {
-    let channel_manager = Arc::new(
-        ChannelManager::new(
-            crate::test_utils::create_test_shm_handle(),
-            crate::test_utils::create_test_routing_cache(),
-        )
-        .unwrap(),
-    );
-    let app = create_api_routes(channel_manager, create_test_sqlite_pool().await);
-
-    for path in ["/api/channels/reconcile", "/api/channels/reload"] {
-        let response = app
-            .clone()
-            .oneshot(governed_reconciliation_request(path))
-            .await
-            .unwrap();
-        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE, "{path}");
-    }
 }
 
 // ========================================================================
@@ -3881,7 +3896,7 @@ fn reconciliation_items() -> Vec<ChannelReconciliationItem> {
 }
 
 #[tokio::test]
-async fn canonical_compatibility_and_single_channel_reconciliation_share_one_application() {
+async fn full_and_single_channel_reconciliation_share_one_application() {
     let reconciler = RecordingChannelReconciler::successful(reconciliation_items());
     let app = recording_reconciliation_router(
         Arc::clone(&reconciler),
@@ -3889,34 +3904,32 @@ async fn canonical_compatibility_and_single_channel_reconciliation_share_one_app
     )
     .await;
 
-    for path in ["/api/channels/reconcile", "/api/channels/reload"] {
-        let response = app
-            .clone()
-            .oneshot(governed_reconciliation_request(path))
-            .await
-            .unwrap();
-        assert_eq!(response.status(), StatusCode::OK, "{path}");
-        let payload = extract_json(response).await;
-        assert_eq!(payload["success"], true);
-        assert_eq!(payload["data"]["request_id"], TEST_REQUEST_ID);
-        assert_eq!(payload["data"]["scope"], "all");
-        assert_eq!(payload["data"]["channel_id"], serde_json::Value::Null);
-        assert_eq!(payload["data"]["degraded_count"], 0);
-        assert_eq!(payload["data"]["reconciliation_required"], false);
-        assert_eq!(payload["data"]["completion_audit"]["status"], "recorded");
-        assert_eq!(payload["data"]["retryable"], false);
-        assert_eq!(payload["data"]["items"][0]["channel_id"], 7);
-        assert_eq!(payload["data"]["items"][0]["desired"]["status"], "present");
-        assert_eq!(payload["data"]["items"][0]["desired"]["revision"], 3);
-        assert_eq!(payload["data"]["items"][0]["desired"]["enabled"], true);
-        assert_eq!(payload["data"]["items"][0]["runtime_projection"], "active");
-        assert_eq!(payload["data"]["items"][1]["channel_id"], 8);
-        assert_eq!(payload["data"]["items"][1]["desired"]["status"], "absent");
-        assert_eq!(payload["data"]["items"][1]["desired"]["last_revision"], 4);
-        let serialized = payload.to_string().to_ascii_lowercase();
-        for secret_bearing_field in ["parameters", "logging", "config", "credential"] {
-            assert!(!serialized.contains(secret_bearing_field));
-        }
+    let response = app
+        .clone()
+        .oneshot(governed_reconciliation_request("/api/channels/reconcile"))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let payload = extract_json(response).await;
+    assert_eq!(payload["success"], true);
+    assert_eq!(payload["data"]["request_id"], TEST_REQUEST_ID);
+    assert_eq!(payload["data"]["scope"], "all");
+    assert_eq!(payload["data"]["channel_id"], serde_json::Value::Null);
+    assert_eq!(payload["data"]["degraded_count"], 0);
+    assert_eq!(payload["data"]["reconciliation_required"], false);
+    assert_eq!(payload["data"]["completion_audit"]["status"], "recorded");
+    assert_eq!(payload["data"]["retryable"], false);
+    assert_eq!(payload["data"]["items"][0]["channel_id"], 7);
+    assert_eq!(payload["data"]["items"][0]["desired"]["status"], "present");
+    assert_eq!(payload["data"]["items"][0]["desired"]["revision"], 3);
+    assert_eq!(payload["data"]["items"][0]["desired"]["enabled"], true);
+    assert_eq!(payload["data"]["items"][0]["runtime_projection"], "active");
+    assert_eq!(payload["data"]["items"][1]["channel_id"], 8);
+    assert_eq!(payload["data"]["items"][1]["desired"]["status"], "absent");
+    assert_eq!(payload["data"]["items"][1]["desired"]["last_revision"], 4);
+    let serialized = payload.to_string().to_ascii_lowercase();
+    for secret_bearing_field in ["parameters", "logging", "config", "credential"] {
+        assert!(!serialized.contains(secret_bearing_field));
     }
 
     let response = app
@@ -3933,7 +3946,6 @@ async fn canonical_compatibility_and_single_channel_reconciliation_share_one_app
     assert_eq!(
         reconciler.scopes(),
         vec![
-            ChannelReconciliationScope::All,
             ChannelReconciliationScope::All,
             ChannelReconciliationScope::One(aether_domain::ChannelId::new(7)),
         ]
@@ -3963,7 +3975,7 @@ async fn channel_reconciliation_requires_bearer_confirmation_and_explicit_reques
 
     let missing_confirmation = Request::builder()
         .method("POST")
-        .uri("/api/channels/reload")
+        .uri("/api/channels/reconcile")
         .header("authorization", format!("Bearer {}", admin_access_token()))
         .header("x-request-id", TEST_REQUEST_ID)
         .body(Body::empty())
@@ -4326,19 +4338,13 @@ async fn confirmed_channel_requests_forward_exact_typed_mutations() {
         mutator.mutations(),
         vec![
             ChannelMutation::create(expected_create),
-            ChannelMutation::update_with_revision(
+            ChannelMutation::update(
                 aether_domain::ChannelId::new(7),
                 ChannelRevision::new(3),
                 expected_update,
             ),
-            ChannelMutation::enable_with_revision(
-                aether_domain::ChannelId::new(7),
-                ChannelRevision::new(4),
-            ),
-            ChannelMutation::delete_with_revision(
-                aether_domain::ChannelId::new(7),
-                ChannelRevision::new(5),
-            ),
+            ChannelMutation::enable(aether_domain::ChannelId::new(7), ChannelRevision::new(4),),
+            ChannelMutation::delete(aether_domain::ChannelId::new(7), ChannelRevision::new(5),),
         ]
     );
 }
@@ -4377,41 +4383,6 @@ async fn degraded_and_terminal_audit_incomplete_are_explicit_non_retryable_accep
         assert_eq!(payload["data"]["completion_audit"]["retryable"], false);
         assert_eq!(payload["data"]["retryable"], false);
     }
-}
-
-#[tokio::test]
-async fn legacy_route_constructor_fails_closed_for_channel_mutations() {
-    let pool = create_test_sqlite_pool().await;
-    let manager = Arc::new(
-        ChannelManager::new(
-            crate::test_utils::create_test_shm_handle(),
-            crate::test_utils::create_test_routing_cache(),
-        )
-        .unwrap(),
-    );
-    let app = create_api_routes(manager, pool.clone());
-    let response = app
-        .oneshot(governed_channel_request(
-            "POST",
-            "/api/channels",
-            Some(json!({
-                "channel_id": 91,
-                "name": "Must Not Be Created",
-                "protocol": "modbus_tcp",
-                "parameters": {}
-            })),
-            true,
-            true,
-            None,
-        ))
-        .await
-        .unwrap();
-    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
-    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM channels WHERE channel_id = 91")
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-    assert_eq!(count, 0);
 }
 
 // ========================================================================
@@ -4704,6 +4675,7 @@ mod openapi_tests {
                         })
                     })
                     .expect("expected-revision parameter");
+                assert_eq!(revision_parameter["required"], true, "{pointer}");
                 assert_eq!(revision_parameter["schema"]["minimum"], 1);
                 assert_eq!(
                     revision_parameter["schema"]["maximum"],
@@ -4835,7 +4807,6 @@ mod openapi_tests {
         for pointer in [
             "/paths/~1api~1channels~1reconcile/post",
             "/paths/~1api~1channels~1{id}~1reconcile/post",
-            "/paths/~1api~1channels~1reload/post",
         ] {
             let operation = spec
                 .pointer(pointer)
@@ -4917,15 +4888,7 @@ mod openapi_tests {
         }
         assert_eq!(receipt["request_id"]["format"], "uuid");
 
-        let reload = spec
-            .pointer("/paths/~1api~1channels~1reload/post")
-            .expect("compatibility reload alias");
-        assert_eq!(reload["deprecated"], true);
-        assert!(
-            reload["description"]
-                .as_str()
-                .is_some_and(|description| description.contains("/api/channels/reconcile"))
-        );
+        assert!(spec.pointer("/paths/~1api~1channels~1reload").is_none());
         let serialized = serde_json::to_string(
             spec.pointer("/components/schemas/ChannelReconciliationItemResult")
                 .expect("sanitized reconciliation item schema"),
@@ -5094,7 +5057,7 @@ mod openapi_tests {
     fn test_openapi_http_operation_count_requires_router_parity_review() {
         assert_eq!(
             common::openapi_operation_count(&spec()),
-            54,
+            53,
             "HTTP operation count changed; re-audit Router/OpenAPI parity before updating this guard"
         );
     }

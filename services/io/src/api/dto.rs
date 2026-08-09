@@ -131,10 +131,10 @@ pub struct ChannelOperation {
 /// - `parameters` are protocol-specific (see OpenAPI schema examples)
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct ChannelCreateRequest {
-    /// Optional channel ID below 10000. When omitted, allocation selects the
+    /// Optional channel ID in 1..9999. When omitted, allocation selects the
     /// lowest ID in 1..9999 unused by live channels and revision tombstones.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schema(example = json!(null), maximum = 9999, nullable = true)]
+    #[schema(example = json!(null), minimum = 1, maximum = 9999, nullable = true)]
     pub channel_id: Option<u32>,
 
     /// Channel name (must be unique)

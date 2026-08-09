@@ -15,14 +15,13 @@ use aether_shm_bridge::{
 fn create_test_handle() -> (tempfile::TempDir, Arc<ShmWriterHandle>) {
     let directory = tempfile::tempdir().expect("create temp SHM directory");
     let config = ShmRuntimeConfig::new(directory.path().join("io.shm"), 16);
-    let manifest = Arc::new(ChannelPointManifest::from_map(BTreeMap::from([(
-        7,
-        [2, 1, 0, 0],
-    )])));
+    let manifest = Arc::new(ChannelPointManifest::dense_test_fixture(BTreeMap::from([
+        (7, [2, 1, 0, 0]),
+    ])));
     (
         directory,
         Arc::new(
-            ShmWriterHandle::create_published(config, manifest, None)
+            ShmWriterHandle::create(config, manifest, None, None, 1)
                 .expect("compose typed SHM layout"),
         ),
     )
@@ -41,7 +40,7 @@ async fn shm_store_writes_poll_data_to_the_authoritative_slot() {
     let layout = handle.generation().expect("active layout");
     let slot = layout
         .manifest()
-        .slot_for(PhysicalPointAddress::from_legacy_raw(
+        .slot_for(PhysicalPointAddress::from_raw_ids(
             7,
             PointKind::Telemetry,
             1,
@@ -94,7 +93,7 @@ async fn unknown_c2c_target_rejects_source_before_any_production_write() {
     let layout = handle.generation().expect("active layout");
     let source_slot = layout
         .manifest()
-        .slot_for(PhysicalPointAddress::from_legacy_raw(
+        .slot_for(PhysicalPointAddress::from_raw_ids(
             7,
             PointKind::Telemetry,
             0,
@@ -116,12 +115,12 @@ async fn c2c_expansion_deduplicates_targets_before_the_typed_port_call() {
 
     let directory = tempfile::tempdir().expect("create temp SHM directory");
     let config = ShmRuntimeConfig::new(directory.path().join("c2c.shm"), 16);
-    let manifest = Arc::new(ChannelPointManifest::from_map(BTreeMap::from([
+    let manifest = Arc::new(ChannelPointManifest::dense_test_fixture(BTreeMap::from([
         (7, [2, 0, 0, 0]),
         (8, [1, 0, 0, 0]),
     ])));
     let handle = Arc::new(
-        ShmWriterHandle::create_published(config, manifest, None)
+        ShmWriterHandle::create(config, manifest, None, None, 1)
             .expect("compose typed C2C SHM generation"),
     );
     let routing = Arc::new(RoutingCache::from_maps(
@@ -144,7 +143,7 @@ async fn c2c_expansion_deduplicates_targets_before_the_typed_port_call() {
     let layout = handle.generation().expect("active layout");
     let target_slot = layout
         .manifest()
-        .slot_for(PhysicalPointAddress::from_legacy_raw(
+        .slot_for(PhysicalPointAddress::from_raw_ids(
             8,
             PointKind::Telemetry,
             0,
@@ -163,13 +162,13 @@ async fn c2c_expansion_deduplicates_targets_before_the_typed_port_call() {
 #[tokio::test]
 async fn shm_store_composes_the_typed_acquisition_writer_atomically() {
     let directory = tempfile::tempdir().expect("create temp SHM directory");
-    let manifest = ChannelPointManifest::from_entries([(7, [2, 1, 0, 0])]);
+    let manifest = ChannelPointManifest::dense_test_fixture([(7, [2, 1, 0, 0])]);
     let writer = Arc::new(
         SlotWriter::create(
             directory.path().join("typed-io.shm"),
-            16,
             manifest.slot_count(),
             manifest.layout_hash(),
+            1,
         )
         .expect("create typed acquisition writer"),
     );
@@ -225,13 +224,13 @@ async fn shm_store_composes_the_typed_acquisition_writer_atomically() {
 #[tokio::test]
 async fn duplicate_batch_is_invalid_data_without_polluting_slot_miss_metric() {
     let directory = tempfile::tempdir().expect("create temp SHM directory");
-    let manifest = ChannelPointManifest::from_entries([(7, [1, 0, 0, 0])]);
+    let manifest = ChannelPointManifest::dense_test_fixture([(7, [1, 0, 0, 0])]);
     let writer = Arc::new(
         SlotWriter::create(
             directory.path().join("duplicate-io.shm"),
-            16,
             manifest.slot_count(),
             manifest.layout_hash(),
+            1,
         )
         .expect("create typed acquisition writer"),
     );
@@ -258,13 +257,13 @@ async fn duplicate_batch_is_invalid_data_without_polluting_slot_miss_metric() {
 #[tokio::test]
 async fn generation_conflict_is_retryable_without_polluting_slot_miss_metric() {
     let directory = tempfile::tempdir().expect("create temp SHM directory");
-    let manifest = ChannelPointManifest::from_entries([(7, [1, 0, 0, 0])]);
+    let manifest = ChannelPointManifest::dense_test_fixture([(7, [1, 0, 0, 0])]);
     let writer = Arc::new(
         SlotWriter::create(
             directory.path().join("conflict-io.shm"),
-            16,
             manifest.slot_count(),
             manifest.layout_hash() ^ 1,
+            1,
         )
         .expect("create mismatched acquisition writer"),
     );

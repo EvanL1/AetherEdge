@@ -520,7 +520,7 @@ fn check_shared_memory_path(shm_path: &Path) -> CheckResult {
             return CheckResult::error(
                 "Shared Memory",
                 format!("Cannot inspect authoritative segment: {error}"),
-                "Check /dev/shm and aether-rtdb.shm permissions",
+                "Check /dev/shm and aether-live-state.shm permissions",
             );
         },
     };
@@ -779,7 +779,7 @@ mod tests {
         assert_eq!(check_shared_memory_path(&empty).status, CheckStatus::Error);
 
         let stale = directory.path().join("stale.shm");
-        let stale_writer = aether_dataplane::SlotWriter::create(&stale, 8, 2, 7)
+        let stale_writer = aether_dataplane::SlotWriter::create(&stale, 2, 7, 1)
             .expect("create stale SHM fixture");
         stale_writer.update_heartbeat(
             aether_dataplane::core::config::timestamp_ms().saturating_sub(10_000),
@@ -788,7 +788,7 @@ mod tests {
         assert_eq!(check_shared_memory_path(&stale).status, CheckStatus::Error);
 
         let valid = directory.path().join("valid.shm");
-        let writer = aether_dataplane::SlotWriter::create(&valid, 8, 2, 7)
+        let writer = aether_dataplane::SlotWriter::create(&valid, 2, 7, 1)
             .expect("create valid SHM fixture");
         writer.update_heartbeat(aether_dataplane::core::config::timestamp_ms());
         drop(writer);
@@ -803,7 +803,7 @@ mod tests {
         let directory = tempfile::tempdir().expect("temporary SHM directory");
         let target = directory.path().join("target.shm");
         let link = directory.path().join("link.shm");
-        let writer = aether_dataplane::SlotWriter::create(&target, 8, 0, 7)
+        let writer = aether_dataplane::SlotWriter::create(&target, 0, 7, 1)
             .expect("create valid SHM target");
         writer.update_heartbeat(aether_dataplane::core::config::timestamp_ms());
         drop(writer);

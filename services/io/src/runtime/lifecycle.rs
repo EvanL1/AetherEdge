@@ -192,13 +192,6 @@ pub fn start_cleanup_task(
     (handle, token)
 }
 
-/// Wait for shutdown signal (Ctrl+C or SIGTERM on Unix)
-///
-/// Re-exports the common shutdown handler for backwards compatibility.
-pub async fn wait_for_shutdown() {
-    common::shutdown::wait_for_shutdown().await
-}
-
 /// Perform graceful shutdown of all services
 ///
 /// # Lock-free channel_manager

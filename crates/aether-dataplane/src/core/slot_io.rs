@@ -1,8 +1,8 @@
 //! Pure-infra contract for SHM slot I/O.
 //!
 //! `SlotIo` is the declaration of what a "business-unaware SHM writer" can do:
-//! address slots by index, write/read seqlocked cells, track dirty slots,
-//! observe header state. **Nothing on this trait mentions channels, point
+//! address slots by index, write/read seqlocked cells, and observe header
+//! state. **Nothing on this trait mentions channels, point
 //! types, instances, or routing** — that is by design.
 //!
 //! `SlotWriter` and `SlotReader` implement `SlotIo`. Consumers program
@@ -32,12 +32,12 @@ pub(crate) fn slot_at(mmap: &[u8], slot_count: usize, index: usize) -> &PointSlo
         slot_count
     );
     // SAFETY: alignment chain — mmap base is page-aligned (≥4096),
-    // slot_offset() == size_of::<UnifiedHeader>() == 64 (asserted at
+    // slot_offset() == size_of::<ShmHeader>() == 64 (asserted at
     // const time in core::header), and 64 is divisible by 32. So the
     // base pointer for the slot array is 32-byte aligned, matching
     // PointSlot's `#[repr(C, align(32))]` requirement. `index` is
     // bounds-checked above against `slot_count`, and the constructor
-    // verified the mmap covers at least `max_slots` slots.
+    // verified the mmap covers exactly `slot_count` slots.
     unsafe {
         let ptr = mmap.as_ptr().add(slot_offset()) as *const PointSlot;
         &*ptr.add(index)
@@ -50,11 +50,13 @@ pub(crate) fn read_slot(mmap: &[u8], slot_count: usize, index: usize) -> Option<
     if index >= slot_count {
         return None;
     }
-    let (value, raw, timestamp_ms) = slot_at(mmap, slot_count, index).try_load_consistent()?;
+    let (value, raw, timestamp_ms, quality_code) =
+        slot_at(mmap, slot_count, index).try_load_consistent()?;
     Some(SlotRead {
         value,
         raw,
         timestamp_ms,
+        quality_code,
     })
 }
 
@@ -67,6 +69,8 @@ pub struct SlotRead {
     pub raw: f64,
     /// Wall-clock timestamp in ms since UNIX epoch.
     pub timestamp_ms: u64,
+    /// Opaque point-quality code supplied by the composition layer.
+    pub quality_code: u32,
 }
 
 /// Pure-infra **read view** of a SHM segment: slot-level reads and header
@@ -74,8 +78,8 @@ pub struct SlotRead {
 ///
 /// Read access returns a value snapshot (`SlotRead`), never a reference to
 /// the underlying atomic cell — exposing `&PointSlot` would let a caller
-/// call `PointSlot::set` directly and bypass the writer's dirty-tracking
-/// invariants. Mutating access lives on the sub-trait [`SlotIoWrite`],
+/// call `PointSlot::set` directly and bypass the writer authority boundary.
+/// Mutating access lives on the sub-trait [`SlotIoWrite`],
 /// so code bounded by `SlotIo` alone provably cannot write.
 pub trait SlotIo: Send + Sync {
     /// Number of slots currently live in this SHM.
@@ -83,10 +87,8 @@ pub trait SlotIo: Send + Sync {
 
     /// Read a slot's current measurement using a seqlock-consistent load.
     ///
-    /// Returns `None` if the index is out of bounds **or** if the seqlock
-    /// retry budget was exhausted (a writer was concurrently mid-update).
-    /// In the latter case, callers should retry on a subsequent tick — the
-    /// torn-read window is microseconds.
+    /// Returns `None` if the index is out of bounds or a writer was concurrently
+    /// mid-update. Callers retry on a subsequent read cycle.
     fn read_slot(&self, index: usize) -> Option<SlotRead>;
 
     /// Current writer generation. Bumped by the writer on each
@@ -103,15 +105,15 @@ pub trait SlotIo: Send + Sync {
 /// Pure-infra **write view** of a SHM segment. Sub-trait of `SlotIo` —
 /// any writer is also a reader, but not vice versa.
 ///
-/// Implementations must mark each written slot as dirty so a subsequent
-/// [`take_dirty_slots`](Self::take_dirty_slots) call surfaces it; this is
-/// the contract that lets a downstream `StateMirror` sweep O(dirty)
-/// instead of O(slot_count).
 pub trait SlotIoWrite: SlotIo {
     /// Write a measurement to a slot. Returns `false` if the index is
     /// out of bounds.
-    fn write_slot(&self, index: usize, value: f64, raw: f64, timestamp_ms: u64) -> bool;
-
-    /// Drain and return the set of slot indices written since the last drain.
-    fn take_dirty_slots(&self) -> Vec<usize>;
+    fn write_slot(
+        &self,
+        index: usize,
+        value: f64,
+        raw: f64,
+        timestamp_ms: u64,
+        quality_code: u32,
+    ) -> bool;
 }

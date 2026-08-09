@@ -1,108 +1,20 @@
-use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-use aether_domain::{InstanceId, PointAddress, PointId, PointKind, PointQuality, TimestampMs};
-use aether_ports::LiveState;
+use aether_domain::PointKind;
 use aether_shm_bridge::{
-    ChannelHealthManifest, ChannelPointManifest, PhysicalPointAddress, PointSlotResolver,
-    PointWatchEvent, PointWatchEventListener, ReconnectingSlotSource, ShmChannelHealthReader,
-    ShmChannelHealthWriter, ShmClientConfig, ShmLiveState, SlotSnapshot, SlotSource,
-    StaticSlotResolver, channel_health_path_from_shm, point_watch_socket_for_consumer,
+    ChannelHealthManifest, ChannelPointManifest, PhysicalPointAddress, PointWatchEvent,
+    PointWatchEventListener, ReconnectingSlotSource, ShmChannelHealthReader,
+    ShmChannelHealthWriterHandle, ShmClientConfig, SlotSource, channel_health_path_from_shm,
+    point_watch_socket_for_consumer,
 };
 
-#[derive(Debug)]
-struct StubSlots {
-    slots: Vec<Option<SlotSnapshot>>,
-}
-
-impl SlotSource for StubSlots {
-    fn slot_count(&self) -> aether_ports::PortResult<usize> {
-        Ok(self.slots.len())
-    }
-
-    fn read_slot(&self, index: usize) -> aether_ports::PortResult<Option<SlotSnapshot>> {
-        Ok(self.slots.get(index).copied().flatten())
-    }
-}
-
-fn address(point_id: u32) -> PointAddress {
-    PointAddress::new(
-        InstanceId::new(10),
-        PointKind::Telemetry,
-        PointId::new(point_id),
-    )
-}
-
-fn bridge(
-    slots: Vec<Option<SlotSnapshot>>,
-    mappings: impl IntoIterator<Item = (PointAddress, usize)>,
-) -> ShmLiveState {
-    ShmLiveState::new(
-        Arc::new(StubSlots { slots }),
-        Arc::new(StaticSlotResolver::from_entries(mappings)),
-    )
-}
-
-#[tokio::test]
-async fn mapped_legacy_slot_is_exposed_as_a_domain_sample() {
-    let state = bridge(
-        vec![Some(SlotSnapshot::new(48.5, 1_500))],
-        [(address(7), 0)],
-    );
-
-    let sample = state.read(address(7)).await.unwrap().unwrap();
-    assert_eq!(sample.address(), address(7));
-    assert_eq!(sample.value(), 48.5);
-    assert_eq!(sample.timestamp(), TimestampMs::new(1_500));
-    assert_eq!(sample.quality(), PointQuality::Good);
-}
-
-#[tokio::test]
-async fn missing_mapping_and_unwritten_nan_are_absent_values() {
-    let state = bridge(
-        vec![Some(SlotSnapshot::new(f64::NAN, 0))],
-        [(address(7), 0)],
-    );
-
-    assert_eq!(state.read(address(8)).await.unwrap(), None);
-    assert_eq!(state.read(address(7)).await.unwrap(), None);
-}
-
-#[tokio::test]
-async fn seqlock_contention_is_retryable_but_invalid_mapping_is_not() {
-    let contended = bridge(vec![None], [(address(7), 0)]);
-    let contention = contended
-        .read(address(7))
-        .await
-        .expect_err("empty resolved slot represents a torn read");
-    assert!(contention.is_retryable());
-
-    let invalid = bridge(vec![], [(address(7), 1)]);
-    let invalid_mapping = invalid
-        .read(address(7))
-        .await
-        .expect_err("out-of-bounds slot mapping is invalid");
-    assert!(!invalid_mapping.is_retryable());
-}
-
 #[test]
-fn resolver_trait_is_independent_of_legacy_routing_types() {
-    let resolver = StaticSlotResolver::from_entries([(address(7), 3)]);
-    assert_eq!(resolver.resolve(address(7)), Some(3));
-    assert_eq!(resolver.resolve(address(8)), None);
-
-    let domain_map: HashMap<PointAddress, usize> = [(address(9), 4)].into_iter().collect();
-    let resolver = StaticSlotResolver::from_map(domain_map);
-    assert_eq!(resolver.resolve(address(9)), Some(4));
-}
-
-#[test]
-fn channel_manifest_preserves_deterministic_padded_layout() {
-    let manifest = ChannelPointManifest::from_entries([(1, [3, 0, 1, 1]), (2, [1, 1, 0, 0])]);
+fn channel_manifest_preserves_only_the_writer_ownership_padding() {
+    let manifest = ChannelPointManifest::dense_test_fixture([(1, [3, 0, 1, 1]), (2, [1, 1, 0, 0])]);
 
     assert_eq!(
-        manifest.slot_for(PhysicalPointAddress::from_legacy_raw(
+        manifest.slot_for(PhysicalPointAddress::from_raw_ids(
             1,
             PointKind::Telemetry,
             0,
@@ -110,23 +22,15 @@ fn channel_manifest_preserves_deterministic_padded_layout() {
         Some(0)
     );
     assert_eq!(
-        manifest.slot_for(PhysicalPointAddress::from_legacy_raw(
-            1,
-            PointKind::Command,
-            0,
-        )),
+        manifest.slot_for(PhysicalPointAddress::from_raw_ids(1, PointKind::Command, 0,)),
         Some(4)
     );
     assert_eq!(
-        manifest.slot_for(PhysicalPointAddress::from_legacy_raw(
-            1,
-            PointKind::Action,
-            0,
-        )),
+        manifest.slot_for(PhysicalPointAddress::from_raw_ids(1, PointKind::Action, 0,)),
         Some(5)
     );
     assert_eq!(
-        manifest.slot_for(PhysicalPointAddress::from_legacy_raw(
+        manifest.slot_for(PhysicalPointAddress::from_raw_ids(
             2,
             PointKind::Telemetry,
             0,
@@ -134,11 +38,7 @@ fn channel_manifest_preserves_deterministic_padded_layout() {
         Some(6)
     );
     assert_eq!(
-        manifest.slot_for(PhysicalPointAddress::from_legacy_raw(
-            2,
-            PointKind::Status,
-            0,
-        )),
+        manifest.slot_for(PhysicalPointAddress::from_raw_ids(2, PointKind::Status, 0,)),
         Some(7)
     );
     assert_eq!(manifest.slot_count(), 8);
@@ -147,17 +47,17 @@ fn channel_manifest_preserves_deterministic_padded_layout() {
 
 fn write_managed_shm(path: &std::path::Path, layout_hash: u64, generation: u64, value: f64) {
     let mut image = vec![0_u8; aether_dataplane::calculate_file_size(1)];
-    image[0..8].copy_from_slice(&aether_dataplane::UNIFIED_MAGIC.to_ne_bytes());
-    image[8..12].copy_from_slice(&aether_dataplane::UNIFIED_VERSION.to_ne_bytes());
+    image[0..8].copy_from_slice(&aether_dataplane::AETHER_SHM_MAGIC.to_ne_bytes());
+    image[8..12].copy_from_slice(&aether_dataplane::SHM_LAYOUT_VERSION.to_ne_bytes());
     image[12..16].copy_from_slice(&1_u32.to_ne_bytes());
-    image[16..20].copy_from_slice(&1_u32.to_ne_bytes());
     let now_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .expect("clock after epoch")
         .as_millis() as u64;
-    image[32..40].copy_from_slice(&now_ms.to_ne_bytes());
-    image[40..48].copy_from_slice(&layout_hash.to_ne_bytes());
-    image[48..56].copy_from_slice(&generation.to_ne_bytes());
+    image[16..24].copy_from_slice(&now_ms.to_ne_bytes());
+    image[24..32].copy_from_slice(&layout_hash.to_ne_bytes());
+    image[32..40].copy_from_slice(&generation.to_ne_bytes());
+    image[40..48].copy_from_slice(&1_u64.to_ne_bytes());
     image[64..72].copy_from_slice(&value.to_bits().to_ne_bytes());
     image[72..80].copy_from_slice(&now_ms.to_ne_bytes());
     image[80..88].copy_from_slice(&value.to_bits().to_ne_bytes());
@@ -212,17 +112,21 @@ fn managed_source_classifies_missing_writer_as_retryable() {
 }
 
 #[test]
-fn channel_health_manifest_is_sparse_and_order_independent() {
-    let first = ChannelHealthManifest::from_channel_ids([20, 3, 20]);
-    let second = ChannelHealthManifest::from_channel_ids([3, 20]);
+fn channel_health_manifest_is_dense_and_order_independent() {
+    let first = ChannelHealthManifest::compile([20, 3], 2).expect("dense health manifest");
+    let second = ChannelHealthManifest::compile([3, 20], 2).expect("canonical health manifest");
 
-    assert_eq!(first.slot_count(), 21);
+    assert_eq!(first.slot_count(), 2);
+    assert_eq!(first.slot_for(3), Some(0));
+    assert_eq!(first.slot_for(20), Some(1));
     assert!(first.contains(3));
     assert!(!first.contains(4));
     assert_eq!(first.layout_hash(), second.layout_hash());
+    assert!(ChannelHealthManifest::compile([3, 3], 2).is_err());
+    assert!(ChannelHealthManifest::compile([3, 20], 1).is_err());
     assert_eq!(
-        channel_health_path_from_shm(std::path::Path::new("/dev/shm/aether-rtdb.shm")),
-        std::path::PathBuf::from("/dev/shm/aether-rtdb-health.shm")
+        channel_health_path_from_shm(std::path::Path::new("/dev/shm/aether-live-state.shm")),
+        std::path::PathBuf::from("/dev/shm/aether-live-state-health.shm")
     );
 }
 
@@ -230,8 +134,8 @@ fn channel_health_manifest_is_sparse_and_order_independent() {
 fn channel_health_roundtrips_without_redis() {
     let dir = tempfile::tempdir().expect("temporary directory");
     let path = dir.path().join("health.shm");
-    let manifest = Arc::new(ChannelHealthManifest::from_channel_ids([10, 20]));
-    let writer = ShmChannelHealthWriter::create(&path, Arc::clone(&manifest))
+    let manifest = Arc::new(ChannelHealthManifest::test_fixture([10, 20]));
+    let writer = ShmChannelHealthWriterHandle::create(&path, Arc::clone(&manifest), 1)
         .expect("create channel health writer");
     let now_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -240,6 +144,7 @@ fn channel_health_roundtrips_without_redis() {
     writer
         .set_online(10, true, now_ms)
         .expect("write online state");
+    writer.update_heartbeat(now_ms).expect("publish heartbeat");
 
     let reader = ShmChannelHealthReader::new(
         ShmClientConfig::new(&path, manifest.layout_hash())
@@ -262,16 +167,19 @@ fn channel_health_roundtrips_without_redis() {
 fn channel_health_reader_reopens_after_writer_process_restart() {
     let dir = tempfile::tempdir().expect("temporary directory");
     let path = dir.path().join("restart-health.shm");
-    let manifest = Arc::new(ChannelHealthManifest::from_channel_ids([10]));
+    let manifest = Arc::new(ChannelHealthManifest::test_fixture([10]));
     let now_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .expect("clock after epoch")
         .as_millis() as u64;
-    let first_writer = ShmChannelHealthWriter::create(&path, Arc::clone(&manifest))
+    let first_writer = ShmChannelHealthWriterHandle::create(&path, Arc::clone(&manifest), 10)
         .expect("create first health generation");
     first_writer
         .set_online(10, true, now_ms)
         .expect("write first generation");
+    first_writer
+        .update_heartbeat(now_ms)
+        .expect("publish first heartbeat");
     let reader = ShmChannelHealthReader::new(
         ShmClientConfig::new(&path, manifest.layout_hash())
             .with_identity_check_interval(Duration::ZERO)
@@ -280,11 +188,14 @@ fn channel_health_reader_reopens_after_writer_process_restart() {
     );
     assert!(reader.read_channel(10).unwrap().unwrap().online());
 
-    let second_writer = ShmChannelHealthWriter::create(&path, manifest)
+    let second_writer = ShmChannelHealthWriterHandle::create(&path, manifest, 11)
         .expect("atomically publish second health generation");
     second_writer
         .set_online(10, false, now_ms + 1)
         .expect("write second generation");
+    second_writer
+        .update_heartbeat(now_ms + 1)
+        .expect("publish second heartbeat");
 
     let reopened = reader
         .read_channel(10)
@@ -296,14 +207,18 @@ fn channel_health_reader_reopens_after_writer_process_restart() {
 
 #[test]
 fn point_watch_wire_frame_is_explicit_little_endian() {
-    let event = PointWatchEvent::new(10, PointKind::Telemetry, 7, 42, 12.5, 125.0, 1_000, 99);
+    let event = PointWatchEvent::new(10, PointKind::Telemetry, 7, 42)
+        .expect("slot fits the compact wire frame");
 
     let bytes = event.to_bytes();
-    let decoded = PointWatchEvent::from_bytes(&bytes);
+    let decoded = PointWatchEvent::from_bytes(&bytes).expect("decode compact v1 event");
 
+    assert_eq!(PointWatchEvent::SIZE, 16);
     assert_eq!(decoded, event);
     assert_eq!(&bytes[0..4], &10_u32.to_le_bytes());
-    assert_eq!(decoded.value(), 12.5);
+    assert_eq!(&bytes[8..12], &42_u32.to_le_bytes());
+    assert_eq!(bytes[12], 0);
+    assert_eq!(&bytes[13..16], &[0xA5, 1, 0x5A]);
     assert_eq!(decoded.slot_index(), 42);
     assert_eq!(
         point_watch_socket_for_consumer("alarm"),
@@ -315,11 +230,24 @@ fn point_watch_wire_frame_is_explicit_little_endian() {
 }
 
 #[test]
+fn point_watch_rejects_unversioned_and_unknown_kind_frames() {
+    let unversioned = [0_u8; PointWatchEvent::SIZE];
+    assert!(PointWatchEvent::from_bytes(&unversioned).is_err());
+
+    let mut unknown_kind = PointWatchEvent::new(10, PointKind::Telemetry, 7, 42)
+        .expect("event")
+        .to_bytes();
+    unknown_kind[12] = u8::MAX;
+    assert!(PointWatchEvent::from_bytes(&unknown_kind).is_err());
+}
+
+#[test]
 fn point_watch_event_matches_only_its_typed_address_in_the_current_manifest() {
-    let manifest = ChannelPointManifest::from_entries([(10, [2, 1, 0, 0])]);
-    let current = PointWatchEvent::new(10, PointKind::Telemetry, 1, 1, 12.5, 125.0, 1_000, 99);
-    let stale_slot = PointWatchEvent::new(10, PointKind::Telemetry, 1, 2, 12.5, 125.0, 1_000, 99);
-    let stale_kind = PointWatchEvent::new(10, PointKind::Status, 1, 1, 1.0, 1.0, 1_000, 99);
+    let manifest = ChannelPointManifest::dense_test_fixture([(10, [2, 1, 0, 0])]);
+    let current = PointWatchEvent::new(10, PointKind::Telemetry, 1, 1).expect("current event");
+    let stale_slot =
+        PointWatchEvent::new(10, PointKind::Telemetry, 1, 2).expect("stale-slot event");
+    let stale_kind = PointWatchEvent::new(10, PointKind::Status, 1, 1).expect("stale-kind event");
 
     assert!(current.matches_manifest(&manifest));
     assert!(!stale_slot.matches_manifest(&manifest));
@@ -353,7 +281,7 @@ async fn point_watch_listener_delivers_hints_on_an_isolated_socket() {
     })
     .await
     .expect("listener bind timeout");
-    let event = PointWatchEvent::new(10, PointKind::Status, 3, 8, 1.0, 1.0, 2_000, 100);
+    let event = PointWatchEvent::new(10, PointKind::Status, 3, 8).expect("wire event");
     stream
         .write_all(&event.to_bytes())
         .await
@@ -371,4 +299,15 @@ async fn point_watch_listener_delivers_hints_on_an_isolated_socket() {
         .expect("listener shutdown timeout")
         .expect("listener task joins")
         .expect("listener stops cleanly");
+}
+
+#[cfg(target_pointer_width = "64")]
+#[test]
+fn point_watch_event_rejects_a_slot_wider_than_its_wire_field() {
+    let oversized = usize::try_from(u64::from(u32::MAX) + 1).expect("64-bit usize");
+
+    let error = PointWatchEvent::new(10, PointKind::Telemetry, 7, oversized)
+        .expect_err("slot conversion must never truncate");
+
+    assert_eq!(error.kind(), aether_ports::PortErrorKind::InvalidData);
 }

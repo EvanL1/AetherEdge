@@ -616,10 +616,12 @@ async fn mapping_update_executes_inside_the_same_revision_transaction() {
 #[tokio::test]
 async fn mqtt_jsonpath_mapping_uses_the_point_owned_cas_transaction() {
     let pool = configured_pool().await;
-    sqlx::query("UPDATE channels SET protocol = 'mqtt' WHERE channel_id = 7")
-        .execute(&pool)
-        .await
-        .expect("MQTT channel fixture");
+    sqlx::query(
+        "UPDATE channels SET protocol = 'mqtt', revision = revision + 1 WHERE channel_id = 7",
+    )
+    .execute(&pool)
+    .await
+    .expect("MQTT channel fixture");
     sqlx::query(
         "INSERT INTO telemetry_points \
          (channel_id, point_id, signal_name, scale, offset, unit, data_type, reverse, description) \

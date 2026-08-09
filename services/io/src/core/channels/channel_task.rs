@@ -139,8 +139,6 @@ fn handle_protocol_event(
                 ctx.shared
                     .watchdog_heartbeat_ms
                     .store(now_ms, Ordering::Relaxed);
-                ctx.store
-                    .refresh_channel_health_heartbeat(now_ms.max(0) as u64);
                 if let Err(error) = write_batch_and_mark_fresh(
                     ctx.store.as_ref(),
                     ctx.channel_id,
@@ -174,8 +172,6 @@ fn handle_protocol_event(
             ctx.shared
                 .watchdog_heartbeat_ms
                 .store(now_ms, Ordering::Relaxed);
-            ctx.store
-                .refresh_channel_health_heartbeat(now_ms.max(0) as u64);
         },
     }
 }
@@ -189,8 +185,6 @@ fn check_online_change(
     store: &ShmDataStore,
     channel_id: u32,
 ) {
-    let heartbeat_ms = super::channel_entry::unix_timestamp_ms().max(0) as u64;
-    store.refresh_channel_health_heartbeat(heartbeat_ms);
     let current_online = protocol.connection_state().is_connected();
     if *prev_online != Some(current_online) {
         *prev_online = Some(current_online);
@@ -955,13 +949,16 @@ mod tests {
     #[tokio::test]
     async fn failed_acquisition_commit_does_not_advance_freshness() {
         let directory = tempfile::tempdir().expect("create test SHM directory");
-        let manifest = Arc::new(ChannelPointManifest::from_entries([(7, [1, 0, 0, 0])]));
+        let manifest = Arc::new(ChannelPointManifest::dense_test_fixture([(
+            7,
+            [1, 0, 0, 0],
+        )]));
         let writer = Arc::new(
             SlotWriter::create(
                 directory.path().join("freshness.shm"),
-                16,
                 manifest.slot_count(),
                 manifest.layout_hash(),
+                1,
             )
             .expect("create acquisition writer"),
         );

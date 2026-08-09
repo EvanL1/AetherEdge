@@ -6,16 +6,24 @@ any HTTP stack.
 
 It owns:
 
-- the stable 64-byte header and 32-byte aligned `PointSlot` layout;
+- the v5 64-byte `ShmHeader` and 32-byte aligned `PointSlot` layout;
 - seqlock-consistent reads and single-writer atomic updates;
 - read-only and writable mmap owners with RAII cleanup;
-- process-local dirty-slot tracking;
-- slot allocation bitmaps and generation path helpers;
-- tear-resistant snapshot serialization.
+- owner-controlled heartbeat and generation fencing;
+- point-quality persistence and generation path helpers;
+- ABI-independent, tear-resistant snapshot serialization with durable rename.
 
-Mmap constructors reject a mapping that cannot cover its declared capacity or
-whose live slot count exceeds that capacity before exposing any header or slot
-reference. Public failures use `DataplaneError`, allowing hosts to distinguish
+Mmap constructors require an exact physical length for the declared live slot
+count (`64 + 32 × slot_count`) before exposing any header or slot reference.
+`ShmHeader` carries only magic/version, `slot_count`, owner heartbeat,
+`layout_hash`, writer generation, publication epoch, and reserved bytes. A
+`PointSlot` carries value, raw value, timestamp, sequence, and quality. There
+is no dirty state, physical spare-capacity field, or automatic heartbeat update
+on a point write.
+
+Production reads make one seqlock attempt. Contention returns `None` to the
+adapter; the data plane does not spin through a retry loop. Public failures use
+`DataplaneError`, allowing hosts to distinguish
 invalid layout, invalid path, and operating-system I/O failures. Read-only
 readers and the generic `SlotIo` trait expose header values as a
 `HeaderSnapshot`, never as writable atomic cells. Logical manifest validation
@@ -26,6 +34,9 @@ cargo test -p aether-dataplane
 cargo tree -p aether-dataplane --edges normal
 ```
 
-The former `aether-rtdb-shm` aggregation crate was retired after its rolling
-v4 compatibility contracts passed. Industry-neutral code depends on this
-crate directly; channel-aware composition belongs in `aether-shm-bridge`.
+The canonical default file is `aether-live-state.shm`. The v5 layout is the
+only accepted physical format. Snapshot v1 is a separate `AETHSNAP` format and
+does not serialize heartbeat, writer generation, publication epoch, or seqlock
+state; earlier mmap and snapshot representations are rejected. Industry-neutral
+code depends on this crate directly; channel-aware composition belongs in
+`aether-shm-bridge`.

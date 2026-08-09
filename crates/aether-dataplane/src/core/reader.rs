@@ -16,7 +16,7 @@ use std::sync::atomic::Ordering;
 use memmap2::{Mmap, MmapOptions};
 
 use crate::core::header::{
-    HeaderSnapshot, UNIFIED_MAGIC, UNIFIED_VERSION, UnifiedHeader, validate_mapping_layout,
+    AETHER_SHM_MAGIC, HeaderSnapshot, SHM_LAYOUT_VERSION, ShmHeader, validate_mapping_layout,
 };
 use crate::core::slot_io::{self, SlotIo, SlotRead};
 use crate::{DataplaneError, DataplaneResult};
@@ -28,7 +28,6 @@ use crate::{DataplaneError, DataplaneResult};
 /// instance, point type, routing).
 pub struct SlotReader {
     pub(crate) mmap: Mmap,
-    pub(crate) max_slots: u32,
     pub(crate) slot_count: usize,
 }
 
@@ -37,7 +36,7 @@ impl SlotReader {
     ///
     /// This is the only file-to-mmap entry point required by read-side
     /// extensions. It validates the minimum file length before interpreting the
-    /// header, then validates magic, version, capacity, and live slot count
+    /// header, then validates magic, version, live slot count, and exact length
     /// before any slot can be read.
     pub fn open(path: impl AsRef<Path>) -> DataplaneResult<Self> {
         let path = path.as_ref();
@@ -47,7 +46,7 @@ impl SlotReader {
             .metadata()
             .map_err(|source| DataplaneError::io(format!("stat SHM file {path:?}"), source))?
             .len() as usize;
-        let header_len = std::mem::size_of::<UnifiedHeader>();
+        let header_len = std::mem::size_of::<ShmHeader>();
         if file_len < header_len {
             return Err(DataplaneError::InvalidLayout(format!(
                 "SHM file {path:?} is shorter than its header: {file_len} < {header_len}"
@@ -67,39 +66,35 @@ impl SlotReader {
         }
 
         // SAFETY: the mapping length was checked above; mmap bases are
-        // page-aligned, which satisfies `UnifiedHeader`'s 64-byte alignment;
+        // page-aligned, which satisfies `ShmHeader`'s 64-byte alignment;
         // integer atomics accept every bit pattern. The writer initializes this
         // fixed `repr(C)` header before publishing the canonical path.
-        let header = unsafe { &*(mmap.as_ptr() as *const UnifiedHeader) };
+        let header = unsafe { &*(mmap.as_ptr() as *const ShmHeader) };
         let snapshot = header.snapshot();
-        if snapshot.magic != UNIFIED_MAGIC {
+        if snapshot.magic != AETHER_SHM_MAGIC {
             return Err(DataplaneError::InvalidLayout(format!(
-                "invalid SHM magic for {path:?}: expected 0x{UNIFIED_MAGIC:X}, got 0x{:X}",
+                "invalid SHM magic for {path:?}: expected 0x{AETHER_SHM_MAGIC:X}, got 0x{:X}",
                 snapshot.magic
             )));
         }
-        if snapshot.version != UNIFIED_VERSION {
+        if snapshot.version != SHM_LAYOUT_VERSION {
             return Err(DataplaneError::InvalidLayout(format!(
-                "unsupported SHM version for {path:?}: expected {UNIFIED_VERSION}, got {}",
+                "unsupported SHM version for {path:?}: expected {SHM_LAYOUT_VERSION}, got {}",
                 snapshot.version
             )));
         }
+        if snapshot.publication_epoch == 0 {
+            return Err(DataplaneError::InvalidLayout(format!(
+                "SHM publication epoch is zero for {path:?}"
+            )));
+        }
 
-        Self::from_mmap(mmap, snapshot.max_slots, snapshot.slot_count as usize)
+        Self::from_mmap(mmap, snapshot.slot_count as usize)
     }
 
-    /// Wraps an already-opened mmap after validating its physical bounds.
-    ///
-    /// Logical metadata such as magic, version, and manifest identity remains
-    /// the caller's policy decision; this constructor guarantees only that
-    /// subsequent header and slot pointer dereferences stay inside the map.
-    pub fn from_mmap(mmap: Mmap, max_slots: u32, slot_count: usize) -> DataplaneResult<Self> {
-        validate_mapping_layout(mmap.len(), max_slots, slot_count)?;
-        Ok(Self {
-            mmap,
-            max_slots,
-            slot_count,
-        })
+    fn from_mmap(mmap: Mmap, slot_count: usize) -> DataplaneResult<Self> {
+        validate_mapping_layout(mmap.len(), slot_count)?;
+        Ok(Self { mmap, slot_count })
     }
 
     /// Copies the current header into a read-only value snapshot.
@@ -108,29 +103,22 @@ impl SlotReader {
         self.header_atomic().snapshot()
     }
 
-    /// Returns the opaque cross-plane publication identity stored in the
-    /// physical header, or zero for an uncoordinated file.
+    /// Returns the cross-plane publication identity stored in the header.
     #[inline]
     pub fn publication_epoch(&self) -> u64 {
         self.header_atomic().publication_epoch()
     }
 
     #[inline]
-    fn header_atomic(&self) -> &UnifiedHeader {
-        // SAFETY: mmap region starts with a valid UnifiedHeader.
-        unsafe { &*(self.mmap.as_ptr() as *const UnifiedHeader) }
+    fn header_atomic(&self) -> &ShmHeader {
+        // SAFETY: mmap region starts with a valid ShmHeader.
+        unsafe { &*(self.mmap.as_ptr() as *const ShmHeader) }
     }
 
     #[inline]
     /// Returns the number of live slots declared by the mapped header.
     pub fn slot_count(&self) -> usize {
         self.slot_count
-    }
-
-    #[inline]
-    /// Returns the maximum slot capacity of the mapped file.
-    pub fn max_slots(&self) -> u32 {
-        self.max_slots
     }
 
     /// Most recent heartbeat timestamp written by the writer.
@@ -151,25 +139,6 @@ impl SlotReader {
             .map(|d| d.as_millis() as u64)
             .unwrap_or(0);
         now_ms.saturating_sub(last_hb) < timeout_ms
-    }
-
-    /// Save a tear-resistant snapshot of the current SHM state.
-    ///
-    /// Uses `self.slot_count` (captured at `open()`) rather than the live
-    /// `header().slot_count` field. Reading the live header here would race
-    /// with io's `reconfigure_existing`: during the reconfigure window
-    /// `header.slot_count` has already been advanced to the new value, but
-    /// the slot array is still being zeroed. Snapshotting through the live
-    /// count in that window would capture all-zero slots that read as
-    /// `value=0.0` (a valid finite reading) rather than NaN sentinels, and
-    /// the snapshot would silently encode garbage as live data.
-    pub fn save_snapshot(&self, path: &Path) -> DataplaneResult<()> {
-        crate::core::snapshot_save::save_snapshot_impl(
-            &self.mmap,
-            self.slot_count,
-            path,
-            "SlotReader",
-        )
     }
 }
 

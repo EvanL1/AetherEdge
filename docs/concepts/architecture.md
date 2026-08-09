@@ -35,7 +35,7 @@ they are not architecture boundaries of the edge kernel.
 ```
 
 In the reference Docker deployment (`docker-compose.yml`) every container runs
-with `network_mode: host`. `/dev/shm` is mounted read/write at `/shm/rtdb` for
+with `network_mode: host`. `/dev/shm` is mounted read/write at `/shm/aether` for
 the main segments, per-consumer subscription bitmaps, and cross-container UDS
 sockets. The five internal process APIs bind to `127.0.0.1`; only the
 JWT-protected `aether-api` gateway is remotely reachable. Device actions are

@@ -34,35 +34,16 @@ impl ActionRoutingApplication {
         }
     }
 
-    /// Authorizes, audits, and applies one action-routing mutation.
-    pub async fn mutate(
-        &self,
-        context: &RequestContext,
-        mutation: ActionRoutingMutation,
-    ) -> Result<ActionRoutingMutationAcceptance, ApplicationError> {
-        self.mutate_inner(context, PendingActionRoutingMutation::Legacy(mutation))
-            .await
-    }
-
     /// Authorizes, audits, and applies one revision-fenced routing mutation.
     pub async fn mutate_revisioned(
         &self,
         context: &RequestContext,
         command: RevisionedActionRoutingMutation,
     ) -> Result<ActionRoutingMutationAcceptance, ApplicationError> {
-        self.mutate_inner(context, PendingActionRoutingMutation::Revisioned(command))
-            .await
-    }
-
-    async fn mutate_inner(
-        &self,
-        context: &RequestContext,
-        command: PendingActionRoutingMutation,
-    ) -> Result<ActionRoutingMutationAcceptance, ApplicationError> {
         let mutation = command.mutation();
         let kind = mutation.kind();
         let target = mutation.target();
-        let mutation_detail = mutation_audit_detail(&mutation, command.expected_revision());
+        let mutation_detail = mutation_audit_detail(&mutation, command.expected_revision().get());
 
         if let Err(error) = self.policy.authorize(MANAGE_ROUTING_CAPABILITY, context) {
             self.record_audit(
@@ -87,12 +68,7 @@ impl ActionRoutingApplication {
         )
         .await?;
 
-        let result = match command {
-            PendingActionRoutingMutation::Legacy(mutation) => self.mutator.mutate(mutation).await,
-            PendingActionRoutingMutation::Revisioned(command) => {
-                self.mutator.mutate_revisioned(command).await
-            },
-        };
+        let result = self.mutator.mutate_revisioned(command).await;
         match result {
             Ok(receipt) => {
                 let runtime = receipt.runtime_status();
@@ -193,39 +169,6 @@ impl ActionRoutingApplication {
     }
 }
 
-/// Carries an action-routing mutation that either arrived with a
-/// caller-supplied revision or came through the revisionless compatibility
-/// surface.
-///
-/// # Removal criteria
-///
-/// Same staged migration as [`PendingRuleMutation`]: `Legacy` backs the
-/// published `AutomationActionRoutingMutator::mutate`, no first-party route
-/// constructs it, and the adapter upgrades such a call to the CAS path by
-/// reading the current head. Remove this variant,
-/// `ActionRoutingApplication::mutate`, and the port's `mutate` method
-/// together with the rule-side shim, under the same three conditions.
-enum PendingActionRoutingMutation {
-    Legacy(ActionRoutingMutation),
-    Revisioned(RevisionedActionRoutingMutation),
-}
-
-impl PendingActionRoutingMutation {
-    const fn mutation(&self) -> ActionRoutingMutation {
-        match self {
-            Self::Legacy(mutation) => *mutation,
-            Self::Revisioned(command) => command.mutation(),
-        }
-    }
-
-    const fn expected_revision(&self) -> Option<u64> {
-        match self {
-            Self::Legacy(_) => None,
-            Self::Revisioned(command) => Some(command.expected_revision().get()),
-        }
-    }
-}
-
 fn target_audit_detail(target: ActionRoutingTarget) -> String {
     match target {
         ActionRoutingTarget::Route(key) => format!(
@@ -243,12 +186,8 @@ fn target_audit_detail(target: ActionRoutingTarget) -> String {
     }
 }
 
-fn mutation_audit_detail(
-    mutation: &ActionRoutingMutation,
-    expected_revision: Option<u64>,
-) -> String {
-    let expected =
-        expected_revision.map_or_else(|| "legacy".to_string(), |value| value.to_string());
+fn mutation_audit_detail(mutation: &ActionRoutingMutation, expected_revision: u64) -> String {
+    let expected = expected_revision.to_string();
     match mutation {
         ActionRoutingMutation::Upsert { route, .. } => {
             let destination = route.destination();

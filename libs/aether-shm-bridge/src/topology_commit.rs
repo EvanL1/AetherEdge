@@ -64,10 +64,10 @@ impl TopologyPublicationCommit {
         )?;
         Ok(Self {
             publication_epoch,
-            point_layout_hash: point.routing_hash,
+            point_layout_hash: point.layout_hash,
             point_slot_count: u64::from(point.slot_count),
             point_writer_generation: point.writer_generation,
-            health_layout_hash: health.routing_hash,
+            health_layout_hash: health.layout_hash,
             health_slot_count: u64::from(health.slot_count),
             health_writer_generation: health.writer_generation,
         })
@@ -99,10 +99,10 @@ impl TopologyPublicationCommit {
         self.publication_epoch != 0
             && point_reader.publication_epoch() == self.publication_epoch
             && health_reader.publication_epoch() == self.publication_epoch
-            && point.routing_hash == self.point_layout_hash
+            && point.layout_hash == self.point_layout_hash
             && u64::from(point.slot_count) == self.point_slot_count
             && point.writer_generation == self.point_writer_generation
-            && health.routing_hash == self.health_layout_hash
+            && health.layout_hash == self.health_layout_hash
             && u64::from(health.slot_count) == self.health_slot_count
             && health.writer_generation == self.health_writer_generation
     }
@@ -258,8 +258,8 @@ pub fn publish_topology_generation(
 ) -> PortResult<TopologyPublicationCommit> {
     let mut publication = begin_topology_publication(point_writer.config().path())?;
     let publication_epoch = publication.next_publication_epoch(health_writer.path())?;
-    point_writer.rebuild_for_publication(point_manifest, publication_epoch)?;
-    health_writer.rebuild_for_publication(health_manifest, publication_epoch)?;
+    point_writer.rebuild(point_manifest, publication_epoch)?;
+    health_writer.rebuild(health_manifest, publication_epoch)?;
     publication.commit(health_writer.path(), publication_epoch)
 }
 
@@ -356,9 +356,6 @@ fn observed_plane_epoch(path: &Path) -> PortResult<Option<u64>> {
     }
     let reader = SlotReader::open(path).map_err(map_dataplane_error)?;
     let epoch = reader.publication_epoch();
-    if epoch == 0 {
-        return Ok(None);
-    }
     validate_topology_publication_epoch(epoch)?;
     Ok(Some(epoch))
 }
@@ -414,9 +411,9 @@ pub(crate) fn validate_topology_publication_locked(
     let health = SlotReader::open(health_path).map_err(map_dataplane_error)?;
     let point_header = point.header();
     let health_header = health.header();
-    if point_header.routing_hash != expected_point_hash
+    if point_header.layout_hash != expected_point_hash
         || point_header.slot_count as usize != expected_point_slots
-        || health_header.routing_hash != expected_health_hash
+        || health_header.layout_hash != expected_health_hash
         || health_header.slot_count as usize != expected_health_slots
     {
         return Err(transition_error(

@@ -8,34 +8,11 @@ use std::time::Duration;
 use aether_domain::{ChannelCommandAddress, CommandConstraints, PointKind};
 use aether_ports::{PortError, PortErrorKind, PortResult};
 use aether_shm_bridge::{
-    ChannelHealthManifest, ChannelPointManifest, PhysicalPointAddress, ShmClientConfig,
-    ShmReadTopologyGeneration,
+    ChannelHealthManifest, ChannelPointManifest, DEFAULT_MAX_SLOTS, PhysicalPointAddress,
+    ShmClientConfig, ShmReadTopologyGeneration,
 };
 use rustc_hash::FxHasher;
 use sqlx::{SqliteConnection, SqlitePool};
-
-const POINT_COUNT_QUERIES: [(&str, &str, usize); 4] = [
-    (
-        "SELECT channel_id, MIN(point_id), MAX(point_id) + 1, COUNT(*), COUNT(DISTINCT point_id) FROM telemetry_points GROUP BY channel_id",
-        "telemetry_points",
-        0,
-    ),
-    (
-        "SELECT channel_id, MIN(point_id), MAX(point_id) + 1, COUNT(*), COUNT(DISTINCT point_id) FROM signal_points GROUP BY channel_id",
-        "signal_points",
-        1,
-    ),
-    (
-        "SELECT channel_id, MIN(point_id), MAX(point_id) + 1, COUNT(*), COUNT(DISTINCT point_id) FROM control_points GROUP BY channel_id",
-        "control_points",
-        2,
-    ),
-    (
-        "SELECT channel_id, MIN(point_id), MAX(point_id) + 1, COUNT(*), COUNT(DISTINCT point_id) FROM adjustment_points GROUP BY channel_id",
-        "adjustment_points",
-        3,
-    ),
-];
 
 const CONFIGURED_POINT_QUERY: &str = "SELECT channel_id, 0 AS kind_index, point_id FROM telemetry_points \
      UNION ALL \
@@ -51,6 +28,7 @@ const CONFIGURED_POINT_QUERY: &str = "SELECT channel_id, 0 AS kind_index, point_
 pub struct SqliteShmTopologySnapshot {
     point_manifest: ChannelPointManifest,
     health_manifest: ChannelHealthManifest,
+    max_slots: usize,
 }
 
 /// Deterministically ordered logical instance route map.
@@ -122,8 +100,7 @@ impl SqliteLiveTopologySnapshot {
 
     /// Returns every configured physical point in canonical SHM address order.
     ///
-    /// Sparse manifest holes are omitted. The order is ascending channel id,
-    /// then T/S/C/A kind, then point id.
+    /// The order is ascending channel id, then T/S/C/A kind, then point id.
     #[must_use]
     pub fn configured_physical_points(&self) -> &[PhysicalPointAddress] {
         &self.configured_physical_points
@@ -211,6 +188,12 @@ impl SqliteShmTopologySnapshot {
     pub fn into_manifests(self) -> (ChannelPointManifest, ChannelHealthManifest) {
         (self.point_manifest, self.health_manifest)
     }
+
+    /// Returns the resource cap used to compile both physical manifests.
+    #[must_use]
+    pub const fn max_slots(&self) -> usize {
+        self.max_slots
+    }
 }
 
 /// Loads point and channel-health topology from one authoritative SQLite snapshot.
@@ -232,7 +215,11 @@ pub async fn load_sqlite_live_topology(
 ) -> PortResult<SqliteLiveTopologySnapshot> {
     let mut transaction = pool.begin().await.map_err(topology_unavailable)?;
     let shm = load_shm_topology(&mut transaction).await?;
-    let configured_physical_points = load_configured_physical_points(&mut transaction).await?;
+    let configured_physical_points = shm
+        .point_manifest()
+        .iter_physical_points()
+        .map(|(_, address)| address)
+        .collect::<Vec<_>>();
     let measurement_routes = load_routes(
         &mut transaction,
         "measurement_routing",
@@ -271,67 +258,91 @@ pub async fn load_sqlite_live_topology(
 async fn load_shm_topology(
     connection: &mut SqliteConnection,
 ) -> PortResult<SqliteShmTopologySnapshot> {
-    let mut counts = BTreeMap::<u32, [u32; 4]>::new();
-
-    for (query, table, kind_index) in POINT_COUNT_QUERIES {
-        let rows = sqlx::query_as::<_, (i64, i64, i64, i64, i64)>(query)
-            .fetch_all(&mut *connection)
-            .await
-            .map_err(topology_unavailable)?;
-        for (
-            raw_channel_id,
-            raw_min_point_id,
-            raw_upper_bound,
-            raw_row_count,
-            raw_distinct_count,
-        ) in rows
-        {
-            let channel_id = stored_u32(raw_channel_id, "channel_id", table)?;
-            stored_u32(raw_min_point_id, "point_id", table)?;
-            let count = stored_u32(raw_upper_bound, "point count", table)?;
-            let row_count = stored_u32(raw_row_count, "point row count", table)?;
-            let distinct_count = stored_u32(raw_distinct_count, "distinct point count", table)?;
-            if row_count != distinct_count {
-                return Err(invalid_topology(format!(
-                    "{table} channel {channel_id} contains duplicate point identifiers"
-                )));
-            }
-            counts.entry(channel_id).or_insert([0; 4])[kind_index] = count;
-        }
-    }
-
+    let max_slots = load_manifest_capacity(connection).await?;
+    let bounded_limit = i64::try_from(max_slots.saturating_add(1))
+        .map_err(|_| invalid_topology("configured SHM capacity exceeds SQLite integer range"))?;
     let raw_channel_ids =
-        sqlx::query_scalar::<_, i64>("SELECT channel_id FROM channels ORDER BY channel_id")
+        sqlx::query_scalar::<_, i64>("SELECT channel_id FROM channels ORDER BY channel_id LIMIT ?")
+            .bind(bounded_limit)
             .fetch_all(&mut *connection)
             .await
             .map_err(topology_unavailable)?;
+    if raw_channel_ids.len() > max_slots {
+        return Err(invalid_topology(format!(
+            "channel-health topology exceeds configured capacity {max_slots}"
+        )));
+    }
     let channel_ids = raw_channel_ids
         .into_iter()
         .map(|channel_id| stored_u32(channel_id, "channel_id", "channels"))
         .collect::<PortResult<Vec<_>>>()?;
-    if let Some(orphan_channel_id) = counts
-        .keys()
-        .copied()
+    let configured_points = load_configured_physical_points(connection, max_slots).await?;
+    if let Some(orphan_channel_id) = configured_points
+        .iter()
+        .map(|address| address.channel_id().get())
         .find(|channel_id| channel_ids.binary_search(channel_id).is_err())
     {
         return Err(invalid_topology(format!(
             "point topology references channel {orphan_channel_id}, which is absent from channels"
         )));
     }
-
     Ok(SqliteShmTopologySnapshot {
-        point_manifest: ChannelPointManifest::from_map(counts),
-        health_manifest: ChannelHealthManifest::from_channel_ids(channel_ids),
+        point_manifest: ChannelPointManifest::compile(configured_points, max_slots)?,
+        health_manifest: ChannelHealthManifest::compile(channel_ids, max_slots)?,
+        max_slots,
     })
+}
+
+async fn load_manifest_capacity(connection: &mut SqliteConnection) -> PortResult<usize> {
+    let has_service_config = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'service_config'",
+    )
+    .fetch_one(&mut *connection)
+    .await
+    .map_err(topology_unavailable)?
+        != 0;
+    if !has_service_config {
+        return Ok(DEFAULT_MAX_SLOTS as usize);
+    }
+
+    let stored = sqlx::query_scalar::<_, String>(
+        "SELECT value FROM service_config \
+         WHERE service_name = 'global' AND key = 'shared_memory.max_slots'",
+    )
+    .fetch_optional(&mut *connection)
+    .await
+    .map_err(topology_unavailable)?;
+    let Some(stored) = stored else {
+        return Ok(DEFAULT_MAX_SLOTS as usize);
+    };
+    let max_slots = stored.parse::<u32>().map_err(|_| {
+        invalid_topology("service_config shared_memory.max_slots is not a positive u32")
+    })?;
+    if max_slots == 0 {
+        return Err(invalid_topology(
+            "service_config shared_memory.max_slots must be greater than zero",
+        ));
+    }
+    Ok(max_slots as usize)
 }
 
 async fn load_configured_physical_points(
     connection: &mut SqliteConnection,
+    max_slots: usize,
 ) -> PortResult<Vec<PhysicalPointAddress>> {
-    let rows = sqlx::query_as::<_, (i64, i64, i64)>(CONFIGURED_POINT_QUERY)
+    let bounded_limit = i64::try_from(max_slots.saturating_add(1))
+        .map_err(|_| invalid_topology("configured SHM capacity exceeds SQLite integer range"))?;
+    let query = format!("{CONFIGURED_POINT_QUERY} LIMIT ?");
+    let rows = sqlx::query_as::<_, (i64, i64, i64)>(&query)
+        .bind(bounded_limit)
         .fetch_all(&mut *connection)
         .await
         .map_err(topology_unavailable)?;
+    if rows.len() > max_slots {
+        return Err(invalid_topology(format!(
+            "point topology exceeds configured capacity {max_slots}"
+        )));
+    }
     rows.into_iter()
         .map(|(raw_channel_id, raw_kind_index, raw_point_id)| {
             let channel_id = stored_u32(raw_channel_id, "channel_id", "physical point tables")?;
@@ -347,7 +358,7 @@ async fn load_configured_physical_points(
                     ));
                 },
             };
-            Ok(PhysicalPointAddress::from_legacy_raw(
+            Ok(PhysicalPointAddress::from_raw_ids(
                 channel_id, kind, point_id,
             ))
         })
@@ -510,7 +521,7 @@ fn validate_route(
             "{table} route kind {raw_kind} violates its read/write ownership"
         )));
     }
-    let target = PhysicalPointAddress::from_legacy_raw(channel_id, kind, point_id);
+    let target = PhysicalPointAddress::from_raw_ids(channel_id, kind, point_id);
     if manifest.slot_for(target).is_none() {
         return Err(invalid_topology(format!(
             "{table} route target {channel_id}:{raw_kind}:{point_id} is absent from the point manifest"
@@ -622,7 +633,7 @@ fn live_topology_digest(
     actions: &LogicalCommandRoutes,
 ) -> u64 {
     let mut hasher = FxHasher::default();
-    "aether.sqlite-live-topology.v3".hash(&mut hasher);
+    "aether.sqlite-live-topology.v5".hash(&mut hasher);
     shm.point_manifest().layout_hash().hash(&mut hasher);
     shm.point_manifest().slot_count().hash(&mut hasher);
     shm.health_manifest().layout_hash().hash(&mut hasher);
