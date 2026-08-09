@@ -28,6 +28,10 @@ const NOT_OPERATOR_FACING: &[(&str, &str)] = &[
         "install-layout detail resolved by install context",
     ),
     ("HOSTNAME", "provided by the operating system"),
+    (
+        "AETHER_TEST_PG_DSN",
+        "opts a developer into the ignored PostgreSQL integration tests; never read by a running service",
+    ),
     ("CARGO_TARGET_TMPDIR", "provided by cargo during tests"),
 ];
 
