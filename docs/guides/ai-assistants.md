@@ -144,21 +144,22 @@ token's role allows, including the governed writes that were withheld from
 `tools/list`. Withholding a tool hides an action from the model; it does not
 withhold authority from the credential.
 
-**The credential is the boundary, so narrow the credential.** An access token
-may carry a `scope` claim listing the permissions it is allowed to exercise.
-The role remains the ceiling and the scope may only narrow it, so a scope can
-never award authority a role does not already have. A token scoped to reads is
-refused at the gateway and again by each service, whichever route the request
-takes:
+**The credential is the boundary, so narrow the credential.** Every access
+token carries a `scope` claim listing the permissions it may exercise. The role
+remains the ceiling and the scope selects within it, so a scope can never award
+authority a role does not already have. A token scoped to reads is refused at
+the gateway and again by each service, whichever route the request takes:
 
 ```json
 { "user_id": 42, "role": "Engineer", "scope": ["data_processing.read"], "type": "access", "exp": 4102444800, "iat": 1 }
 ```
 
-Omit `scope` entirely and the token behaves exactly as before, keeping
-everything its role carries. Issue a scoped token for any assistant that
-should read but never command; use `--allow-write` to decide what the model is
-shown, not to decide what it is permitted to do.
+`scope` is required. A token that does not state its permissions is rejected
+rather than treated as fully privileged — an omitted scope would be an implicit
+grant, which is the fail-open path the claim exists to close. Login issues a
+token carrying everything its role may hold; issue a narrowed one for any
+assistant that should read but never command, and use `--allow-write` to decide
+what the model is shown, not what it is permitted to do.
 
 Starting the server with `--allow-write` is a deliberate act, but the flag is
 only a registration gate. It is not confirmation for any command. The MCP

@@ -819,6 +819,7 @@ async fn http_create(
 struct AccessClaims<'a> {
     user_id: i64,
     role: &'a str,
+    scope: Vec<&'static str>,
     exp: usize,
     iat: usize,
     #[serde(rename = "type")]
@@ -831,6 +832,7 @@ fn access_token() -> String {
         &AccessClaims {
             user_id: 7,
             role: "Admin",
+            scope: aether_auth_jwt::permissions_for_role(Some("Admin")),
             exp: 4_102_444_800,
             iat: 1,
             token_type: "access",

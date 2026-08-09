@@ -53,6 +53,7 @@ struct AccessClaims<'a> {
     user_id: i64,
     username: &'a str,
     role: &'a str,
+    scope: Vec<&'static str>,
     exp: usize,
     iat: usize,
     #[serde(rename = "type")]
@@ -67,6 +68,7 @@ fn access_token(role: &str) -> String {
             user_id: 7,
             username: "operator",
             role,
+            scope: aether_auth_jwt::permissions_for_role(Some(role)),
             exp: (now + 3_600) as usize,
             iat: now as usize,
             token_type: "access",

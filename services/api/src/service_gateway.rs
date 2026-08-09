@@ -219,7 +219,7 @@ fn authorize_service_request(
     // reads is refused here instead of being forwarded to be rejected there.
     if !ROLE_COMMAND_PERMISSIONS
         .iter()
-        .any(|permission| scope_allows(claims.scope.as_deref(), permission))
+        .any(|permission| scope_allows(&claims.scope, permission))
     {
         return Err(GatewayAuthorizationError::MutationForbidden);
     }
@@ -390,7 +390,10 @@ mod tests {
             username: "gateway-test".to_owned(),
             role: Some(role.to_owned()),
             token_id: None,
-            scope: None,
+            scope: aether_auth_jwt::permissions_for_role(Some(role))
+                .into_iter()
+                .map(str::to_owned)
+                .collect(),
             exp: usize::MAX,
             iat: 0,
             token_type: "access".to_owned(),
@@ -504,7 +507,7 @@ mod tests {
 
     fn scoped_claims(role: &str, scope: Vec<&str>) -> Claims {
         Claims {
-            scope: Some(scope.into_iter().map(str::to_owned).collect()),
+            scope: scope.into_iter().map(str::to_owned).collect(),
             ..claims(role)
         }
     }

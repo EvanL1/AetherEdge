@@ -719,7 +719,7 @@ fn request_context(
     let request_id = request_id(headers)?;
     let mut actor = Actor::new(format!("user:{}", claims.user_id));
     // The role sets the ceiling; a token scope may only narrow it further.
-    let scope = claims.scope.as_deref();
+    let scope = claims.scope.as_slice();
     if matches!(
         claims.role.as_deref(),
         Some("Viewer" | "Engineer" | "Admin")
@@ -851,7 +851,10 @@ mod tests {
             username: "processing-test".to_owned(),
             role: Some(role.to_owned()),
             token_id: None,
-            scope: None,
+            scope: aether_auth_jwt::permissions_for_role(Some(role))
+                .into_iter()
+                .map(str::to_owned)
+                .collect(),
             exp: usize::MAX,
             iat: 0,
             token_type: "access".to_owned(),

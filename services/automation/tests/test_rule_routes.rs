@@ -47,6 +47,7 @@ const JWT_SECRET: &str = "0123456789abcdef0123456789abcdef";
 struct AccessClaims<'a> {
     user_id: i64,
     role: &'a str,
+    scope: Vec<&'static str>,
     exp: usize,
     iat: usize,
     #[serde(rename = "type")]
@@ -60,6 +61,7 @@ fn access_token() -> String {
         &AccessClaims {
             user_id: 7,
             role: "Engineer",
+            scope: aether_auth_jwt::permissions_for_role(Some("Engineer")),
             exp: (now + 3_600) as usize,
             iat: now as usize,
             token_type: "access",

@@ -769,10 +769,14 @@ fn execute_repl_command(reader: &ShmRuntimeView, input: &str) -> Result<bool> {
                 println!("  Key format: inst:<id>:M|A:<point_id> or ch:<id>:T|S|C|A:<point_id>");
             } else {
                 let key = parse_key(parts[1])?;
-                match get_value(reader, &key)? {
-                    Some(v) => println!("{}", v),
-                    None => println!("(nil)"),
-                }
+                println!(
+                    "{}",
+                    render_sample(
+                        get_sample(reader, &key)?,
+                        chrono::Utc::now().timestamp_millis(),
+                        sample_stale_after_ms()
+                    )
+                );
             }
         },
         Some("INFO") => {

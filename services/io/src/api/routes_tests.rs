@@ -21,7 +21,37 @@ use aether_ports::{
 use tower::util::ServiceExt; // for `oneshot` and `ready`
 
 const TEST_JWT_SECRET: &str = "0123456789abcdef0123456789abcdef";
-const ADMIN_ACCESS_TOKEN: &str = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyX2lkIjo3LCJyb2xlIjoiQWRtaW4iLCJ0eXBlIjoiYWNjZXNzIiwiaWF0IjoxNzAwMDAwMDAwLCJleHAiOjQxMDI0NDQ4MDB9.JtjQvDBo7j0bLOxwed6yC9-M9qFCloc4H2Dt0LjzF9E";
+/// An Admin token carrying everything that role may hold.
+///
+/// Signed here rather than pasted in as a literal: a pre-encoded blob cannot
+/// follow a change to the claim set, and the one that used to live here went
+/// stale the moment `scope` became required.
+fn admin_access_token() -> String {
+    #[derive(serde::Serialize)]
+    struct AccessClaims {
+        user_id: i64,
+        role: &'static str,
+        scope: Vec<&'static str>,
+        #[serde(rename = "type")]
+        token_type: &'static str,
+        iat: usize,
+        exp: usize,
+    }
+
+    jsonwebtoken::encode(
+        &jsonwebtoken::Header::new(jsonwebtoken::Algorithm::HS256),
+        &AccessClaims {
+            user_id: 7,
+            role: "Admin",
+            scope: aether_auth_jwt::permissions_for_role(Some("Admin")),
+            token_type: "access",
+            iat: 1_700_000_000,
+            exp: 4_102_444_800,
+        },
+        &jsonwebtoken::EncodingKey::from_secret(TEST_JWT_SECRET.as_bytes()),
+    )
+    .expect("encode admin test token")
+}
 const TEST_REQUEST_ID: &str = "018f0000-0000-7000-8000-000000000041";
 
 /// Helper: Create in-memory SQLite pool for testing
@@ -115,7 +145,7 @@ fn channel_mutation_request(
     let builder = Request::builder()
         .uri(uri)
         .method(method)
-        .header("authorization", format!("Bearer {ADMIN_ACCESS_TOKEN}"))
+        .header("authorization", format!("Bearer {}", admin_access_token()))
         .header("x-request-id", TEST_REQUEST_ID)
         .header("x-aether-confirmed", "true");
     match body {
@@ -398,7 +428,7 @@ async fn channel_mutations_require_real_bearer_auth_and_confirmation_before_side
         .uri("/api/channels")
         .method("POST")
         .header("content-type", "application/json")
-        .header("authorization", format!("Bearer {ADMIN_ACCESS_TOKEN}"))
+        .header("authorization", format!("Bearer {}", admin_access_token()))
         .body(Body::from(body.to_string()))
         .unwrap();
     let response = app.oneshot(unconfirmed).await.unwrap();
@@ -1297,7 +1327,7 @@ async fn test_update_mappings_replace_persists() {
         .uri("/api/channels/8002/mappings")
         .method("PUT")
         .header("content-type", "application/json")
-        .header("authorization", format!("Bearer {ADMIN_ACCESS_TOKEN}"))
+        .header("authorization", format!("Bearer {}", admin_access_token()))
         .header("x-request-id", TEST_REQUEST_ID)
         .header("x-aether-confirmed", "true")
         .header("x-aether-expected-revision", "1")
@@ -1351,7 +1381,7 @@ async fn test_update_mappings_merge_persists() {
         .uri("/api/channels/8010/mappings")
         .method("PUT")
         .header("content-type", "application/json")
-        .header("authorization", format!("Bearer {ADMIN_ACCESS_TOKEN}"))
+        .header("authorization", format!("Bearer {}", admin_access_token()))
         .header("x-request-id", TEST_REQUEST_ID)
         .header("x-aether-confirmed", "true")
         .header("x-aether-expected-revision", "1")
@@ -1621,7 +1651,7 @@ fn governed_channel_control_request(
         .header("content-type", "application/json")
         .header("x-aether-confirmed", confirmed.to_string());
     if authenticated {
-        request = request.header("authorization", format!("Bearer {ADMIN_ACCESS_TOKEN}"));
+        request = request.header("authorization", format!("Bearer {}", admin_access_token()));
     }
     if let Some(request_id) = request_id {
         request = request.header("x-request-id", request_id);
@@ -3096,7 +3126,7 @@ async fn test_protocol_data_type_normalization_closed_loop() {
         .uri("/api/channels/4001/mappings")
         .method("PUT")
         .header("content-type", "application/json")
-        .header("authorization", format!("Bearer {ADMIN_ACCESS_TOKEN}"))
+        .header("authorization", format!("Bearer {}", admin_access_token()))
         .header("x-request-id", TEST_REQUEST_ID)
         .header("x-aether-confirmed", "true")
         .header("x-aether-expected-revision", "1")
@@ -3215,7 +3245,7 @@ async fn send_json_request(
     };
     if uri.contains("/apply/") {
         builder = builder
-            .header("authorization", format!("Bearer {ADMIN_ACCESS_TOKEN}"))
+            .header("authorization", format!("Bearer {}", admin_access_token()))
             .header("x-request-id", TEST_REQUEST_ID)
             .header("x-aether-confirmed", "true")
             .header("x-aether-expected-revision", "1");
@@ -3788,7 +3818,7 @@ async fn channel_management_logger_does_not_consume_large_chunked_json() {
         .method("POST")
         .uri("/api/channels")
         .header("content-type", "application/json")
-        .header("authorization", format!("Bearer {ADMIN_ACCESS_TOKEN}"))
+        .header("authorization", format!("Bearer {}", admin_access_token()))
         .header("x-aether-confirmed", "true")
         // Intentionally omit Content-Length to exercise chunked semantics.
         .body(Body::from(body.to_string()))
@@ -3814,7 +3844,7 @@ fn governed_channel_request(
         .header("x-request-id", "018f4f04-0db8-7c6c-84ab-4b8457d8d385")
         .header("x-aether-confirmed", confirmed.to_string());
     if authenticated {
-        request = request.header("authorization", format!("Bearer {ADMIN_ACCESS_TOKEN}"));
+        request = request.header("authorization", format!("Bearer {}", admin_access_token()));
     }
     if let Some(revision) = expected_revision {
         request = request.header("x-aether-expected-revision", revision);
@@ -3828,7 +3858,7 @@ fn governed_reconciliation_request(uri: &str) -> Request<Body> {
     Request::builder()
         .method("POST")
         .uri(uri)
-        .header("authorization", format!("Bearer {ADMIN_ACCESS_TOKEN}"))
+        .header("authorization", format!("Bearer {}", admin_access_token()))
         .header("x-request-id", TEST_REQUEST_ID)
         .header("x-aether-confirmed", "true")
         .body(Body::empty())
@@ -3934,7 +3964,7 @@ async fn channel_reconciliation_requires_bearer_confirmation_and_explicit_reques
     let missing_confirmation = Request::builder()
         .method("POST")
         .uri("/api/channels/reload")
-        .header("authorization", format!("Bearer {ADMIN_ACCESS_TOKEN}"))
+        .header("authorization", format!("Bearer {}", admin_access_token()))
         .header("x-request-id", TEST_REQUEST_ID)
         .body(Body::empty())
         .unwrap();
@@ -3950,7 +3980,7 @@ async fn channel_reconciliation_requires_bearer_confirmation_and_explicit_reques
     let missing_request_id = Request::builder()
         .method("POST")
         .uri("/api/channels/7/reconcile")
-        .header("authorization", format!("Bearer {ADMIN_ACCESS_TOKEN}"))
+        .header("authorization", format!("Bearer {}", admin_access_token()))
         .header("x-aether-confirmed", "true")
         .body(Body::empty())
         .unwrap();
@@ -4080,7 +4110,7 @@ async fn invalid_channel_http_inputs_never_reach_the_mutator() {
         Request::builder()
             .method("POST")
             .uri("/api/channels")
-            .header("authorization", format!("Bearer {ADMIN_ACCESS_TOKEN}"))
+            .header("authorization", format!("Bearer {}", admin_access_token()))
             .header("x-aether-confirmed", "true")
             .body(Body::from(r#"{"name":"missing content type"}"#))
             .unwrap(),
@@ -4088,7 +4118,7 @@ async fn invalid_channel_http_inputs_never_reach_the_mutator() {
             .method("POST")
             .uri("/api/channels")
             .header("content-type", "application/json")
-            .header("authorization", format!("Bearer {ADMIN_ACCESS_TOKEN}"))
+            .header("authorization", format!("Bearer {}", admin_access_token()))
             .header("x-aether-confirmed", "true")
             .body(Body::from("{invalid-json"))
             .unwrap(),

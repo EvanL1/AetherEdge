@@ -119,10 +119,10 @@ visible rather than absent. An unrecognised `outcome` is a 400 rather than an
 ignored filter, because silently widening an audit query answers a narrower
 question than the one asked.
 
-An access token may also carry a `scope` claim listing the permissions it may
-exercise. The role remains the ceiling and a scope only narrows it, so a scope
-never grants authority the role lacks. A token without the claim keeps
-everything its role carries.
+Every access token carries a required `scope` claim listing the permissions it
+may exercise. The role remains the ceiling and the scope selects within it, so
+a scope never grants authority the role lacks. A token without the claim is
+refused rather than treated as fully privileged.
 
 The gateway requires an access JWT before forwarding any namespace request.
 The owning service then applies operation-specific authorization:

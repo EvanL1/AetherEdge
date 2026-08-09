@@ -25,7 +25,7 @@ use axum::{
 };
 use serde_json::json;
 use std::sync::Arc;
-use support::{ADMIN_ACCESS_TOKEN, TEST_JWT_SECRET};
+use support::{TEST_JWT_SECRET, admin_access_token};
 use tower::ServiceExt;
 
 const TEST_REQUEST_ID: &str = "018f0000-0000-7000-8000-000000000051";
@@ -110,7 +110,7 @@ async fn make_request(
     let req_builder = Request::builder()
         .method(method)
         .uri(uri)
-        .header("authorization", format!("Bearer {ADMIN_ACCESS_TOKEN}"))
+        .header("authorization", format!("Bearer {}", admin_access_token()))
         .header("x-request-id", TEST_REQUEST_ID)
         .header("x-aether-confirmed", "true");
 

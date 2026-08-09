@@ -479,6 +479,7 @@ dependencies = [
  "futures",
  "hex",
  "http-body-util",
+ "jsonwebtoken",
  "rand 0.8.7",
  "reqwest",
  "rumqttc",

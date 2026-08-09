@@ -14,12 +14,13 @@ const MIN_SECRET_BYTES: usize = 32;
 struct AccessClaims {
     user_id: i64,
     role: Option<String>,
-    /// Optional narrowing of the role's permissions.
+    /// The permissions this token may exercise.
     ///
-    /// Absent means "whatever the role carries", which keeps every previously
-    /// issued token behaving exactly as before.
-    #[serde(default)]
-    scope: Option<Vec<String>>,
+    /// Required. A token that does not say what it is allowed to do is not
+    /// granted the role's full authority by default — an omitted scope is a
+    /// malformed token, because an implicit grant is exactly the fail-open
+    /// path this claim exists to close.
+    scope: Vec<String>,
     #[serde(rename = "type")]
     token_type: String,
     exp: usize,
@@ -40,6 +41,30 @@ pub const ROLE_COMMAND_PERMISSIONS: [&str; 8] = [
     "alarm.rule.manage",
     "alarm.alert.resolve",
 ];
+
+/// Gateway-local capabilities that are not device or automation commands.
+pub const DATA_PROCESSING_READ: &str = "data_processing.read";
+
+/// Gateway-local capability to run a Data Processing task.
+pub const DATA_PROCESSING_RUN: &str = "data_processing.run";
+
+/// Every permission a role may hold, and therefore the widest scope a token
+/// issued for that role may carry.
+///
+/// One table so issuance, the gateway, and the services cannot disagree about
+/// what a role means.
+#[must_use]
+pub fn permissions_for_role(role: Option<&str>) -> Vec<&'static str> {
+    match role {
+        Some("Admin" | "Engineer") => ROLE_COMMAND_PERMISSIONS
+            .iter()
+            .copied()
+            .chain([DATA_PROCESSING_READ, DATA_PROCESSING_RUN])
+            .collect(),
+        Some("Viewer") => vec![DATA_PROCESSING_READ],
+        _ => Vec::new(),
+    }
+}
 
 /// Verifies access JWTs issued by Aether's gateway authentication API.
 ///
@@ -83,7 +108,7 @@ impl AccessTokenAuthenticator {
 
         let mut validation = Validation::new(Algorithm::HS256);
         validation.validate_exp = true;
-        validation.set_required_spec_claims(&["exp", "iat", "type", "user_id"]);
+        validation.set_required_spec_claims(&["exp", "iat", "type", "user_id", "scope"]);
         let claims = decode::<AccessClaims>(
             credential,
             &DecodingKey::from_secret(self.secret.as_bytes()),
@@ -98,7 +123,7 @@ impl AccessTokenAuthenticator {
         Ok(actor_for_claims(
             &format!("user:{}", claims.user_id),
             claims.role.as_deref(),
-            claims.scope.as_deref(),
+            &claims.scope,
         ))
     }
 
@@ -152,32 +177,27 @@ impl AuthenticatedInvocation {
     }
 }
 
-/// Reports whether an optional token scope permits `permission`.
+/// Reports whether a token scope permits `permission`.
 ///
-/// An absent scope means the token was never narrowed and keeps whatever its
-/// role carries. A present scope is an allow-list, so an empty one permits
-/// nothing.
+/// The scope is an allow-list and nothing else, so an empty one permits
+/// nothing. There is no "unset means everything" reading.
 #[must_use]
-pub fn scope_allows(scope: Option<&[String]>, permission: &str) -> bool {
-    scope.is_none_or(|granted| granted.iter().any(|entry| entry == permission))
+pub fn scope_allows(scope: &[String], permission: &str) -> bool {
+    scope.iter().any(|entry| entry == permission)
 }
 
-/// Derives the actor's permissions from its role and optional scope.
+/// Derives the actor's permissions from its role and its scope.
 ///
-/// The role sets the ceiling and the scope may only narrow it. Treating scope
+/// The role sets the ceiling and the scope selects within it. Treating scope
 /// as a grant instead of an intersection would let any token award itself
 /// command authority, which is the opposite of what it exists for.
-fn actor_for_claims(actor_id: &str, role: Option<&str>, scope: Option<&[String]>) -> Actor {
-    let actor = Actor::new(actor_id);
-    if !matches!(role, Some("Admin" | "Engineer")) {
-        return actor;
-    }
-
-    ROLE_COMMAND_PERMISSIONS
-        .iter()
-        .copied()
+fn actor_for_claims(actor_id: &str, role: Option<&str>, scope: &[String]) -> Actor {
+    permissions_for_role(role)
+        .into_iter()
         .filter(|permission| scope_allows(scope, permission))
-        .fold(actor, |actor, permission| actor.with_permission(permission))
+        .fold(Actor::new(actor_id), |actor, permission| {
+            actor.with_permission(permission)
+        })
 }
 
 fn validate_secret(secret: &str) -> Result<(), AuthenticationError> {
