@@ -16,11 +16,20 @@ use super::point_helpers::{
     fetch_grouped_points, parse_protocol_mapping_json, point_type_to_table, validate_channel_exists,
 };
 
-/// Read the real-time value of a single point (value + timestamp + raw).
+/// Read the real-time value of a single point, graded by how old it is.
 ///
-/// Reads the authoritative SHM slot and returns its engineering value,
-/// timestamp, and raw protocol value. An unwritten NaN slot is represented as
-/// `null` rather than being mistaken for a real zero.
+/// Reads the authoritative SHM slot and returns its engineering value, source
+/// timestamp, raw protocol value, and the freshness of that sample. An
+/// unwritten NaN slot is represented as `null` rather than being mistaken for
+/// a real zero.
+///
+/// `quality` is `good` while the sample is newer than
+/// `SHM_WRITER_STALE_AFTER_MS`, `uncertain` once it is not, and `unavailable`
+/// when the slot was never written. `age_ms` is how long ago the acquisition
+/// plane produced the sample, and is `null` alongside `unavailable`. A channel
+/// that stops responding leaves its last value in place, so `value` on its own
+/// cannot be told apart from a live reading — grade every point by `quality`
+/// before acting on the number.
 #[utoipa::path(
     get,
     path = "/api/channels/{channel_id}/{telemetry_type}/{point_id}",
@@ -39,7 +48,9 @@ use super::point_helpers::{
                     "point_id": 101,
                     "value": "650.5",
                     "timestamp": "1729000815",
-                    "raw": "6505"
+                    "raw": "6505",
+                    "quality": "good",
+                    "age_ms": 812
                 }
             })
         )

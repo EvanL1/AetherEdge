@@ -1246,7 +1246,13 @@ Usage: aether shm get [OPTIONS] <KEY>
 
 ```bash
 aether shm get inst:9:M:101
+# 24.6  [good, 812ms ago]
 ```
+
+The value is printed with the age of the sample it came from and whether that
+sample is still fresh. A channel that stops responding leaves its last value in
+the slot, so the number alone cannot be told apart from a live reading; a
+sample older than `SHM_WRITER_STALE_AFTER_MS` is marked `stale`.
 
 ### shm info
 
@@ -1274,7 +1280,13 @@ Usage: aether shm watch [OPTIONS] <KEY>
 
 ```bash
 aether shm watch ch:1001:T:101 --interval-ms 200
+# [13:20:20] 24.6  [good, 140ms ago]
+# [13:20:20] 24.6  [stale, 41200ms ago]
 ```
+
+Each line carries the same freshness marking as `shm get`. The stream does not
+stop when a device goes away — the slot keeps its last value — so a frozen
+reading is distinguished by its age rather than by the output ending.
 
 ### shm top
 
