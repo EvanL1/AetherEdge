@@ -20,4 +20,4 @@ pub use core::slot_io::{SlotIo, SlotIoWrite, SlotRead};
 pub use core::snapshot_format::{SNAPSHOT_MAGIC, SNAPSHOT_VERSION, SnapshotHeader};
 pub use core::snapshot_load::SnapshotImage;
 pub use core::writer::{GenerationInvalidation, SlotWriter};
-pub use watch_bitmap::{SubscriptionBitmap, WATCH_SLOT_CAPACITY, bitmap_path_for_consumer};
+pub use watch_bitmap::{SubscriptionBitmap, bitmap_path_for_consumer};

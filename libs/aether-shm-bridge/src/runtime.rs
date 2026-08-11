@@ -206,6 +206,10 @@ impl ShmWriterHandle {
     }
 
     /// Replaces the canonical point plane for one new coordinated epoch.
+    ///
+    /// State for exact typed-address intersections is copied into the staged
+    /// generation before publication. Added points start unwritten and removed
+    /// points disappear with the retired manifest.
     pub fn rebuild(
         &self,
         manifest: Arc<ChannelPointManifest>,
@@ -296,6 +300,9 @@ fn publish_generation(
     .map_err(map_dataplane_error)?;
     if let Some(snapshot_path) = snapshot {
         restore_exact_snapshot(&writer, snapshot_path, &manifest)?;
+    } else if let Some(previous) = previous {
+        migrate_point_intersection(&writer, &manifest, previous)?;
+        writer.update_heartbeat(previous.writer.writer_heartbeat());
     }
     writer.flush().map_err(map_dataplane_error)?;
     let discovered_previous = if previous.is_none() {
@@ -326,6 +333,36 @@ fn publish_generation(
             .map_err(map_dataplane_error)?,
     );
     ShmWriterGeneration::compose(writer, manifest, Arc::clone(&authority_gate), observer)
+}
+
+fn migrate_point_intersection(
+    staging_writer: &SlotWriter,
+    manifest: &ChannelPointManifest,
+    previous: &ShmWriterGeneration,
+) -> PortResult<()> {
+    for (target_slot, address) in manifest.iter_physical_points() {
+        let Some(previous_slot) = previous.manifest.slot_for(address) else {
+            continue;
+        };
+        let sample =
+            SlotIo::read_slot(previous.writer.as_ref(), previous_slot).ok_or_else(|| {
+                PortError::new(
+                    PortErrorKind::Conflict,
+                    format!("physical point {address:?} changed during live-state migration"),
+                )
+            })?;
+        if sample.value.is_nan() {
+            continue;
+        }
+        staging_writer.set_direct(
+            target_slot,
+            sample.value,
+            sample.raw,
+            sample.timestamp_ms,
+            sample.quality_code,
+        );
+    }
+    Ok(())
 }
 
 fn restore_exact_snapshot(

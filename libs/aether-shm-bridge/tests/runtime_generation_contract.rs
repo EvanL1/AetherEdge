@@ -4,19 +4,27 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
+use aether_dataplane::calculate_file_size;
 use aether_domain::{
     AcquiredPointSample, ChannelId, ChannelPointAddress, PointId, PointKind, PointQuality,
     TimestampMs,
 };
 use aether_shm_bridge::{
-    ChannelPointManifest, ReconnectingSlotSource, ShmChannelReader, ShmClientConfig,
-    ShmRuntimeConfig, ShmWriterHandle, SlotSource,
+    ChannelPointManifest, PhysicalPointAddress, ReconnectingSlotSource, ShmChannelReader,
+    ShmClientConfig, ShmRuntimeConfig, ShmWriterHandle, SlotSource,
 };
 
 fn manifest(channel_id: u32) -> Arc<ChannelPointManifest> {
     Arc::new(ChannelPointManifest::dense_test_fixture(BTreeMap::from([
         (channel_id, [1, 1, 1, 1]),
     ])))
+}
+
+fn exact_manifest(channel_ids: impl IntoIterator<Item = u32>) -> Arc<ChannelPointManifest> {
+    let addresses = channel_ids
+        .into_iter()
+        .map(|channel_id| PhysicalPointAddress::from_raw_ids(channel_id, PointKind::Telemetry, 0));
+    Arc::new(ChannelPointManifest::compile(addresses, 64).expect("exact manifest"))
 }
 
 fn next_epoch() -> u64 {
@@ -75,6 +83,99 @@ fn published_generation_is_readable_through_the_typed_channel_adapter() {
     assert_eq!(value.value(), 12.5);
     assert_eq!(value.raw(), 125.0);
     assert_eq!(value.timestamp_ms(), 100);
+}
+
+#[test]
+fn rebuild_grows_and_shrinks_by_typed_address_without_reusing_slot_state() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let path = directory.path().join("aether.shm");
+    let initial_manifest = exact_manifest([2]);
+    let handle = create_handle(
+        ShmRuntimeConfig::new(&path, 64),
+        Arc::clone(&initial_manifest),
+        None,
+    )
+    .expect("publish initial generation");
+    let initial_size = std::fs::metadata(&path)
+        .expect("initial SHM metadata")
+        .len() as usize;
+    assert_eq!(
+        initial_size,
+        calculate_file_size(initial_manifest.slot_count() as u32)
+    );
+    handle
+        .generation()
+        .expect("initial generation")
+        .acquisition_writer()
+        .commit_batch(&[sample(2, 4.2, 400)])
+        .expect("write retained point");
+
+    let grown_manifest = exact_manifest([1, 2, 3]);
+    handle
+        .rebuild(Arc::clone(&grown_manifest), next_epoch())
+        .expect("grow topology");
+    let grown_size = std::fs::metadata(&path).expect("grown SHM metadata").len() as usize;
+    assert_eq!(
+        grown_size,
+        calculate_file_size(grown_manifest.slot_count() as u32)
+    );
+    assert!(grown_size > initial_size);
+    let grown = handle.generation().expect("grown generation");
+    let retained_address = PhysicalPointAddress::from_raw_ids(2, PointKind::Telemetry, 0);
+    let retained_slot = grown_manifest
+        .slot_for(retained_address)
+        .expect("retained address");
+    let retained = grown.read_slot(retained_slot).expect("retained sample");
+    assert_eq!(retained.value, 4.2);
+    assert_eq!(retained.raw, 42.0);
+    assert_eq!(retained.timestamp_ms, 400);
+    for added_channel in [1, 3] {
+        let added_slot = grown_manifest
+            .slot_for(PhysicalPointAddress::from_raw_ids(
+                added_channel,
+                PointKind::Telemetry,
+                0,
+            ))
+            .expect("added address");
+        assert!(
+            grown
+                .read_slot(added_slot)
+                .expect("added slot")
+                .value
+                .is_nan()
+        );
+    }
+
+    let shrunk_manifest = exact_manifest([2, 3]);
+    handle
+        .rebuild(Arc::clone(&shrunk_manifest), next_epoch())
+        .expect("shrink topology");
+    let shrunk_size = std::fs::metadata(&path).expect("shrunk SHM metadata").len() as usize;
+    assert_eq!(
+        shrunk_size,
+        calculate_file_size(shrunk_manifest.slot_count() as u32)
+    );
+    assert!(shrunk_size < grown_size);
+    let shrunk = handle.generation().expect("shrunk generation");
+    assert!(
+        shrunk_manifest
+            .slot_for(PhysicalPointAddress::from_raw_ids(
+                1,
+                PointKind::Telemetry,
+                0,
+            ))
+            .is_none()
+    );
+    let remapped_slot = shrunk_manifest
+        .slot_for(retained_address)
+        .expect("retained address after shrink");
+    assert_eq!(
+        shrunk
+            .read_slot(remapped_slot)
+            .expect("retained sample after shrink")
+            .value,
+        4.2
+    );
 }
 
 #[test]
@@ -143,17 +244,12 @@ fn canonical_rebuild_immediately_fences_a_retained_reader_without_inode_polling(
         .rebuild(active_manifest, next_epoch())
         .expect("publish same-layout replacement");
 
-    match retained_reader.read_slot(0) {
-        Ok(Some(replacement)) => assert!(
-            replacement.value().is_nan(),
-            "the retained reader returned a value from the unlinked generation"
-        ),
-        Ok(None) => {},
-        Err(error) => assert!(
-            error.is_retryable(),
-            "a newly published writer without a heartbeat may be unavailable, but not stale: {error}"
-        ),
-    }
+    let replacement = retained_reader
+        .read_slot(0)
+        .expect("reconnect to replacement generation")
+        .expect("migrated point value");
+    assert_eq!(replacement.value(), 12.5);
+    assert_eq!(replacement.raw(), 125.0);
 }
 
 #[test]

@@ -1552,6 +1552,7 @@ mod tests {
             db: db.clone(),
             live_values: Arc::new(NoLiveValues),
             notifier,
+            point_watch_capacity: 128,
             monitor_status: Arc::new(tokio::sync::RwLock::new(crate::models::MonitorStatus {
                 running: false,
                 last_check_time: None,

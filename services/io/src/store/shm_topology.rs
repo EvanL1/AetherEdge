@@ -55,8 +55,9 @@ impl ShmTopologyProjectionReceipt {
 
 /// Projects one coherent SQLite topology snapshot into the two SHM writer planes.
 ///
-/// Point values are deliberately not migrated across topology generations. The
-/// health handle owns its narrower intersection-state migration policy.
+/// Point and health values for exact typed-address intersections are copied
+/// into the staged generations. Added addresses start unwritten and removed
+/// addresses disappear with the retired manifests.
 pub struct SqliteShmTopologyProjector {
     pool: SqlitePool,
     live_state: Arc<ShmWriterHandle>,

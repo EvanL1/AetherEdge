@@ -146,7 +146,7 @@ async fn point_watch_publication_failure_is_gated_and_a_later_reload_recovers() 
     let (dispatcher, _events) = PointWatchDispatcher::new();
     configured_scheduler.set_point_watch_rebuild_handle(Arc::new(Mutex::new(dispatcher)));
     let scheduler = Arc::new(configured_scheduler);
-    let bitmap = Arc::new(SubscriptionBitmap::new_in_memory().expect("bitmap"));
+    let bitmap = Arc::new(SubscriptionBitmap::new_in_memory(8).expect("bitmap"));
     let runtime = Arc::new(
         RuleRuntimeCoordinator::new(Arc::clone(&scheduler)).with_point_watch(
             Arc::clone(&topology),

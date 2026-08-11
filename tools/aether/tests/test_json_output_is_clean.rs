@@ -6,7 +6,59 @@
 //! for JSON-RPC frames exclusively, so any stray log line there is fatal.
 
 use std::process::Command;
+
+use aether_dataplane::SlotWriter;
+use aether_shm_bridge::{channel_health_path_from_shm, commit_topology_publication, timestamp_ms};
 use tempfile::TempDir;
+
+#[test]
+fn shm_info_json_reports_the_committed_dual_plane() {
+    let workspace = TempDir::new().expect("create temporary workspace");
+    let point_path = workspace.path().join("aether-live-state.shm");
+    let health_path = channel_health_path_from_shm(&point_path);
+    let point = SlotWriter::create(&point_path, 2, 0x1010, 7).expect("create point plane");
+    let health = SlotWriter::create(&health_path, 1, 0x2020, 7).expect("create health plane");
+    let now = timestamp_ms();
+    point.update_heartbeat(now);
+    health.update_heartbeat(now);
+    commit_topology_publication(&point_path, &health_path, 7).expect("commit topology publication");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_aether"))
+        .args(["--json", "shm", "info", "--no-scan"])
+        .env("AETHER_SHM_PATH", &point_path)
+        .output()
+        .expect("run SHM observer");
+
+    assert!(
+        output.status.success(),
+        "SHM observer failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).expect("stdout was not UTF-8");
+    let parsed: serde_json::Value = serde_json::from_str(&stdout)
+        .unwrap_or_else(|error| panic!("expected one JSON envelope: {error}\n{stdout}"));
+    assert_eq!(parsed.get("success"), Some(&serde_json::Value::Bool(true)));
+    assert_eq!(
+        parsed.pointer("/data/status"),
+        Some(&serde_json::Value::String("healthy".to_string()))
+    );
+    assert_eq!(
+        parsed.pointer("/data/publication_epoch"),
+        Some(&serde_json::Value::Number(7_u64.into()))
+    );
+    assert_eq!(
+        parsed.pointer("/data/point/slot_count"),
+        Some(&serde_json::Value::Number(2_u64.into()))
+    );
+    assert_eq!(
+        parsed.pointer("/data/health/slot_count"),
+        Some(&serde_json::Value::Number(1_u64.into()))
+    );
+    assert_eq!(
+        parsed.pointer("/data/point/slots"),
+        Some(&serde_json::Value::Null)
+    );
+}
 
 #[test]
 fn json_output_has_no_log_lines_mixed_in() {

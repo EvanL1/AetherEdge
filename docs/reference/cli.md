@@ -1255,15 +1255,39 @@ sample older than `SHM_WRITER_STALE_AFTER_MS` is marked `stale`.
 
 ### shm info
 
-Show shared memory statistics.
+Inspect the committed point and channel-health planes directly, without HTTP
+or a running observer daemon. The command validates both physical files, the
+durable topology witness, publication epoch, writer generations, heartbeat
+age, and an aggregate slot/quality scan. It never refreshes a heartbeat,
+repairs a file, or publishes a generation.
 
 ```
 Usage: aether shm info [OPTIONS]
+
+Options:
+      --no-scan  Validate headers and commit without scanning every slot
 ```
 
 ```bash
-aether shm info --json
+aether shm info
+# Aether SHM HEALTHY
+# Publication:   928
+# Point plane:
+#   slots/size:  83417 / 2669408 bytes
+#   generation:  184  heartbeat: 312ms  hash: 0x...
+# Health plane:
+#   channels:    online=408 offline=4
+
+aether --json shm info
 ```
+
+JSON output uses the regular `{success, data}` CLI envelope and contains
+stable finding codes for scripts. `healthy` means both planes match the same
+commit and their heartbeat is at most 3 seconds old; 3–30 seconds is
+`degraded`; a missing, future, or older heartbeat and every layout/commit
+mismatch is `unhealthy`. `SHM_WRITER_STALE_AFTER_MS` remains the terminal
+stale threshold; the healthy threshold is one tenth of it, capped at 3
+seconds.
 
 ### shm watch
 
@@ -1289,7 +1313,10 @@ reading is distinguished by its age rather than by the output ending.
 
 ### shm top
 
-Real-time TUI dashboard (like htop).
+Real-time TUI dashboard (like htop). Its header refreshes the same read-only
+observer once per second and shows overall status, publication epoch, point
+and health heartbeat ages, and quality/unwritten/contention counts. The point
+table remains available below it.
 
 ```
 Usage: aether shm top [OPTIONS]
@@ -1298,6 +1325,35 @@ Usage: aether shm top [OPTIONS]
 ```bash
 aether shm top
 ```
+
+### shm serve
+
+Serve the optional browser dashboard from the CLI. It is not a seventh
+runtime service: the process exists only while this command is running,
+opens SHM read-only, and accepts loopback connections only.
+
+```
+Usage: aether shm serve [OPTIONS]
+
+Options:
+      --bind <BIND>  Loopback address for the local dashboard [default: 127.0.0.1:6070]
+      --no-scan      Validate headers and commit without scanning every slot
+```
+
+```bash
+aether shm serve
+# Open http://127.0.0.1:6070
+```
+
+The self-contained page refreshes once per second and displays authority
+status, publication epoch, both writer heartbeats, exact plane sizes and
+generations, point-quality distribution, a bounded typed live-point preview,
+and stable-code findings. Its JSON source is the same-origin read-only endpoint
+`/api/v1/observation`. The server rejects `0.0.0.0`, LAN, and public bind
+addresses; it has no mutation route, external asset, CORS grant, or persistent
+state. The point preview is available when `--db-path` resolves the SQLite
+manifest that matches the live SHM layout; plane observability remains
+available when it does not.
 
 ## aether doctor
 

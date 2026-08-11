@@ -30,9 +30,9 @@ use aether_io::{
 use aether_routing::load_routing_maps;
 use aether_shm_bridge::{
     AcquisitionCommitObserver, PointWatchPublisher, ShmChannelHealthWriterHandle, ShmRuntimeConfig,
-    ShmWriterHandle, SubscriptionBitmap, WATCH_SLOT_CAPACITY, begin_topology_publication,
-    bitmap_path_for_consumer, channel_health_path_from_shm, cleanup_orphan_generation_files,
-    default_shm_path, point_watch_socket_from_shm, timestamp_ms,
+    ShmWriterHandle, SubscriptionBitmap, begin_topology_publication, bitmap_path_for_consumer,
+    channel_health_path_from_shm, cleanup_orphan_generation_files, default_shm_path,
+    point_watch_socket_from_shm, timestamp_ms,
 };
 
 /// Resolve the SHM snapshot period from `SHM_SNAPSHOT_INTERVAL`.
@@ -131,12 +131,6 @@ async fn main() -> AetherResult<()> {
         let health_path = std::env::var("AETHER_CHANNEL_HEALTH_SHM_PATH")
             .map(std::path::PathBuf::from)
             .unwrap_or_else(|_| channel_health_path_from_shm(&shm_path));
-        if max_slots as usize > WATCH_SLOT_CAPACITY {
-            return Err(IoError::config(format!(
-                "shared_memory.max_slots {max_slots} exceeds point-watch bitmap capacity {WATCH_SLOT_CAPACITY}"
-            ))
-            .into());
-        }
         let runtime_config = ShmRuntimeConfig::new(&shm_path, max_slots);
         let manifest = Arc::new(initial_point_manifest);
         let snapshot_path = std::env::var("SHM_SNAPSHOT_PATH")
@@ -178,8 +172,10 @@ async fn main() -> AetherResult<()> {
             ("alarm", "AETHER_ALARM_POINT_WATCH_SOCKET"),
             ("api", "AETHER_API_POINT_WATCH_SOCKET"),
         ] {
-            match SubscriptionBitmap::open_or_create(&bitmap_path_for_consumer(&shm_path, consumer))
-            {
+            match SubscriptionBitmap::open_or_create(
+                &bitmap_path_for_consumer(&shm_path, consumer),
+                max_slots as usize,
+            ) {
                 Ok(bitmap) => {
                     let socket = std::env::var(variable)
                         .map(std::path::PathBuf::from)

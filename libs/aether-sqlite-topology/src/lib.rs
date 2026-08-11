@@ -208,6 +208,17 @@ pub async fn load_sqlite_shm_topology(pool: &SqlitePool) -> PortResult<SqliteShm
     Ok(snapshot)
 }
 
+/// Loads the deployment resource cap used by every SHM and PointWatch composition.
+///
+/// Consumers call this before creating their subscription bitmap so all
+/// processes publish or open the same capacity-specific physical layout.
+pub async fn load_sqlite_shm_capacity(pool: &SqlitePool) -> PortResult<usize> {
+    let mut transaction = pool.begin().await.map_err(topology_unavailable)?;
+    let max_slots = load_manifest_capacity(&mut transaction).await?;
+    transaction.commit().await.map_err(topology_unavailable)?;
+    Ok(max_slots)
+}
+
 /// Loads physical manifests and logical measurement/action routes from one
 /// authoritative SQLite read transaction.
 pub async fn load_sqlite_live_topology(

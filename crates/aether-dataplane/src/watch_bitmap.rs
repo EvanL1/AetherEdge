@@ -2,6 +2,7 @@
 
 use std::ffi::OsString;
 use std::fs::{File, OpenOptions};
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -10,16 +11,11 @@ use memmap2::{MmapMut, MmapOptions};
 use crate::core::authority::{AuthorityReadGuard, AuthorityWriteGuard};
 use crate::{DataplaneError, DataplaneResult};
 
-/// Number of 64-bit words in one point-watch subscription bitmap.
-const WATCH_WORDS_COUNT: usize = 1_563;
-
-/// Watch bitmap file size in bytes.
-const WATCH_BITMAP_SIZE: usize = WATCH_WORDS_COUNT * std::mem::size_of::<AtomicU64>();
+const WATCH_BITMAP_MAGIC: [u8; 8] = *b"AETHPWBM";
+const WATCH_BITMAP_VERSION: u32 = 1;
+const WATCH_BITMAP_HEADER_SIZE: usize = 32;
 
 static BITMAP_STAGING_SEQUENCE: AtomicU64 = AtomicU64::new(1);
-
-/// Maximum number of physical slots addressable by a subscription bitmap.
-pub const WATCH_SLOT_CAPACITY: usize = WATCH_WORDS_COUNT * u64::BITS as usize;
 
 const WATCH_BITMAP_SUFFIX: &str = "-point-watch-subs";
 
@@ -51,6 +47,8 @@ fn bitmap_path_with_suffix(shm_path: &Path, suffix: &str) -> PathBuf {
 /// Shared atomic bitset used by one event consumer to declare watched slots.
 pub struct SubscriptionBitmap {
     mmap: MmapMut,
+    capacity: usize,
+    word_count: usize,
 }
 
 impl SubscriptionBitmap {
@@ -60,9 +58,10 @@ impl SubscriptionBitmap {
     /// running consumers keep both their mapping and current subscriptions.
     /// Creation and repair are serialized through the bitmap's authority
     /// sidecar, initialized in a staging inode, and atomically published.
-    pub fn open_or_create(path: &Path) -> DataplaneResult<Self> {
+    pub fn open_or_create(path: &Path, capacity: usize) -> DataplaneResult<Self> {
+        let layout = BitmapLayout::new(capacity)?;
         let _authority = AuthorityWriteGuard::acquire(path)?;
-        match Self::open_unlocked(path) {
+        match Self::open_unlocked(path, capacity) {
             Ok(bitmap) => return Ok(bitmap),
             Err(DataplaneError::Io { source, .. })
                 if source.kind() == std::io::ErrorKind::NotFound => {},
@@ -79,7 +78,7 @@ impl SubscriptionBitmap {
         }
         let staging_path = bitmap_staging_path(path);
         let mut cleanup = BitmapStagingCleanup(Some(staging_path.clone()));
-        let file = OpenOptions::new()
+        let mut file = OpenOptions::new()
             .read(true)
             .write(true)
             .create_new(true)
@@ -90,8 +89,16 @@ impl SubscriptionBitmap {
                     source,
                 )
             })?;
-        file.set_len(WATCH_BITMAP_SIZE as u64)
+        let file_size = u64::try_from(layout.file_size).map_err(|_| {
+            DataplaneError::InvalidLayout(format!(
+                "watch bitmap size {} exceeds the platform file-size range",
+                layout.file_size
+            ))
+        })?;
+        file.set_len(file_size)
             .map_err(|source| DataplaneError::io("size watch bitmap", source))?;
+        file.write_all(&layout.encode_header())
+            .map_err(|source| DataplaneError::io("write watch bitmap header", source))?;
         #[cfg(unix)]
         std::fs::set_permissions(
             &staging_path,
@@ -108,51 +115,93 @@ impl SubscriptionBitmap {
         })?;
         cleanup.0 = None;
         sync_parent_directory(path)?;
-        Self::open_unlocked(path)
+        Self::open_unlocked(path, capacity)
     }
 
-    /// Opens an existing read/write bitmap file.
-    pub fn open(path: &Path) -> DataplaneResult<Self> {
+    /// Opens an existing read/write bitmap file with the required capacity.
+    pub fn open(path: &Path, expected_capacity: usize) -> DataplaneResult<Self> {
+        BitmapLayout::new(expected_capacity)?;
         let _authority = AuthorityReadGuard::acquire(path)?;
-        Self::open_unlocked(path)
+        Self::open_unlocked(path, expected_capacity)
     }
 
-    fn open_unlocked(path: &Path) -> DataplaneResult<Self> {
-        let file = OpenOptions::new()
+    fn open_unlocked(path: &Path, expected_capacity: usize) -> DataplaneResult<Self> {
+        let mut file = OpenOptions::new()
             .read(true)
             .write(true)
             .open(path)
             .map_err(|source| DataplaneError::io(format!("open watch bitmap {path:?}"), source))?;
-        let file_len = file
-            .metadata()
-            .map_err(|source| DataplaneError::io("stat watch bitmap", source))?
-            .len() as usize;
-        if file_len != WATCH_BITMAP_SIZE {
+        let file_len = usize::try_from(
+            file.metadata()
+                .map_err(|source| DataplaneError::io("stat watch bitmap", source))?
+                .len(),
+        )
+        .map_err(|_| {
+            DataplaneError::InvalidLayout(format!(
+                "watch bitmap {path:?} exceeds the platform address-size range"
+            ))
+        })?;
+        if file_len < WATCH_BITMAP_HEADER_SIZE {
             return Err(DataplaneError::InvalidLayout(format!(
-                "watch bitmap {path:?} has size {file_len}, expected {WATCH_BITMAP_SIZE}"
+                "watch bitmap {path:?} is too short: {file_len} bytes"
+            )));
+        }
+        let mut header = [0_u8; WATCH_BITMAP_HEADER_SIZE];
+        file.read_exact(&mut header)
+            .map_err(|source| DataplaneError::io("read watch bitmap header", source))?;
+        let layout = BitmapLayout::decode_header(&header)?;
+        if layout.capacity as usize != expected_capacity {
+            return Err(DataplaneError::InvalidLayout(format!(
+                "watch bitmap {path:?} capacity {} does not match expected capacity {expected_capacity}",
+                layout.capacity
+            )));
+        }
+        if file_len != layout.file_size {
+            return Err(DataplaneError::InvalidLayout(format!(
+                "watch bitmap {path:?} has size {file_len}, expected {} for capacity {expected_capacity}",
+                layout.file_size
             )));
         }
 
         // SAFETY: the file length was validated above and the OS provides a
         // page-aligned mmap base, satisfying `AtomicU64` alignment.
-        let mmap = unsafe { MmapOptions::new().len(WATCH_BITMAP_SIZE).map_mut(&file) }
+        let mmap = unsafe { MmapOptions::new().len(layout.file_size).map_mut(&file) }
             .map_err(|source| DataplaneError::io(format!("mmap watch bitmap {path:?}"), source))?;
-        Ok(Self { mmap })
+        Ok(Self {
+            mmap,
+            capacity: expected_capacity,
+            word_count: layout.word_count,
+        })
     }
 
     /// Creates an anonymous bitmap for tests and in-process compositions.
-    pub fn new_in_memory() -> DataplaneResult<Self> {
-        let mmap = MmapOptions::new()
-            .len(WATCH_BITMAP_SIZE)
+    pub fn new_in_memory(capacity: usize) -> DataplaneResult<Self> {
+        let layout = BitmapLayout::new(capacity)?;
+        let mut mmap = MmapOptions::new()
+            .len(layout.file_size)
             .map_anon()
             .map_err(|source| DataplaneError::io("create anonymous watch bitmap", source))?;
-        Ok(Self { mmap })
+        mmap[..WATCH_BITMAP_HEADER_SIZE].copy_from_slice(&layout.encode_header());
+        Ok(Self {
+            mmap,
+            capacity,
+            word_count: layout.word_count,
+        })
+    }
+
+    /// Returns the exact physical-slot capacity declared by this bitmap.
+    #[must_use]
+    pub const fn capacity(&self) -> usize {
+        self.capacity
     }
 
     /// Returns whether one physical slot is subscribed.
     #[inline]
     #[must_use]
     pub fn is_watched(&self, slot: usize) -> bool {
+        if slot >= self.capacity {
+            return false;
+        }
         let word_index = slot / u64::BITS as usize;
         let bit_index = slot % u64::BITS as usize;
         let Some(word) = self.words().get(word_index) else {
@@ -164,13 +213,15 @@ impl SubscriptionBitmap {
     /// Subscribes one physical slot.
     #[inline]
     pub fn set_watched(&self, slot: usize) -> DataplaneResult<()> {
+        if slot >= self.capacity {
+            return Err(self.out_of_bounds(slot));
+        }
         let word_index = slot / u64::BITS as usize;
         let bit_index = slot % u64::BITS as usize;
-        let word = self.words().get(word_index).ok_or_else(|| {
-            DataplaneError::InvalidLayout(format!(
-                "watch bitmap slot {slot} exceeds capacity {WATCH_SLOT_CAPACITY}"
-            ))
-        })?;
+        let word = self
+            .words()
+            .get(word_index)
+            .ok_or_else(|| self.out_of_bounds(slot))?;
         word.fetch_or(1_u64 << bit_index, Ordering::Release);
         Ok(())
     }
@@ -178,13 +229,15 @@ impl SubscriptionBitmap {
     /// Unsubscribes one physical slot.
     #[inline]
     pub fn clear_watched(&self, slot: usize) -> DataplaneResult<()> {
+        if slot >= self.capacity {
+            return Err(self.out_of_bounds(slot));
+        }
         let word_index = slot / u64::BITS as usize;
         let bit_index = slot % u64::BITS as usize;
-        let word = self.words().get(word_index).ok_or_else(|| {
-            DataplaneError::InvalidLayout(format!(
-                "watch bitmap slot {slot} exceeds capacity {WATCH_SLOT_CAPACITY}"
-            ))
-        })?;
+        let word = self
+            .words()
+            .get(word_index)
+            .ok_or_else(|| self.out_of_bounds(slot))?;
         word.fetch_and(!(1_u64 << bit_index), Ordering::Release);
         Ok(())
     }
@@ -206,13 +259,105 @@ impl SubscriptionBitmap {
     }
 
     fn words(&self) -> &[AtomicU64] {
-        // SAFETY: every constructor guarantees an exact
-        // `WATCH_WORDS_COUNT * size_of::<AtomicU64>()` mapping. mmap bases are
-        // page-aligned and therefore correctly aligned for `AtomicU64`; the
-        // mapping outlives the returned slice borrowed from `self`.
+        // SAFETY: every constructor validates the versioned header and exact
+        // `header + word_count * size_of::<AtomicU64>()` mapping. The 32-byte
+        // header keeps the word array aligned, mmap bases are page-aligned,
+        // and the mapping outlives the returned slice borrowed from `self`.
         unsafe {
-            std::slice::from_raw_parts(self.mmap.as_ptr() as *const AtomicU64, WATCH_WORDS_COUNT)
+            std::slice::from_raw_parts(
+                self.mmap.as_ptr().add(WATCH_BITMAP_HEADER_SIZE) as *const AtomicU64,
+                self.word_count,
+            )
         }
+    }
+
+    fn out_of_bounds(&self, slot: usize) -> DataplaneError {
+        DataplaneError::InvalidLayout(format!(
+            "watch bitmap slot {slot} exceeds capacity {}",
+            self.capacity
+        ))
+    }
+}
+
+struct BitmapLayout {
+    capacity: u32,
+    word_count: usize,
+    file_size: usize,
+}
+
+impl BitmapLayout {
+    fn new(capacity: usize) -> DataplaneResult<Self> {
+        if capacity == 0 {
+            return Err(DataplaneError::InvalidLayout(
+                "watch bitmap capacity must be greater than zero".to_string(),
+            ));
+        }
+        let capacity = u32::try_from(capacity).map_err(|_| {
+            DataplaneError::InvalidLayout(format!(
+                "watch bitmap capacity {capacity} exceeds u32::MAX"
+            ))
+        })?;
+        let word_count = (capacity as usize).div_ceil(u64::BITS as usize);
+        let words_size = word_count
+            .checked_mul(std::mem::size_of::<AtomicU64>())
+            .ok_or_else(|| {
+                DataplaneError::InvalidLayout(
+                    "watch bitmap word-array size overflows usize".to_string(),
+                )
+            })?;
+        let file_size = WATCH_BITMAP_HEADER_SIZE
+            .checked_add(words_size)
+            .ok_or_else(|| {
+                DataplaneError::InvalidLayout("watch bitmap size overflows usize".to_string())
+            })?;
+        Ok(Self {
+            capacity,
+            word_count,
+            file_size,
+        })
+    }
+
+    fn encode_header(&self) -> [u8; WATCH_BITMAP_HEADER_SIZE] {
+        let mut bytes = [0_u8; WATCH_BITMAP_HEADER_SIZE];
+        bytes[0..8].copy_from_slice(&WATCH_BITMAP_MAGIC);
+        bytes[8..12].copy_from_slice(&WATCH_BITMAP_VERSION.to_le_bytes());
+        bytes[12..16].copy_from_slice(&self.capacity.to_le_bytes());
+        bytes[16..20].copy_from_slice(&(self.word_count as u32).to_le_bytes());
+        bytes
+    }
+
+    fn decode_header(bytes: &[u8; WATCH_BITMAP_HEADER_SIZE]) -> DataplaneResult<Self> {
+        if bytes[0..8] != WATCH_BITMAP_MAGIC {
+            return Err(DataplaneError::InvalidLayout(
+                "watch bitmap has invalid or obsolete magic".to_string(),
+            ));
+        }
+        let version = u32::from_le_bytes(bytes[8..12].try_into().map_err(|_| {
+            DataplaneError::InvalidLayout("watch bitmap version is malformed".to_string())
+        })?);
+        if version != WATCH_BITMAP_VERSION {
+            return Err(DataplaneError::InvalidLayout(format!(
+                "watch bitmap version {version} is unsupported; expected {WATCH_BITMAP_VERSION}"
+            )));
+        }
+        if bytes[20..].iter().any(|byte| *byte != 0) {
+            return Err(DataplaneError::InvalidLayout(
+                "watch bitmap reserved header bytes are non-zero".to_string(),
+            ));
+        }
+        let capacity = u32::from_le_bytes(bytes[12..16].try_into().map_err(|_| {
+            DataplaneError::InvalidLayout("watch bitmap capacity is malformed".to_string())
+        })?);
+        let word_count = u32::from_le_bytes(bytes[16..20].try_into().map_err(|_| {
+            DataplaneError::InvalidLayout("watch bitmap word count is malformed".to_string())
+        })?) as usize;
+        let layout = Self::new(capacity as usize)?;
+        if layout.word_count != word_count {
+            return Err(DataplaneError::InvalidLayout(format!(
+                "watch bitmap word count {word_count} does not match capacity {capacity}"
+            )));
+        }
+        Ok(layout)
     }
 }
 

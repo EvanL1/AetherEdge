@@ -93,7 +93,11 @@ impl TopologyPublicationCommit {
         self.health_writer_generation
     }
 
-    fn matches_readers(self, point_reader: &SlotReader, health_reader: &SlotReader) -> bool {
+    pub(crate) fn matches_readers(
+        self,
+        point_reader: &SlotReader,
+        health_reader: &SlotReader,
+    ) -> bool {
         let point = point_reader.header();
         let health = health_reader.header();
         self.publication_epoch != 0

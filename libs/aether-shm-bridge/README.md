@@ -11,6 +11,11 @@ dense health slots. Both manifests contribute their `layout_hash`, exact slot
 count, writer generation, and nonzero publication epoch to one coordinated
 point/health commit witness.
 
+Topology changes publish a new exact-sized inode rather than resizing a live
+mapping. The bridge migrates only exact typed-address intersections; added
+points start unwritten and removed points cannot leak state through a reused
+slot index.
+
 `ShmAcquisitionStateWriter` owns T/S writes and preserves value, raw value,
 timestamp, and `PointQuality`. Governed command dispatch mirrors only C/A.
 Ordinary writes do not refresh liveness; dedicated io tasks own point and
@@ -25,7 +30,14 @@ cross-slot snapshot.
 PointWatch uses independent consumer bitmaps and 16-byte UDS wake-up frames
 containing only channel ID, point ID, slot index, and kind. Automation, alarm,
 and API validate the address/slot against their pinned manifest and re-read
-SHM; no event payload is authoritative.
+SHM; no event payload is authoritative. Bitmap capacity is explicit and
+versioned, selected from the same deployment resource cap used to compile the
+manifests rather than from a fixed library constant.
+
+`ShmObserver` provides direct read-only observability without HTTP or a
+daemon. It grades the committed point/health pair as healthy, degraded, or
+unhealthy from physical identity, heartbeat age, and an optional aggregate
+slot scan; it never repairs or writes either plane.
 
 The default point path is `aether-live-state.shm`. This bridge accepts only the
 v5 mmap and snapshot v1 contracts exposed by `aether-dataplane`; it contains no

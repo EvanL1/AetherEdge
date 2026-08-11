@@ -1,7 +1,7 @@
 use aether_domain::PointKind;
 use aether_ports::PortErrorKind;
 use aether_shm_bridge::{ChannelPointManifest, PhysicalPointAddress};
-use aether_sqlite_topology::load_sqlite_shm_topology;
+use aether_sqlite_topology::{load_sqlite_shm_capacity, load_sqlite_shm_topology};
 use sqlx::sqlite::SqlitePoolOptions;
 
 async fn topology_pool() -> sqlx::SqlitePool {
@@ -170,8 +170,12 @@ async fn snapshot_compacts_sparse_nonzero_point_identifiers_without_creating_hol
     let snapshot = load_sqlite_shm_topology(&pool)
         .await
         .expect("sparse point ids compile into an exact physical topology");
+    let point_watch_capacity = load_sqlite_shm_capacity(&pool)
+        .await
+        .expect("shared PointWatch capacity");
 
     assert_eq!(snapshot.max_slots(), 3);
+    assert_eq!(point_watch_capacity, 3);
     assert_eq!(snapshot.point_manifest().slot_count(), 2);
     assert_eq!(
         snapshot

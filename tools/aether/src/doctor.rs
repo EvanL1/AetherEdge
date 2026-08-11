@@ -8,7 +8,7 @@ use std::path::Path;
 use std::process::Command;
 use std::time::{Duration, Instant};
 
-use aether_dataplane::SlotReader;
+use aether_shm_bridge::{ShmObservationStatus, ShmObserver};
 
 use crate::utils::check_database_status;
 
@@ -499,11 +499,18 @@ async fn check_config_files(config_path: &Path) -> CheckResult {
 async fn check_shared_memory() -> CheckResult {
     let start = Instant::now();
     let shm_path = aether_dataplane::core::config::default_shm_path();
+    let health_path = std::env::var("AETHER_CHANNEL_HEALTH_SHM_PATH").ok();
 
-    check_shared_memory_path(&shm_path).with_duration(start.elapsed())
+    check_shared_memory_paths(&shm_path, health_path.as_deref().map(Path::new))
+        .with_duration(start.elapsed())
 }
 
+#[cfg(test)]
 fn check_shared_memory_path(shm_path: &Path) -> CheckResult {
+    check_shared_memory_paths(shm_path, None)
+}
+
+fn check_shared_memory_paths(shm_path: &Path, health_path: Option<&Path>) -> CheckResult {
     let metadata = match std::fs::symlink_metadata(shm_path) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
@@ -533,32 +540,51 @@ fn check_shared_memory_path(shm_path: &Path) -> CheckResult {
         );
     }
 
-    match SlotReader::open(shm_path) {
-        Ok(reader) => {
-            let header = reader.header();
-            if !reader.is_writer_alive(3_000) {
+    let mut observer = ShmObserver::new(shm_path).with_slot_scan(false);
+    if let Some(health_path) = health_path {
+        observer = observer.with_health_path(health_path);
+    }
+    let observation = observer.inspect();
+    let evidence = observation
+        .findings
+        .iter()
+        .map(|finding| format!("{}: {}", finding.code, finding.message))
+        .collect::<Vec<_>>()
+        .join("; ");
+    match observation.status {
+        ShmObservationStatus::Healthy => {
+            let (Some(point), Some(health), Some(epoch)) = (
+                observation.point.as_ref(),
+                observation.health.as_ref(),
+                observation.publication_epoch,
+            ) else {
                 return CheckResult::error(
                     "Shared Memory",
-                    format!(
-                        "Authoritative segment has a missing or stale writer heartbeat ({})",
-                        header.writer_heartbeat
-                    ),
-                    "Restart aether-io and inspect its SHM writer task",
+                    "Observer returned healthy without a complete committed topology",
+                    "Run `aether shm info` and inspect the observer contract",
                 );
-            }
-            let size_mb = metadata.len() as f64 / 1024.0 / 1024.0;
+            };
             CheckResult::ok(
                 "Shared Memory",
                 format!(
-                    "Authoritative ({size_mb:.1} MB, {} live slots, generation {})",
-                    header.slot_count, header.writer_generation
+                    "Committed epoch {} (point slots {}, health slots {}, generations {}/{})",
+                    epoch,
+                    point.slot_count,
+                    health.slot_count,
+                    point.writer_generation,
+                    health.writer_generation,
                 ),
             )
         },
-        Err(error) => CheckResult::error(
+        ShmObservationStatus::Degraded => CheckResult::warning(
             "Shared Memory",
-            format!("Authoritative segment is unreadable or invalid: {error}"),
-            "Restart aether-io and inspect its SHM initialization logs",
+            format!("Committed topology is degraded: {evidence}"),
+            "Inspect `aether shm info` and aether-io heartbeat scheduling",
+        ),
+        ShmObservationStatus::Unhealthy => CheckResult::error(
+            "Shared Memory",
+            format!("Committed topology is unhealthy: {evidence}"),
+            "Run `aether shm info`; then inspect aether-io topology publication logs",
         ),
     }
 }
@@ -779,20 +805,32 @@ mod tests {
         assert_eq!(check_shared_memory_path(&empty).status, CheckStatus::Error);
 
         let stale = directory.path().join("stale.shm");
-        let stale_writer = aether_dataplane::SlotWriter::create(&stale, 2, 7, 1)
-            .expect("create stale SHM fixture");
-        stale_writer.update_heartbeat(
-            aether_dataplane::core::config::timestamp_ms().saturating_sub(10_000),
+        let (_stale_point, _stale_health) = committed_shm_fixture(
+            &stale,
+            aether_dataplane::core::config::timestamp_ms().saturating_sub(40_000),
         );
-        drop(stale_writer);
         assert_eq!(check_shared_memory_path(&stale).status, CheckStatus::Error);
 
         let valid = directory.path().join("valid.shm");
-        let writer = aether_dataplane::SlotWriter::create(&valid, 2, 7, 1)
-            .expect("create valid SHM fixture");
-        writer.update_heartbeat(aether_dataplane::core::config::timestamp_ms());
-        drop(writer);
+        let (_valid_point, _valid_health) =
+            committed_shm_fixture(&valid, aether_dataplane::core::config::timestamp_ms());
         assert_eq!(check_shared_memory_path(&valid).status, CheckStatus::Ok);
+    }
+
+    fn committed_shm_fixture(
+        point_path: &Path,
+        heartbeat_ms: u64,
+    ) -> (aether_dataplane::SlotWriter, aether_dataplane::SlotWriter) {
+        let health_path = aether_shm_bridge::channel_health_path_from_shm(point_path);
+        let point = aether_dataplane::SlotWriter::create(point_path, 2, 7, 1)
+            .expect("create point SHM fixture");
+        let health = aether_dataplane::SlotWriter::create(&health_path, 1, 8, 1)
+            .expect("create health SHM fixture");
+        point.update_heartbeat(heartbeat_ms);
+        health.update_heartbeat(heartbeat_ms);
+        aether_shm_bridge::commit_topology_publication(point_path, &health_path, 1)
+            .expect("commit SHM fixture");
+        (point, health)
     }
 
     #[cfg(unix)]

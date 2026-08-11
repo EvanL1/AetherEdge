@@ -642,14 +642,34 @@ mod tests {
         let snapshot = load_sqlite_live_topology(&pool)
             .await
             .expect("load one authoritative topology snapshot");
+        let telemetry_0_slot = snapshot
+            .point_manifest()
+            .slot_for(PhysicalPointAddress::from_raw_ids(
+                10,
+                PointKind::Telemetry,
+                0,
+            ))
+            .expect("configured telemetry point 0 has a canonical slot");
+        let telemetry_2_slot = snapshot
+            .point_manifest()
+            .slot_for(PhysicalPointAddress::from_raw_ids(
+                10,
+                PointKind::Telemetry,
+                2,
+            ))
+            .expect("configured telemetry point 2 has a canonical slot");
 
         let series = history_series_from_snapshot(&snapshot).expect("compose history catalogue");
 
         assert!(series.iter().any(|series| {
-            series.logical_key == "io:10:T" && series.point_id == "0" && series.slot == 0
+            series.logical_key == "io:10:T"
+                && series.point_id == "0"
+                && series.slot == telemetry_0_slot
         }));
         assert!(series.iter().any(|series| {
-            series.logical_key == "io:10:T" && series.point_id == "2" && series.slot == 2
+            series.logical_key == "io:10:T"
+                && series.point_id == "2"
+                && series.slot == telemetry_2_slot
         }));
         assert!(
             !series
@@ -657,7 +677,9 @@ mod tests {
                 .any(|series| series.logical_key == "io:10:T" && series.point_id == "1")
         );
         assert!(series.iter().any(|series| {
-            series.logical_key == "inst:42:M" && series.point_id == "7" && series.slot == 2
+            series.logical_key == "inst:42:M"
+                && series.point_id == "7"
+                && series.slot == telemetry_2_slot
         }));
         assert!(
             series

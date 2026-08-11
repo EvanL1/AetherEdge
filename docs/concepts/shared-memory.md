@@ -68,6 +68,14 @@ IDs into dense health slots. Agreement is verified through each manifest's
 generation. Logical measurement/action routing and protocol register mapping
 do not participate in either physical layout.
 
+Topology growth and shrink never resize a mapped live inode in place. io
+builds an exact-sized staging generation, copies state only for identical
+`(channel, kind, point)` addresses, and atomically publishes the new inode.
+Added points start with the unwritten NaN sentinel; removed points disappear;
+unchanged points retain value, raw value, timestamp, and quality even when
+their slot index changes. Readers fence the retired generation and reconnect
+through the canonical path.
+
 The live mmap ABI is not the persistent snapshot format. Snapshot v1 uses its
 own `AETHSNAP` header (`slot_count` plus `layout_hash`) and an explicit
 absent/present record for every slot; present records contain value, raw value,
@@ -204,8 +212,11 @@ result reports degraded delivery and the caller decides what to surface.
 Commands flow automation → io; PointWatch is the reverse direction, and it is
 what makes the rule engine event-driven (see [Rule Engine](rule-engine.md)).
 After every T/S slot write, io consults each consumer's **subscription bitmap**
-— a separate 12,504-byte mmap of atomic u64 words beside the main segment.
-Paths are derived from the resolved live-state path, for example
+— a separate versioned mmap of atomic u64 words beside the main segment. Its
+capacity comes from the deployment's `shared_memory.max_slots` resource cap;
+its exact length is a 32-byte self-describing header plus
+`ceil(max_slots / 64) × 8` bytes. It therefore has no compiled-in 100,000-slot
+ceiling. Paths are derived from the resolved live-state path, for example
 `aether-live-state-point-watch-subs-automation.shm`; automation, alarm, and API
 own independent bitmaps and sockets. The common unwatched path is one relaxed
 atomic load and bit test per consumer.
@@ -215,6 +226,9 @@ The sidecar is read-only to non-owners because advisory locking never needs to
 mutate its contents; a newly published bitmap is mode `0666` so the root-owned
 io process and an explicitly unprivileged consumer can map the same atomic
 words. Reopening a valid bitmap never changes its ownership or permissions.
+The header binds magic, format version, capacity, and word count to the exact
+file length. Obsolete, malformed, or capacity-mismatched files are never
+decoded; the composition owner publishes a clean bitmap generation instead.
 
 On a hit, io builds a 16-byte little-endian `PointWatchEvent`: `channel_id`
 (u32), `point_id` (u32), `slot_index` (u32), point kind (u8), and a three-byte
@@ -236,6 +250,33 @@ and authoritative SHM re-read. Every stage uses non-blocking `try_send`; on
 overflow the hint is dropped and `dropped_count` is incremented rather than
 ever blocking io's write path. Periodic polling remains the repair path for a
 dropped hint.
+
+## Local observability without mandatory HTTP
+
+`ShmObserver` in `aether-shm-bridge` opens the point plane, channel-health
+plane, and topology commit through read-only paths. It validates exact mmap
+layouts, stable generations, the common publication epoch, commit identity,
+and dedicated heartbeat age. Its optional O(N) scan reports present,
+unwritten, quality, online/offline, invalid, and contended slot counts. It
+does not take writer authority, refresh heartbeat, repair files, or trigger a
+topology publication.
+
+Operators use the existing local CLI surfaces:
+
+```bash
+aether shm info             # one human-readable observation
+aether --json shm info      # script/agent observation
+aether shm info --no-scan   # O(1) header and commit validation
+aether shm top              # continuously refreshed terminal UI
+aether shm serve            # optional loopback browser UI
+```
+
+`aether doctor` uses the same observer, so system diagnostics and the SHM
+dashboards cannot disagree by checking different planes. HTTP is optional and
+no permanent observer process is required. `aether shm serve` embeds a
+self-contained page and same-origin JSON endpoint, binds only to loopback, and
+exists only for the CLI process lifetime. It has no write route and cannot
+become SHM authority.
 
 ## Related pages
 

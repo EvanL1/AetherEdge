@@ -385,6 +385,7 @@ pub async fn run_data_push(
     shm_path: &str,
     point_watch_socket: &str,
     debounce_ms: u64,
+    point_watch_capacity: usize,
 ) {
     let (listener, mut event_rx) =
         PointWatchEventListener::new(point_watch_socket, shutdown.clone());
@@ -403,7 +404,11 @@ pub async fn run_data_push(
         tokio::select! {
             _ = shutdown.cancelled() => break,
             _ = interval.tick() => {
-                reconcile_point_watch_subscriptions(&hub, &bitmap_path);
+                reconcile_point_watch_subscriptions(
+                    &hub,
+                    &bitmap_path,
+                    point_watch_capacity,
+                );
                 push_subscribed_data(&hub).await;
             }
             event = event_rx.recv(), if events_open => {
@@ -525,8 +530,8 @@ async fn push_subscribed_data_to(hub: &Arc<WsHub>, client_ids: Vec<String>) {
     }
 }
 
-fn reconcile_point_watch_subscriptions(hub: &WsHub, bitmap_path: &Path) {
-    let bitmap = match SubscriptionBitmap::open_or_create(bitmap_path) {
+fn reconcile_point_watch_subscriptions(hub: &WsHub, bitmap_path: &Path, capacity: usize) {
+    let bitmap = match SubscriptionBitmap::open_or_create(bitmap_path, capacity) {
         Ok(bitmap) => bitmap,
         Err(error) => {
             debug!(

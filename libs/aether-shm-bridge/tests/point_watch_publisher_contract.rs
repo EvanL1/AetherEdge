@@ -28,7 +28,7 @@ async fn typed_acquisition_commit_emits_a_compact_point_watch_hint() {
         tokio::time::sleep(Duration::from_millis(5)).await;
     }
 
-    let bitmap = Arc::new(SubscriptionBitmap::new_in_memory().expect("in-memory bitmap"));
+    let bitmap = Arc::new(SubscriptionBitmap::new_in_memory(8).expect("in-memory bitmap"));
     bitmap.set_watched(0).expect("subscribe slot");
     let (publisher, publisher_task) =
         PointWatchPublisher::new_with_fanout(vec![(bitmap, socket)], shutdown.clone());

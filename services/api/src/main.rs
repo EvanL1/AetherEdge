@@ -504,6 +504,9 @@ async fn main() -> anyhow::Result<()> {
     db::init_calculated_points(&db_pool).await?;
 
     let live_values = build_gateway_value_source(&db_pool, &cfg).await?;
+    let point_watch_capacity = aether_sqlite_topology::load_sqlite_shm_capacity(&db_pool)
+        .await
+        .map_err(|error| anyhow::anyhow!("load PointWatch capacity: {error}"))?;
 
     // Data Processing is composed only after explicit deployment opt-in. A
     // disabled deployment neither constructs source/processor clients nor
@@ -580,6 +583,7 @@ async fn main() -> anyhow::Result<()> {
             &push_shm_path,
             &push_socket,
             push_debounce_ms,
+            point_watch_capacity,
         )
         .await;
     });

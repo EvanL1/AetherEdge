@@ -2,22 +2,24 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Barrier};
 use std::thread;
 
-use aether_dataplane::{
-    DataplaneError, SubscriptionBitmap, WATCH_SLOT_CAPACITY, bitmap_path_for_consumer,
-};
+use aether_dataplane::{DataplaneError, SubscriptionBitmap, bitmap_path_for_consumer};
+
+const TEST_CAPACITY: usize = 100_000;
 
 #[test]
 fn bitmap_create_open_and_atomic_updates_roundtrip() {
     let dir = tempfile::tempdir().expect("temporary directory");
     let path = dir.path().join("alarm-subs.shm");
     {
-        let bitmap = SubscriptionBitmap::open_or_create(&path).expect("create bitmap");
+        let bitmap =
+            SubscriptionBitmap::open_or_create(&path, TEST_CAPACITY).expect("create bitmap");
         bitmap.set_watched(42).expect("watch slot 42");
         bitmap.set_watched(99_999).expect("watch slot 99,999");
         assert_eq!(bitmap.subscription_count(), 2);
     }
 
-    let reopened = SubscriptionBitmap::open(&path).expect("open bitmap");
+    let reopened = SubscriptionBitmap::open(&path, TEST_CAPACITY).expect("open bitmap");
+    assert_eq!(reopened.capacity(), TEST_CAPACITY);
     assert!(reopened.is_watched(42));
     assert!(reopened.is_watched(99_999));
     reopened.clear_watched(42).expect("clear slot 42");
@@ -29,7 +31,8 @@ fn concurrent_open_or_create_publishes_one_shared_bitmap() {
     let directory = tempfile::tempdir().expect("temporary directory");
     let path = Arc::new(directory.path().join("concurrent.bitmap"));
     let start = Arc::new(Barrier::new(3));
-    let slots = [17, WATCH_SLOT_CAPACITY - 1];
+    let capacity = 257;
+    let slots = [17, capacity - 1];
     let workers: Vec<_> = slots
         .into_iter()
         .map(|slot| {
@@ -37,7 +40,7 @@ fn concurrent_open_or_create_publishes_one_shared_bitmap() {
             let start = Arc::clone(&start);
             thread::spawn(move || {
                 start.wait();
-                let bitmap = SubscriptionBitmap::open_or_create(path.as_path())
+                let bitmap = SubscriptionBitmap::open_or_create(path.as_path(), capacity)
                     .expect("concurrent open_or_create");
                 bitmap.set_watched(slot).expect("watch concurrent slot");
             })
@@ -49,7 +52,7 @@ fn concurrent_open_or_create_publishes_one_shared_bitmap() {
         worker.join().expect("open_or_create worker");
     }
 
-    let reopened = SubscriptionBitmap::open(path.as_path()).expect("open shared bitmap");
+    let reopened = SubscriptionBitmap::open(path.as_path(), capacity).expect("open shared bitmap");
     assert!(reopened.is_watched(slots[0]));
     assert!(reopened.is_watched(slots[1]));
     assert_eq!(reopened.subscription_count(), 2);
@@ -67,7 +70,9 @@ fn zero_byte_canonical_orphan_is_replaced_atomically() {
         .expect("create zero-byte orphan");
     assert_eq!(orphan.metadata().expect("stat orphan").len(), 0);
 
-    let repaired = SubscriptionBitmap::open_or_create(&path).expect("repair orphan atomically");
+    let capacity: usize = 129;
+    let repaired =
+        SubscriptionBitmap::open_or_create(&path, capacity).expect("repair orphan atomically");
     repaired.set_watched(7).expect("watch repaired slot");
 
     assert_eq!(
@@ -79,11 +84,11 @@ fn zero_byte_canonical_orphan_is_replaced_atomically() {
         std::fs::metadata(&path)
             .expect("stat repaired canonical")
             .len(),
-        (WATCH_SLOT_CAPACITY / u8::BITS as usize) as u64
+        (32 + capacity.div_ceil(u64::BITS as usize) * std::mem::size_of::<u64>()) as u64
     );
     assert!(repaired.is_watched(7));
     assert!(
-        SubscriptionBitmap::open(&path)
+        SubscriptionBitmap::open(&path, capacity)
             .expect("open repaired canonical")
             .is_watched(7)
     );
@@ -93,11 +98,13 @@ fn zero_byte_canonical_orphan_is_replaced_atomically() {
 fn open_or_create_does_not_truncate_an_existing_live_bitmap() {
     let directory = tempfile::tempdir().expect("temporary directory");
     let path = directory.path().join("subscriptions.bitmap");
-    let consumer = SubscriptionBitmap::open_or_create(&path).expect("create bitmap");
+    let capacity = 128;
+    let consumer = SubscriptionBitmap::open_or_create(&path, capacity).expect("create bitmap");
     consumer.set_watched(73).expect("watch retained slot");
     let original_len = std::fs::metadata(&path).expect("stat live bitmap").len();
 
-    let writer_restart = SubscriptionBitmap::open_or_create(&path).expect("reuse existing bitmap");
+    let writer_restart =
+        SubscriptionBitmap::open_or_create(&path, capacity).expect("reuse existing bitmap");
     writer_restart
         .set_watched(91)
         .expect("watch through reopened mapping");
@@ -116,8 +123,9 @@ fn open_or_create_does_not_truncate_an_existing_live_bitmap() {
 
 #[test]
 fn capacity_last_slot_succeeds_and_capacity_is_an_explicit_error() {
-    let bitmap = SubscriptionBitmap::new_in_memory().expect("anonymous bitmap");
-    let last_slot = WATCH_SLOT_CAPACITY - 1;
+    let capacity = 65;
+    let bitmap = SubscriptionBitmap::new_in_memory(capacity).expect("anonymous bitmap");
+    let last_slot = capacity - 1;
 
     bitmap
         .set_watched(last_slot)
@@ -130,16 +138,69 @@ fn capacity_last_slot_succeeds_and_capacity_is_an_explicit_error() {
 
     for error in [
         bitmap
-            .set_watched(WATCH_SLOT_CAPACITY)
+            .set_watched(capacity)
             .expect_err("capacity must be rejected by set"),
         bitmap
-            .clear_watched(WATCH_SLOT_CAPACITY)
+            .clear_watched(capacity)
             .expect_err("capacity must be rejected by clear"),
     ] {
         assert!(matches!(error, DataplaneError::InvalidLayout(_)));
         assert!(error.to_string().contains("exceeds capacity"));
     }
-    assert!(!bitmap.is_watched(WATCH_SLOT_CAPACITY));
+    assert!(!bitmap.is_watched(capacity));
+}
+
+#[test]
+fn zero_capacity_is_rejected() {
+    let error = match SubscriptionBitmap::new_in_memory(0) {
+        Ok(_) => panic!("zero capacity must fail"),
+        Err(error) => error,
+    };
+    assert!(matches!(error, DataplaneError::InvalidLayout(_)));
+    assert!(error.to_string().contains("greater than zero"));
+}
+
+#[test]
+fn expected_capacity_is_part_of_the_physical_contract() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let path = directory.path().join("capacity.bitmap");
+    let original = SubscriptionBitmap::open_or_create(&path, 64).expect("create bitmap");
+    original.set_watched(63).expect("watch old last slot");
+    assert_eq!(std::fs::metadata(&path).expect("bitmap metadata").len(), 40);
+
+    let error = match SubscriptionBitmap::open(&path, 65) {
+        Ok(_) => panic!("capacity mismatch must fail"),
+        Err(error) => error,
+    };
+    assert!(matches!(error, DataplaneError::InvalidLayout(_)));
+    assert!(error.to_string().contains("capacity"));
+
+    let replacement =
+        SubscriptionBitmap::open_or_create(&path, 65).expect("publish replacement capacity");
+    assert_eq!(replacement.capacity(), 65);
+    assert_eq!(replacement.subscription_count(), 0);
+    assert_eq!(std::fs::metadata(&path).expect("bitmap metadata").len(), 48);
+    assert_eq!(original.capacity(), 64);
+    assert!(original.is_watched(63));
+}
+
+#[test]
+fn obsolete_headerless_bitmap_is_replaced_without_decoding_its_bits() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let path = directory.path().join("obsolete.bitmap");
+    std::fs::write(&path, 1_u64.to_ne_bytes()).expect("write obsolete headerless bitmap");
+
+    let error = match SubscriptionBitmap::open(&path, 64) {
+        Ok(_) => panic!("obsolete bitmap must fail"),
+        Err(error) => error,
+    };
+    assert!(matches!(error, DataplaneError::InvalidLayout(_)));
+
+    let replacement =
+        SubscriptionBitmap::open_or_create(&path, 64).expect("publish current bitmap");
+    assert_eq!(replacement.capacity(), 64);
+    assert_eq!(replacement.subscription_count(), 0);
+    assert!(!replacement.is_watched(0));
 }
 
 #[test]
@@ -163,7 +224,7 @@ fn creator_publishes_shared_mode_without_rewriting_existing_permissions() {
 
     let directory = tempfile::tempdir().expect("temporary directory");
     let path = directory.path().join("cross-uid.bitmap");
-    drop(SubscriptionBitmap::open_or_create(&path).expect("create shared bitmap"));
+    drop(SubscriptionBitmap::open_or_create(&path, 128).expect("create shared bitmap"));
     assert_eq!(
         std::fs::metadata(&path)
             .expect("stat shared bitmap")
@@ -175,7 +236,7 @@ fn creator_publishes_shared_mode_without_rewriting_existing_permissions() {
 
     std::fs::set_permissions(&path, PermissionsExt::from_mode(0o600))
         .expect("set owner-only fixture mode");
-    drop(SubscriptionBitmap::open_or_create(&path).expect("reopen existing bitmap"));
+    drop(SubscriptionBitmap::open_or_create(&path, 128).expect("reopen existing bitmap"));
     assert_eq!(
         std::fs::metadata(&path)
             .expect("stat reopened bitmap")

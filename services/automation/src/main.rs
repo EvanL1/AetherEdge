@@ -25,6 +25,7 @@ use aether_shm_bridge::{
     PointWatchEvent, PointWatchEventListener, SubscriptionBitmap, bitmap_path_for_consumer,
     default_shm_path, point_watch_socket_from_shm,
 };
+use aether_sqlite_topology::load_sqlite_shm_capacity;
 
 #[cfg(feature = "openapi")]
 async fn openapi_document() -> axum::Json<utoipa::openapi::OpenApi> {
@@ -293,10 +294,26 @@ async fn main() -> Result<()> {
         Option<tokio::sync::mpsc::Receiver<PointWatchEvent>>,
         Option<tokio::sync::mpsc::Receiver<WatchEvent>>,
     );
+    let point_watch_capacity = match load_sqlite_shm_capacity(&sqlite_pool).await {
+        Ok(capacity) => Some(capacity),
+        Err(error) => {
+            warn!("PointWatch disabled (SHM capacity is unavailable): {error}");
+            None
+        },
+    };
     let (pw_bitmap, pw_dispatcher, pw_event_rx, pw_watch_rx): PwInitResult = {
         let bitmap_path = bitmap_path_for_consumer(&shm_path, "automation");
-        match SubscriptionBitmap::open_or_create(&bitmap_path) {
-            Ok(bitmap) => {
+        let bitmap = point_watch_capacity.and_then(|capacity| {
+            match SubscriptionBitmap::open_or_create(&bitmap_path, capacity) {
+                Ok(bitmap) => Some(bitmap),
+                Err(error) => {
+                    warn!("PointWatch disabled (bitmap initialization failed): {error}");
+                    None
+                },
+            }
+        });
+        match bitmap {
+            Some(bitmap) => {
                 let bitmap = Arc::new(bitmap);
 
                 // event_rx: raw PointWatchEvents forwarded from the UDS socket.
@@ -327,10 +344,7 @@ async fn main() -> Result<()> {
                     Some(watch_rx),
                 )
             },
-            Err(e) => {
-                warn!("PointWatch disabled (bitmap initialization failed): {}", e);
-                (None, None, None, None)
-            },
+            None => (None, None, None, None),
         }
     };
 

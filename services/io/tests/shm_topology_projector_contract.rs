@@ -220,7 +220,7 @@ async fn unchanged_topology_is_a_noop_and_preserves_live_values() {
 }
 
 #[tokio::test]
-async fn topology_change_publishes_both_planes_and_preserves_only_health_intersection() {
+async fn topology_change_publishes_both_planes_and_preserves_typed_intersections() {
     let pool = pool().await;
     insert_channel(&pool, 1).await;
     insert_telemetry(&pool, 1, 0).await;
@@ -284,14 +284,12 @@ async fn topology_change_publishes_both_planes_and_preserves_only_health_interse
             0,
         ))
         .expect("old address remains allocated");
-    assert!(
-        current_generation
-            .read_slot(old_slot)
-            .expect("fresh old-address slot")
-            .value
-            .is_nan(),
-        "business point values must not cross topology generations"
-    );
+    let retained_point = current_generation
+        .read_slot(old_slot)
+        .expect("retained old-address slot");
+    assert_eq!(retained_point.value, 8.0);
+    assert_eq!(retained_point.raw, 8.0);
+    assert_eq!(retained_point.timestamp_ms, 100);
     current_generation
         .acquisition_writer()
         .commit_batch(&[sample(1, 1, 9.0)])

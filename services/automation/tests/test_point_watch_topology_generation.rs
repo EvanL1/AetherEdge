@@ -69,7 +69,7 @@ async fn rebuild_uses_the_route_and_manifest_of_one_pinned_service_generation() 
     );
     let (dispatcher, mut events) = PointWatchDispatcher::new();
     let dispatcher = Arc::new(Mutex::new(dispatcher));
-    let bitmap = Arc::new(SubscriptionBitmap::new_in_memory().expect("bitmap"));
+    let bitmap = Arc::new(SubscriptionBitmap::new_in_memory(8).expect("bitmap"));
     scheduler.set_point_watch_rebuild_handle(Arc::clone(&dispatcher));
     scheduler.reload_rules().await.expect("rule reload");
 

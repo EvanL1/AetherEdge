@@ -9,6 +9,7 @@ mod events;
 mod health;
 mod managed;
 mod manifest;
+mod observer;
 #[cfg(unix)]
 mod point_watch;
 mod read_topology;
@@ -22,7 +23,7 @@ pub use acquisition_writer::{AcquisitionCommitObserver, ShmAcquisitionStateWrite
 pub use aether_dataplane::core::config::{
     cleanup_orphan_generation_files, default_shm_path, timestamp_ms,
 };
-pub use aether_dataplane::{SubscriptionBitmap, WATCH_SLOT_CAPACITY, bitmap_path_for_consumer};
+pub use aether_dataplane::{SubscriptionBitmap, bitmap_path_for_consumer};
 pub use aether_ports::ChannelHealthObservation as ChannelHealthSample;
 pub use channel_reader::ShmChannelReader;
 #[cfg(unix)]
@@ -41,6 +42,10 @@ pub use health::{
 };
 pub use managed::{ReconnectingSlotSource, ShmClientConfig};
 pub use manifest::{ChannelPointManifest, PhysicalPointAddress};
+pub use observer::{
+    ShmObservationFinding, ShmObservationSeverity, ShmObservationStatus, ShmObserver,
+    ShmPlaneObservation, ShmSlotObservation, ShmTopologyObservation,
+};
 #[cfg(unix)]
 pub use point_watch::PointWatchPublisher;
 pub use read_topology::ShmReadTopologyGeneration;

@@ -11,6 +11,7 @@ It owns:
 - read-only and writable mmap owners with RAII cleanup;
 - owner-controlled heartbeat and generation fencing;
 - point-quality persistence and generation path helpers;
+- capacity-specific, versioned subscription bitmaps for local wake-up hints;
 - ABI-independent, tear-resistant snapshot serialization with durable rename.
 
 Mmap constructors require an exact physical length for the declared live slot

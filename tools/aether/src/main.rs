@@ -26,6 +26,7 @@ mod services;
 mod setup;
 mod shm;
 mod shm_dashboard;
+mod shm_web;
 mod templates;
 mod top;
 mod top_draw;
@@ -506,10 +507,7 @@ async fn run(cli: Cli) -> Result<()> {
             logs::handle_command(command, json, host).await?;
         },
         Commands::Shm { command } => {
-            if json {
-                eprintln!("warning: --json is not supported for 'shm' command");
-            }
-            shm::handle_command(command, &db_path).await?;
+            shm::handle_command(command, &db_path, json).await?;
         },
         Commands::Doctor { verbose } => {
             let mode = deploy_mode::DeployMode::detect(install_mode.as_deref())?;

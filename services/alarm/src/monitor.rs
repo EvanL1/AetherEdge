@@ -194,7 +194,8 @@ async fn check_event_batch(
 
 fn reconcile_point_watch_subscriptions(state: &AppState, rules: &[crate::models::AlertRule]) {
     let bitmap_path = bitmap_path_for_consumer(Path::new(&state.config.shm_path), "alarm");
-    let bitmap = match SubscriptionBitmap::open_or_create(&bitmap_path) {
+    let bitmap = match SubscriptionBitmap::open_or_create(&bitmap_path, state.point_watch_capacity)
+    {
         Ok(bitmap) => bitmap,
         Err(error) => {
             debug!(
