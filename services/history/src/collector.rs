@@ -1001,12 +1001,12 @@ mod tests {
                     .expect("valid History soak sample")
                 })
                 .collect::<Vec<_>>();
-            writer
-                .generation()
-                .expect("History point generation")
-                .acquisition_writer()
+            let generation = writer.generation().expect("History point generation");
+            let acquisition_writer = generation.acquisition_writer();
+            acquisition_writer
                 .commit_batch(&samples)
                 .expect("write History epoch samples");
+            acquisition_writer.update_heartbeat(aether_shm_bridge::timestamp_ms());
         }
 
         fn write_history_soak_health(
@@ -1023,6 +1023,9 @@ mod tests {
                     )
                     .expect("write History epoch health");
             }
+            writer
+                .update_heartbeat(aether_shm_bridge::timestamp_ms())
+                .expect("write History health heartbeat");
         }
     }
 
