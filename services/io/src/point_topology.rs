@@ -1401,7 +1401,7 @@ mod tests {
     fn canonical_validator_accepts_linux_only_inline_mapping_consumers() {
         for (protocol, kind, mapping) in [
             (
-                "gpio",
+                "di_do",
                 PointKind::Signal,
                 serde_json::json!({"gpio_number": 496}),
             ),
@@ -1428,7 +1428,7 @@ mod tests {
     fn canonical_validator_rejects_linux_only_protocols_when_not_composed() {
         for (protocol, kind, mapping) in [
             (
-                "gpio",
+                "di_do",
                 PointKind::Signal,
                 serde_json::json!({"gpio_number": 496}),
             ),
