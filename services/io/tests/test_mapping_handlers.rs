@@ -96,7 +96,7 @@ async fn create_test_database_with_gpio_channel() -> Result<sqlx::SqlitePool> {
     // Insert a GPIO channel
     sqlx::query(
         r#"INSERT INTO channels (channel_id, name, protocol, enabled, config)
-           VALUES (2001, 'GPIO Channel', 'gpio', 1, '{}')"#,
+           VALUES (2001, 'GPIO Channel', 'di_do', 1, '{}')"#,
     )
     .execute(&pool)
     .await?;
