@@ -98,7 +98,7 @@ async fn application(
     let point_path = directory.path().join("live.shm");
     let health_path = directory.path().join("channel-health.shm");
     let epoch = 77;
-    let _point_writer = ShmWriterHandle::create(
+    let point_writer = ShmWriterHandle::create(
         ShmRuntimeConfig::new(&point_path, 32),
         Arc::new(snapshot.point_manifest().clone()),
         None,
@@ -117,6 +117,14 @@ async fn application(
     health_writer
         .set_online(2, true, health_timestamp)
         .expect("online channel");
+    point_writer
+        .generation()
+        .expect("point generation")
+        .acquisition_writer()
+        .update_heartbeat(health_timestamp);
+    health_writer
+        .update_heartbeat(health_timestamp)
+        .expect("publish health heartbeat");
     let topology = Arc::new(
         AutomationTopologyHandle::new_lazy(
             point_path,
