@@ -1274,12 +1274,12 @@ mod tests {
                     .expect("valid Uplink soak sample")
                 })
                 .collect::<Vec<_>>();
-            writer
-                .generation()
-                .expect("Uplink point generation")
-                .acquisition_writer()
+            let generation = writer.generation().expect("Uplink point generation");
+            let acquisition_writer = generation.acquisition_writer();
+            acquisition_writer
                 .commit_batch(&samples)
                 .expect("write Uplink epoch samples");
+            acquisition_writer.update_heartbeat(aether_shm_bridge::timestamp_ms());
         }
 
         fn write_uplink_soak_health(
@@ -1296,6 +1296,9 @@ mod tests {
                     )
                     .expect("write Uplink epoch health");
             }
+            writer
+                .update_heartbeat(aether_shm_bridge::timestamp_ms())
+                .expect("write Uplink health heartbeat");
         }
     }
 
