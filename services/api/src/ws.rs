@@ -1,11 +1,12 @@
-use std::collections::{BTreeSet, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::Path;
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
 use aether_shm_bridge::{
-    PointWatchEvent, PointWatchEventListener, SubscriptionBitmap, bitmap_path_for_consumer,
+    PhysicalPointAddress, PointWatchEvent, PointWatchEventListener, SubscriptionBitmap,
+    bitmap_path_for_consumer,
 };
 use axum::extract::ws::{Message, WebSocket};
 use chrono::Utc;
@@ -17,7 +18,10 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
-use crate::live_values::GatewayValueSource;
+use aether_domain::PointQuality;
+use aether_shm_bridge::SlotSnapshot;
+
+use crate::live_values::{GatewayValueSource, sample_age_ms};
 
 // ── Subscription State ────────────────────────────────────────────────────────
 
@@ -51,20 +55,64 @@ struct ClientHandle {
     last_activity: Arc<AtomicI64>,
 }
 
+/// Grades every sample in a group so the payload cannot present a frozen
+/// reading as a live one.
+///
+/// The values and their timestamps were always both on the wire, but nothing
+/// said which timestamps still counted as current, so a disconnected channel
+/// looked exactly like a healthy one.
+fn quality_object(
+    samples: &BTreeMap<String, SlotSnapshot>,
+    now_ms: u64,
+    stale_after_ms: u64,
+) -> serde_json::Map<String, Value> {
+    samples
+        .iter()
+        .map(|(point_id, sample)| {
+            let age_ms = sample_age_ms(now_ms, sample.timestamp_ms());
+            let freshness = PointQuality::for_sample_age(age_ms, stale_after_ms);
+            let effective = match sample.quality() {
+                PointQuality::Good => freshness,
+                PointQuality::Uncertain => PointQuality::Uncertain,
+                PointQuality::Bad => PointQuality::Bad,
+                PointQuality::Unavailable => PointQuality::Unavailable,
+            };
+            let label = match effective {
+                PointQuality::Good => "good",
+                PointQuality::Uncertain => "uncertain",
+                PointQuality::Bad => "bad",
+                PointQuality::Unavailable => "unavailable",
+            };
+            (point_id.clone(), Value::String(label.to_owned()))
+        })
+        .collect()
+}
+
+/// Wall-clock milliseconds used to grade sample freshness.
+fn now_ms_for_grading() -> u64 {
+    u64::try_from(Utc::now().timestamp_millis()).unwrap_or(0)
+}
+
 // ── WebSocket Hub ─────────────────────────────────────────────────────────────
 
 pub struct WsHub {
     clients: DashMap<String, Arc<ClientHandle>>,
     live_values: Arc<dyn GatewayValueSource>,
     db: SqlitePool,
+    sample_stale_after_ms: u64,
 }
 
 impl WsHub {
-    pub fn new(live_values: Arc<dyn GatewayValueSource>, db: SqlitePool) -> Arc<Self> {
+    pub fn new(
+        live_values: Arc<dyn GatewayValueSource>,
+        db: SqlitePool,
+        sample_stale_after_ms: u64,
+    ) -> Arc<Self> {
         Arc::new(Self {
             clients: DashMap::new(),
             live_values,
             db,
+            sample_stale_after_ms,
         })
     }
 
@@ -252,14 +300,52 @@ impl WsHub {
             .collect()
     }
 
-    fn clients_watching(&self, changed_slots: &HashSet<usize>) -> Vec<String> {
+    fn subscription_addresses(&self, subscription: &Subscription) -> HashSet<PhysicalPointAddress> {
+        if subscription.source == "homepage" {
+            return subscription
+                .homepage_points
+                .iter()
+                .filter(|point| !point.formula.is_empty())
+                .filter_map(|point| {
+                    match self.live_values.watched_formula_address(&point.formula) {
+                        Ok(address) => address,
+                        Err(error) => {
+                            debug!(
+                                "Cannot resolve homepage PointWatch formula '{}': {error}",
+                                point.formula
+                            );
+                            None
+                        },
+                    }
+                })
+                .collect();
+        }
+        if subscription.source == "rule" {
+            return HashSet::new();
+        }
+        self.live_values
+            .watched_addresses(
+                &subscription.source,
+                &subscription.channels,
+                &subscription.data_types,
+            )
+            .unwrap_or_else(|error| {
+                debug!(
+                    "Cannot resolve PointWatch subscription '{}': {error}",
+                    subscription.source
+                );
+                HashSet::new()
+            })
+    }
+
+    fn clients_watching(&self, changed_addresses: &HashSet<PhysicalPointAddress>) -> Vec<String> {
         self.clients
             .iter()
             .filter_map(|client| {
                 let subscription = client.sub.read().ok()?;
-                self.subscription_slots(&subscription)
+                self.subscription_addresses(&subscription)
                     .iter()
-                    .any(|slot| changed_slots.contains(slot))
+                    .any(|address| changed_addresses.contains(address))
                     .then(|| client.key().clone())
             })
             .collect()
@@ -299,6 +385,7 @@ pub async fn run_data_push(
     shm_path: &str,
     point_watch_socket: &str,
     debounce_ms: u64,
+    point_watch_capacity: usize,
 ) {
     let (listener, mut event_rx) =
         PointWatchEventListener::new(point_watch_socket, shutdown.clone());
@@ -317,7 +404,11 @@ pub async fn run_data_push(
         tokio::select! {
             _ = shutdown.cancelled() => break,
             _ = interval.tick() => {
-                reconcile_point_watch_subscriptions(&hub, &bitmap_path);
+                reconcile_point_watch_subscriptions(
+                    &hub,
+                    &bitmap_path,
+                    point_watch_capacity,
+                );
                 push_subscribed_data(&hub).await;
             }
             event = event_rx.recv(), if events_open => {
@@ -411,12 +502,16 @@ async fn push_subscribed_data_to(hub: &Arc<WsHub>, client_ids: Vec<String>) {
                     })
                     .collect();
 
+                let quality_obj =
+                    quality_object(&samples, now_ms_for_grading(), hub.sample_stale_after_ms);
+
                 all_updates.push(json!({
                     "source": source,
                     "channel_id": channel_id,
                     "data_type": dt,
                     "values": values_obj,
                     "ts": ts_obj,
+                    "quality": quality_obj,
                 }));
             }
         }
@@ -435,8 +530,8 @@ async fn push_subscribed_data_to(hub: &Arc<WsHub>, client_ids: Vec<String>) {
     }
 }
 
-fn reconcile_point_watch_subscriptions(hub: &WsHub, bitmap_path: &Path) {
-    let bitmap = match SubscriptionBitmap::open(bitmap_path) {
+fn reconcile_point_watch_subscriptions(hub: &WsHub, bitmap_path: &Path, capacity: usize) {
+    let bitmap = match SubscriptionBitmap::open_or_create(bitmap_path, capacity) {
         Ok(bitmap) => bitmap,
         Err(error) => {
             debug!(
@@ -448,7 +543,9 @@ fn reconcile_point_watch_subscriptions(hub: &WsHub, bitmap_path: &Path) {
     };
     bitmap.clear_all();
     for slot in hub.all_subscription_slots() {
-        bitmap.set_watched(slot);
+        if let Err(error) = bitmap.set_watched(slot) {
+            warn!("Cannot subscribe API PointWatch slot {slot}: {error}");
+        }
     }
     debug!(
         "API Gateway PointWatch subscriptions reconciled: {} slot(s)",
@@ -463,23 +560,35 @@ async fn push_point_watch_batch(
     debounce_ms: u64,
     shutdown: &CancellationToken,
 ) {
-    let mut changed_slots = HashSet::new();
-    if let Some(slot) = hub.live_values.validated_point_watch_slot(first) {
-        changed_slots.insert(slot);
-    }
+    let mut events = vec![first];
     tokio::select! {
         _ = shutdown.cancelled() => return,
         _ = tokio::time::sleep(Duration::from_millis(debounce_ms)) => {}
     }
     while let Ok(event) = event_rx.try_recv() {
-        if let Some(slot) = hub.live_values.validated_point_watch_slot(event) {
-            changed_slots.insert(slot);
+        events.push(event);
+    }
+    let mut changed_addresses = HashSet::new();
+    for event in events {
+        match hub.live_values.validate_point_watch(event) {
+            Ok(Some(validated)) => {
+                changed_addresses.insert(validated.address());
+            },
+            Ok(None) => {},
+            Err(error) => {
+                debug!(
+                    channel_id = event.channel_id(),
+                    point_id = event.point_id(),
+                    slot = event.slot_index(),
+                    "API PointWatch SHM re-read rejected: {error}"
+                );
+            },
         }
     }
-    if changed_slots.is_empty() {
+    if changed_addresses.is_empty() {
         return;
     }
-    let clients = hub.clients_watching(&changed_slots);
+    let clients = hub.clients_watching(&changed_addresses);
     if !clients.is_empty() {
         debug!(
             "PointWatch woke {} API Gateway client subscription(s)",
@@ -925,6 +1034,27 @@ fn error_msg(code: &str, message: &str, request_id: Option<&str>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_group_payload_grades_every_sample_it_reports() {
+        // A channel that stops responding leaves its last value in the slot.
+        // Without this map the frozen reading is indistinguishable from a live
+        // one, which is exactly how a disconnected device kept looking healthy.
+        let mut samples = BTreeMap::new();
+        samples.insert(
+            "1".to_owned(),
+            SlotSnapshot::new(384.3, 1_000, PointQuality::Good),
+        );
+        samples.insert(
+            "2".to_owned(),
+            SlotSnapshot::new(12.5, 95_000, PointQuality::Good),
+        );
+
+        let graded = quality_object(&samples, 100_000, 30_000);
+
+        assert_eq!(graded["1"], "uncertain");
+        assert_eq!(graded["2"], "good");
+    }
 
     async fn rule_history_pool() -> SqlitePool {
         let pool = sqlx::sqlite::SqlitePoolOptions::new()

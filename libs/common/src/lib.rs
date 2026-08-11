@@ -14,6 +14,7 @@ pub mod service_ports;
 // Common modules
 pub mod admin_api;
 pub mod api_types;
+pub mod audit_api;
 pub mod log_rotation;
 pub mod logging;
 pub mod serde_helpers;

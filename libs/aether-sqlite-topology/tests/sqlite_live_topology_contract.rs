@@ -276,7 +276,7 @@ async fn routing_only_change_advances_the_deterministic_digest() {
 }
 
 #[tokio::test]
-async fn exact_configured_point_change_advances_digest_when_layout_is_unchanged() {
+async fn exact_configured_point_change_advances_layout_hash_and_digest() {
     let pool = live_topology_pool().await;
     sqlx::query("INSERT INTO channels (channel_id, protocol) VALUES (7, 'modbus_tcp')")
         .execute(&pool)
@@ -305,7 +305,7 @@ async fn exact_configured_point_change_advances_digest_when_layout_is_unchanged(
         .await
         .expect("second live topology");
 
-    assert_eq!(
+    assert_ne!(
         first.point_manifest().layout_hash(),
         second.point_manifest().layout_hash()
     );

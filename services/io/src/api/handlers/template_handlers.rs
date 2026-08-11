@@ -6,11 +6,11 @@
 //! Templates capture a channel's complete point definitions and protocol mappings
 //! as JSON snapshots, enabling "save once → apply many" workflows.
 
-use crate::api::routes::AppState;
-use crate::dto::{
+use crate::api::dto::{
     AppError, ApplyTemplateReq, CreateTemplateFromChannelReq, CreateTemplateReq, PointCounts,
     SuccessResponse, TemplateDetail, TemplateListItem, TemplateListQuery, UpdateTemplateReq,
 };
+use crate::api::routes::AppState;
 use crate::point_topology::{
     PointDefinitionMutation, PointKind, PointTopologyMutation, PointTopologyMutationResult,
 };

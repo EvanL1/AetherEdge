@@ -134,8 +134,32 @@ In the Claude Desktop config, a remote write-enabled server looks like this
 By default, `aether mcp` is read-only. This is not an advisory annotation:
 without `--allow-write`, the 22 write tools are never registered and do not
 appear in the `tools/list` response at all. A client cannot call — or even
-see — what is not registered, so the guarantee holds regardless of how the
-client is configured or how the model behaves.
+see — what is not registered.
+
+That guarantee covers the MCP tool surface, and nothing more. It is not a
+property of the credential. An assistant that can also make plain HTTP
+requests — which most coding-agent clients can — may send the same
+`AETHER_ACCESS_TOKEN` straight to the gateway and reach every capability the
+token's role allows, including the governed writes that were withheld from
+`tools/list`. Withholding a tool hides an action from the model; it does not
+withhold authority from the credential.
+
+**The credential is the boundary, so narrow the credential.** Every access
+token carries a `scope` claim listing the permissions it may exercise. The role
+remains the ceiling and the scope selects within it, so a scope can never award
+authority a role does not already have. A token scoped to reads is refused at
+the gateway and again by each service, whichever route the request takes:
+
+```json
+{ "user_id": 42, "role": "Engineer", "scope": ["data_processing.read"], "type": "access", "exp": 4102444800, "iat": 1 }
+```
+
+`scope` is required. A token that does not state its permissions is rejected
+rather than treated as fully privileged — an omitted scope would be an implicit
+grant, which is the fail-open path the claim exists to close. Login issues a
+token carrying everything its role may hold; issue a narrowed one for any
+assistant that should read but never command, and use `--allow-write` to decide
+what the model is shown, not what it is permitted to do.
 
 Starting the server with `--allow-write` is a deliberate act, but the flag is
 only a registration gate. It is not confirmation for any command. The MCP

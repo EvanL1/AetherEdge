@@ -193,9 +193,9 @@ cursor metadata before accepting work after 256 mutations.
 | SHM publication epoch | `topology.publication_epoch` | Coherent point/health generation witness |
 | topology snapshot digest | `topology.snapshot_digest` | Identifies the exact published routing snapshot |
 
-The current SHM slot does not encode acquisition quality, so its read adapter
-reports accepted finite values as `good`. This is an implementation limitation,
-not proof that the source supplied `good` quality.
+SHM v5 encodes acquisition quality beside value, raw value, and timestamp. Its
+read and uplink adapters preserve that quality; an unknown physical quality
+code is invalid data rather than an excuse to report `good`.
 
 No Thing Model revision is fabricated. The optional `model` binding is accepted
 only when it originates from commissioned, verified configuration. Cloud

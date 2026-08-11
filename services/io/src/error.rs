@@ -145,7 +145,10 @@ impl IoError {
 
     /// Invalid channel ID (out of bounds for pre-allocated Vec)
     pub fn invalid_channel_id(id: u32) -> Self {
-        IoError::ChannelError(format!("Invalid channel ID: {} (must be < 10000)", id))
+        IoError::ChannelError(format!(
+            "Invalid channel ID: {} (must be between 1 and 9999)",
+            id
+        ))
     }
 
     pub fn point_not_found(id: impl std::fmt::Display) -> Self {

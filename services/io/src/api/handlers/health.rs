@@ -9,8 +9,8 @@ use common::{ComponentHealth, ServiceStatus as HealthServiceStatus};
 use std::collections::HashMap;
 use std::time::Instant;
 
+use crate::api::dto::{AppError, HealthStatus, ServiceStatus, SuccessResponse};
 use crate::api::routes::{AppState, get_service_start_time};
-use crate::dto::{AppError, HealthStatus, ServiceStatus, SuccessResponse};
 
 /// io runtime summary: total channels, active channels, uptime, and version.
 ///
@@ -22,7 +22,7 @@ use crate::dto::{AppError, HealthStatus, ServiceStatus, SuccessResponse};
     get,
     path = "/api/status",
     responses(
-        (status = 200, description = "Service status retrieved", body = crate::dto::ServiceStatus)
+        (status = 200, description = "Service status retrieved", body = crate::api::dto::ServiceStatus)
     ),
     tag = "io"
 )]

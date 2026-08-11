@@ -7,7 +7,38 @@ use std::sync::Arc;
 use aether_shm_bridge::{ChannelPointManifest, ShmRuntimeConfig, ShmWriterHandle};
 
 pub const TEST_JWT_SECRET: &str = "0123456789abcdef0123456789abcdef";
-pub const ADMIN_ACCESS_TOKEN: &str = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyX2lkIjo3LCJyb2xlIjoiQWRtaW4iLCJ0eXBlIjoiYWNjZXNzIiwiaWF0IjoxNzAwMDAwMDAwLCJleHAiOjQxMDI0NDQ4MDB9.JtjQvDBo7j0bLOxwed6yC9-M9qFCloc4H2Dt0LjzF9E";
+
+/// An Admin token carrying everything that role may hold.
+///
+/// Signed here rather than pasted in as a literal: a pre-encoded blob cannot
+/// follow a change to the claim set, and the one that used to live here went
+/// stale the moment `scope` became required.
+pub fn admin_access_token() -> String {
+    #[derive(serde::Serialize)]
+    struct AccessClaims {
+        user_id: i64,
+        role: &'static str,
+        scope: Vec<&'static str>,
+        #[serde(rename = "type")]
+        token_type: &'static str,
+        iat: usize,
+        exp: usize,
+    }
+
+    jsonwebtoken::encode(
+        &jsonwebtoken::Header::new(jsonwebtoken::Algorithm::HS256),
+        &AccessClaims {
+            user_id: 7,
+            role: "Admin",
+            scope: aether_auth_jwt::permissions_for_role(Some("Admin")),
+            token_type: "access",
+            iat: 1_700_000_000,
+            exp: 4_102_444_800,
+        },
+        &jsonwebtoken::EncodingKey::from_secret(TEST_JWT_SECRET.as_bytes()),
+    )
+    .expect("encode admin test token")
+}
 
 pub fn create_test_shm_handle() -> Arc<ShmWriterHandle> {
     let directory = tempfile::Builder::new()
@@ -17,8 +48,14 @@ pub fn create_test_shm_handle() -> Arc<ShmWriterHandle> {
         .keep();
     let config = ShmRuntimeConfig::new(directory.join("io.shm"), 65_536);
     Arc::new(
-        ShmWriterHandle::create_published(config, Arc::new(ChannelPointManifest::default()), None)
-            .expect("compose typed SHM layout"),
+        ShmWriterHandle::create(
+            config,
+            Arc::new(ChannelPointManifest::default()),
+            None,
+            None,
+            1,
+        )
+        .expect("compose typed SHM layout"),
     )
 }
 

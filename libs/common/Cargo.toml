@@ -15,6 +15,8 @@ schema = ["dep:schemars", "aether-core/schema"]
 [dependencies]
 errors = { path = "../errors", default-features = false }
 aether-core = { path = "../aether-core", features = ["serde"] }
+aether-domain = { path = "../../crates/aether-domain" }
+aether-ports = { path = "../../crates/aether-ports" }
 aether-schema-macro = { path = "../aether-schema-macro" }
 tokio = { workspace = true, features = ["full"] }
 tokio-util = { workspace = true }

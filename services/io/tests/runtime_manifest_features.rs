@@ -114,35 +114,33 @@ fn manifest_protocols_are_exactly_the_discoverable_production_protocols() {
 }
 
 #[test]
-fn registry_resolves_runtime_aliases_to_one_canonical_factory() {
+fn registry_accepts_only_exact_runtime_manifest_identifiers() {
     let registry = get_protocol_registry();
 
     #[cfg(feature = "modbus")]
     {
         assert_eq!(
             registry
-                .resolve("modbus")
-                .expect("Modbus alias must resolve")
+                .resolve("modbus_tcp")
+                .expect("canonical Modbus TCP identifier must resolve")
                 .protocol_type,
             "modbus_tcp"
         );
-        assert_eq!(
-            registry
-                .resolve("MODBUS-RTU")
-                .expect("normalized Modbus RTU alias must resolve")
-                .protocol_type,
-            "modbus_rtu"
-        );
+        assert!(registry.resolve("modbus").is_none());
+        assert!(registry.resolve("MODBUS-RTU").is_none());
     }
 
     #[cfg(all(target_os = "linux", feature = "gpio"))]
-    assert_eq!(
-        registry
-            .resolve("gpio")
-            .expect("GPIO alias must resolve")
-            .protocol_type,
-        "di_do"
-    );
+    {
+        assert_eq!(
+            registry
+                .resolve("di_do")
+                .expect("canonical GPIO identifier must resolve")
+                .protocol_type,
+            "di_do"
+        );
+        assert!(registry.resolve("gpio").is_none());
+    }
 
     assert!(
         registry.resolve("unregistered-protocol").is_none(),

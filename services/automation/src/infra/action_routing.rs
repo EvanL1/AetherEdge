@@ -4,8 +4,8 @@ use std::sync::Arc;
 
 use aether_domain::PointKind;
 use aether_ports::{
-    ActionRoutingMutation, ActionRoutingMutationReceipt, AutomationActionRoutingMutator,
-    LogicalRoutingRevision, PortError, PortErrorKind, PortResult, RevisionedActionRoutingMutation,
+    ActionRoutingMutation, ActionRoutingMutationReceipt, AutomationActionRoutingMutator, PortError,
+    PortErrorKind, PortResult, RevisionedActionRoutingMutation,
 };
 use async_trait::async_trait;
 use sqlx::SqlitePool;
@@ -140,26 +140,6 @@ impl SqliteActionRoutingMutator {
 
 #[async_trait]
 impl AutomationActionRoutingMutator for SqliteActionRoutingMutator {
-    async fn mutate(
-        &self,
-        mutation: ActionRoutingMutation,
-    ) -> PortResult<ActionRoutingMutationReceipt> {
-        let revision = sqlx::query_scalar::<_, i64>(
-            "SELECT revision FROM configuration_revisions WHERE scope = 'logical_routing'",
-        )
-        .fetch_one(&self.pool)
-        .await
-        .map_err(|error| storage_error("read logical-routing revision", error))?;
-        let revision = LogicalRoutingRevision::new(u64::try_from(revision).map_err(|_| {
-            PortError::new(
-                PortErrorKind::Permanent,
-                "logical-routing revision became negative",
-            )
-        })?);
-        self.mutate_revisioned(RevisionedActionRoutingMutation::new(mutation, revision))
-            .await
-    }
-
     async fn mutate_revisioned(
         &self,
         mutation: RevisionedActionRoutingMutation,

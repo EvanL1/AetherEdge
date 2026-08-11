@@ -100,6 +100,30 @@ The gateway WebSocket is also authenticated. Its documented `?token=...`
 fallback is accepted only for an actual WebSocket upgrade; REST query-string
 tokens are rejected. WebSocket control writes are not supported.
 
+Each subscription update carries `values`, `ts`, and `quality`, keyed by point
+id. `quality` is `good` while the sample is newer than
+`SHM_WRITER_STALE_AFTER_MS` (30 s by default) and `uncertain` once it is not.
+A channel that stops responding leaves its last value in place, so `values`
+alone cannot distinguish a live reading from a frozen one — grade every point
+by its `quality` before acting on the number.
+
+Every governed mutation is recorded before it is reported as complete, and each
+service answers for its own trail at `GET /api/audit/events` — reachable
+through the gateway as `/io/api/audit/events` and
+`/automation/api/audit/events`. Filter by `request_id`, `actor_id`,
+`capability`, `outcome` (`rejected`, `attempted`, `succeeded`, `failed`),
+`since_ms`, and `until_ms`; page with `limit` (clamped to 1000) and `offset`.
+Events come back newest first, and `total` counts every match rather than the
+returned page. Rejected commands are recorded too, so a refused attempt is
+visible rather than absent. An unrecognised `outcome` is a 400 rather than an
+ignored filter, because silently widening an audit query answers a narrower
+question than the one asked.
+
+Every access token carries a required `scope` claim listing the permissions it
+may exercise. The role remains the ceiling and the scope selects within it, so
+a scope never grants authority the role lacks. A token without the claim is
+refused rather than treated as fully privileged.
+
 The gateway requires an access JWT before forwarding any namespace request.
 The owning service then applies operation-specific authorization:
 
@@ -140,12 +164,18 @@ closed-loop confirmation.
 
 For channel commissioning, SQLite desired configuration and the active
 protocol runtime are deliberately distinct. Existing-resource mutations may
-document an optional `x-aether-expected-revision` compare-and-set guard. An
+proceed only with the required `x-aether-expected-revision` compare-and-set
+guard obtained from the latest channel read. A missing revision is rejected
+instead of being upgraded to the current database head. An
 accepted response can report an activation-pending or degraded runtime
 projection after desired state has committed; reconcile by `request_id` and
 `resulting_revision` rather than automatically repeating the non-idempotent
 mutation. The exact headers, receipt fields, and per-operation status codes are
 defined by the I/O OpenAPI document.
+
+Automation-rule mutation bodies likewise require `expected_revision` from the
+latest rule query ETag or `x-aether-configuration-revision`. The service never
+substitutes its current head for a caller that omitted the revision.
 
 ## Response compatibility
 

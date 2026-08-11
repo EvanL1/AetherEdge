@@ -1,7 +1,7 @@
 ---
 title: Shared Memory
 description: The SHM data plane - slot layout, writer ownership, seqlock reads, generations, and the PointWatch event plane
-updated: 2026-07-13
+updated: 2026-08-09
 ---
 
 # Shared Memory
@@ -20,45 +20,68 @@ mean see [Data Model](data-model.md).
 Source of truth: `crates/aether-dataplane/` (physical header, slots, locking),
 `libs/aether-shm-bridge/` (typed manifests, point/health publication and
 self-healing readers), and `services/io/src/core/channels/shm_listener.rs`
-(the command listener). The former legacy SHM aggregation crate has been
-removed after the v4 rolling-compatibility gate passed.
+(the command listener).
 
 ## Layout
 
-The segment is a single file: a 64-byte header followed by a fixed-size array
-of 32-byte point slots (`calculate_file_size` in
+The live-state segment is a 64-byte header followed by an exact-sized array of
+32-byte point slots. `calculate_file_size` in
 `crates/aether-dataplane/src/core/header.rs` is exactly
-`64 + 32 × max_slots`; the default capacity is 100,000 slots). Both struct
-sizes are compile-time asserted.
+`64 + 32 × slot_count`; spare capacity is not mapped into the file. The
+composition still enforces its configured resource limit before creation, but
+that safety limit is not part of the physical ABI. Header and slot sizes are
+compile-time asserted. Channel health uses a second exact-sized segment with
+one dense slot per configured channel.
 
 The file path is resolved by `default_shm_path()`
 (`crates/aether-dataplane/src/core/config.rs`) in this order:
 
 1. `AETHER_SHM_PATH` environment variable, if set.
-2. `/shm/rtdb/aether-rtdb.shm`, if the `/shm/rtdb` directory exists (the
+2. `/shm/aether/aether-live-state.shm`, if the `/shm/aether` directory exists (the
    Docker deployment mounts a shared tmpfs volume there).
-3. `/dev/shm/aether-rtdb.shm` on Linux (RAM-backed tmpfs).
-4. `/tmp/aether-rtdb.shm` otherwise (macOS development).
+3. `/dev/shm/aether-live-state.shm` on Linux (RAM-backed tmpfs).
+4. `/tmp/aether-live-state.shm` otherwise (macOS development).
 
-The header (`UnifiedHeader`, `#[repr(C, align(64))]`) carries: a magic number,
-a layout version, `max_slots`, the live `slot_count`, a last-update timestamp,
-a writer heartbeat, `routing_hash` (a fingerprint of the channel/point layout),
-`writer_generation` (an incarnation counter), and `publication_epoch` (the
-common point/health publication identity). All multi-byte fields use native
-endianness, so readers and writers must run on the same architecture.
+The v5 header (`ShmHeader`, `#[repr(C, align(64))]`) carries the `AETHER__`
+magic, layout version, live `slot_count`, owner heartbeat, `layout_hash`,
+`writer_generation`, and `publication_epoch`. There is no physical
+`max_slots`, last-update timestamp, or ambiguously named routing field. All
+multi-byte fields use native endianness, so readers and writers must run on the
+same architecture.
 
 Each `PointSlot` holds an engineering value (f64 bits), a raw value (f64
-bits), a millisecond timestamp, a seqlock sequence counter, and a dirty flag.
-A slot that has never been written holds a quiet-NaN sentinel in both value
-fields — an unwritten slot is self-describing, never confusable with a real
-device reading of zero. Downstream consumers filter on `is_finite`.
+bits), a millisecond timestamp, a seqlock sequence counter, and the acquisition
+quality code. There is no dirty flag or companion dirty bitmap in the write
+path. A slot that has never been written holds a quiet-NaN sentinel in both
+value fields — an unwritten slot is self-describing, never confusable with a
+real device reading of zero. Downstream consumers reject non-finite values and
+decode the stored quality; unknown quality codes fail closed.
 
-Slots are addressed by flat index. Each process independently derives the same
-`(channel_id, point_type, point_id) → slot` mapping from the same immutable
-`ChannelPointManifest`. Agreement is verified through the manifest
-`routing_hash`, exact slot count, committed publication epoch, and writer
+Slots are addressed by flat index. `ChannelPointManifest` compiles the exact
+configured physical addresses in deterministic channel/kind/point order;
+sparse point IDs do not create implicit addresses or holes. Its only padding
+rule aligns a channel's first C/A slot to a 64-byte cache-line boundary when
+that channel also has T/S points, keeping the two writer authorities off one
+cache line. `ChannelHealthManifest` independently compiles configured channel
+IDs into dense health slots. Agreement is verified through each manifest's
+`layout_hash`, exact slot count, committed publication epoch, and writer
 generation. Logical measurement/action routing and protocol register mapping
-do not participate in the physical slot layout.
+do not participate in either physical layout.
+
+Topology growth and shrink never resize a mapped live inode in place. io
+builds an exact-sized staging generation, copies state only for identical
+`(channel, kind, point)` addresses, and atomically publishes the new inode.
+Added points start with the unwritten NaN sentinel; removed points disappear;
+unchanged points retain value, raw value, timestamp, and quality even when
+their slot index changes. Readers fence the retired generation and reconnect
+through the canonical path.
+
+The live mmap ABI is not the persistent snapshot format. Snapshot v1 uses its
+own `AETHSNAP` header (`slot_count` plus `layout_hash`) and an explicit
+absent/present record for every slot; present records contain value, raw value,
+timestamp, and quality. It deliberately excludes heartbeat, writer generation,
+publication epoch, and seqlock state. Live layouts before v5 and every earlier
+snapshot representation are rejected; there is no decoder for older versions.
 
 ## Writer ownership is type-enforced
 
@@ -79,6 +102,11 @@ slot-indexed writes stay inside the physical adapter. Runtime checks provide
 defense in depth for manifest membership, slot bounds, stable generation, and
 canonical-file identity.
 
+Ordinary point and channel-health writes do not update liveness. Dedicated io
+tasks publish the point-plane and health-plane heartbeats, so automation's C/A
+mirror writes cannot impersonate acquisition health. Readers treat a missing
+or stale owner heartbeat as unavailable.
+
 `ShmReadTopologyGeneration` provides the production read view. It binds point
 and health manifests to one commit witness and pins both writer generations;
 debug tools may still open a single physical segment explicitly.
@@ -86,33 +114,33 @@ debug tools may still open a single physical segment explicitly.
 ## Consistency: seqlock
 
 Each slot is protected by a per-slot seqlock: the writer bumps the sequence
-counter to an odd value, writes the three data fields, then bumps it back to
-even. Readers read the sequence, read the data, and re-read the sequence; the
-snapshot is valid only if both reads returned the same even value. Memory
+counter to an odd value, writes value, raw value, timestamp, and quality, then
+bumps it back to even. Readers read the sequence, read the data, and re-read
+the sequence; the snapshot is valid only if both reads returned the same even value. Memory
 ordering uses paired Acquire fences on the read side and a Release fence plus
 Release increment on the write side — the comments in
 `crates/aether-dataplane/src/core/slot.rs` explain why single Acquire loads are
 insufficient on AArch64.
 
-Two read entry points exist, and choosing the right one matters:
+The data plane performs one `try_load_consistent()` attempt per slot. An odd or
+changed sequence returns contention rather than spinning on an async runtime
+thread; callers retry on their next bounded read cycle. The production data
+plane contains no spin retry loop.
 
-- `try_load_consistent()` — a single attempt that returns `None` on any
-  contention (odd sequence or sequence change). This is the variant for tasks
-  running on async runtime worker threads: never spin on a tokio worker.
-- `load_consistent()` — retries `try_load_consistent` up to 32,768 times with
-  a spin hint, bounding worst-case spinning to roughly 3–16 ms under extreme
-  contention. It is intended for dedicated threads. When retries are
-  exhausted it logs a warning and returns `None` — it never returns torn
-  data.
-
-In production the retry path almost never iterates: protocol I/O between
-writes means a reader rarely collides with a write in progress.
+`SlotSource::read_slots` makes a multi-point operation one batch read session.
+`ReconnectingSlotSource` fixes one mmap reader and one local read lock for the
+complete batch, checks heartbeat once, and validates writer generation and
+publication identity before and after the batch. Individual slots are each
+seqlock-consistent, but the batch is not an atomic cross-slot snapshot. Any
+slot contention or fencing failure rejects the complete batch. History uses
+this contract instead of repeating file identity, clock, header, and lock work
+for every selected series.
 
 ## Generations and rebuilds
 
 Three identities let readers detect that their view is stale:
 
-- **`routing_hash`** is the fingerprint of the channel point layout. io
+- **`layout_hash`** is the fingerprint of the exact physical slot layout. io
   writes it at create time; every coordinated open path
   recomputes its own fingerprint from local configuration and refuses to open
   on mismatch — slot indices would silently point at the wrong points
@@ -139,6 +167,11 @@ their service-level topology. History and Uplink replace their SQLite routes
 and committed SHM read view as one `Arc`, so a collection pass cannot mix
 logical and physical generations. Crash-orphaned staging files are bounded
 and cleaned on recovery.
+
+The physical contract is v5 only. An old v4 mmap, an old snapshot, or a mixed
+v4/v5 process set is invalid input. Upgrade by stopping the six services,
+removing the obsolete runtime files, and starting the complete v5 composition
+so io publishes a new point/health pair and commit witness.
 
 ## Command notifications
 
@@ -177,39 +210,73 @@ result reports degraded delivery and the caller decides what to surface.
 ## The PointWatch event plane
 
 Commands flow automation → io; PointWatch is the reverse direction, and it is
-what makes the rule engine event-driven (see [Rule Engine](rule-engine.md)). After every T/S
-slot write, io consults a **subscription bitmap** — a separate 12,504-byte
-mmap file (`aether-rtdb-point-watch-subs.shm`, next to the main segment) of
-atomic u64 words covering all slots. io creates it zero-filled at
-startup; automation sets bits when it loads or reloads rules. The hot-path check
-is a single relaxed atomic load and bit test, about 1–2 ns, and the common
-case (slot not subscribed) returns immediately.
+what makes the rule engine event-driven (see [Rule Engine](rule-engine.md)).
+After every T/S slot write, io consults each consumer's **subscription bitmap**
+— a separate versioned mmap of atomic u64 words beside the main segment. Its
+capacity comes from the deployment's `shared_memory.max_slots` resource cap;
+its exact length is a 32-byte self-describing header plus
+`ceil(max_slots / 64) × 8` bytes. It therefore has no compiled-in 100,000-slot
+ceiling. Paths are derived from the resolved live-state path, for example
+`aether-live-state-point-watch-subs-automation.shm`; automation, alarm, and API
+own independent bitmaps and sockets. The common unwatched path is one relaxed
+atomic load and bit test per consumer.
 
-On a hit, io builds a 56-byte `PointWatchEvent` — channel, point, point
-type, value bits, raw bits, slot index, timestamp, producer ID — and pushes it
-to a bounded in-process channel (capacity 2048) drained by a background task
-that batches up to 64 events per write onto a dedicated socket
-(`/tmp/aether-point-watch-automation.sock`, aether-automation listens, aether-io connects, same
-1–5 s reconnect backoff as the command plane). Because the event carries the
-value itself, automation evaluates deadband directly from the event with no
-read-back; duplicate events are harmless (at worst an extra
-deadband check), which is why the frame has no sequence field.
+Bitmap creation is serialized by an atomically published authority sidecar.
+The sidecar is read-only to non-owners because advisory locking never needs to
+mutate its contents; a newly published bitmap is mode `0666` so the root-owned
+io process and an explicitly unprivileged consumer can map the same atomic
+words. Reopening a valid bitmap never changes its ownership or permissions.
+The header binds magic, format version, capacity, and word count to the exact
+file length. Obsolete, malformed, or capacity-mismatched files are never
+decoded; the composition owner publishes a clean bitmap generation instead.
+
+On a hit, io builds a 16-byte little-endian `PointWatchEvent`: `channel_id`
+(u32), `point_id` (u32), `slot_index` (u32), point kind (u8), and a three-byte
+v1 frame marker. Construction rejects a slot that cannot fit the u32 wire field
+and never truncates. Decoding rejects an unversioned or malformed frame, so an
+older sender cannot be misinterpreted. The frame contains no value, raw value, timestamp, quality,
+producer ID, or sequence. It is only a wake-up hint and cannot compete with
+SHM authority. A background task drains the bounded in-process channel in
+batches of up to 64 frames onto each consumer's isolated socket.
 
 On the automation side the pipeline stays bounded end to end: the listener
 forwards frames into a 1024-capacity channel, and the dispatcher
 (`PointWatchDispatcher` in `libs/aether-rules/`) maps
-`(channel, point) → rule IDs` and forwards wake-up events into the
-scheduler's own 1024-capacity channel. Every stage uses a non-blocking
-`try_send`; on overflow the event is dropped and a `dropped_count` counter is
-incremented rather than ever blocking io's write path. Dropped events are
-recovered by the rule engine's periodic tick, so overload degrades to the old
-polling latency instead of losing correctness.
+`(channel, kind, point) → rule IDs` and forwards wake-up events into the
+scheduler's own 1024-capacity channel. Before dispatch, automation validates
+the typed address/slot against its pinned manifest and re-reads the sample from
+that same SHM generation. API and alarm perform the same manifest validation
+and authoritative SHM re-read. Every stage uses non-blocking `try_send`; on
+overflow the hint is dropped and `dropped_count` is incremented rather than
+ever blocking io's write path. Periodic polling remains the repair path for a
+dropped hint.
 
-The payoff, measured on production hardware (Cortex-A55 @ 1.4 GHz, ECU-1170)
-for the initial PointWatch benchmark: point-change-to-event-delivery latency of 206 µs at
-P50 and 526 µs at P99 (rule evaluation brings the cumulative figure to
-~215 µs P50 — see [Data Flow](data-flow.md)), versus 50–150 ms under the
-previous Redis-tick model — roughly a 500× improvement at the median.
+## Local observability without mandatory HTTP
+
+`ShmObserver` in `aether-shm-bridge` opens the point plane, channel-health
+plane, and topology commit through read-only paths. It validates exact mmap
+layouts, stable generations, the common publication epoch, commit identity,
+and dedicated heartbeat age. Its optional O(N) scan reports present,
+unwritten, quality, online/offline, invalid, and contended slot counts. It
+does not take writer authority, refresh heartbeat, repair files, or trigger a
+topology publication.
+
+Operators use the existing local CLI surfaces:
+
+```bash
+aether shm info             # one human-readable observation
+aether --json shm info      # script/agent observation
+aether shm info --no-scan   # O(1) header and commit validation
+aether shm top              # continuously refreshed terminal UI
+aether shm serve            # optional loopback browser UI
+```
+
+`aether doctor` uses the same observer, so system diagnostics and the SHM
+dashboards cannot disagree by checking different planes. HTTP is optional and
+no permanent observer process is required. `aether shm serve` embeds a
+self-contained page and same-origin JSON endpoint, binds only to loopback, and
+exists only for the CLI process lifetime. It has no write route and cannot
+become SHM authority.
 
 ## Related pages
 

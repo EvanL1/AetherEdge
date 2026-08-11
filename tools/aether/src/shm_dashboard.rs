@@ -2,6 +2,7 @@
 //!
 //! Extracted from shm.rs to keep each module focused on a single concern.
 
+use aether_shm_bridge::{ShmObservationStatus, ShmObserver, ShmTopologyObservation};
 use anyhow::{Context, Result};
 use crossterm::ExecutableCommand;
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
@@ -17,7 +18,7 @@ use std::io;
 use std::path::Path;
 use std::time::{Duration, Instant};
 
-use crate::shm::{ShmKey, ShmRuntimeView, get_value, open_reader, parse_key};
+use crate::shm::{ShmKey, ShmRuntimeView, default_observer, get_value, open_reader, parse_key};
 
 /// Point data for display in TUI
 struct PointRow {
@@ -32,19 +33,23 @@ struct DashboardState {
     table_state: TableState,
     scroll_offset: usize,
     last_scan: Instant,
+    last_observation: Instant,
     last_instance_count: usize,
     last_channel_count: usize,
+    observation: ShmTopologyObservation,
 }
 
 impl DashboardState {
-    fn new() -> Self {
+    fn new(observation: ShmTopologyObservation) -> Self {
         Self {
             points: Vec::new(),
             table_state: TableState::default(),
             scroll_offset: 0,
             last_scan: Instant::now(),
+            last_observation: Instant::now(),
             last_instance_count: 0,
             last_channel_count: 0,
+            observation,
         }
     }
 
@@ -64,6 +69,7 @@ impl DashboardState {
 /// Run the TUI dashboard
 pub async fn run_dashboard(data_directory: &Path) -> Result<()> {
     let reader = open_reader(data_directory).await?;
+    let observer = default_observer(true)?;
     enable_raw_mode().context("Failed to enable raw mode")?;
     let mut stdout = io::stdout();
     stdout
@@ -72,10 +78,10 @@ pub async fn run_dashboard(data_directory: &Path) -> Result<()> {
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend).context("Failed to create terminal")?;
 
-    let mut state = DashboardState::new();
+    let mut state = DashboardState::new(observer.inspect());
     let tick_rate = Duration::from_millis(250);
 
-    let result = run_dashboard_loop(&mut terminal, &reader, &mut state, tick_rate);
+    let result = run_dashboard_loop(&mut terminal, &reader, &observer, &mut state, tick_rate);
 
     disable_raw_mode().context("Failed to disable raw mode")?;
     terminal
@@ -89,13 +95,14 @@ pub async fn run_dashboard(data_directory: &Path) -> Result<()> {
 fn run_dashboard_loop(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     reader: &ShmRuntimeView,
+    observer: &ShmObserver,
     state: &mut DashboardState,
     tick_rate: Duration,
 ) -> Result<()> {
     let mut last_tick = Instant::now();
 
     loop {
-        refresh_point_data(reader, state);
+        refresh_point_data(reader, observer, state);
         terminal.draw(|f| draw_dashboard(f, reader, state))?;
 
         let timeout = tick_rate.saturating_sub(last_tick.elapsed());
@@ -110,6 +117,7 @@ fn run_dashboard_loop(
                 KeyCode::Char('r') => {
                     state.last_instance_count = 0;
                     state.last_channel_count = 0;
+                    state.last_observation = Instant::now() - Duration::from_secs(1);
                 },
                 _ => {},
             }
@@ -121,7 +129,11 @@ fn run_dashboard_loop(
     }
 }
 
-fn refresh_point_data(reader: &ShmRuntimeView, state: &mut DashboardState) {
+fn refresh_point_data(reader: &ShmRuntimeView, observer: &ShmObserver, state: &mut DashboardState) {
+    if state.last_observation.elapsed() >= Duration::from_secs(1) {
+        state.observation = observer.inspect();
+        state.last_observation = Instant::now();
+    }
     let instance_count = reader.instance_ids().len();
     let channel_count = reader.channel_ids().len();
 
@@ -171,33 +183,55 @@ fn update_point_values(reader: &ShmRuntimeView, points: &mut [PointRow]) {
 }
 
 fn draw_dashboard(f: &mut ratatui::Frame, reader: &ShmRuntimeView, state: &DashboardState) {
-    let alive = reader.is_writer_alive(Duration::from_secs(5));
-    let heartbeat = reader.writer_heartbeat();
-    let heartbeat_age = aether_dataplane::core::config::timestamp_ms().saturating_sub(heartbeat);
-
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(3), Constraint::Min(5)])
+        .constraints([Constraint::Length(5), Constraint::Min(5)])
         .split(f.area());
 
-    let writer_status = if alive {
-        format!("● alive ({}ms)", heartbeat_age)
-    } else {
-        format!("○ dead ({}ms)", heartbeat_age)
-    };
+    let observation = &state.observation;
+    let point = observation.point.as_ref();
+    let health = observation.health.as_ref();
+    let point_heartbeat = point.map_or_else(
+        || "n/a".to_owned(),
+        |plane| format!("{}ms", plane.heartbeat_age_ms),
+    );
+    let health_heartbeat = health.map_or_else(
+        || "n/a".to_owned(),
+        |plane| format!("{}ms", plane.heartbeat_age_ms),
+    );
+    let quality = point.and_then(|plane| plane.slots).map_or_else(
+        || "scan disabled".to_owned(),
+        |slots| {
+            format!(
+                "good={} uncertain={} bad={} unavailable={} unwritten={} contended={}",
+                slots.good,
+                slots.uncertain,
+                slots.bad,
+                slots.unavailable,
+                slots.unwritten,
+                slots.contended
+            )
+        },
+    );
 
     let status_text = format!(
-        " Instances: {}  Channels: {}  Points: {}  Writer: {}  │  [q]uit [↑↓]scroll [r]efresh",
+        " Status: {}  Epoch: {}  Point HB: {}  Health HB: {}\n Quality: {}\n Instances: {}  Channels: {}  Points: {}  │  [q]uit [↑↓]scroll [r]efresh",
+        observation.status.as_str().to_uppercase(),
+        observation
+            .publication_epoch
+            .map_or_else(|| "unverified".to_owned(), |epoch| epoch.to_string()),
+        point_heartbeat,
+        health_heartbeat,
+        quality,
         reader.instance_ids().len(),
         reader.channel_ids().len(),
         state.points.len(),
-        writer_status
     );
 
-    let status_style = if alive {
-        Style::default().fg(Color::Green)
-    } else {
-        Style::default().fg(Color::Red)
+    let status_style = match observation.status {
+        ShmObservationStatus::Healthy => Style::default().fg(Color::Green),
+        ShmObservationStatus::Degraded => Style::default().fg(Color::Yellow),
+        ShmObservationStatus::Unhealthy => Style::default().fg(Color::Red),
     };
 
     let status = Paragraph::new(status_text).style(status_style).block(
@@ -254,7 +288,7 @@ mod tests {
 
     #[test]
     fn test_dashboard_state_new() {
-        let state = DashboardState::new();
+        let state = DashboardState::new(unhealthy_fixture());
         assert!(state.points.is_empty());
         assert_eq!(state.scroll_offset, 0);
         assert_eq!(state.last_instance_count, 0);
@@ -263,7 +297,7 @@ mod tests {
 
     #[test]
     fn test_dashboard_state_scroll_up() {
-        let mut state = DashboardState::new();
+        let mut state = DashboardState::new(unhealthy_fixture());
         state.scroll_offset = 5;
 
         state.scroll_up();
@@ -276,7 +310,7 @@ mod tests {
 
     #[test]
     fn test_dashboard_state_scroll_down() {
-        let mut state = DashboardState::new();
+        let mut state = DashboardState::new(unhealthy_fixture());
 
         state.scroll_down(10);
         assert_eq!(state.scroll_offset, 1);
@@ -292,8 +326,19 @@ mod tests {
 
     #[test]
     fn test_dashboard_state_scroll_down_empty() {
-        let mut state = DashboardState::new();
+        let mut state = DashboardState::new(unhealthy_fixture());
         state.scroll_down(0);
         assert_eq!(state.scroll_offset, 0);
+    }
+
+    fn unhealthy_fixture() -> ShmTopologyObservation {
+        ShmTopologyObservation {
+            observed_at_ms: 1,
+            status: ShmObservationStatus::Unhealthy,
+            point: None,
+            health: None,
+            publication_epoch: None,
+            findings: Vec::new(),
+        }
     }
 }

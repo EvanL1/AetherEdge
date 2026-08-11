@@ -20,7 +20,7 @@ fn every_rule_mutation_carries_a_mandatory_aggregate_revision() {
 }
 
 #[test]
-fn legacy_rule_mutation_constructors_remain_revisionless() {
+fn rule_mutation_payload_constructors_remain_transport_neutral() {
     let mutations = [
         RuleMutation::create("rule", None),
         RuleMutation::set_enabled(RuleId::new(3), true),

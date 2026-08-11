@@ -2,7 +2,6 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::atomic::Ordering;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use aether_dataplane::{AuthorityWriteGuard, SlotIo, SlotWriter};
@@ -38,13 +37,16 @@ fn command(kind: PointKind, point_id: u32, value: f64) -> PhysicalDeviceCommand 
 }
 
 fn generation(directory: &tempfile::TempDir) -> (Arc<SlotWriter>, Arc<ChannelPointManifest>) {
-    let manifest = Arc::new(ChannelPointManifest::from_entries([(7, [1, 0, 1, 1])]));
+    let manifest = Arc::new(ChannelPointManifest::dense_test_fixture([(
+        7,
+        [1, 0, 1, 1],
+    )]));
     let writer = Arc::new(
         SlotWriter::create(
             directory.path().join("commands.shm"),
-            16,
             manifest.slot_count(),
             manifest.layout_hash(),
+            1,
         )
         .expect("create command SHM"),
     );
@@ -66,11 +68,7 @@ async fn unknown_command_slot_is_rejected_before_any_shm_write() {
 
     assert_eq!(error.kind(), PortErrorKind::NotFound);
     let known_slot = manifest
-        .slot_for(PhysicalPointAddress::from_legacy_raw(
-            7,
-            PointKind::Action,
-            0,
-        ))
+        .slot_for(PhysicalPointAddress::from_raw_ids(7, PointKind::Action, 0))
         .expect("known action slot");
     assert!(
         writer
@@ -100,11 +98,7 @@ async fn uds_degradation_is_typed_and_never_returns_an_acceptance_receipt() {
 
     assert_eq!(error.kind(), PortErrorKind::Unavailable);
     let slot = manifest
-        .slot_for(PhysicalPointAddress::from_legacy_raw(
-            7,
-            PointKind::Command,
-            0,
-        ))
+        .slot_for(PhysicalPointAddress::from_raw_ids(7, PointKind::Command, 0))
         .expect("known command slot");
     assert_eq!(
         writer.read_slot(slot).expect("mirrored command").value,
@@ -119,7 +113,7 @@ async fn successful_send_preserves_the_existing_56_byte_command_wire() {
     let socket = directory.path().join("m2c.sock");
     let listener = UnixListener::bind(&socket).expect("bind command listener");
     let (writer, manifest) = generation(&directory);
-    let canonical = writer.path().clone();
+    let canonical = directory.path().join("commands.shm");
     let sink = ShmDeviceCommandSink::with_observer(Arc::new(AssertCommandLeaseHeld { canonical }));
     sink.publish_generation(writer, manifest)
         .expect("publish generation");
@@ -152,7 +146,7 @@ async fn successful_send_preserves_the_existing_56_byte_command_wire() {
         u32::from_ne_bytes(bytes[4..8].try_into().expect("point")),
         0
     );
-    assert_eq!(bytes[8], 3, "Action retains legacy Adjustment wire code");
+    assert_eq!(bytes[8], 3, "Action uses the Adjustment wire code");
     assert_eq!(&bytes[9..16], &[0; 7]);
     assert_eq!(
         f64::from_bits(u64::from_ne_bytes(bytes[16..24].try_into().expect("value"))),
@@ -191,74 +185,6 @@ impl CommandMirrorObserver for AssertCommandLeaseHeld {
             "command must retain its shared lease through transport and receipt formation"
         );
     }
-}
-
-struct SwapGenerationAfterWrite {
-    writer: Arc<SlotWriter>,
-}
-
-impl CommandMirrorObserver for SwapGenerationAfterWrite {
-    fn after_shm_write(&self, _command: PhysicalDeviceCommand, _slot: usize) {
-        self.writer
-            .header()
-            .writer_generation
-            .fetch_add(2, Ordering::AcqRel);
-    }
-}
-
-#[tokio::test]
-async fn generation_change_after_shm_write_fails_closed_and_triggers_rebuild() {
-    let directory = tempfile::tempdir().expect("temporary directory");
-    let (writer, manifest) = generation(&directory);
-    let sink = ShmDeviceCommandSink::with_observer(Arc::new(SwapGenerationAfterWrite {
-        writer: Arc::clone(&writer),
-    }));
-    sink.publish_generation(writer, manifest)
-        .expect("publish generation");
-    let rebuild = sink.rebuild_trigger();
-
-    let error = sink
-        .send(command(PointKind::Action, 0, 8.0))
-        .await
-        .expect_err("generation swap must fail closed");
-
-    assert_eq!(error.kind(), PortErrorKind::Conflict);
-    tokio::time::timeout(Duration::from_millis(100), rebuild.notified())
-        .await
-        .expect("generation mismatch must request rebuild");
-    assert!(!sink.is_writer_available());
-}
-
-#[tokio::test]
-async fn generation_change_before_shm_write_fails_closed_and_triggers_rebuild() {
-    let directory = tempfile::tempdir().expect("temporary directory");
-    let (writer, manifest) = generation(&directory);
-    let sink = ShmDeviceCommandSink::new();
-    sink.publish_generation(Arc::clone(&writer), Arc::clone(&manifest))
-        .expect("publish generation");
-    writer
-        .header()
-        .writer_generation
-        .fetch_add(2, Ordering::AcqRel);
-    let rebuild = sink.rebuild_trigger();
-
-    let error = sink
-        .send(command(PointKind::Action, 0, 8.0))
-        .await
-        .expect_err("stale generation must fail before write");
-
-    assert_eq!(error.kind(), PortErrorKind::Conflict);
-    tokio::time::timeout(Duration::from_millis(100), rebuild.notified())
-        .await
-        .expect("generation mismatch must request rebuild");
-    let slot = manifest
-        .slot_for(PhysicalPointAddress::from_legacy_raw(
-            7,
-            PointKind::Action,
-            0,
-        ))
-        .expect("action slot");
-    assert!(writer.read_slot(slot).expect("action value").value.is_nan());
 }
 
 struct SlowMirrorObserver;
@@ -313,13 +239,16 @@ fn reloadable_manifest_source_tracks_each_published_generation() {
     let directory = tempfile::tempdir().expect("temporary directory");
     let sink = ShmDeviceCommandSink::new();
     let source = sink.manifest_source();
-    let first = Arc::new(ChannelPointManifest::from_entries([(7, [1, 0, 1, 1])]));
+    let first = Arc::new(ChannelPointManifest::dense_test_fixture([(
+        7,
+        [1, 0, 1, 1],
+    )]));
     let first_writer = Arc::new(
         SlotWriter::create(
             directory.path().join("first.shm"),
-            16,
             first.slot_count(),
             first.layout_hash(),
+            1,
         )
         .expect("first generation"),
     );
@@ -330,16 +259,16 @@ fn reloadable_manifest_source_tracks_each_published_generation() {
         first.layout_hash()
     );
 
-    let second = Arc::new(ChannelPointManifest::from_entries([
+    let second = Arc::new(ChannelPointManifest::dense_test_fixture([
         (7, [1, 0, 1, 1]),
         (9, [2, 0, 0, 1]),
     ]));
     let second_writer = Arc::new(
         SlotWriter::create(
             directory.path().join("second.shm"),
-            32,
             second.slot_count(),
             second.layout_hash(),
+            2,
         )
         .expect("second generation"),
     );
@@ -350,11 +279,7 @@ fn reloadable_manifest_source_tracks_each_published_generation() {
     assert_eq!(current.layout_hash(), second.layout_hash());
     assert!(
         current
-            .slot_for(PhysicalPointAddress::from_legacy_raw(
-                9,
-                PointKind::Action,
-                0,
-            ))
+            .slot_for(PhysicalPointAddress::from_raw_ids(9, PointKind::Action, 0,))
             .is_some()
     );
 }
@@ -415,18 +340,16 @@ async fn canonical_inode_replacement_after_command_mirror_fails_before_receipt()
     let directory = tempfile::tempdir().expect("temporary directory");
     let canonical = directory.path().join("canonical-commands.shm");
     let staging = directory.path().join("replacement-commands.shm");
-    let manifest = Arc::new(ChannelPointManifest::from_entries([(7, [1, 0, 1, 1])]));
+    let manifest = Arc::new(ChannelPointManifest::dense_test_fixture([(
+        7,
+        [1, 0, 1, 1],
+    )]));
     let old_writer = Arc::new(
-        SlotWriter::create(
-            &canonical,
-            16,
-            manifest.slot_count(),
-            manifest.layout_hash(),
-        )
-        .expect("create old canonical generation"),
+        SlotWriter::create(&canonical, manifest.slot_count(), manifest.layout_hash(), 1)
+            .expect("create old canonical generation"),
     );
     let replacement =
-        SlotWriter::create(&staging, 16, manifest.slot_count(), manifest.layout_hash())
+        SlotWriter::create(&staging, manifest.slot_count(), manifest.layout_hash(), 2)
             .expect("create replacement generation");
     let sink = ShmDeviceCommandSink::with_observer(Arc::new(ReplaceCanonicalAfterCommandMirror {
         staging,
@@ -450,11 +373,7 @@ async fn canonical_inode_replacement_after_command_mirror_fails_before_receipt()
         SlotWriter::open_existing(&canonical, replacement.slot_count(), manifest.layout_hash())
             .expect("open replacement through canonical path");
     let slot = manifest
-        .slot_for(PhysicalPointAddress::from_legacy_raw(
-            7,
-            PointKind::Action,
-            0,
-        ))
+        .slot_for(PhysicalPointAddress::from_raw_ids(7, PointKind::Action, 0))
         .expect("action slot");
     assert!(
         replacement_reader
@@ -487,18 +406,16 @@ async fn canonical_inode_replacement_after_transport_never_returns_receipt() {
     let staging = directory.path().join("transport-replacement.shm");
     let socket = directory.path().join("transport.sock");
     let listener = UnixListener::bind(&socket).expect("bind command listener");
-    let manifest = Arc::new(ChannelPointManifest::from_entries([(7, [1, 0, 1, 1])]));
+    let manifest = Arc::new(ChannelPointManifest::dense_test_fixture([(
+        7,
+        [1, 0, 1, 1],
+    )]));
     let old_writer = Arc::new(
-        SlotWriter::create(
-            &canonical,
-            16,
-            manifest.slot_count(),
-            manifest.layout_hash(),
-        )
-        .expect("create old canonical generation"),
+        SlotWriter::create(&canonical, manifest.slot_count(), manifest.layout_hash(), 1)
+            .expect("create old canonical generation"),
     );
     let _replacement =
-        SlotWriter::create(&staging, 16, manifest.slot_count(), manifest.layout_hash())
+        SlotWriter::create(&staging, manifest.slot_count(), manifest.layout_hash(), 2)
             .expect("create replacement generation");
     let sink = ShmDeviceCommandSink::with_observer(Arc::new(ReplaceCanonicalAfterTransport {
         staging,

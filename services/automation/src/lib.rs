@@ -17,6 +17,7 @@ pub mod api {
     //! - cloud sync (cloud-edge synchronization)
     pub mod action_routing_boundary;
     pub mod admin_handlers;
+    pub mod audit_handlers;
     pub mod cloud_sync;
     pub mod dto;
     pub mod error_response;

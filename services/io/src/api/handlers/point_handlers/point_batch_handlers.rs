@@ -9,8 +9,8 @@ use axum::{
     response::Json,
 };
 
+use crate::api::dto::{AppError, SuccessResponse};
 use crate::api::routes::AppState;
-use crate::dto::{AppError, SuccessResponse};
 use crate::point_topology::{
     PointDefinitionMutation, PointKind, PointMutation, PointPatchMutation, PointTopologyMutation,
     PointTopologyMutationResult,
@@ -39,7 +39,7 @@ use super::point_types::*;
 pub async fn batch_point_operations_handler(
     Path(channel_id): Path<u32>,
     State(state): State<AppState>,
-    Query(reload_query): Query<crate::dto::AutoReloadQuery>,
+    Query(reload_query): Query<crate::api::dto::AutoReloadQuery>,
     Extension(boundary): Extension<PointTopologyHttpBoundary>,
     headers: HeaderMap,
     Json(request): Json<PointBatchRequest>,

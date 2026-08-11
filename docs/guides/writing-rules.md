@@ -39,10 +39,22 @@ A rule row in the SQLite `rules` table carries:
     point changes, filtered by a time deadband (minimum gap between
     triggers) and an optional value deadband (absolute or percent change
     threshold).
-- **The flow** — the logic itself: a start node fanning out to input nodes
-  (read a measurement point or load configuration parameters), through
-  decision nodes (condition branches), to action nodes (write an action
-  point), ending at an end node.
+- **The flow** — the logic itself: a start node fanning out through
+  condition branches to nodes that write a point, ending at an end node.
+  Every node carries a `type`, and only four values are accepted there:
+  `start`, `end`, `custom`, and nothing else. A node that does work is
+  always `"type": "custom"`, with the kind of work named in `data.type`:
+
+  | `data.type` | Does |
+  |-------------|------|
+  | `function-switch` | Evaluates condition branches and selects an output wire |
+  | `action-changeValue` | Writes a value to a point |
+  | `action-calculation` | Evaluates an `evalexpr` formula into a variable |
+  | `action-periodDelta` | Tracks a cumulative value's change across a period |
+
+  Every node's payload lives under `data.config`. Points are named by
+  `{"name": "X1", "instance": 1, "pointType": "measurement", "point_id": 0}`,
+  where `pointType` is `measurement` or `action`.
 
 The flow is stored twice — `flow_json`, the full visual-editor document,
 and `nodes_json`, the compact topology the engine executes — and the two
@@ -131,12 +143,71 @@ where `rule.json` supplies the editor document and trigger:
 }
 ```
 
-That flow is the minimal valid document (it does nothing); for a full
-strategy with input, decision, and action nodes, see the shipped template
-`packs/energy/rules/battery_soc_management.json`, which
-[Control Strategies](../domain/control-strategies.md) walks through node by
-node. A malformed flow fails the PUT as a unit — nothing is stored — and a
-malformed `trigger_config` is rejected at the same boundary.
+That flow is the minimal valid document: it does nothing. A flow that
+actually acts reads a point, branches on it, and writes another point.
+This one trips a breaker when power passes 400 kW:
+
+```json
+{
+  "nodes": [
+    {
+      "id": "start",
+      "type": "start",
+      "data": { "config": { "wires": { "default": ["check_power"] } } }
+    },
+    {
+      "id": "check_power",
+      "type": "custom",
+      "data": {
+        "type": "function-switch",
+        "config": {
+          "variables": [
+            { "name": "X1", "instance": 1, "pointType": "measurement", "point_id": 0 }
+          ],
+          "rule": [
+            {
+              "name": "out001",
+              "type": "default",
+              "rule": [
+                { "type": "variable", "variables": "X1", "operator": ">", "value": 400 }
+              ]
+            }
+          ],
+          "wires": { "out001": ["open_breaker"] }
+        }
+      }
+    },
+    {
+      "id": "open_breaker",
+      "type": "custom",
+      "data": {
+        "type": "action-changeValue",
+        "config": {
+          "variables": [
+            { "name": "Y1", "instance": 2, "pointType": "action", "point_id": 10 }
+          ],
+          "rule": [ { "Variables": "Y1", "value": 0 } ],
+          "wires": { "default": ["end"] }
+        }
+      }
+    },
+    { "id": "end", "type": "end" }
+  ],
+  "edges": []
+}
+```
+
+A switch branch names its output wire (`out001` above) and lists conditions;
+`wires` then maps that name to the nodes it feeds. A `action-changeValue`
+assignment names its target through `Variables` — the capital letter is part
+of the wire format. This example is held to the parser by a test, so it
+cannot drift from what the service accepts.
+
+A malformed flow fails the PUT as a unit — nothing is stored — and a
+malformed `trigger_config` is rejected at the same boundary. A node whose
+`type` or `data.type` is not one of the values above is a malformed flow: the
+parse fails and names the offending node, rather than dropping it and leaving
+a rule that stores cleanly but does nothing.
 
 The `aether` CLI wraps the same endpoints. Set `AETHER_ACCESS_TOKEN` and pass
 `--confirmed` to `rules create`, `update`, `enable`, `disable`, and `delete`;

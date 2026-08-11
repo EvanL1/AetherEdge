@@ -22,7 +22,7 @@ use axum::{
 };
 use http_body_util::BodyExt;
 use serde_json::json;
-use support::{ADMIN_ACCESS_TOKEN, create_test_app_with_pool};
+use support::{admin_access_token, create_test_app_with_pool};
 use tower::ServiceExt;
 
 /// Create test SQLite database with required schema (including point tables)
@@ -142,7 +142,7 @@ async fn make_request(
         let revision_json: serde_json::Value = serde_json::from_slice(&revision_body)?;
         let revision = revision_json["data"]["revision"].as_u64().unwrap_or(1);
         req_builder = req_builder
-            .header("authorization", format!("Bearer {ADMIN_ACCESS_TOKEN}"))
+            .header("authorization", format!("Bearer {}", admin_access_token()))
             .header("x-aether-confirmed", "true")
             .header("x-aether-expected-revision", revision.to_string());
     }

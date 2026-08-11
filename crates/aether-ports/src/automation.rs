@@ -5,7 +5,7 @@ use aether_domain::{
 };
 use async_trait::async_trait;
 
-use crate::{PortError, PortErrorKind, PortResult};
+use crate::{PortError, PortResult};
 
 /// Summary returned after one rule invocation completes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -195,8 +195,8 @@ impl RuleMutation {
 
 /// Compare-and-set envelope for a governed rule mutation.
 ///
-/// The envelope extends the published [`RuleMutation`] API without changing
-/// its exhaustive variants or legacy constructors.
+/// The transport-neutral [`RuleMutation`] payload can reach a mutator only
+/// through this envelope, which always carries the caller's CAS revision.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RevisionedRuleMutation {
     mutation: RuleMutation,
@@ -204,7 +204,7 @@ pub struct RevisionedRuleMutation {
 }
 
 impl RevisionedRuleMutation {
-    /// Wraps one legacy-compatible mutation with its mandatory CAS revision.
+    /// Wraps one transport-neutral mutation with its mandatory CAS revision.
     #[must_use]
     pub const fn new(mutation: RuleMutation, expected_revision: AutomationRulesRevision) -> Self {
         Self {
@@ -322,12 +322,6 @@ pub struct RuleMutationReceipt {
 }
 
 impl RuleMutationReceipt {
-    /// Creates a legacy-compatible mutation receipt without a known revision.
-    #[must_use]
-    pub const fn new(rule_id: RuleId, kind: RuleMutationKind) -> Self {
-        Self::new_at_revision(rule_id, kind, AutomationRulesRevision::new(0))
-    }
-
     /// Creates a mutation receipt with its authoritative resulting revision.
     #[must_use]
     pub const fn new_at_revision(
@@ -342,12 +336,6 @@ impl RuleMutationReceipt {
             scheduler_refresh: RuleSchedulerRefreshStatus::Refreshed,
             runtime_status: RuleRuntimeStatus::Refreshed,
         }
-    }
-
-    /// Creates a legacy-compatible scheduler-reload receipt.
-    #[must_use]
-    pub const fn reload() -> Self {
-        Self::reload_at_revision(AutomationRulesRevision::new(0))
     }
 
     /// Creates a scheduler-reload receipt with its authoritative revision.
@@ -378,16 +366,6 @@ impl RuleMutationReceipt {
             scheduler_refresh: RuleSchedulerRefreshStatus::Refreshed,
             runtime_status: RuleRuntimeStatus::PointWatchGated { failure },
         }
-    }
-
-    /// Creates a legacy-compatible accepted receipt after scheduler shutdown.
-    #[must_use]
-    pub fn scheduler_stopped(
-        rule_id: Option<RuleId>,
-        kind: RuleMutationKind,
-        failure: PortError,
-    ) -> Self {
-        Self::scheduler_stopped_at_revision(rule_id, kind, AutomationRulesRevision::new(0), failure)
     }
 
     /// Creates an accepted mutation receipt after the scheduler was stopped
@@ -549,38 +527,12 @@ impl RuleRuntimeStatus {
 /// invoke this port only through the governed application command.
 #[async_trait]
 pub trait AutomationRuleMutator: Send + Sync + 'static {
-    /// Applies one mutation and refreshes the active scheduler view.
-    ///
-    /// This is the revisionless compatibility entry point. Implementations
-    /// must not perform a blind overwrite: service such a call by reading the
-    /// current head and submitting the same compare-and-set path used by
-    /// [`mutate_revisioned`](Self::mutate_revisioned). That prevents two
-    /// simultaneous commits from sharing a head, but cannot detect an edit
-    /// made since the caller's earlier read.
-    ///
-    /// Removal criteria: drop this method once every client sends the
-    /// revision exposed by rule `GET` ETags, telemetry reports no use of the
-    /// revisionless shim for one stability window, and the compatibility
-    /// contract tests are replaced by mandatory-revision tests.
-    async fn mutate(&self, mutation: RuleMutation) -> PortResult<RuleMutationReceipt>;
-
-    /// Applies one revision-fenced mutation.
-    ///
-    /// Existing third-party implementations remain source-compatible and
-    /// fail closed until they explicitly implement revisioned commands.
+    /// Applies one revision-fenced mutation and refreshes the active scheduler
+    /// view.
     async fn mutate_revisioned(
         &self,
         command: RevisionedRuleMutation,
-    ) -> PortResult<RuleMutationReceipt> {
-        Err(PortError::new(
-            PortErrorKind::Conflict,
-            format!(
-                "rule mutator does not support required revision {} for {}",
-                command.expected_revision().get(),
-                command.kind().as_str()
-            ),
-        ))
-    }
+    ) -> PortResult<RuleMutationReceipt>;
 }
 
 /// Monotonic compare-and-set revision of the complete logical-routing authority.
@@ -1302,7 +1254,7 @@ pub struct RevisionedActionRoutingMutation {
 }
 
 impl RevisionedActionRoutingMutation {
-    /// Wraps one legacy-compatible routing mutation with its mandatory CAS revision.
+    /// Wraps one transport-neutral routing mutation with its mandatory CAS revision.
     #[must_use]
     pub const fn new(
         mutation: ActionRoutingMutation,
@@ -1503,21 +1455,6 @@ pub struct ActionRoutingMutationReceipt {
 }
 
 impl ActionRoutingMutationReceipt {
-    /// Creates a legacy-compatible receipt without a known revision.
-    #[must_use]
-    pub const fn new(
-        kind: ActionRoutingMutationKind,
-        target: ActionRoutingTarget,
-        affected_routes: u64,
-    ) -> Self {
-        Self::new_at_revision(
-            kind,
-            target,
-            affected_routes,
-            LogicalRoutingRevision::new(0),
-        )
-    }
-
     /// Creates a receipt with its authoritative resulting revision.
     #[must_use]
     pub const fn new_at_revision(
@@ -1533,23 +1470,6 @@ impl ActionRoutingMutationReceipt {
             resulting_revision,
             runtime_status: ActionRoutingRuntimeStatus::Published,
         }
-    }
-
-    /// Creates a legacy-compatible degraded receipt without a known revision.
-    #[must_use]
-    pub fn commands_revoked(
-        kind: ActionRoutingMutationKind,
-        target: ActionRoutingTarget,
-        affected_routes: u64,
-        failure: PortError,
-    ) -> Self {
-        Self::commands_revoked_at_revision(
-            kind,
-            target,
-            affected_routes,
-            LogicalRoutingRevision::new(0),
-            failure,
-        )
     }
 
     /// Creates an accepted receipt whose runtime command routes were revoked
@@ -1613,36 +1533,14 @@ impl ActionRoutingMutationReceipt {
 /// Authorization, confirmation, and audit are application-layer concerns.
 /// Implementations own persistence and any atomic refresh of their runtime
 /// routing view. Once persistence commits, a publication failure must be
-/// returned as an accepted [`ActionRoutingMutationReceipt::commands_revoked`]
+/// returned as an accepted
+/// [`ActionRoutingMutationReceipt::commands_revoked_at_revision`]
 /// receipt; a port error means the durable mutation did not commit.
 #[async_trait]
 pub trait AutomationActionRoutingMutator: Send + Sync + 'static {
-    /// Applies one typed action-routing mutation.
-    ///
-    /// Revisionless compatibility entry point with the same contract and the
-    /// same removal criteria as
-    /// [`AutomationRuleMutator::mutate`]: read the current head and submit
-    /// the compare-and-set path rather than overwriting blindly.
-    async fn mutate(
-        &self,
-        mutation: ActionRoutingMutation,
-    ) -> PortResult<ActionRoutingMutationReceipt>;
-
     /// Applies one revision-fenced action-routing mutation.
-    ///
-    /// Existing implementations remain source-compatible and fail closed
-    /// until they explicitly support logical-routing CAS.
     async fn mutate_revisioned(
         &self,
         command: RevisionedActionRoutingMutation,
-    ) -> PortResult<ActionRoutingMutationReceipt> {
-        Err(PortError::new(
-            PortErrorKind::Conflict,
-            format!(
-                "action-routing mutator does not support required revision {} for {}",
-                command.expected_revision().get(),
-                command.kind().as_str()
-            ),
-        ))
-    }
+    ) -> PortResult<ActionRoutingMutationReceipt>;
 }

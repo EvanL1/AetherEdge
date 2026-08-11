@@ -6,7 +6,7 @@ use crate::core::channels::RuntimeChannelConfig;
 #[cfg(test)]
 use crate::core::config::{
     ADJUSTMENT_POINTS_TABLE, CHANNELS_TABLE, CONTROL_POINTS_TABLE, SERVICE_CONFIG_TABLE,
-    SIGNAL_POINTS_TABLE, TELEMETRY_POINTS_TABLE, install_channel_revision_triggers,
+    SIGNAL_POINTS_TABLE, TELEMETRY_POINTS_TABLE, install_channel_revision_guards,
 };
 use crate::core::config::{
     AdjustmentPoint, ApiConfig, ChannelConfig, ControlPoint, ServiceConfig, SignalPoint,
@@ -653,7 +653,7 @@ mod tests {
 
         // Create channels table
         sqlx::query(CHANNELS_TABLE).execute(&pool).await.unwrap();
-        install_channel_revision_triggers(&pool).await.unwrap();
+        install_channel_revision_guards(&pool).await.unwrap();
 
         // Insert test channels
         sqlx::query(
@@ -811,10 +811,19 @@ mod tests {
         let pool = SqlitePool::connect(&format!("sqlite://{db_path}"))
             .await
             .unwrap();
-        sqlx::query("UPDATE channels SET enabled = 0 WHERE channel_id = 1002")
-            .execute(&pool)
-            .await
-            .unwrap();
+        sqlx::query(
+            "UPDATE channels SET enabled = 0, revision = revision + 1 WHERE channel_id = 1002",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO channel_revision_tombstones (channel_id, last_revision) \
+             VALUES (1003, 2)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
         sqlx::query("DELETE FROM channels WHERE channel_id = 1003")
             .execute(&pool)
             .await
@@ -1093,7 +1102,7 @@ mod tests {
         let db_url = format!("sqlite://{db_path}");
         let pool = SqlitePool::connect(&db_url).await.unwrap();
         sqlx::query(
-            "UPDATE channels SET config = ? WHERE channel_id = 1001",
+            "UPDATE channels SET config = ?, revision = revision + 1 WHERE channel_id = 1001",
         )
         .bind(
             r#"{"description":null,"parameters":{"host":"192.168.1.100","port":502},"future":true}"#,
@@ -1106,11 +1115,13 @@ mod tests {
         let snapshot = loader.load_runtime_channel(1001, 2).await.unwrap();
         assert!(snapshot.base.core.description.is_none());
 
-        sqlx::query("UPDATE channels SET config = ? WHERE channel_id = 1001")
-            .bind(r#"{"logging":"debug"}"#)
-            .execute(&pool)
-            .await
-            .unwrap();
+        sqlx::query(
+            "UPDATE channels SET config = ?, revision = revision + 1 WHERE channel_id = 1001",
+        )
+        .bind(r#"{"logging":"debug"}"#)
+        .execute(&pool)
+        .await
+        .unwrap();
         let error = loader
             .load_runtime_channel(1001, 3)
             .await

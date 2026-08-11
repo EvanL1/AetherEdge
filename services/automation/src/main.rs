@@ -22,9 +22,10 @@ use aether_rules::{
     DEFAULT_TICK_MS, PointWatchDispatcher, PointWatchHint, RuleScheduler, WatchEvent,
 };
 use aether_shm_bridge::{
-    PointWatchEvent, PointWatchEventListener, SubscriptionBitmap, automation_bitmap_path_from_shm,
+    PointWatchEvent, PointWatchEventListener, SubscriptionBitmap, bitmap_path_for_consumer,
     default_shm_path, point_watch_socket_from_shm,
 };
+use aether_sqlite_topology::load_sqlite_shm_capacity;
 
 #[cfg(feature = "openapi")]
 async fn openapi_document() -> axum::Json<utoipa::openapi::OpenApi> {
@@ -293,10 +294,26 @@ async fn main() -> Result<()> {
         Option<tokio::sync::mpsc::Receiver<PointWatchEvent>>,
         Option<tokio::sync::mpsc::Receiver<WatchEvent>>,
     );
+    let point_watch_capacity = match load_sqlite_shm_capacity(&sqlite_pool).await {
+        Ok(capacity) => Some(capacity),
+        Err(error) => {
+            warn!("PointWatch disabled (SHM capacity is unavailable): {error}");
+            None
+        },
+    };
     let (pw_bitmap, pw_dispatcher, pw_event_rx, pw_watch_rx): PwInitResult = {
-        let bitmap_path = automation_bitmap_path_from_shm(&shm_path);
-        match SubscriptionBitmap::open(&bitmap_path) {
-            Ok(bitmap) => {
+        let bitmap_path = bitmap_path_for_consumer(&shm_path, "automation");
+        let bitmap = point_watch_capacity.and_then(|capacity| {
+            match SubscriptionBitmap::open_or_create(&bitmap_path, capacity) {
+                Ok(bitmap) => Some(bitmap),
+                Err(error) => {
+                    warn!("PointWatch disabled (bitmap initialization failed): {error}");
+                    None
+                },
+            }
+        });
+        match bitmap {
+            Some(bitmap) => {
                 let bitmap = Arc::new(bitmap);
 
                 // event_rx: raw PointWatchEvents forwarded from the UDS socket.
@@ -327,13 +344,7 @@ async fn main() -> Result<()> {
                     Some(watch_rx),
                 )
             },
-            Err(e) => {
-                warn!(
-                    "PointWatch disabled (bitmap open failed — is io running?): {}",
-                    e
-                );
-                (None, None, None, None)
-            },
+            None => (None, None, None, None),
         }
     };
 
@@ -488,7 +499,8 @@ async fn main() -> Result<()> {
 
     // Spawn the PointWatch bridge task if PointWatch is enabled. The
     // subscription index has already been built by reload_rules above; this
-    // task just routes raw UDS events → dispatcher.dispatch() → watch_rx.
+    // task validates each UDS wake-up hint, re-reads its pinned SHM slot, then
+    // routes the authoritative sample through dispatcher.dispatch() → watch_rx.
     if let (Some(dispatcher_arc), Some(mut event_rx)) = (pw_dispatcher_arc, pw_event_rx) {
         // Spawn the bridge task: drains raw PointWatchEvents from the listener
         // and calls dispatcher.dispatch() which sends WatchEvents onto the
@@ -506,11 +518,27 @@ async fn main() -> Result<()> {
                     ev = event_rx.recv() => {
                         match ev {
                             Some(e) => {
+                                let Some(point_kind) = e.point_kind() else {
+                                    continue;
+                                };
                                 let view = Arc::clone(&topology_for_bridge).pin_command().await;
                                 if !runtime_for_bridge.accepts_point_watch(view.generation(), e)
                                 {
                                     continue;
                                 }
+                                let sample = match view.generation().read_point_watch_sample(e) {
+                                    Ok(Some(sample)) => sample,
+                                    Ok(None) => continue,
+                                    Err(error) => {
+                                        warn!(
+                                            channel_id = e.channel_id(),
+                                            point_id = e.point_id(),
+                                            slot = e.slot_index(),
+                                            "PointWatch SHM re-read rejected: {error}"
+                                        );
+                                        continue;
+                                    },
+                                };
                                 // Recover from mutex poison: prior panic in another
                                 // thread doesn't invalidate the dispatcher state.
                                 let d = dispatcher_for_bridge
@@ -518,10 +546,11 @@ async fn main() -> Result<()> {
                                     .unwrap_or_else(|p| p.into_inner());
                                 d.dispatch(PointWatchHint::new(
                                     e.channel_id(),
+                                    point_kind,
                                     e.point_id(),
-                                    e.value(),
-                                    e.raw(),
-                                    e.timestamp_ms(),
+                                    sample.value(),
+                                    sample.raw(),
+                                    sample.timestamp_ms(),
                                 ));
                             }
                             None => break, // listener channel closed

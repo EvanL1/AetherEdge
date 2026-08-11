@@ -82,15 +82,6 @@ impl ShmDataStore {
         self.slot_miss_count.load(Ordering::Relaxed)
     }
 
-    /// Refreshes health-plane writer liveness without changing channel state.
-    pub fn refresh_channel_health_heartbeat(&self, timestamp_ms: u64) {
-        if let Some(writer) = &self.channel_health_writer
-            && let Err(error) = writer.update_heartbeat(timestamp_ms)
-        {
-            warn!("failed to refresh authoritative SHM health heartbeat: {error}");
-        }
-    }
-
     fn batch_to_acquired_samples(
         &self,
         channel_id: u32,

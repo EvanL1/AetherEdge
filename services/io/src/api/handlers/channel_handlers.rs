@@ -11,11 +11,11 @@ use axum::{
 };
 use chrono::{DateTime, Utc};
 
-use crate::api::routes::AppState;
-use crate::dto::{
+use crate::api::dto::{
     AppError, ChannelConfig, ChannelDetail, ChannelListQuery, ChannelRuntimeStatus,
     ChannelStatusDto, ChannelStatusResponse, PaginatedResponse, PointCounts, SuccessResponse,
 };
+use crate::api::routes::AppState;
 
 fn decode_stored_channel_config(
     config_str: Option<&str>,
@@ -48,7 +48,7 @@ fn decode_stored_channel_config(
         ("connected" = Option<bool>, Query, description = "Filter by connection status")
     ),
     responses(
-        (status = 200, description = "Paginated list of channels, including the desired-state revision used by x-aether-expected-revision", body = common::SuccessResponse<crate::dto::PaginatedResponse<crate::dto::ChannelStatusResponse>>,
+        (status = 200, description = "Paginated list of channels, including the desired-state revision used by x-aether-expected-revision", body = common::SuccessResponse<crate::api::dto::PaginatedResponse<crate::api::dto::ChannelStatusResponse>>,
             example = json!({
                 "success": true,
                 "data": {
@@ -191,7 +191,7 @@ pub async fn get_all_channels(
         ("id" = String, Path, description = "Channel identifier")
     ),
     responses(
-        (status = 200, description = "Channel status", body = crate::dto::ChannelStatusDto,
+        (status = 200, description = "Channel status", body = crate::api::dto::ChannelStatusDto,
             example = json!({
                 "success": true,
                 "data": {
@@ -270,7 +270,7 @@ pub async fn get_channel_status(
         ("id" = String, Path, description = "Channel identifier")
     ),
     responses(
-        (status = 200, description = "Channel details, including the desired-state revision used by x-aether-expected-revision", body = common::SuccessResponse<crate::dto::ChannelDetail>,
+        (status = 200, description = "Channel details, including the desired-state revision used by x-aether-expected-revision", body = common::SuccessResponse<crate::api::dto::ChannelDetail>,
             example = json!({
                 "success": true,
                 "data": {

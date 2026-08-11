@@ -20,17 +20,31 @@ fn sample(
     raw: f64,
     timestamp_ms: u64,
 ) -> AcquiredPointSample {
+    sample_with_quality(
+        channel_id,
+        kind,
+        point_id,
+        value,
+        raw,
+        timestamp_ms,
+        PointQuality::Good,
+    )
+}
+
+fn sample_with_quality(
+    channel_id: u32,
+    kind: PointKind,
+    point_id: u32,
+    value: f64,
+    raw: f64,
+    timestamp_ms: u64,
+    quality: PointQuality,
+) -> AcquiredPointSample {
     let address =
         ChannelPointAddress::new(ChannelId::new(channel_id), kind, PointId::new(point_id))
             .expect("contract fixtures use acquisition-owned point kinds");
-    AcquiredPointSample::new(
-        address,
-        value,
-        raw,
-        TimestampMs::new(timestamp_ms),
-        PointQuality::Good,
-    )
-    .expect("contract fixtures use finite values")
+    AcquiredPointSample::new(address, value, raw, TimestampMs::new(timestamp_ms), quality)
+        .expect("contract fixtures use finite values")
 }
 
 fn fixture(
@@ -45,9 +59,9 @@ fn fixture(
     let writer = Arc::new(
         SlotWriter::create(
             directory.path().join("acquisition.shm"),
-            16,
             manifest.slot_count(),
             writer_layout_hash,
+            1,
         )
         .expect("create test slot writer"),
     );
@@ -57,11 +71,19 @@ fn fixture(
 
 #[tokio::test]
 async fn writes_validated_telemetry_and_status_with_source_fields() {
-    let manifest = ChannelPointManifest::from_entries([(7, [2, 1, 1, 1])]);
+    let manifest = ChannelPointManifest::dense_test_fixture([(7, [2, 1, 1, 1])]);
     let layout_hash = manifest.layout_hash();
     let (_directory, writer, adapter) = fixture(manifest, layout_hash);
     let samples = [
-        sample(7, PointKind::Telemetry, 1, 42.5, 4_250.0, 1_001),
+        sample_with_quality(
+            7,
+            PointKind::Telemetry,
+            1,
+            42.5,
+            4_250.0,
+            1_001,
+            PointQuality::Uncertain,
+        ),
         sample(7, PointKind::Status, 0, 1.0, 0.01, 1_002),
     ];
 
@@ -75,15 +97,17 @@ async fn writes_validated_telemetry_and_status_with_source_fields() {
     assert_eq!(telemetry.value, 42.5);
     assert_eq!(telemetry.raw, 4_250.0);
     assert_eq!(telemetry.timestamp_ms, 1_001);
+    assert_eq!(telemetry.quality_code, 1);
     let status = writer.read_slot(2).expect("status slot");
     assert_eq!(status.value, 1.0);
     assert_eq!(status.raw, 0.01);
     assert_eq!(status.timestamp_ms, 1_002);
+    assert_eq!(status.quality_code, 0);
 }
 
 #[tokio::test]
 async fn unknown_address_rejects_the_whole_batch_before_any_write() {
-    let manifest = ChannelPointManifest::from_entries([(7, [1, 0, 0, 0])]);
+    let manifest = ChannelPointManifest::dense_test_fixture([(7, [1, 0, 0, 0])]);
     let layout_hash = manifest.layout_hash();
     let (_directory, writer, adapter) = fixture(manifest, layout_hash);
     let samples = [
@@ -98,12 +122,11 @@ async fn unknown_address_rejects_the_whole_batch_before_any_write() {
 
     assert_eq!(error.kind(), PortErrorKind::NotFound);
     assert!(writer.read_slot(0).expect("known slot").value.is_nan());
-    assert!(adapter.take_dirty_slots().is_empty());
 }
 
 #[tokio::test]
 async fn duplicate_address_rejects_the_whole_batch_before_any_write() {
-    let manifest = ChannelPointManifest::from_entries([(7, [1, 0, 0, 0])]);
+    let manifest = ChannelPointManifest::dense_test_fixture([(7, [1, 0, 0, 0])]);
     let layout_hash = manifest.layout_hash();
     let (_directory, writer, adapter) = fixture(manifest, layout_hash);
     let samples = [
@@ -118,12 +141,11 @@ async fn duplicate_address_rejects_the_whole_batch_before_any_write() {
 
     assert_eq!(error.kind(), PortErrorKind::InvalidData);
     assert!(writer.read_slot(0).expect("known slot").value.is_nan());
-    assert!(adapter.take_dirty_slots().is_empty());
 }
 
 #[tokio::test]
 async fn manifest_mismatch_rejects_the_whole_batch_before_any_write() {
-    let manifest = ChannelPointManifest::from_entries([(7, [1, 0, 0, 0])]);
+    let manifest = ChannelPointManifest::dense_test_fixture([(7, [1, 0, 0, 0])]);
     let wrong_layout_hash = manifest.layout_hash() ^ 1;
     let (_directory, writer, adapter) = fixture(manifest, wrong_layout_hash);
     let samples = [sample(7, PointKind::Telemetry, 0, 11.0, 110.0, 4_001)];
@@ -135,12 +157,11 @@ async fn manifest_mismatch_rejects_the_whole_batch_before_any_write() {
 
     assert_eq!(error.kind(), PortErrorKind::Conflict);
     assert!(writer.read_slot(0).expect("known slot").value.is_nan());
-    assert!(adapter.take_dirty_slots().is_empty());
 }
 
 #[tokio::test]
 async fn exposes_only_narrow_writer_lifecycle_operations() {
-    let manifest = ChannelPointManifest::from_entries([(7, [1, 0, 0, 0])]);
+    let manifest = ChannelPointManifest::dense_test_fixture([(7, [1, 0, 0, 0])]);
     let layout_hash = manifest.layout_hash();
     let (directory, _writer, adapter) = fixture(manifest, layout_hash);
 
@@ -152,8 +173,6 @@ async fn exposes_only_narrow_writer_lifecycle_operations() {
         .write_batch(&[sample(7, PointKind::Telemetry, 0, 11.0, 110.0, 9_002)])
         .await
         .expect("write one sample");
-    assert_eq!(adapter.take_dirty_slots(), vec![0]);
-
     let snapshot_path = directory.path().join("acquisition.snapshot");
     adapter
         .save_snapshot(&snapshot_path)
@@ -191,18 +210,16 @@ async fn canonical_inode_replacement_during_batch_fails_closed() {
     let directory = tempfile::tempdir().expect("temporary directory");
     let canonical = directory.path().join("authoritative.shm");
     let staging = directory.path().join("replacement.shm");
-    let manifest = Arc::new(ChannelPointManifest::from_entries([(7, [1, 0, 0, 0])]));
+    let manifest = Arc::new(ChannelPointManifest::dense_test_fixture([(
+        7,
+        [1, 0, 0, 0],
+    )]));
     let old_writer = Arc::new(
-        SlotWriter::create(
-            &canonical,
-            16,
-            manifest.slot_count(),
-            manifest.layout_hash(),
-        )
-        .expect("create old canonical generation"),
+        SlotWriter::create(&canonical, manifest.slot_count(), manifest.layout_hash(), 1)
+            .expect("create old canonical generation"),
     );
     let replacement =
-        SlotWriter::create(&staging, 16, manifest.slot_count(), manifest.layout_hash())
+        SlotWriter::create(&staging, manifest.slot_count(), manifest.layout_hash(), 2)
             .expect("create replacement generation");
     let adapter = ShmAcquisitionStateWriter::new(Arc::clone(&old_writer), manifest).with_observer(
         Arc::new(ReplaceCanonicalBeforeConfirmation {
@@ -220,7 +237,7 @@ async fn canonical_inode_replacement_during_batch_fails_closed() {
     let canonical_reader = SlotWriter::open_existing(
         &canonical,
         replacement.slot_count(),
-        replacement.header().snapshot().routing_hash,
+        replacement.header().layout_hash,
     )
     .expect("open replacement through canonical path");
     assert!(
@@ -259,15 +276,13 @@ impl AcquisitionCommitObserver for AssertReplacementExcluded {
 async fn acquisition_commit_holds_local_and_cross_process_authority_leases() {
     let directory = tempfile::tempdir().expect("temporary directory");
     let canonical = directory.path().join("linearized-acquisition.shm");
-    let manifest = Arc::new(ChannelPointManifest::from_entries([(7, [1, 0, 0, 0])]));
+    let manifest = Arc::new(ChannelPointManifest::dense_test_fixture([(
+        7,
+        [1, 0, 0, 0],
+    )]));
     let writer = Arc::new(
-        SlotWriter::create(
-            &canonical,
-            16,
-            manifest.slot_count(),
-            manifest.layout_hash(),
-        )
-        .expect("create canonical generation"),
+        SlotWriter::create(&canonical, manifest.slot_count(), manifest.layout_hash(), 1)
+            .expect("create canonical generation"),
     );
     let local_gate = Arc::new(RwLock::new(()));
     let adapter = ShmAcquisitionStateWriter::new(writer, manifest)

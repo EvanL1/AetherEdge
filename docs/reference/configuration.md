@@ -188,6 +188,75 @@ gates):
 | `AETHER_DATA_PROCESSING_CONFIG` | `/app/data/config/data-processing/runtime.yaml` | Strict runtime YAML containing commissioned task, binding, history, covariate, processor, and audit composition; downstream compositions provide processor-specific credential variables named by this file |
 | `RUST_LOG` | `info` | Log level for the Rust services; supports filter syntax such as `info,io=debug,automation=trace` |
 
+### Service bind addresses
+
+Each service reads its own listen port, and which variable name it reads is not
+uniform — three services use `SERVICE_PORT` and three use `API_PORT`. Compose
+sets these explicitly; a source or bare-metal deployment that wants anything
+other than the defaults must set them per process.
+
+| Variable | Service | Default | Purpose |
+|----------|---------|---------|---------|
+| `SERVICE_PORT` | io | `6001` | Loopback listen port |
+| `SERVICE_PORT` | automation | `6002` | Loopback listen port |
+| `API_PORT` | history | `6004` | Loopback listen port |
+| `API_PORT` | api | `6005` | The one remote application boundary |
+| `API_PORT` | uplink | `6006` | Loopback listen port |
+| `SERVICE_PORT` | alarm | `6007` | Loopback listen port |
+| `API_HOST` / `SERVICE_HOST` | all | `127.0.0.1` | Bind address; only the gateway should ever leave loopback |
+
+### Gateway upstream addresses
+
+`aether-api` resolves each internal service through its own variable. These are
+distinct from `AETHER_IO_URL` and friends above, which other services and the
+CLI use for their own outbound calls — setting those does not move the gateway.
+A wrong or unset value here fails silently: the gateway falls back to the
+default port and answers with another instance's data.
+
+| Variable | Default |
+|----------|---------|
+| `AETHER_IO_SERVICE_URL` | `http://127.0.0.1:6001` |
+| `AETHER_AUTOMATION_SERVICE_URL` | `http://127.0.0.1:6002` |
+| `AETHER_HISTORY_SERVICE_URL` | `http://127.0.0.1:6004` |
+| `AETHER_UPLINK_SERVICE_URL` | `http://127.0.0.1:6006` |
+| `AETHER_ALARM_SERVICE_URL` | `http://127.0.0.1:6007` |
+| `AETHER_SERVICE_REQUEST_TIMEOUT_SECS` | `60` |
+
+The alarm service makes its own outbound call rather than going through the
+gateway, and reads `AETHER_UPLINK_URL` (default `http://localhost:6006`) for it.
+
+### Storage and IPC paths
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `AETHER_DB_PATH` | `/app/data/aether.db` | Shared SQLite configuration database |
+| `AETHER_HISTORY_DB_PATH` | `aether-history.db` beside `AETHER_DB_PATH` | Embedded historian database |
+| `AETHER_UPLINK_OUTBOX_PATH` | `/app/data/uplink.outbox` | CloudLink spool file |
+| `AETHER_UPLINK_OUTBOX_CAPACITY` | `10000` | Maximum spooled messages before the oldest are dropped |
+| `AETHER_LOG_DIR` | `/app/logs` | Log directory |
+| `AETHER_M2C_SOCKET` | `/tmp/aether-m2c.sock` | Unix socket automation uses to dispatch governed commands to io |
+| `AETHER_AUTOMATION_POINT_WATCH_SOCKET` | derived from the SHM path | Point-change notification socket for automation |
+| `AETHER_API_POINT_WATCH_SOCKET` | derived from the SHM path | Point-change notification socket for the gateway |
+| `AETHER_ALARM_POINT_WATCH_SOCKET` | derived from the SHM path | Point-change notification socket for alarm |
+| `SHM_SNAPSHOT_PATH` | `data/shm-snapshot.bin` | Periodic point-state snapshot used to restore after restart |
+| `SHM_SNAPSHOT_INTERVAL` | `300` | Snapshot period in seconds |
+| `SHM_RESTORE_ON_START` | `true` | Set to `false` to start with empty point state instead of restoring the snapshot |
+| `CERT_DIR` | `/app/config/cert` | Certificate directory |
+| `NETWORK_CONFIG_DIR` | `/etc/systemd/network` | Host network unit directory read by the gateway's network endpoints |
+
+Running two instances on one host means giving the second one its own value for
+every path above as well as its own ports — the defaults are machine-global.
+
+### Timing and session lifetimes
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `DATA_FETCH_INTERVAL` | `5` in alarm, `1` in api | Poll period in seconds. The two services read the same name with different defaults and different meanings |
+| `AETHER_IO_RECONCILIATION_INTERVAL_MS` | `2000` | Interval at which io reconciles desired against applied channel state |
+| `POINT_WATCH_DEBOUNCE_MS` | `25` | Minimum gap between point-change notifications |
+| `ACCESS_TOKEN_EXPIRE_MINUTES` | `30` | Access JWT lifetime |
+| `REFRESH_TOKEN_EXPIRE_DAYS` | `7` | Refresh token lifetime |
+
 ### Experimental CloudLink MQTT settings
 
 The current `aether-uplink` production composition stays in deprecated

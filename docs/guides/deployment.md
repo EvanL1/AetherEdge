@@ -94,11 +94,14 @@ The optional TimescaleDB listener is also loopback-only.
 Two mount classes matter for the runtime:
 
 - **Shared memory and local event sockets** — the host's `/dev/shm` is
-  bind-mounted at `/shm/rtdb` in all six Rust services. The mount is
+  bind-mounted at `/shm/aether` in all six Rust services. The mount is
   read-write because the SHM owner writes point slots while isolated
   consumers create their own subscription bitmaps and UDS endpoints beside
   the segment. Mounting the directory also avoids Docker auto-creating a
-  stale file entry.
+  stale file entry. Authority sidecars are immutable coordination inodes that
+  all service UIDs may lock; consumer bitmaps are created with shared
+  read/write mode, while reopening an existing bitmap never rewrites its
+  owner or permissions.
 - **Optional external stores** — AetherEdge ships no Redis mirror adapter and
   the Compose file defines no Redis service; a downstream composition that
   wants one owns both the adapter and its infrastructure. PostgreSQL
@@ -361,12 +364,12 @@ The shared-memory segment path is resolved in this order
 (`crates/aether-dataplane/src/core/config.rs`):
 
 1. `AETHER_SHM_PATH` environment variable, if set
-2. `/shm/rtdb/aether-rtdb.shm`, if the `/shm/rtdb` directory exists (the
+2. `/shm/aether/aether-live-state.shm`, if the `/shm/aether` directory exists (the
    Docker mount point)
-3. `/dev/shm/aether-rtdb.shm` on Linux
-4. `/tmp/aether-rtdb.shm` elsewhere (macOS development)
+3. `/dev/shm/aether-live-state.shm` on Linux
+4. `/tmp/aether-live-state.shm` elsewhere (macOS development)
 
-Inside containers, `/shm/rtdb` is the host's `/dev/shm`, so both views name
+Inside containers, `/shm/aether` is the host's `/dev/shm`, so both views name
 the same file. Docker also places the aether-automation command socket and PointWatch
 socket in this directory through `AETHER_M2C_SOCKET` and
 `AETHER_AUTOMATION_POINT_WATCH_SOCKET`; native deployments keep the `/tmp`

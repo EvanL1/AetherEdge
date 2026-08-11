@@ -171,12 +171,12 @@ The processor does not map SHM, understand slots or writer generations, or
 receive `LiveStateWriter`. This keeps the shared-memory ABI inside Aether and
 preserves IO's exclusive ownership of T/S writes.
 
-The current SHM bridge labels accepted finite live values as `good`; it does
-not preserve device-origin sample quality. Likewise, the current SQLite history
-schema stores numeric observations without source quality. Version 1 enforces
-freshness, gaps, missingness, numeric constraints, provenance, and issue time,
-but a deployment that requires end-to-end device quality must provide a
-quality-bearing source adapter.
+SHM v5 preserves device-origin quality for live values, and the API combines
+that source quality with its freshness policy. The current SQLite history
+schema still stores numeric observations without source quality. Version 1
+enforces freshness, gaps, missingness, numeric constraints, provenance, and
+issue time, but a deployment that requires original quality for historical
+features must provide a quality-bearing history adapter.
 
 ## 4. Resolve covariates and context
 

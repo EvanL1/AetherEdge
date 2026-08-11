@@ -98,14 +98,15 @@ async fn application(
     let point_path = directory.path().join("live.shm");
     let health_path = directory.path().join("channel-health.shm");
     let epoch = 77;
-    let _point_writer = ShmWriterHandle::create_published_at_epoch(
+    let _point_writer = ShmWriterHandle::create(
         ShmRuntimeConfig::new(&point_path, 32),
         Arc::new(snapshot.point_manifest().clone()),
+        None,
         None,
         epoch,
     )
     .expect("point writer");
-    let health_writer = ShmChannelHealthWriterHandle::create_at_epoch(
+    let health_writer = ShmChannelHealthWriterHandle::create(
         &health_path,
         Arc::new(snapshot.health_manifest().clone()),
         epoch,

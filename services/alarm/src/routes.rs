@@ -1476,6 +1476,7 @@ mod tests {
     struct AccessClaims<'a> {
         user_id: i64,
         role: &'a str,
+        scope: Vec<&'static str>,
         #[serde(rename = "type")]
         token_type: &'a str,
         exp: usize,
@@ -1488,6 +1489,7 @@ mod tests {
             &AccessClaims {
                 user_id: 17,
                 role: "Engineer",
+                scope: aether_auth_jwt::permissions_for_role(Some("Engineer")),
                 token_type: "access",
                 exp: 4_102_444_800,
                 iat: 1,
@@ -1550,6 +1552,7 @@ mod tests {
             db: db.clone(),
             live_values: Arc::new(NoLiveValues),
             notifier,
+            point_watch_capacity: 128,
             monitor_status: Arc::new(tokio::sync::RwLock::new(crate::models::MonitorStatus {
                 running: false,
                 last_check_time: None,

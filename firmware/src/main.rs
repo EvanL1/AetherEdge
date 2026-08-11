@@ -135,7 +135,7 @@ fn process_uart_rx(shm: &mut RawPtrShm) {
     // Try to decode the frame
     if frame_len >= 14 && frame_buf[frame_len - 1] == 0x16 {
         if let Ok(frame) = decode_response(&frame_buf[..frame_len]) {
-            process_dl645_frame(shm, &frame);
+            let _published = process_dl645_frame(shm, &frame);
         }
 
         // Advance tail past processed frame
@@ -146,7 +146,7 @@ fn process_uart_rx(shm: &mut RawPtrShm) {
 }
 
 /// Process a decoded DL/T 645 frame
-fn process_dl645_frame(shm: &mut RawPtrShm, frame: &Dl645Frame) {
+fn process_dl645_frame(shm: &mut RawPtrShm, frame: &Dl645Frame) -> bool {
     let timestamp = get_timestamp_ms();
 
     // Map data identifier to slot index
@@ -155,7 +155,7 @@ fn process_dl645_frame(shm: &mut RawPtrShm, frame: &Dl645Frame) {
         [0x00, 0x01, 0x00, 0x00] => 0, // Total active energy
         [0x02, 0x01, 0x01, 0x00] => 1, // A-phase voltage
         [0x02, 0x02, 0x01, 0x00] => 2, // A-phase current
-        _ => return,                   // Unknown data identifier
+        _ => return false,             // Unknown data identifier
     };
 
     // Parse the value based on data identifier
@@ -170,7 +170,13 @@ fn process_dl645_frame(shm: &mut RawPtrShm, frame: &Dl645Frame) {
     };
 
     // Write to shared memory
-    shm.write_slot(slot_index, value, timestamp, Quality::Good as u8);
+    shm.write_slot(slot_index, value, timestamp, Quality::Good as u8)
+}
+
+fn configure_point_metadata(shm: &mut RawPtrShm) -> bool {
+    shm.set_slot_metadata(0, 0, 1, PointType::Telemetry as u8)
+        && shm.set_slot_metadata(1, 1, 1, PointType::Telemetry as u8)
+        && shm.set_slot_metadata(2, 2, 1, PointType::Telemetry as u8)
 }
 
 /// Main firmware entry point
@@ -181,17 +187,25 @@ fn main() -> ! {
 
     // Initialize shared memory
     let shm_ptr = SHM_BASE_ADDR as *mut u8;
-    let mut shm = unsafe { RawPtrShm::from_raw(shm_ptr, MAX_SLOTS) };
+    let Some(mut shm) = (unsafe { RawPtrShm::from_raw(shm_ptr, MAX_SLOTS) }) else {
+        loop {
+            cortex_m::asm::nop();
+        }
+    };
 
     // Initialize shared memory (only on first boot)
-    if !shm.is_valid() {
-        shm.init();
+    if !shm.is_valid() && !shm.init() {
+        loop {
+            cortex_m::asm::nop();
+        }
     }
 
     // Pre-configure slot metadata
-    shm.set_slot_metadata(0, 0, 1, PointType::Telemetry as u8); // Total energy
-    shm.set_slot_metadata(1, 1, 1, PointType::Telemetry as u8); // A-phase voltage
-    shm.set_slot_metadata(2, 2, 1, PointType::Telemetry as u8); // A-phase current
+    if !configure_point_metadata(&mut shm) {
+        loop {
+            cortex_m::asm::nop();
+        }
+    }
 
     // Main loop
     loop {

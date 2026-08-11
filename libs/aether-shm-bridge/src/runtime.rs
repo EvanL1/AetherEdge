@@ -11,6 +11,13 @@ use arc_swap::ArcSwapOption;
 use crate::topology_commit::validate_topology_publication_epoch;
 use crate::{AcquisitionCommitObserver, ChannelPointManifest, ShmAcquisitionStateWriter};
 
+/// Default composition-level safety limit for live point slots.
+///
+/// The physical mmap is sized to the compiled manifest; this value prevents
+/// an invalid topology from requesting an unbounded allocation before
+/// publication begins.
+pub const DEFAULT_MAX_SLOTS: u32 = 100_000;
+
 /// Physical writer configuration selected by the IO composition root.
 #[derive(Debug, Clone)]
 pub struct ShmRuntimeConfig {
@@ -92,7 +99,7 @@ impl ShmWriterGeneration {
     /// Returns the cross-plane publication identity stored in this segment.
     #[must_use]
     pub fn publication_epoch(&self) -> u64 {
-        self.writer.header().publication_epoch()
+        self.writer.header().publication_epoch
     }
 
     /// Returns the number of live slots, including alignment padding.
@@ -105,11 +112,6 @@ impl ShmWriterGeneration {
     #[must_use]
     pub fn read_slot(&self, slot: usize) -> Option<aether_dataplane::SlotRead> {
         SlotIo::read_slot(self.writer.as_ref(), slot)
-    }
-
-    /// Drains the process-local dirty-slot set for optional mirrors.
-    pub fn take_dirty_slots(&self) -> Vec<usize> {
-        self.writer.take_dirty_slots()
     }
 
     /// Saves a tear-resistant snapshot of this exact generation.
@@ -165,45 +167,12 @@ impl ShmWriterHandle {
         }
     }
 
-    /// Creates and atomically publishes the initial generation.
+    /// Creates and publishes one non-zero coordinated generation.
     ///
     /// When `snapshot` is present, restoration is accepted only when the
     /// snapshot carries the exact manifest hash and slot count. A topology
     /// change never reinterprets old slot positions as new physical points.
-    pub fn create_published(
-        config: ShmRuntimeConfig,
-        manifest: Arc<ChannelPointManifest>,
-        snapshot: Option<&Path>,
-    ) -> PortResult<Self> {
-        Self::create_published_internal(config, manifest, snapshot, None, 0)
-    }
-
-    /// Creates the initial generation as one member of a coordinated physical
-    /// topology publication.
-    pub fn create_published_at_epoch(
-        config: ShmRuntimeConfig,
-        manifest: Arc<ChannelPointManifest>,
-        snapshot: Option<&Path>,
-        publication_epoch: u64,
-    ) -> PortResult<Self> {
-        validate_topology_publication_epoch(publication_epoch)?;
-        Self::create_published_internal(config, manifest, snapshot, None, publication_epoch)
-    }
-
-    /// Creates the initial generation with a post-commit observer such as the
-    /// PointWatch publisher.
-    pub fn create_published_with_observer(
-        config: ShmRuntimeConfig,
-        manifest: Arc<ChannelPointManifest>,
-        snapshot: Option<&Path>,
-        observer: Option<Arc<dyn AcquisitionCommitObserver>>,
-    ) -> PortResult<Self> {
-        Self::create_published_internal(config, manifest, snapshot, observer, 0)
-    }
-
-    /// Creates the initial generation with both a post-commit observer and a
-    /// cross-plane publication identity.
-    pub fn create_published_with_observer_at_epoch(
+    pub fn create(
         config: ShmRuntimeConfig,
         manifest: Arc<ChannelPointManifest>,
         snapshot: Option<&Path>,
@@ -211,16 +180,6 @@ impl ShmWriterHandle {
         publication_epoch: u64,
     ) -> PortResult<Self> {
         validate_topology_publication_epoch(publication_epoch)?;
-        Self::create_published_internal(config, manifest, snapshot, observer, publication_epoch)
-    }
-
-    fn create_published_internal(
-        config: ShmRuntimeConfig,
-        manifest: Arc<ChannelPointManifest>,
-        snapshot: Option<&Path>,
-        observer: Option<Arc<dyn AcquisitionCommitObserver>>,
-        publication_epoch: u64,
-    ) -> PortResult<Self> {
         validate_capacity(&config, &manifest)?;
         let authority_gate = Arc::new(RwLock::new(()));
         let generation = publish_generation(
@@ -246,14 +205,12 @@ impl ShmWriterHandle {
         self.current.load_full()
     }
 
-    /// Atomically replaces the canonical segment with a fresh manifest.
-    pub fn rebuild(&self, manifest: Arc<ChannelPointManifest>) -> PortResult<()> {
-        self.rebuild_internal(manifest, 0)
-    }
-
-    /// Replaces the canonical point plane as part of one coordinated physical
-    /// topology publication.
-    pub fn rebuild_for_publication(
+    /// Replaces the canonical point plane for one new coordinated epoch.
+    ///
+    /// State for exact typed-address intersections is copied into the staged
+    /// generation before publication. Added points start unwritten and removed
+    /// points disappear with the retired manifest.
+    pub fn rebuild(
         &self,
         manifest: Arc<ChannelPointManifest>,
         publication_epoch: u64,
@@ -268,14 +225,6 @@ impl ShmWriterHandle {
                 format!("point SHM publication epoch {publication_epoch} was already used"),
             ));
         }
-        self.rebuild_internal(manifest, publication_epoch)
-    }
-
-    fn rebuild_internal(
-        &self,
-        manifest: Arc<ChannelPointManifest>,
-        publication_epoch: u64,
-    ) -> PortResult<()> {
         validate_capacity(&self.config, &manifest)?;
         let previous = self.current.load_full();
         let generation = publish_generation(
@@ -342,9 +291,8 @@ fn publish_generation(
     let staging_path = generation_file_path(config.path(), staging_sequence.max(1));
     let mut cleanup = StagingCleanup(Some(staging_path.clone()));
 
-    let writer = SlotWriter::create_at_epoch(
+    let writer = SlotWriter::create(
         &staging_path,
-        config.max_slots,
         manifest.slot_count(),
         manifest.layout_hash(),
         publication_epoch,
@@ -352,6 +300,9 @@ fn publish_generation(
     .map_err(map_dataplane_error)?;
     if let Some(snapshot_path) = snapshot {
         restore_exact_snapshot(&writer, snapshot_path, &manifest)?;
+    } else if let Some(previous) = previous {
+        migrate_point_intersection(&writer, &manifest, previous)?;
+        writer.update_heartbeat(previous.writer.writer_heartbeat());
     }
     writer.flush().map_err(map_dataplane_error)?;
     let discovered_previous = if previous.is_none() {
@@ -384,6 +335,36 @@ fn publish_generation(
     ShmWriterGeneration::compose(writer, manifest, Arc::clone(&authority_gate), observer)
 }
 
+fn migrate_point_intersection(
+    staging_writer: &SlotWriter,
+    manifest: &ChannelPointManifest,
+    previous: &ShmWriterGeneration,
+) -> PortResult<()> {
+    for (target_slot, address) in manifest.iter_physical_points() {
+        let Some(previous_slot) = previous.manifest.slot_for(address) else {
+            continue;
+        };
+        let sample =
+            SlotIo::read_slot(previous.writer.as_ref(), previous_slot).ok_or_else(|| {
+                PortError::new(
+                    PortErrorKind::Conflict,
+                    format!("physical point {address:?} changed during live-state migration"),
+                )
+            })?;
+        if sample.value.is_nan() {
+            continue;
+        }
+        staging_writer.set_direct(
+            target_slot,
+            sample.value,
+            sample.raw,
+            sample.timestamp_ms,
+            sample.quality_code,
+        );
+    }
+    Ok(())
+}
+
 fn restore_exact_snapshot(
     writer: &SlotWriter,
     snapshot_path: &Path,
@@ -393,14 +374,14 @@ fn restore_exact_snapshot(
         aether_dataplane::SnapshotImage::load(snapshot_path).map_err(map_dataplane_error)?;
     let header = snapshot.header();
     if header.slot_count as usize != manifest.slot_count()
-        || header.routing_hash != manifest.layout_hash()
+        || header.layout_hash != manifest.layout_hash()
     {
         return Err(PortError::new(
             PortErrorKind::Conflict,
             format!(
                 "snapshot layout does not match active manifest: snapshot slots={} hash=0x{:016x}, manifest slots={} hash=0x{:016x}",
                 header.slot_count,
-                header.routing_hash,
+                header.layout_hash,
                 manifest.slot_count(),
                 manifest.layout_hash()
             ),
@@ -409,7 +390,13 @@ fn restore_exact_snapshot(
 
     for (slot, value) in snapshot.slots().iter().enumerate() {
         if let Some(value) = value {
-            writer.set_direct(slot, value.value, value.raw, value.timestamp_ms);
+            writer.set_direct(
+                slot,
+                value.value,
+                value.raw,
+                value.timestamp_ms,
+                value.quality_code,
+            );
         }
     }
     Ok(())

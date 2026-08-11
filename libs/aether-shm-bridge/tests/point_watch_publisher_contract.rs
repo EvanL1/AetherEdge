@@ -15,7 +15,7 @@ use aether_shm_bridge::{
 use tokio_util::sync::CancellationToken;
 
 #[tokio::test]
-async fn typed_acquisition_commit_emits_the_existing_point_watch_wire_frame() {
+async fn typed_acquisition_commit_emits_a_compact_point_watch_hint() {
     let directory = tempfile::tempdir().expect("temporary directory");
     let socket = directory.path().join("automation.sock");
     let shutdown = CancellationToken::new();
@@ -28,19 +28,19 @@ async fn typed_acquisition_commit_emits_the_existing_point_watch_wire_frame() {
         tokio::time::sleep(Duration::from_millis(5)).await;
     }
 
-    let bitmap = Arc::new(SubscriptionBitmap::new_in_memory().expect("in-memory bitmap"));
-    bitmap.set_watched(0);
+    let bitmap = Arc::new(SubscriptionBitmap::new_in_memory(8).expect("in-memory bitmap"));
+    bitmap.set_watched(0).expect("subscribe slot");
     let (publisher, publisher_task) =
         PointWatchPublisher::new_with_fanout(vec![(bitmap, socket)], shutdown.clone());
-    let manifest = Arc::new(ChannelPointManifest::from_map(BTreeMap::from([(
-        7,
-        [1, 0, 0, 0],
-    )])));
-    let handle = ShmWriterHandle::create_published_with_observer(
+    let manifest = Arc::new(ChannelPointManifest::dense_test_fixture(BTreeMap::from([
+        (7, [1, 0, 0, 0]),
+    ])));
+    let handle = ShmWriterHandle::create(
         ShmRuntimeConfig::new(directory.path().join("aether.shm"), 8),
         Arc::clone(&manifest),
         None,
         Some(publisher),
+        1,
     )
     .expect("publish SHM generation");
     let address =
@@ -69,9 +69,6 @@ async fn typed_acquisition_commit_emits_the_existing_point_watch_wire_frame() {
     assert_eq!(event.point_kind(), Some(PointKind::Telemetry));
     assert_eq!(event.point_id(), 0);
     assert_eq!(event.slot_index(), 0);
-    assert_eq!(event.value(), 12.5);
-    assert_eq!(event.raw(), 125.0);
-    assert_eq!(event.timestamp_ms(), 4_200);
     assert!(event.matches_manifest(&manifest));
 
     shutdown.cancel();

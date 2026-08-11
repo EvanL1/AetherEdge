@@ -6,6 +6,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use aether_automation::infra::runtime_topology::AutomationTopologyHandle;
+use aether_domain::PointKind;
 use aether_rules::{MemoryRuleLiveState, PointWatchDispatcher, PointWatchHint, RuleScheduler};
 use aether_shm_bridge::{ShmDeviceCommandSink, SubscriptionBitmap};
 
@@ -68,7 +69,7 @@ async fn rebuild_uses_the_route_and_manifest_of_one_pinned_service_generation() 
     );
     let (dispatcher, mut events) = PointWatchDispatcher::new();
     let dispatcher = Arc::new(Mutex::new(dispatcher));
-    let bitmap = Arc::new(SubscriptionBitmap::new_in_memory().expect("bitmap"));
+    let bitmap = Arc::new(SubscriptionBitmap::new_in_memory(8).expect("bitmap"));
     scheduler.set_point_watch_rebuild_handle(Arc::clone(&dispatcher));
     scheduler.reload_rules().await.expect("rule reload");
 
@@ -81,7 +82,14 @@ async fn rebuild_uses_the_route_and_manifest_of_one_pinned_service_generation() 
     dispatcher
         .lock()
         .expect("dispatcher")
-        .dispatch(PointWatchHint::new(10, 0, 1.0, 1.0, 1));
+        .dispatch(PointWatchHint::new(
+            10,
+            PointKind::Telemetry,
+            0,
+            1.0,
+            1.0,
+            1,
+        ));
     assert_eq!(
         events.try_recv().expect("original route").rule_ids,
         vec![43]
@@ -108,12 +116,26 @@ async fn rebuild_uses_the_route_and_manifest_of_one_pinned_service_generation() 
     dispatcher
         .lock()
         .expect("dispatcher")
-        .dispatch(PointWatchHint::new(20, 0, 2.0, 2.0, 2));
+        .dispatch(PointWatchHint::new(
+            20,
+            PointKind::Telemetry,
+            0,
+            2.0,
+            2.0,
+            2,
+        ));
     assert!(events.try_recv().is_err());
     dispatcher
         .lock()
         .expect("dispatcher")
-        .dispatch(PointWatchHint::new(10, 0, 1.0, 1.0, 3));
+        .dispatch(PointWatchHint::new(
+            10,
+            PointKind::Telemetry,
+            0,
+            1.0,
+            1.0,
+            3,
+        ));
     assert_eq!(
         events.try_recv().expect("retained route").rule_ids,
         vec![43]
@@ -129,12 +151,26 @@ async fn rebuild_uses_the_route_and_manifest_of_one_pinned_service_generation() 
     dispatcher
         .lock()
         .expect("dispatcher")
-        .dispatch(PointWatchHint::new(10, 0, 1.0, 1.0, 4));
+        .dispatch(PointWatchHint::new(
+            10,
+            PointKind::Telemetry,
+            0,
+            1.0,
+            1.0,
+            4,
+        ));
     assert!(events.try_recv().is_err());
     dispatcher
         .lock()
         .expect("dispatcher")
-        .dispatch(PointWatchHint::new(20, 0, 2.0, 2.0, 5));
+        .dispatch(PointWatchHint::new(
+            20,
+            PointKind::Telemetry,
+            0,
+            2.0,
+            2.0,
+            5,
+        ));
     assert_eq!(
         events.try_recv().expect("replacement route").rule_ids,
         vec![43]

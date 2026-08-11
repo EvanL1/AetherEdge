@@ -16,6 +16,11 @@ pub struct Claims {
     pub role: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub token_id: Option<String>,
+    /// The permissions this token may exercise.
+    ///
+    /// Always written and always read. A token that does not state its
+    /// permissions is malformed rather than fully privileged.
+    pub scope: Vec<String>,
     pub exp: usize,
     pub iat: usize,
     #[serde(rename = "type")]
@@ -45,11 +50,18 @@ pub fn create_access_token(
     let now = Utc::now().timestamp() as usize;
     let exp = (Utc::now().timestamp() + expire_minutes * 60) as usize;
 
+    // A login token states the whole set its role may hold. Writing it out
+    // rather than leaving it implied means every token answers "what may this
+    // credential do" from its own contents.
     let claims = Claims {
         user_id: user.id,
         username: user.username.clone(),
         role: Some(user.role.name_en.clone()),
         token_id: None,
+        scope: aether_auth_jwt::permissions_for_role(Some(&user.role.name_en))
+            .into_iter()
+            .map(str::to_owned)
+            .collect(),
         exp,
         iat: now,
         token_type: "access".to_string(),
@@ -78,6 +90,7 @@ pub fn create_refresh_token(
         username: user.username.clone(),
         role: None,
         token_id: Some(token_id.clone()),
+        scope: Vec::new(),
         exp,
         iat: now as usize,
         token_type: "refresh".to_string(),

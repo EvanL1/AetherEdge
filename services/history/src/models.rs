@@ -1,5 +1,16 @@
 use chrono::{DateTime, Utc};
 
+/// Upper bound for any day-denominated configuration value (100 years).
+///
+/// `chrono` panics when a `DateTime` +/- `Duration` leaves its representable
+/// range, and the workspace release profile sets `panic = "abort"`, so an
+/// unclamped value turns one request into a process kill. The persisted config
+/// would then reproduce the crash on every restart.
+pub const MAX_RANGE_DAYS: i64 = 36_500;
+
+/// Upper bound for page sizes so `(page - 1) * page_size` cannot overflow `i64`.
+pub const MAX_PAGE_SIZE_LIMIT: i64 = 100_000;
+
 // ── Core data types ───────────────────────────────────────────────────────────
 
 /// One measurement point ready to be written to storage.
@@ -26,7 +37,7 @@ pub struct HistoryRecord {
 }
 
 /// One data point in a batch query response.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct SeriesPoint {
     pub time: String,
     pub value: Option<f64>,
@@ -335,15 +346,17 @@ impl ServiceConfig {
         self.collection_interval_secs = self.collection_interval_secs.max(1);
         self.flush_interval_secs = self.flush_interval_secs.max(1);
         self.batch_size = self.batch_size.max(1);
-        self.cleanup_older_than_days = self.cleanup_older_than_days.max(1);
-        self.default_page_size = self.default_page_size.max(1);
-        self.max_page_size = self.max_page_size.max(1);
-        self.max_time_range_days = self.max_time_range_days.max(1);
+        self.cleanup_older_than_days = self.cleanup_older_than_days.clamp(1, MAX_RANGE_DAYS as i32);
+        self.default_page_size = self.default_page_size.clamp(1, MAX_PAGE_SIZE_LIMIT);
+        self.max_page_size = self.max_page_size.clamp(1, MAX_PAGE_SIZE_LIMIT);
+        self.max_time_range_days = self.max_time_range_days.clamp(1, MAX_RANGE_DAYS);
     }
 }
 
 #[cfg(test)]
 mod config_tests {
+    use chrono::Duration;
+
     use super::*;
 
     #[test]
@@ -368,6 +381,56 @@ mod config_tests {
         assert_eq!(cfg.default_page_size, 1);
         assert_eq!(cfg.max_page_size, 1);
         assert_eq!(cfg.max_time_range_days, 1);
+    }
+
+    #[test]
+    fn normalize_clamps_day_ranges_that_would_overflow_chrono() {
+        let mut cfg = ServiceConfig {
+            cleanup_older_than_days: i32::MAX,
+            max_time_range_days: i64::MAX,
+            ..ServiceConfig::default()
+        };
+
+        cfg.normalize();
+
+        assert_eq!(cfg.max_time_range_days, MAX_RANGE_DAYS);
+        assert_eq!(cfg.cleanup_older_than_days, MAX_RANGE_DAYS as i32);
+    }
+
+    #[test]
+    fn clamped_day_ranges_survive_the_arithmetic_the_query_path_performs() {
+        let mut cfg = ServiceConfig {
+            cleanup_older_than_days: i32::MAX,
+            max_time_range_days: i64::MAX,
+            ..ServiceConfig::default()
+        };
+        cfg.normalize();
+
+        // These are exactly the operations dto.rs and the cleanup backends run;
+        // before clamping they panic and, under `panic = "abort"`, kill the process.
+        let now = Utc::now();
+        assert!(
+            now.checked_sub_signed(Duration::days(cfg.max_time_range_days))
+                .is_some()
+        );
+        assert!(
+            now.checked_sub_signed(Duration::days(i64::from(cfg.cleanup_older_than_days)))
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn normalize_clamps_page_sizes_so_offset_arithmetic_cannot_overflow() {
+        let mut cfg = ServiceConfig {
+            default_page_size: i64::MAX,
+            max_page_size: i64::MAX,
+            ..ServiceConfig::default()
+        };
+
+        cfg.normalize();
+
+        assert_eq!(cfg.max_page_size, MAX_PAGE_SIZE_LIMIT);
+        assert_eq!(cfg.default_page_size, MAX_PAGE_SIZE_LIMIT);
     }
 }
 
@@ -416,6 +479,18 @@ pub fn source_from_key(key: &str) -> String {
     key.split(':').next().unwrap_or(key).to_string()
 }
 
+/// Distinct data-type codes carried by a set of logical series keys.
+///
+/// The type code is the *last* `:` segment — the first one is the source, which
+/// [`source_from_key`] already reports separately.
+pub fn data_types_from_keys(keys: &[String]) -> Vec<String> {
+    keys.iter()
+        .filter_map(|key| key.rsplit(':').next().map(String::from))
+        .collect::<std::collections::HashSet<_>>()
+        .into_iter()
+        .collect()
+}
+
 /// Parse various time string formats into `DateTime<Utc>`.
 pub fn parse_time(s: &str) -> anyhow::Result<DateTime<Utc>> {
     use chrono::NaiveDateTime;
@@ -450,4 +525,34 @@ pub fn parse_time(s: &str) -> anyhow::Result<DateTime<Utc>> {
     }
 
     anyhow::bail!("Unsupported time format: {}", s)
+}
+
+#[cfg(test)]
+mod key_derivation_tests {
+    use super::{data_types_from_keys, source_from_key};
+
+    #[test]
+    fn the_source_is_the_first_segment_and_the_data_type_is_the_last() {
+        // Both backends must agree: `GET /hisApi/data/range` returned the source
+        // list on PostgreSQL and the type list on SQLite for the same field.
+        assert_eq!(source_from_key("inst:1:M"), "inst");
+
+        let keys = vec![
+            "inst:1:M".to_string(),
+            "inst:2:A".to_string(),
+            "io:3:M".to_string(),
+        ];
+        let mut types = data_types_from_keys(&keys);
+        types.sort();
+
+        assert_eq!(types, vec!["A".to_string(), "M".to_string()]);
+    }
+
+    #[test]
+    fn a_key_without_separators_is_its_own_data_type() {
+        assert_eq!(
+            data_types_from_keys(&["plain".to_string()]),
+            vec!["plain".to_string()]
+        );
+    }
 }

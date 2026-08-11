@@ -70,13 +70,15 @@ column:
 
 OnChange rules are served by two paths running in parallel. The fast path is
 event-driven: io publishes a PointWatch event when a subscribed point is
-written, a dispatcher maps the `(channel, point)` pair to rule IDs, and the
-scheduler evaluates those rules immediately. The event carries the new value,
-so the trigger decision needs no read-back from the real-time database or
-shared memory. The tick path is the fallback: each tick, the scheduler samples
-all subscribed points in one batch (directly from shared memory when available)
-and re-evaluates every OnChange rule — this covers multi-point rules and keeps
-rules firing if the event socket is down.
+written. The 16-byte event carries only the typed address and slot wake-up
+hint. Automation validates it against the pinned manifest, re-reads that SHM
+generation, and only then lets the dispatcher map the complete
+`(channel, kind, point)` address to rule IDs and wake the scheduler, so equal
+T/S numeric identifiers never wake each other's rules. The tick path is the
+fallback: each tick, the
+scheduler samples all subscribed points in one batch and re-evaluates every
+OnChange rule — this covers multi-point rules and keeps rules firing if the
+event socket is down.
 
 Two deadbands filter noise, combined with AND semantics:
 
@@ -99,9 +101,12 @@ one action, and suppresses re-execution until it elapses.
 ## Execution
 
 The executor walks the compact topology from the start node, following each
-node's wires: switch nodes evaluate condition branches and select an output
-wire, change nodes write a value to a point, calculation and period-delta nodes
-compute derived values, and the end node terminates the path.
+node's wires: `function-switch` nodes evaluate condition branches and select an
+output wire, `action-changeValue` nodes write a value to a point,
+`action-calculation` and `action-periodDelta` nodes compute derived values, and
+the end node terminates the path. Those four names are the wire format, carried
+in each node's `data.type`; [Writing rules](../guides/writing-rules.md) shows a
+complete document.
 
 Input variables are read through the SHM-backed `RuleLiveState`, and the reads
 are strict: if a variable's data is unavailable this cycle, the evaluation short-circuits rather
@@ -147,7 +152,8 @@ rule set wholesale under a write lock — running executions finish against the
 rule they started with. When the PointWatch handles are wired in (production
 mode), the reload then rebuilds the event plane from the fresh rule set as a
 unit: the subscription bitmap that tells io which points to publish events
-for, and the dispatcher index that maps `(channel, point)` pairs to rule IDs.
+for, and the dispatcher index that maps complete `(channel, kind, point)`
+addresses to rule IDs.
 A newly added or re-targeted OnChange rule starts receiving events immediately,
 with no service restart.
 

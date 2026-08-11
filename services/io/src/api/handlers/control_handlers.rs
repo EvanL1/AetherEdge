@@ -6,14 +6,14 @@
 #![allow(clippy::disallowed_methods)] // json! macro used in multiple functions
 
 use super::channel_management_handlers::{
-    ChannelManagementHttpBoundary, path_channel_id, required_request_id,
+    ChannelManagementHttpBoundary, path_channel_id, required_expected_revision, required_request_id,
 };
-use crate::api::routes::AppState;
-use crate::dto::{
+use crate::api::dto::{
     AppError, ChannelCompletionAudit, ChannelCompletionAuditState, ChannelControlOperationResult,
     ChannelControlResponse, ChannelControlResult, ChannelOperation, ChannelOperationKind,
     ChannelRuntimeProjectionResult, SuccessResponse,
 };
+use crate::api::routes::AppState;
 use aether_application::{
     ChannelMutationAcceptance, ChannelReconciliationAcceptance, CompletionAuditStatus,
 };
@@ -35,11 +35,12 @@ use axum::{
     post,
     path = "/api/channels/{id}/control",
     params(
-        ("id" = u32, Path, description = "Stable channel identifier below 10000", maximum = 9999),
+        ("id" = u32, Path, description = "Stable channel identifier in 1..9999", minimum = 1, maximum = 9999),
         ("x-request-id" = String, Header, format = "uuid", description = "Required UUID audit correlation ID; this is not an idempotency key"),
-        ("x-aether-confirmed" = bool, Header, description = "Required explicit confirmation; must be true")
+        ("x-aether-confirmed" = bool, Header, description = "Required explicit confirmation; must be true"),
+        ("x-aether-expected-revision" = Option<u64>, Header, description = "Required for start and stop desired-state mutations; omitted for runtime-only restart", minimum = 1, maximum = 9223372036854775807_i64)
     ),
-    request_body = crate::dto::ChannelOperation,
+    request_body = crate::api::dto::ChannelOperation,
     responses(
         (status = 200, description = "Accepted non-idempotent desired-state or runtime lifecycle operation. Degraded projection and incomplete terminal audit remain accepted; do not retry automatically.", body = ChannelControlResponse),
         (status = 400, description = "Malformed channel ID, request ID, JSON, or unsupported operation", body = common::ErrorResponse),
@@ -66,24 +67,30 @@ pub async fn control_channel(
         .map_err(|_| AppError::bad_request("Request body must be valid application/json"))?;
 
     match operation.operation {
-        ChannelOperationKind::Start => boundary
-            .mutate(&headers, ChannelMutation::enable(channel_id))
-            .await
-            .map(|acceptance| {
-                Json(control_response_from_mutation(
-                    &acceptance,
-                    ChannelControlOperationResult::Start,
-                ))
-            }),
-        ChannelOperationKind::Stop => boundary
-            .mutate(&headers, ChannelMutation::disable(channel_id))
-            .await
-            .map(|acceptance| {
-                Json(control_response_from_mutation(
-                    &acceptance,
-                    ChannelControlOperationResult::Stop,
-                ))
-            }),
+        ChannelOperationKind::Start => {
+            let revision = required_expected_revision(&headers)?;
+            boundary
+                .mutate(&headers, ChannelMutation::enable(channel_id, revision))
+                .await
+                .map(|acceptance| {
+                    Json(control_response_from_mutation(
+                        &acceptance,
+                        ChannelControlOperationResult::Start,
+                    ))
+                })
+        },
+        ChannelOperationKind::Stop => {
+            let revision = required_expected_revision(&headers)?;
+            boundary
+                .mutate(&headers, ChannelMutation::disable(channel_id, revision))
+                .await
+                .map(|acceptance| {
+                    Json(control_response_from_mutation(
+                        &acceptance,
+                        ChannelControlOperationResult::Stop,
+                    ))
+                })
+        },
         ChannelOperationKind::Restart => {
             let acceptance = boundary
                 .reconcile(&headers, ChannelReconciliationScope::One(channel_id))

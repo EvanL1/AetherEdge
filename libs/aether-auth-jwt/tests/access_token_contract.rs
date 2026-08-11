@@ -9,18 +9,21 @@ const SECRET: &str = "test-only-jwt-secret-32-bytes-minimum";
 struct Claims<'a> {
     user_id: i64,
     role: &'a str,
+    scope: Vec<&'a str>,
     #[serde(rename = "type")]
     token_type: &'a str,
     exp: usize,
     iat: usize,
 }
 
+/// A token carrying everything its role may hold, which is what login issues.
 fn token(role: &str, token_type: &str) -> String {
     encode(
         &Header::new(Algorithm::HS256),
         &Claims {
             user_id: 17,
             role,
+            scope: aether_auth_jwt::permissions_for_role(Some(role)),
             token_type,
             exp: 4_102_444_800,
             iat: 1,
@@ -73,6 +76,113 @@ fn viewer_refresh_and_malformed_credentials_never_gain_command_permissions() {
         authenticator.authenticate("Basic abc"),
         Err(AuthenticationError::InvalidCredentials)
     );
+}
+
+fn scoped_token(role: &str, scope: Vec<&str>) -> String {
+    encode(
+        &Header::new(Algorithm::HS256),
+        &Claims {
+            user_id: 17,
+            role,
+            scope,
+            token_type: "access",
+            exp: 4_102_444_800,
+            iat: 1,
+        },
+        &EncodingKey::from_secret(SECRET.as_bytes()),
+    )
+    .expect("encode scoped access token")
+}
+
+/// A token shaped like one issued before scopes existed.
+#[derive(Serialize)]
+struct ScopelessClaims<'a> {
+    user_id: i64,
+    role: &'a str,
+    #[serde(rename = "type")]
+    token_type: &'a str,
+    exp: usize,
+    iat: usize,
+}
+
+#[test]
+fn a_token_that_never_says_what_it_may_do_is_refused_outright() {
+    // Reading an absent scope as "everything the role carries" would reinstate
+    // the implicit grant this claim exists to remove, and would do it for
+    // precisely the tokens that predate the check.
+    let authenticator = AccessTokenAuthenticator::new(SECRET).expect("valid secret");
+    let scopeless = encode(
+        &Header::new(Algorithm::HS256),
+        &ScopelessClaims {
+            user_id: 17,
+            role: "Admin",
+            token_type: "access",
+            exp: 4_102_444_800,
+            iat: 1,
+        },
+        &EncodingKey::from_secret(SECRET.as_bytes()),
+    )
+    .expect("encode scopeless access token");
+
+    assert_eq!(
+        authenticator.authenticate(&format!("Bearer {scopeless}")),
+        Err(AuthenticationError::InvalidCredentials)
+    );
+}
+
+#[test]
+fn a_scope_narrows_an_administrative_token_to_the_listed_permissions() {
+    // "May read, and may resolve alarms, but may never control a device" is the
+    // identity an AI assistant needs. Without scope the only choices were full
+    // command authority or none, so every AI integration had to be handed a
+    // token that could stop a channel.
+    let authenticator = AccessTokenAuthenticator::new(SECRET).expect("valid secret");
+
+    let actor = authenticator
+        .authenticate(&format!(
+            "Bearer {}",
+            scoped_token("Admin", vec!["alarm.alert.resolve"])
+        ))
+        .expect("valid scoped access token");
+
+    assert!(actor.has_permission("alarm.alert.resolve"));
+    assert!(!actor.has_permission("device.control"));
+    assert!(!actor.has_permission("io.channel.manage"));
+}
+
+#[test]
+fn a_scope_never_grants_what_the_role_itself_lacks() {
+    // Scope narrows; it must not become a self-service escalation path for a
+    // token whose role was never trusted with command permissions.
+    let authenticator = AccessTokenAuthenticator::new(SECRET).expect("valid secret");
+
+    let actor = authenticator
+        .authenticate(&format!(
+            "Bearer {}",
+            scoped_token("Viewer", vec!["device.control", "io.channel.manage"])
+        ))
+        .expect("valid scoped access token");
+
+    assert!(!actor.has_permission("device.control"));
+    assert!(!actor.has_permission("io.channel.manage"));
+}
+
+#[test]
+fn an_empty_scope_is_a_read_only_token_rather_than_an_unrestricted_one() {
+    let authenticator = AccessTokenAuthenticator::new(SECRET).expect("valid secret");
+
+    let actor = authenticator
+        .authenticate(&format!("Bearer {}", scoped_token("Admin", Vec::new())))
+        .expect("valid scoped access token");
+
+    for permission in [
+        "device.control",
+        "automation.rule.execute",
+        "io.channel.manage",
+        "alarm.alert.resolve",
+    ] {
+        assert!(!actor.has_permission(permission), "granted {permission}");
+    }
 }
 
 #[test]

@@ -92,7 +92,7 @@ Docker Compose runtime and fails if that composition is not present.
 | `aether channels update <id> ... --expected-revision <rev> --confirmed` | Update desired channel configuration with mandatory compare-and-set |
 | `aether channels enable\|disable <id> --expected-revision <rev> --confirmed` | Change desired runtime lifecycle with mandatory compare-and-set |
 | `aether channels delete <id> --expected-revision <rev> --confirmed` | Delete a channel with mandatory compare-and-set; `--force` only skips the prompt and action-route references fail with a conflict |
-| `aether channels reload --confirmed` | Reconcile all channel runtimes through `io.channel.reconcile`; requires `AETHER_ACCESS_TOKEN` and must not be retried automatically |
+| `aether channels reconcile --confirmed` | Reconcile all channel runtimes through `io.channel.reconcile`; requires `AETHER_ACCESS_TOKEN` and must not be retried automatically |
 | `aether channels health` | Service health check |
 | `aether models instances action ... --confirmed` | Submit the only supported external device command to the local command plane; requires explicit confirmation and `AETHER_ACCESS_TOKEN` from an Admin/Engineer session |
 
@@ -171,8 +171,10 @@ URLs on the default ports, so use it only for remote read-only inspection.
 |---------|-------------|
 | `aether shm get <key>` | Read one authoritative SHM value |
 | `aether shm watch <key>` | Watch one SHM value for changes |
-| `aether shm info` | Show SHM layout and writer health |
-| `aether shm top` | Open the local SHM dashboard |
+| `aether shm info` | Validate both SHM planes, commit identity, heartbeat and quality |
+| `aether --json shm info` | Emit the same local observation with stable finding codes |
+| `aether shm top` | Open the local dual-plane terminal dashboard |
+| `aether shm serve` | Serve the optional loopback-only browser dashboard |
 | `aether models instances data <id>` | Read instance values through the SHM-backed API |
 
 ### Infrastructure
@@ -184,7 +186,8 @@ URLs on the default ports, so use it only for remote read-only inspection.
 | `aether services status` | Service status |
 | `aether services logs <svc>` | View service logs |
 | `aether logs level <svc> <level>` | Dynamic log level adjustment |
-| `aether shm top` | Local shared memory TUI monitor |
+| `aether shm top` | Local shared memory TUI with dual-plane health and point values |
+| `aether shm serve` | Temporary read-only SHM browser UI on `127.0.0.1:6070` |
 
 ### Interactive Dashboard
 

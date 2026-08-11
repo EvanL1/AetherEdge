@@ -289,12 +289,12 @@ impl ReconnectingSlotSource {
             AuthorityReadGuard::acquire(&self.config.path).map_err(map_dataplane_error)?;
         let reader = SlotReader::open(&self.config.path).map_err(map_dataplane_error)?;
         let header = reader.header();
-        if header.routing_hash != self.config.expected_layout_hash {
+        if header.layout_hash != self.config.expected_layout_hash {
             return Err(PortError::new(
                 PortErrorKind::Conflict,
                 format!(
                     "SHM manifest mismatch at {:?}: expected 0x{:016X}, got 0x{:016X}",
-                    self.config.path, self.config.expected_layout_hash, header.routing_hash
+                    self.config.path, self.config.expected_layout_hash, header.layout_hash
                 ),
             ));
         }
@@ -322,20 +322,25 @@ impl ReconnectingSlotSource {
         let opened = state.opened.as_ref().ok_or_else(|| {
             PortError::new(PortErrorKind::Unavailable, "SHM reader is not connected")
         })?;
+        self.validate_reader_fence(opened, "before the read")?;
         validate_writer_freshness(&opened.reader, self.config.writer_stale_after)?;
-        self.validate_publication_identity(&opened.reader)?;
-        let value = read(&opened.reader)?;
+        let value = read(&opened.reader);
+        self.validate_reader_fence(opened, "after the read")?;
+        value
+    }
+
+    fn validate_reader_fence(&self, opened: &OpenReader, phase: &str) -> PortResult<()> {
         let generation = opened.reader.generation();
-        if generation != opened.generation || generation & 1 != 0 {
+        if generation != opened.generation || generation == 0 || generation & 1 != 0 {
             return Err(PortError::new(
                 PortErrorKind::Conflict,
                 format!(
-                    "SHM generation changed from {} to {generation} during the read",
-                    opened.generation
+                    "SHM generation changed from {} to {generation} {phase}",
+                    opened.generation,
                 ),
             ));
         }
-        Ok(value)
+        self.validate_publication_identity(&opened.reader)
     }
 
     fn validate_publication_identity(&self, reader: &SlotReader) -> PortResult<()> {
@@ -398,27 +403,47 @@ impl SlotSource for ReconnectingSlotSource {
     }
 
     fn read_slot(&self, index: usize) -> PortResult<Option<SlotSnapshot>> {
+        self.read_slots(std::slice::from_ref(&index))?
+            .pop()
+            .ok_or_else(|| {
+                PortError::new(
+                    PortErrorKind::Permanent,
+                    "single-slot SHM read returned no result",
+                )
+            })
+    }
+
+    fn read_slots(&self, indices: &[usize]) -> PortResult<Vec<Option<SlotSnapshot>>> {
+        if indices.is_empty() {
+            return Ok(Vec::new());
+        }
         self.with_reader(|reader| {
-            if index >= reader.slot_count() {
+            let slot_count = reader.slot_count();
+            if let Some(index) = indices.iter().copied().find(|index| *index >= slot_count) {
                 return Err(PortError::new(
                     PortErrorKind::InvalidData,
-                    format!(
-                        "slot {index} is outside live slot_count {}",
-                        reader.slot_count()
-                    ),
+                    format!("slot {index} is outside live slot_count {slot_count}"),
                 ));
             }
-            let slot = SlotIo::read_slot(reader, index).ok_or_else(|| {
-                PortError::new(
-                    PortErrorKind::Conflict,
-                    format!("slot {index} was being updated during the read"),
-                )
-            })?;
-            Ok(Some(SlotSnapshot::new_with_raw(
-                slot.value,
-                slot.raw,
-                slot.timestamp_ms,
-            )))
+
+            indices
+                .iter()
+                .copied()
+                .map(|index| {
+                    let slot = SlotIo::read_slot(reader, index).ok_or_else(|| {
+                        PortError::new(
+                            PortErrorKind::Conflict,
+                            format!("slot {index} was being updated during the batch read"),
+                        )
+                    })?;
+                    Ok(Some(SlotSnapshot::new_with_raw(
+                        slot.value,
+                        slot.raw,
+                        slot.timestamp_ms,
+                        crate::decode_point_quality(slot.quality_code)?,
+                    )))
+                })
+                .collect()
         })
     }
 }
@@ -464,4 +489,87 @@ fn map_io_error(context: &str, error: std::io::Error) -> PortError {
         _ => PortErrorKind::Unavailable,
     };
     PortError::new(kind, format!("{context}: {error}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use aether_dataplane::{AuthorityWriteGuard, SlotWriter};
+
+    use super::*;
+
+    fn live_writer(path: &Path) -> SlotWriter {
+        let writer = SlotWriter::create(path, 3, 0xA37E, 11).expect("create v5 SHM test writer");
+        writer.set_direct(0, 10.0, 100.0, 1_000, 0);
+        writer.set_direct(1, 20.0, 200.0, 2_000, 0);
+        writer.set_direct(2, 30.0, 300.0, 3_000, 0);
+        writer.update_heartbeat(crate::timestamp_ms());
+        writer
+    }
+
+    #[test]
+    fn empty_batch_preserves_lazy_startup_without_a_writer() {
+        let source = ReconnectingSlotSource::new(ShmClientConfig::new(
+            "/missing/aether-batch-read-test.shm",
+            0xA37E,
+        ));
+
+        let samples = source
+            .read_slots(&[])
+            .expect("an empty read does not need a writer");
+
+        assert!(samples.is_empty());
+    }
+
+    #[test]
+    fn batch_reads_preserve_request_order_and_duplicates() {
+        let directory = tempfile::tempdir().expect("temporary SHM directory");
+        let path = directory.path().join("live.shm");
+        let writer = live_writer(&path);
+        let source = ReconnectingSlotSource::new(
+            ShmClientConfig::new(&path, 0xA37E)
+                .with_identity_check_interval(Duration::from_secs(60))
+                .with_writer_stale_after(Duration::from_secs(60)),
+        );
+        source
+            .accept_publication_identity(11, writer.generation())
+            .expect("pin the physical publication");
+
+        let samples = source
+            .read_slots(&[2, 0, 2])
+            .expect("read one fixed SHM generation");
+        let values = samples
+            .into_iter()
+            .map(|sample| sample.expect("written slot").value())
+            .collect::<Vec<_>>();
+
+        assert_eq!(values, vec![30.0, 10.0, 30.0]);
+    }
+
+    #[test]
+    fn batch_postcheck_rejects_a_generation_invalidated_during_the_read() {
+        let directory = tempfile::tempdir().expect("temporary SHM directory");
+        let path = directory.path().join("live.shm");
+        let writer = live_writer(&path);
+        let source = ReconnectingSlotSource::new(
+            ShmClientConfig::new(&path, 0xA37E)
+                .with_identity_check_interval(Duration::from_secs(60))
+                .with_writer_stale_after(Duration::from_secs(60)),
+        );
+        source
+            .accept_publication_identity(11, writer.generation())
+            .expect("pin the physical publication");
+
+        let error = source
+            .with_reader(|_| {
+                let authority = AuthorityWriteGuard::acquire(&path).map_err(map_dataplane_error)?;
+                writer
+                    .begin_generation_swap(&authority)
+                    .map_err(map_dataplane_error)?
+                    .commit();
+                Ok(())
+            })
+            .expect_err("post-read generation fence must reject the batch");
+
+        assert_eq!(error.kind(), PortErrorKind::Conflict);
+    }
 }

@@ -15,6 +15,7 @@ common = { path = "../../libs/common", default-features = false, features = ["sq
 aether-domain = { path = "../../crates/aether-domain" }
 aether-ports = { path = "../../crates/aether-ports" }
 aether-application = { path = "../../crates/aether-application" }
+aether-auth-jwt = { path = "../../libs/aether-auth-jwt" }
 aether-data-processing = { path = "../../crates/aether-data-processing" }
 aether-shm-bridge = { path = "../../libs/aether-shm-bridge" }
 aether-http-data-processor = { path = "adapters/http-data-processor" }

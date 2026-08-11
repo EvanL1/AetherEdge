@@ -4,8 +4,8 @@ use std::sync::Arc;
 
 use aether_domain::RuleId;
 use aether_ports::{
-    AutomationRuleMutator, AutomationRulesRevision, PortError, PortErrorKind, PortResult,
-    RevisionedRuleMutation, RuleMutation, RuleMutationReceipt,
+    AutomationRuleMutator, PortError, PortErrorKind, PortResult, RevisionedRuleMutation,
+    RuleMutation, RuleMutationReceipt,
 };
 use aether_rules::TriggerConfig;
 use async_trait::async_trait;
@@ -30,23 +30,6 @@ impl SqliteRuleMutator {
 
 #[async_trait]
 impl AutomationRuleMutator for SqliteRuleMutator {
-    async fn mutate(&self, mutation: RuleMutation) -> PortResult<RuleMutationReceipt> {
-        let revision = sqlx::query_scalar::<_, i64>(
-            "SELECT revision FROM configuration_revisions WHERE scope = 'automation_rules'",
-        )
-        .fetch_one(&self.pool)
-        .await
-        .map_err(database_error)?;
-        let revision = AutomationRulesRevision::new(u64::try_from(revision).map_err(|_| {
-            PortError::new(
-                PortErrorKind::Permanent,
-                "automation-rules revision became negative",
-            )
-        })?);
-        self.mutate_revisioned(RevisionedRuleMutation::new(mutation, revision))
-            .await
-    }
-
     async fn mutate_revisioned(
         &self,
         mutation: RevisionedRuleMutation,

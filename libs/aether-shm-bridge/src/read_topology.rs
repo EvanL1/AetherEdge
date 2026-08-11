@@ -221,7 +221,7 @@ impl ShmReadTopologyGeneration {
     }
 
     /// Returns the committed IO publication epoch pinned by this read view.
-    /// Zero is reserved for compatibility-only uncoordinated fixtures.
+    /// Zero means this lazy view has not yet validated an IO publication.
     #[must_use]
     pub fn publication_epoch(&self) -> u64 {
         self.publication_epoch.load(Ordering::Acquire)

@@ -25,16 +25,23 @@ use aether_io::{
     },
     error::IoError,
     runtime::start_cleanup_task,
-    shutdown_services, wait_for_shutdown,
+    shutdown_services,
 };
 use aether_routing::load_routing_maps;
 use aether_shm_bridge::{
-    AcquisitionCommitObserver, DEFAULT_MAX_SLOTS, PointWatchPublisher,
-    ShmChannelHealthWriterHandle, ShmRuntimeConfig, ShmWriterHandle, SubscriptionBitmap,
-    automation_bitmap_path_from_shm, begin_topology_publication, bitmap_path_for_consumer,
+    AcquisitionCommitObserver, PointWatchPublisher, ShmChannelHealthWriterHandle, ShmRuntimeConfig,
+    ShmWriterHandle, SubscriptionBitmap, begin_topology_publication, bitmap_path_for_consumer,
     channel_health_path_from_shm, cleanup_orphan_generation_files, default_shm_path,
     point_watch_socket_from_shm, timestamp_ms,
 };
+
+/// Resolve the SHM snapshot period from `SHM_SNAPSHOT_INTERVAL`.
+///
+/// `tokio::time::interval` panics on a zero period and the release profile sets
+/// `panic = "abort"`, so an unclamped `0` would kill the IO service at startup.
+fn snapshot_interval(configured_secs: Option<u64>) -> Duration {
+    Duration::from_secs(configured_secs.unwrap_or(300).max(1))
+}
 
 #[tokio::main]
 async fn main() -> AetherResult<()> {
@@ -100,15 +107,16 @@ async fn main() -> AetherResult<()> {
     // PointWatch drain task spawned during SHM writer initialization.
     let shutdown_token = CancellationToken::new();
 
-    let (initial_point_manifest, initial_health_manifest) =
-        aether_sqlite_topology::load_sqlite_shm_topology(&sqlite_pool)
-            .await
-            .map_err(|error| {
-                IoError::config(format!(
-                    "failed to load authoritative SHM topology from SQLite: {error}"
-                ))
-            })?
-            .into_manifests();
+    let initial_shm_topology = aether_sqlite_topology::load_sqlite_shm_topology(&sqlite_pool)
+        .await
+        .map_err(|error| {
+            IoError::config(format!(
+                "failed to load authoritative SHM topology from SQLite: {error}"
+            ))
+        })?;
+    let max_slots = u32::try_from(initial_shm_topology.max_slots())
+        .map_err(|_| IoError::config("shared_memory.max_slots exceeds the runtime u32 capacity"))?;
+    let (initial_point_manifest, initial_health_manifest) = initial_shm_topology.into_manifests();
     // ============ Phase 2.5: publish the authoritative SHM generation ============
     let (
         shm_handle,
@@ -123,25 +131,16 @@ async fn main() -> AetherResult<()> {
         let health_path = std::env::var("AETHER_CHANNEL_HEALTH_SHM_PATH")
             .map(std::path::PathBuf::from)
             .unwrap_or_else(|_| channel_health_path_from_shm(&shm_path));
-        let max_slots = sqlx::query_scalar::<_, String>(
-            "SELECT value FROM service_config WHERE service_name = 'global' AND key = 'shared_memory.max_slots'",
-        )
-        .fetch_optional(&sqlite_pool)
-        .await
-        .ok()
-        .flatten()
-        .and_then(|value| value.parse::<u32>().ok())
-        .unwrap_or(DEFAULT_MAX_SLOTS);
         let runtime_config = ShmRuntimeConfig::new(&shm_path, max_slots);
         let manifest = Arc::new(initial_point_manifest);
         let snapshot_path = std::env::var("SHM_SNAPSHOT_PATH")
             .map(std::path::PathBuf::from)
             .unwrap_or_else(|_| std::path::PathBuf::from("data/shm-snapshot.bin"));
-        let snapshot_interval = std::env::var("SHM_SNAPSHOT_INTERVAL")
-            .ok()
-            .and_then(|value| value.parse::<u64>().ok())
-            .map(Duration::from_secs)
-            .unwrap_or_else(|| Duration::from_secs(300));
+        let snapshot_interval = snapshot_interval(
+            std::env::var("SHM_SNAPSHOT_INTERVAL")
+                .ok()
+                .and_then(|value| value.parse::<u64>().ok()),
+        );
         let restore_on_start = std::env::var("SHM_RESTORE_ON_START")
             .map(|value| !value.eq_ignore_ascii_case("false"))
             .unwrap_or(true);
@@ -167,42 +166,34 @@ async fn main() -> AetherResult<()> {
             .into());
         }
 
-        let point_watch = match SubscriptionBitmap::open_or_create(
-            &automation_bitmap_path_from_shm(&shm_path),
-        ) {
-            Ok(automation_bitmap) => {
-                let automation_socket = std::env::var("AETHER_AUTOMATION_POINT_WATCH_SOCKET")
-                    .map(std::path::PathBuf::from)
-                    .unwrap_or_else(|_| point_watch_socket_from_shm(&shm_path, "automation"));
-                let mut targets = vec![(Arc::new(automation_bitmap), automation_socket)];
-                for (consumer, variable) in [
-                    ("alarm", "AETHER_ALARM_POINT_WATCH_SOCKET"),
-                    ("api", "AETHER_API_POINT_WATCH_SOCKET"),
-                ] {
-                    match SubscriptionBitmap::open_or_create(&bitmap_path_for_consumer(
-                        &shm_path, consumer,
-                    )) {
-                        Ok(bitmap) => {
-                            let socket = std::env::var(variable)
-                                .map(std::path::PathBuf::from)
-                                .unwrap_or_else(|_| {
-                                    point_watch_socket_from_shm(&shm_path, consumer)
-                                });
-                            targets.push((Arc::new(bitmap), socket));
-                        },
-                        Err(error) => warn!(
-                            "{consumer} PointWatch target disabled (bitmap create failed): {error}"
-                        ),
-                    }
-                }
-                let (publisher, drain) =
-                    PointWatchPublisher::new_with_fanout(targets, shutdown_token.clone());
-                Some((publisher, drain))
-            },
-            Err(error) => {
-                warn!("PointWatch disabled (bitmap create failed): {error}");
-                None
-            },
+        let mut point_watch_targets = Vec::new();
+        for (consumer, variable) in [
+            ("automation", "AETHER_AUTOMATION_POINT_WATCH_SOCKET"),
+            ("alarm", "AETHER_ALARM_POINT_WATCH_SOCKET"),
+            ("api", "AETHER_API_POINT_WATCH_SOCKET"),
+        ] {
+            match SubscriptionBitmap::open_or_create(
+                &bitmap_path_for_consumer(&shm_path, consumer),
+                max_slots as usize,
+            ) {
+                Ok(bitmap) => {
+                    let socket = std::env::var(variable)
+                        .map(std::path::PathBuf::from)
+                        .unwrap_or_else(|_| point_watch_socket_from_shm(&shm_path, consumer));
+                    point_watch_targets.push((Arc::new(bitmap), socket));
+                },
+                Err(error) => warn!(
+                    "{consumer} PointWatch target disabled (bitmap initialization failed): {error}"
+                ),
+            }
+        }
+        let point_watch = if point_watch_targets.is_empty() {
+            warn!("PointWatch disabled because no consumer bitmap could be initialized");
+            None
+        } else {
+            let (publisher, drain) =
+                PointWatchPublisher::new_with_fanout(point_watch_targets, shutdown_token.clone());
+            Some((publisher, drain))
         };
         let observer = point_watch
             .as_ref()
@@ -222,7 +213,7 @@ async fn main() -> AetherResult<()> {
                     "allocate coordinated SHM publication epoch: {error}"
                 ))
             })?;
-        let handle = match ShmWriterHandle::create_published_with_observer_at_epoch(
+        let handle = match ShmWriterHandle::create(
             runtime_config.clone(),
             Arc::clone(&manifest),
             restore_path,
@@ -232,18 +223,12 @@ async fn main() -> AetherResult<()> {
             Ok(handle) => handle,
             Err(error) if restore_path.is_some() => {
                 warn!("Snapshot restore failed, creating fresh: {error}");
-                ShmWriterHandle::create_published_with_observer_at_epoch(
-                    runtime_config,
-                    manifest,
-                    None,
-                    observer,
-                    publication_epoch,
-                )
-                .map_err(|error| {
-                    IoError::config(format!(
-                        "authoritative SHM writer initialization failed: {error}"
-                    ))
-                })?
+                ShmWriterHandle::create(runtime_config, manifest, None, observer, publication_epoch)
+                    .map_err(|error| {
+                        IoError::config(format!(
+                            "authoritative SHM writer initialization failed: {error}"
+                        ))
+                    })?
             },
             Err(error) => {
                 return Err(IoError::config(format!(
@@ -335,9 +320,7 @@ async fn main() -> AetherResult<()> {
     let channel_health_writer = {
         let health_path = initial_health_path;
         let writer = Arc::new(ShmChannelHealthWriterHandle::empty(&health_path));
-        match writer
-            .rebuild_for_publication(Arc::new(initial_health_manifest), initial_publication_epoch)
-        {
+        match writer.rebuild(Arc::new(initial_health_manifest), initial_publication_epoch) {
             Ok(()) => {
                 info!("Channel health SHM ready: {}", health_path.display());
             },
@@ -546,7 +529,7 @@ async fn main() -> AetherResult<()> {
 
     // The loopback service publishes /openapi.json; only aether-api owns the
     // externally reachable Swagger UI.
-    // Note: HTTP request logging middleware is applied in create_api_routes()
+    // Note: HTTP request logging middleware is applied by the API composition root.
 
     let socket = tokio::net::TcpSocket::new_v4()
         .map_err(|e| IoError::ConnectionError(format!("Failed to create socket: {}", e)))?;
@@ -573,7 +556,7 @@ async fn main() -> AetherResult<()> {
     });
 
     // Wait for shutdown and cleanup
-    wait_for_shutdown().await;
+    common::shutdown::wait_for_shutdown().await;
 
     // Signal SHM listener to shutdown
     let _ = shm_listener_shutdown_tx.send(true);
@@ -635,4 +618,27 @@ async fn main() -> AetherResult<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod snapshot_interval_tests {
+    use super::snapshot_interval;
+    use std::time::Duration;
+
+    #[test]
+    fn a_zero_configured_interval_is_clamped_instead_of_panicking() {
+        // `SHM_SNAPSHOT_INTERVAL=0` reached `tokio::time::interval`, which panics —
+        // fatal under the workspace release profile's `panic = "abort"`.
+        assert_eq!(snapshot_interval(Some(0)), Duration::from_secs(1));
+    }
+
+    #[test]
+    fn a_configured_interval_is_preserved() {
+        assert_eq!(snapshot_interval(Some(30)), Duration::from_secs(30));
+    }
+
+    #[test]
+    fn an_absent_setting_uses_the_default() {
+        assert_eq!(snapshot_interval(None), Duration::from_secs(300));
+    }
 }

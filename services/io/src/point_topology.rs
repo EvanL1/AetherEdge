@@ -571,9 +571,9 @@ fn validate_command(
 }
 
 fn validate_mutation(mutation: &PointTopologyMutation) -> Result<(), ApplicationError> {
-    if mutation.channel_id() >= MAX_CHANNEL_ID {
+    if mutation.channel_id() == 0 || mutation.channel_id() >= MAX_CHANNEL_ID {
         return Err(ApplicationError::InvalidChannelMutation(
-            "channel_id must be less than 10000".to_string(),
+            "channel_id must be between 1 and 9999".to_string(),
         ));
     }
     if mutation.point_count() == 0 {

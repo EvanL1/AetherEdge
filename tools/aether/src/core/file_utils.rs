@@ -392,7 +392,7 @@ mod tests {
                 "port": 6001
             },
             "shared_memory": {
-                "path": "/dev/shm/aether-rtdb.shm"
+                "path": "/dev/shm/aether-live-state.shm"
             },
             "logging": {
                 "level": "info",
@@ -408,7 +408,7 @@ mod tests {
         assert_eq!(result.get("api.port").unwrap(), &json!(6001));
         assert_eq!(
             result.get("shared_memory.path").unwrap(),
-            &json!("/dev/shm/aether-rtdb.shm")
+            &json!("/dev/shm/aether-live-state.shm")
         );
         assert_eq!(result.get("logging.level").unwrap(), &json!("info"));
     }

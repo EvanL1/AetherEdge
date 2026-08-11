@@ -186,13 +186,15 @@ itself provide leakage-safe historical model backtesting.
 
 ### Current quality limitation
 
-The domain and wire contracts carry sample quality, but the current production
-sources do not preserve device-origin quality end to end. The history schema
-stores numeric observations without device quality, and the SHM bridge marks
-accepted finite live values as `good`. Version 1 enforces freshness, gaps,
-missingness, numeric constraints, provenance, and covariate issue time. A site
-that requires original device quality must commission a quality-bearing source
-adapter before enabling processing.
+The domain, wire contracts, and SHM v5 live path preserve sample quality. Live
+reads combine the stored source quality with freshness policy rather than
+rewriting every finite value to `good`. The embedded history schema still
+stores numeric observations without device quality, so historical and mixed
+history/live frames cannot claim complete end-to-end quality fidelity. Version
+1 also enforces gaps, missingness, numeric constraints, provenance, and
+covariate issue time. A site that requires original quality for historical
+features must commission a quality-bearing history source before enabling the
+task.
 
 ## The task, binding, and processor split
 

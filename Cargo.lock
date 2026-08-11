@@ -36,6 +36,7 @@ dependencies = [
  "aether-shm-bridge",
  "aether-store-local",
  "anyhow",
+ "axum",
  "base64",
  "chrono",
  "clap",
@@ -58,6 +59,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
+ "tower",
  "tracing",
  "tracing-subscriber",
  "uuid",
@@ -111,6 +113,7 @@ name = "aether-api"
 version = "0.0.1"
 dependencies = [
  "aether-application",
+ "aether-auth-jwt",
  "aether-data-processing",
  "aether-domain",
  "aether-http-data-processor",
@@ -478,6 +481,7 @@ dependencies = [
  "futures",
  "hex",
  "http-body-util",
+ "jsonwebtoken",
  "rand 0.8.7",
  "reqwest",
  "rumqttc",
@@ -1405,6 +1409,8 @@ name = "common"
 version = "0.0.1"
 dependencies = [
  "aether-core",
+ "aether-domain",
+ "aether-ports",
  "aether-schema-macro",
  "anyhow",
  "axum",

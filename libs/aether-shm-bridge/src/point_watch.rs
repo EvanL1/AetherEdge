@@ -3,7 +3,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 use aether_domain::AcquiredPointSample;
 use tokio::io::AsyncWriteExt;
@@ -30,7 +30,6 @@ struct PublisherTarget {
 pub struct PointWatchPublisher {
     targets: Vec<PublisherTarget>,
     dropped_count: Arc<AtomicU64>,
-    producer_id: u64,
 }
 
 impl PointWatchPublisher {
@@ -60,7 +59,6 @@ impl PointWatchPublisher {
         let publisher = Arc::new(Self {
             targets,
             dropped_count,
-            producer_id: new_producer_id(),
         });
         let task = tokio::spawn(async move {
             for drain in drains {
@@ -75,12 +73,6 @@ impl PointWatchPublisher {
     pub fn dropped_count(&self) -> u64 {
         self.dropped_count.load(Ordering::Relaxed)
     }
-
-    /// Returns the IO process incarnation stamped into every event.
-    #[must_use]
-    pub const fn producer_id(&self) -> u64 {
-        self.producer_id
-    }
 }
 
 impl AcquisitionCommitObserver for PointWatchPublisher {
@@ -90,19 +82,23 @@ impl AcquisitionCommitObserver for PointWatchPublisher {
             if !target.subscriptions.is_watched(slot) {
                 continue;
             }
-            let hint = *event.get_or_insert_with(|| {
-                let address = sample.address();
-                PointWatchEvent::new(
-                    address.channel_id().get(),
-                    address.kind(),
-                    address.point_id().get(),
-                    slot as u64,
-                    sample.value(),
-                    sample.raw(),
-                    sample.timestamp().get(),
-                    self.producer_id,
-                )
-            });
+            let hint = match event {
+                Some(event) => event,
+                None => {
+                    let address = sample.address();
+                    let Ok(created) = PointWatchEvent::new(
+                        address.channel_id().get(),
+                        address.kind(),
+                        address.point_id().get(),
+                        slot,
+                    ) else {
+                        self.dropped_count.fetch_add(1, Ordering::Relaxed);
+                        continue;
+                    };
+                    event = Some(created);
+                    created
+                },
+            };
             if target.sender.try_send(hint).is_err() {
                 self.dropped_count.fetch_add(1, Ordering::Relaxed);
             }
@@ -180,12 +176,4 @@ async fn connect(path: &Path) -> Option<UnixStream> {
         .await
         .ok()
         .and_then(Result::ok)
-}
-
-fn new_producer_id() -> u64 {
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos() as u64;
-    (now ^ (u64::from(std::process::id()) << 32)).max(1)
 }

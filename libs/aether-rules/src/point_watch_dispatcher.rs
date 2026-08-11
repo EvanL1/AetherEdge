@@ -1,6 +1,7 @@
 //! PointWatch dispatcher — automation side
 //!
-//! Maintains a `(channel_id, point_id) → Vec<rule_id>` subscription index
+//! Maintains a `(channel_id, point_kind, point_id) → Vec<rule_id>`
+//! subscription index
 //! built from the loaded rules. When the service adapter supplies a
 //! [`PointWatchHint`], the dispatcher looks up matching rules and forwards a
 //! [`WatchEvent`] to the `RuleScheduler`'s event channel.
@@ -11,7 +12,8 @@
 //!    `PointWatchDispatcher::rebuild_from_rules` with that generation's typed
 //!    measurement bindings and point manifest.
 //! 2. `rebuild_from_rules` builds
-//!    `HashMap<(channel_id, point_id_on_channel), Vec<rule_id>>` without
+//!    `HashMap<(channel_id, point_kind, point_id_on_channel), Vec<rule_id>>`
+//!    without
 //!    consulting an independently mutable route cache.
 //!    It returns canonical channel-point subscriptions for the service adapter
 //!    to publish through its concrete event plane.
@@ -25,7 +27,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::sync::mpsc;
 use tracing::{debug, warn};
 
-use aether_domain::ChannelPointAddress;
+use aether_domain::{ChannelPointAddress, PointKind as ChannelPointKind};
 
 use crate::scheduler::TriggerConfig;
 
@@ -89,6 +91,8 @@ pub struct WatchEvent {
     pub rule_ids: Vec<i64>,
     /// Source channel (for cache-key reconstruction inside scheduler).
     pub channel_id: u32,
+    /// Source point kind on that channel.
+    pub point_kind: ChannelPointKind,
     /// Source point ID on that channel.
     pub point_id: u32,
     /// Engineering value at the time of emission.
@@ -107,6 +111,7 @@ pub struct WatchEvent {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PointWatchHint {
     channel_id: u32,
+    point_kind: ChannelPointKind,
     point_id: u32,
     value: f64,
     raw: f64,
@@ -118,6 +123,7 @@ impl PointWatchHint {
     #[must_use]
     pub const fn new(
         channel_id: u32,
+        point_kind: ChannelPointKind,
         point_id: u32,
         value: f64,
         raw: f64,
@@ -125,6 +131,7 @@ impl PointWatchHint {
     ) -> Self {
         Self {
             channel_id,
+            point_kind,
             point_id,
             value,
             raw,
@@ -135,17 +142,15 @@ impl PointWatchHint {
 
 /// automation-side PointWatch dispatcher.
 ///
-/// Holds a subscription index keyed by `(channel_id, point_id)` and forwards
-/// incoming [`PointWatchHint`] values to the `RuleScheduler` via an mpsc channel.
+/// Holds a subscription index keyed by `(channel_id, point_kind, point_id)` and
+/// forwards incoming [`PointWatchHint`] values to the `RuleScheduler` via an
+/// mpsc channel.
 pub struct PointWatchDispatcher {
-    /// (channel_id, point_id) → Vec<rule_id>
+    /// (channel_id, point_kind, point_id) → Vec<rule_id>
     ///
     /// `point_id` here is the **channel-level** point ID (i.e. the source key
     /// from the canonical channel topology), NOT the instance-level point ID.
-    /// `point_type` is intentionally absent from the key: T and S can both
-    /// trigger `OnChange` rules; the per-rule deadband logic in
-    /// `should_trigger_onchange` handles type disambiguation if needed.
-    sub_index: HashMap<(u32, u32), Vec<i64>>,
+    sub_index: HashMap<(u32, ChannelPointKind, u32), Vec<i64>>,
 
     /// Channel for forwarding wake-up events to the scheduler.
     event_tx: mpsc::Sender<WatchEvent>,
@@ -175,7 +180,8 @@ impl PointWatchDispatcher {
     /// 1. Clear the bitmap.
     /// 2. For each enabled `OnChange` rule, iterate its `point_refs`.
     /// 3. Look up the logical measurement in the pinned typed bindings.
-    /// 4. Insert `(channel_id, channel_point_id) → rule_id` into `sub_index`.
+    /// 4. Insert `(channel_id, point_kind, channel_point_id) → rule_id` into
+    ///    `sub_index`.
     /// 5. Return the canonical channel points that the service composition
     ///    must publish through its concrete event adapter.
     pub fn rebuild_from_rules(
@@ -218,7 +224,7 @@ impl PointWatchDispatcher {
 
                         // Register in sub_index
                         self.sub_index
-                            .entry((channel_id, channel_point_id))
+                            .entry((channel_id, target.kind(), channel_point_id))
                             .or_default()
                             .push(rule.rule_id());
 
@@ -245,7 +251,7 @@ impl PointWatchDispatcher {
             )
         });
         tracing::info!(
-            "PointWatchDispatcher: rebuilt index — {} (ch,pt) pairs, {} physical points selected",
+            "PointWatchDispatcher: rebuilt index — {} typed channel-point addresses, {} physical points selected",
             sub_count,
             subscriptions.len()
         );
@@ -256,7 +262,7 @@ impl PointWatchDispatcher {
     ///
     /// Non-blocking: uses `try_send`. On overflow, increments `dropped_count`.
     pub fn dispatch(&self, hint: PointWatchHint) {
-        let key = (hint.channel_id, hint.point_id);
+        let key = (hint.channel_id, hint.point_kind, hint.point_id);
         let Some(rule_ids) = self.sub_index.get(&key) else {
             return; // No rules subscribed to this point
         };
@@ -264,6 +270,7 @@ impl PointWatchDispatcher {
         let watch_event = WatchEvent {
             rule_ids: rule_ids.clone(),
             channel_id: hint.channel_id,
+            point_kind: hint.point_kind,
             point_id: hint.point_id,
             value: hint.value,
             raw: hint.raw,
@@ -273,8 +280,8 @@ impl PointWatchDispatcher {
         if self.event_tx.try_send(watch_event).is_err() {
             self.dropped_count.fetch_add(1, Ordering::Relaxed);
             warn!(
-                "PointWatchDispatcher: event dropped (channel full) ch={} pt={}",
-                hint.channel_id, hint.point_id
+                "PointWatchDispatcher: event dropped (channel full) ch={} kind={:?} pt={}",
+                hint.channel_id, hint.point_kind, hint.point_id
             );
         }
     }
@@ -284,7 +291,7 @@ impl PointWatchDispatcher {
         self.dropped_count.load(Ordering::Relaxed)
     }
 
-    /// Number of (channel_id, point_id) pairs in the subscription index.
+    /// Number of typed channel-point addresses in the subscription index.
     pub fn subscription_count(&self) -> usize {
         self.sub_index.len()
     }
@@ -317,12 +324,16 @@ mod tests {
     }
 
     fn channel_point(channel_id: u32, point_id: u32) -> ChannelPointAddress {
-        ChannelPointAddress::new(
-            ChannelId::new(channel_id),
-            PhysicalPointKind::Telemetry,
-            PointId::new(point_id),
-        )
-        .expect("acquisition address")
+        typed_channel_point(channel_id, PhysicalPointKind::Telemetry, point_id)
+    }
+
+    fn typed_channel_point(
+        channel_id: u32,
+        kind: PhysicalPointKind,
+        point_id: u32,
+    ) -> ChannelPointAddress {
+        ChannelPointAddress::new(ChannelId::new(channel_id), kind, PointId::new(point_id))
+            .expect("acquisition address")
     }
 
     fn make_bindings() -> Vec<MeasurementRouteBinding> {
@@ -417,8 +428,12 @@ mod tests {
         disp.rebuild_from_rules(&rules, &bindings);
 
         let hint = PointWatchHint::new(
-            1001, 0, // channel_pt=0
-            220.0, 2200.0, 12345,
+            1001,
+            PhysicalPointKind::Telemetry,
+            0, // channel_pt=0
+            220.0,
+            2200.0,
+            12345,
         );
 
         disp.dispatch(hint);
@@ -426,10 +441,86 @@ mod tests {
         let watch_ev = rx.try_recv().expect("should have event");
         assert_eq!(watch_ev.rule_ids, vec![42]);
         assert_eq!(watch_ev.channel_id, 1001);
+        assert_eq!(watch_ev.point_kind, PhysicalPointKind::Telemetry);
         assert_eq!(watch_ev.point_id, 0);
         assert!((watch_ev.value - 220.0).abs() < f64::EPSILON);
         assert!((watch_ev.raw - 2200.0).abs() < f64::EPSILON);
         assert_eq!(watch_ev.timestamp_ms, 12345);
+    }
+
+    #[test]
+    fn same_channel_and_point_id_remain_isolated_by_physical_kind() {
+        let (mut dispatcher, mut events) = PointWatchDispatcher::new();
+        let rules = vec![
+            TestRule {
+                id: 50,
+                enabled: true,
+                trigger: TriggerConfig::OnChange {
+                    point_refs: vec![PointRef {
+                        instance: 5,
+                        point_type: PointKind::Measurement,
+                        point: 10,
+                    }],
+                    time_deadband_ms: None,
+                    value_deadband: None,
+                },
+            },
+            TestRule {
+                id: 51,
+                enabled: true,
+                trigger: TriggerConfig::OnChange {
+                    point_refs: vec![PointRef {
+                        instance: 5,
+                        point_type: PointKind::Measurement,
+                        point: 11,
+                    }],
+                    time_deadband_ms: None,
+                    value_deadband: None,
+                },
+            },
+        ];
+        let bindings = [
+            MeasurementRouteBinding::new(
+                5,
+                10,
+                typed_channel_point(1001, PhysicalPointKind::Telemetry, 0),
+            ),
+            MeasurementRouteBinding::new(
+                5,
+                11,
+                typed_channel_point(1001, PhysicalPointKind::Status, 0),
+            ),
+        ];
+
+        let subscriptions = dispatcher.rebuild_from_rules(&rules, &bindings);
+        assert_eq!(subscriptions.len(), 2);
+        assert_eq!(dispatcher.subscription_count(), 2);
+
+        dispatcher.dispatch(PointWatchHint::new(
+            1001,
+            PhysicalPointKind::Telemetry,
+            0,
+            1.0,
+            1.0,
+            1,
+        ));
+        let telemetry = events.try_recv().expect("telemetry event");
+        assert_eq!(telemetry.rule_ids, vec![50]);
+        assert_eq!(telemetry.point_kind, PhysicalPointKind::Telemetry);
+        assert!(events.try_recv().is_err());
+
+        dispatcher.dispatch(PointWatchHint::new(
+            1001,
+            PhysicalPointKind::Status,
+            0,
+            1.0,
+            1.0,
+            2,
+        ));
+        let status = events.try_recv().expect("status event");
+        assert_eq!(status.rule_ids, vec![51]);
+        assert_eq!(status.point_kind, PhysicalPointKind::Status);
+        assert!(events.try_recv().is_err());
     }
 
     #[test]
@@ -459,12 +550,26 @@ mod tests {
             .rebuild_from_rules(&rules, &[MeasurementRouteBinding::new(5, 10, new_target)]);
         assert_eq!(new_subscriptions, [new_target]);
 
-        dispatcher.dispatch(PointWatchHint::new(1001, 0, 1.0, 1.0, 1));
+        dispatcher.dispatch(PointWatchHint::new(
+            1001,
+            PhysicalPointKind::Telemetry,
+            0,
+            1.0,
+            1.0,
+            1,
+        ));
         assert!(
             events.try_recv().is_err(),
             "the dispatcher must not consult the old route generation"
         );
-        dispatcher.dispatch(PointWatchHint::new(1002, 0, 2.0, 2.0, 2));
+        dispatcher.dispatch(PointWatchHint::new(
+            1002,
+            PhysicalPointKind::Telemetry,
+            0,
+            2.0,
+            2.0,
+            2,
+        ));
         assert_eq!(
             events.try_recv().expect("replacement route event").rule_ids,
             vec![43]
@@ -475,7 +580,7 @@ mod tests {
     fn dispatch_miss_sends_nothing() {
         let (disp, mut rx) = PointWatchDispatcher::new();
 
-        let hint = PointWatchHint::new(9999, 0, 0.0, 0.0, 0);
+        let hint = PointWatchHint::new(9999, PhysicalPointKind::Telemetry, 0, 0.0, 0.0, 0);
         disp.dispatch(hint);
         assert!(rx.try_recv().is_err());
     }
@@ -487,14 +592,14 @@ mod tests {
         let d = PointWatchDispatcher {
             sub_index: {
                 let mut m = HashMap::new();
-                m.insert((1001u32, 0u32), vec![1i64]);
+                m.insert((1001u32, PhysicalPointKind::Telemetry, 0u32), vec![1i64]);
                 m
             },
             event_tx: tx_cap,
             dropped_count: Arc::clone(&dropped_count),
         };
 
-        let hint = PointWatchHint::new(1001, 0, 1.0, 1.0, 0);
+        let hint = PointWatchHint::new(1001, PhysicalPointKind::Telemetry, 0, 1.0, 1.0, 0);
 
         d.dispatch(hint); // fills the channel
         d.dispatch(hint); // overflows → dropped

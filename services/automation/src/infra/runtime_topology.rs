@@ -10,7 +10,7 @@ use aether_ports::{ChannelHealthObservation, PortError, PortErrorKind, PortResul
 use aether_rules::{MeasurementRouteBinding, RuleScheduler};
 use aether_shm_bridge::{
     ChannelPointManifest, PhysicalPointAddress, PointWatchEvent, ShmClientConfig,
-    ShmDeviceCommandSink, ShmReadTopologyGeneration, SlotSource, SubscriptionBitmap,
+    ShmDeviceCommandSink, ShmReadTopologyGeneration, SlotSnapshot, SlotSource, SubscriptionBitmap,
 };
 use aether_sqlite_topology::{
     LogicalCommandRoutes, LogicalPointRoutes, RoutedCommandTarget, SqliteLiveTopologySnapshot,
@@ -203,7 +203,10 @@ impl AutomationTopologyGeneration {
                 bitmap.clear_all();
                 return false;
             };
-            bitmap.set_watched(slot);
+            if bitmap.set_watched(slot).is_err() {
+                bitmap.clear_all();
+                return false;
+            }
         }
         true
     }
@@ -253,6 +256,39 @@ impl AutomationTopologyGeneration {
     #[must_use]
     pub fn accepts_point_watch_event(&self, event: PointWatchEvent) -> bool {
         event.matches_manifest(self.read.point_manifest())
+    }
+
+    /// Re-reads the authoritative SHM sample named by a validated wake-up hint.
+    ///
+    /// PointWatch carries no measurement payload. A remapped, unwritten, or
+    /// invalid hint produces no sample; read-side generation fencing remains
+    /// owned by the pinned SHM source.
+    pub fn read_point_watch_sample(
+        &self,
+        event: PointWatchEvent,
+    ) -> PortResult<Option<SlotSnapshot>> {
+        if !self.accepts_point_watch_event(event) {
+            return Ok(None);
+        }
+        let slot = usize::try_from(event.slot_index()).map_err(|_| {
+            PortError::new(
+                PortErrorKind::InvalidData,
+                "PointWatch slot does not fit this platform",
+            )
+        })?;
+        let Some(sample) = self.read.point_source().read_slot(slot)? else {
+            return Ok(None);
+        };
+        if sample.value().is_nan() {
+            return Ok(None);
+        }
+        if !sample.value().is_finite() {
+            return Err(PortError::new(
+                PortErrorKind::InvalidData,
+                "authoritative SHM contains a non-finite PointWatch sample",
+            ));
+        }
+        Ok(Some(sample))
     }
 
     /// Accepts a hint only for the exact sequence whose index was published.

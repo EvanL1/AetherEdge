@@ -85,7 +85,7 @@ Device ──frame──► aether-io protocol adapter (decode)
    producer id + sequence number for deduplication. If aether-io is down, the
    notifier reconnects with exponential backoff (1–5 s). Native deployments
    default to `/tmp/aether-m2c.sock`; Docker sets `AETHER_M2C_SOCKET` to
-   `/shm/rtdb/aether-m2c.sock` so both isolated containers see the socket.
+   `/shm/aether/aether-m2c.sock` so both isolated containers see the socket.
 6. aether-io's `ShmCommandListener`
    (`services/io/src/core/channels/shm_listener.rs`) receives the
    notification, rejects expired frames, deduplicates by sequence, and forwards

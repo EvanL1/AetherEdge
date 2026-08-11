@@ -1,14 +1,15 @@
-//! Shared Memory CLI - Interactive REPL for aether-rtdb
+//! Shared Memory CLI for the authoritative live-state plane.
 //!
 //! Provides a mysql-cli style interactive interface for reading/writing
 //! shared memory data with zero-latency access.
 
-use aether_dataplane::SlotReader;
-use aether_domain::PointKind;
+use aether_domain::{PointKind, PointQuality};
 use aether_routing::{RoutingCache, load_routing_maps};
-#[cfg(test)]
-use aether_shm_bridge::PhysicalPointAddress;
-use aether_shm_bridge::{ChannelPointManifest, ShmChannelReader, default_shm_path};
+use aether_shm_bridge::{
+    ChannelPointManifest, DEFAULT_MAX_SLOTS, PhysicalPointAddress, ShmChannelReader,
+    ShmObservationStatus, ShmObserver, ShmPlaneObservation, ShmTopologyObservation,
+    default_shm_path,
+};
 use anyhow::{Context, Result, bail};
 use clap::Subcommand;
 use colored::*;
@@ -20,6 +21,7 @@ use rustyline::hint::Hinter;
 use rustyline::validate::Validator;
 use rustyline::{Editor, Helper};
 use std::collections::{BTreeMap, BTreeSet};
+use std::net::SocketAddr;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
@@ -35,8 +37,12 @@ pub enum ShmCommands {
         key: String,
     },
 
-    /// Show shared memory statistics
-    Info,
+    /// Inspect committed point/health planes and writer liveness
+    Info {
+        /// Validate headers and commit without scanning every slot
+        #[arg(long)]
+        no_scan: bool,
+    },
 
     /// Watch key for changes (real-time monitoring)
     Watch {
@@ -50,6 +56,17 @@ pub enum ShmCommands {
 
     /// Real-time TUI dashboard (like htop)
     Top,
+
+    /// Serve the read-only SHM observability dashboard over loopback HTTP
+    Serve {
+        /// Loopback address for the local dashboard
+        #[arg(long, default_value = "127.0.0.1:6070")]
+        bind: SocketAddr,
+
+        /// Validate headers and commit without scanning every slot
+        #[arg(long)]
+        no_scan: bool,
+    },
 }
 
 /// Parsed shared memory key
@@ -300,10 +317,15 @@ fn complete_key(key_prefix: &str, start_pos: usize) -> (usize, Vec<Pair>) {
 }
 
 /// Main entry point - handles both REPL and one-shot modes
-pub async fn handle_command(cmd: Option<ShmCommands>, data_directory: &Path) -> Result<()> {
+pub async fn handle_command(
+    cmd: Option<ShmCommands>,
+    data_directory: &Path,
+    json: bool,
+) -> Result<()> {
     match cmd {
+        None if json => bail!("--json requires an explicit 'shm' subcommand"),
         None => run_repl(data_directory).await,
-        Some(cmd) => handle_single_command(cmd, data_directory).await,
+        Some(cmd) => handle_single_command(cmd, data_directory, json).await,
     }
 }
 
@@ -389,15 +411,13 @@ impl ShmRuntimeView {
             };
             keys.insert(key.to_string(), key);
         }
-        if let Some(manifest) = self.reader.manifest() {
-            for (_, address) in manifest.iter_physical_points() {
-                let key = ShmKey::Channel {
-                    channel_id: address.channel_id().get(),
-                    point_type: model_point_type(address.kind()),
-                    point_id: address.point_id().get(),
-                };
-                keys.insert(key.to_string(), key);
-            }
+        for (_, address) in self.reader.manifest().iter_physical_points() {
+            let key = ShmKey::Channel {
+                channel_id: address.channel_id().get(),
+                point_type: model_point_type(address.kind()),
+                point_id: address.point_id().get(),
+            };
+            keys.insert(key.to_string(), key);
         }
         keys.into_values().collect()
     }
@@ -423,24 +443,45 @@ impl ShmRuntimeView {
         self.reader.channel_ids().collect()
     }
 
-    pub(crate) fn slot_count(&self) -> usize {
-        self.reader.slot_count()
-    }
-
-    pub(crate) fn max_slots(&self) -> u32 {
-        self.reader.max_slots()
-    }
-
-    pub(crate) fn writer_heartbeat(&self) -> u64 {
-        self.reader.writer_heartbeat()
-    }
-
-    pub(crate) fn generation(&self) -> u64 {
-        self.reader.generation()
-    }
-
-    pub(crate) fn is_writer_alive(&self, timeout: Duration) -> bool {
-        self.reader.is_writer_alive(timeout)
+    #[allow(clippy::disallowed_methods)] // JSON is the bounded read-only dashboard DTO.
+    pub(crate) fn point_preview(&self, limit: usize) -> Result<Vec<serde_json::Value>> {
+        self.reader
+            .manifest()
+            .iter_physical_points()
+            .take(limit)
+            .map(|(slot, address)| {
+                let sample = self
+                    .reader
+                    .read_physical(address)
+                    .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+                let kind = match address.kind() {
+                    PointKind::Telemetry => "T",
+                    PointKind::Status => "S",
+                    PointKind::Command => "C",
+                    PointKind::Action => "A",
+                };
+                let mut value = serde_json::json!({
+                    "slot": slot,
+                    "channel_id": address.channel_id().get(),
+                    "kind": kind,
+                    "point_id": address.point_id().get(),
+                    "present": sample.is_some(),
+                });
+                if let Some(sample) = sample {
+                    let quality = match sample.quality() {
+                        PointQuality::Good => "good",
+                        PointQuality::Uncertain => "uncertain",
+                        PointQuality::Bad => "bad",
+                        PointQuality::Unavailable => "unavailable",
+                    };
+                    value["value"] = serde_json::json!(sample.value());
+                    value["raw"] = serde_json::json!(sample.raw());
+                    value["timestamp_ms"] = serde_json::json!(sample.timestamp_ms());
+                    value["quality"] = serde_json::json!(quality);
+                }
+                Ok(value)
+            })
+            .collect()
     }
 }
 
@@ -463,28 +504,46 @@ fn model_point_type(kind: PointKind) -> PointType {
 }
 
 async fn load_channel_point_manifest(pool: &sqlx::SqlitePool) -> Result<ChannelPointManifest> {
-    let mut counts = BTreeMap::<u32, [u32; 4]>::new();
-    for (table, kind_index) in [
-        ("telemetry_points", 0_usize),
-        ("signal_points", 1),
-        ("control_points", 2),
-        ("adjustment_points", 3),
+    let mut addresses = Vec::new();
+    for (table, kind) in [
+        ("telemetry_points", PointKind::Telemetry),
+        ("signal_points", PointKind::Status),
+        ("control_points", PointKind::Command),
+        ("adjustment_points", PointKind::Action),
     ] {
         let query =
-            format!("SELECT channel_id, MAX(point_id) + 1 FROM {table} GROUP BY channel_id");
+            format!("SELECT channel_id, point_id FROM {table} ORDER BY channel_id, point_id");
         let rows = sqlx::query_as::<_, (i64, i64)>(&query)
             .fetch_all(pool)
             .await
-            .with_context(|| format!("failed to load channel layout from {table}"))?;
-        for (channel_id, point_count) in rows {
+            .with_context(|| format!("failed to load configured points from {table}"))?;
+        for (channel_id, point_id) in rows {
             let channel_id = u32::try_from(channel_id)
                 .with_context(|| format!("invalid channel id {channel_id} in {table}"))?;
-            let point_count = u32::try_from(point_count)
-                .with_context(|| format!("invalid point count {point_count} in {table}"))?;
-            counts.entry(channel_id).or_insert([0; 4])[kind_index] = point_count;
+            let point_id = u32::try_from(point_id)
+                .with_context(|| format!("invalid point id {point_id} in {table}"))?;
+            addresses.push(PhysicalPointAddress::from_raw_ids(
+                channel_id, kind, point_id,
+            ));
         }
     }
-    Ok(ChannelPointManifest::from_map(counts))
+    let max_slots = sqlx::query_scalar::<_, String>(
+        "SELECT value FROM service_config \
+         WHERE service_name = 'global' AND key = 'shared_memory.max_slots'",
+    )
+    .fetch_optional(pool)
+    .await
+    .ok()
+    .flatten()
+    .map(|value| {
+        value
+            .parse::<u32>()
+            .context("invalid shared_memory.max_slots value")
+    })
+    .transpose()?
+    .unwrap_or(DEFAULT_MAX_SLOTS);
+    ChannelPointManifest::compile(addresses, max_slots as usize)
+        .map_err(|error| anyhow::anyhow!(error.to_string()))
 }
 
 pub(crate) async fn open_reader(data_directory: &Path) -> Result<ShmRuntimeView> {
@@ -518,33 +577,62 @@ async fn open_reader_at(data_directory: &Path, shm_path: &Path) -> Result<ShmRun
     )
 }
 
-fn open_raw_reader() -> Result<SlotReader> {
-    let path = default_shm_path();
-    SlotReader::open(&path)
-        .with_context(|| format!("failed to open shared memory at {}", path.display()))
+pub(crate) fn default_observer(scan_slots: bool) -> Result<ShmObserver> {
+    let point_path = default_shm_path();
+    let mut observer = ShmObserver::new(point_path).with_slot_scan(scan_slots);
+    if let Ok(path) = std::env::var("AETHER_CHANNEL_HEALTH_SHM_PATH") {
+        observer = observer.with_health_path(path);
+    }
+    let stale_after_ms = sample_stale_after_ms();
+    let healthy_after_ms = (stale_after_ms / 10).min(3_000);
+    observer
+        .with_liveness_thresholds(healthy_after_ms, stale_after_ms)
+        .map_err(|error| anyhow::anyhow!(error.to_string()))
 }
 
 /// Handle single command (one-shot mode)
-async fn handle_single_command(cmd: ShmCommands, data_directory: &Path) -> Result<()> {
+async fn handle_single_command(cmd: ShmCommands, data_directory: &Path, json: bool) -> Result<()> {
     match cmd {
         ShmCommands::Get { key } => {
             let reader = open_reader(data_directory).await?;
             let parsed = parse_key(&key)?;
-            let value = get_value(&reader, &parsed)?;
-            match value {
-                Some(v) => println!("{}", v),
-                None => println!("(nil)"),
+            let sample = get_sample(&reader, &parsed)?;
+            let now_ms = chrono::Utc::now().timestamp_millis();
+            if json {
+                crate::output::print_success(sample_json(
+                    &key,
+                    sample,
+                    now_ms,
+                    sample_stale_after_ms(),
+                ));
+            } else {
+                println!("{}", render_sample(sample, now_ms, sample_stale_after_ms()));
             }
         },
-        ShmCommands::Info => {
-            print_raw_info(&open_raw_reader()?);
+        ShmCommands::Info { no_scan } => {
+            let observation = default_observer(!no_scan)?.inspect();
+            print_observation(&observation, json);
         },
         ShmCommands::Watch { key, interval_ms } => {
             let reader = open_reader(data_directory).await?;
             let parsed = parse_key(&key)?;
-            watch_key(&reader, &parsed, interval_ms)?;
+            watch_key(&reader, &parsed, interval_ms, json)?;
         },
+        ShmCommands::Top if json => bail!("--json cannot be combined with 'shm top'"),
         ShmCommands::Top => run_dashboard(data_directory).await?,
+        ShmCommands::Serve { .. } if json => {
+            bail!("--json cannot be combined with 'shm serve'")
+        },
+        ShmCommands::Serve { bind, no_scan } => {
+            let point_view = match open_reader(data_directory).await {
+                Ok(reader) => Some(Arc::new(reader)),
+                Err(error) => {
+                    tracing::warn!(error = %error, "typed point preview unavailable");
+                    None
+                },
+            };
+            crate::shm_web::serve_dashboard(default_observer(!no_scan)?, point_view, bind).await?;
+        },
     }
 
     Ok(())
@@ -552,76 +640,237 @@ async fn handle_single_command(cmd: ShmCommands, data_directory: &Path) -> Resul
 
 /// Get value from shared memory
 pub(crate) fn get_value(reader: &ShmRuntimeView, key: &ShmKey) -> Result<Option<f64>> {
+    Ok(get_sample(reader, key)?.map(|(value, _)| value))
+}
+
+/// Reads a point's newest value together with the timestamp it was stamped at.
+///
+/// `get_value` alone cannot tell a live reading from one frozen by a channel
+/// that stopped answering, because both are the same number. Callers that show
+/// a value to a person need the timestamp too.
+pub(crate) fn get_sample(reader: &ShmRuntimeView, key: &ShmKey) -> Result<Option<(f64, u64)>> {
     let Some((channel_id, kind, point_id)) = reader.resolve_key(key) else {
         return Ok(None);
     };
     reader
         .reader
         .read_channel(channel_id, kind, point_id)
-        .map(|sample| sample.map(|sample| sample.value()))
+        .map(|sample| sample.map(|sample| (sample.value(), sample.timestamp_ms())))
         .with_context(|| format!("failed to read named SHM point {key}"))
 }
 
-fn print_raw_info(reader: &SlotReader) {
-    let path = default_shm_path();
-
-    println!("{}", "=== Shared Memory Stats ===".bright_cyan());
-    println!("Path:          {}", path.display());
-    println!("Total Slots:   {}", reader.slot_count());
-    println!("Max Slots:     {}", reader.max_slots());
-    let header = reader.header();
-    println!("Generation:    {}", header.writer_generation);
-    println!("Layout Hash:   0x{:016x}", header.routing_hash);
-    let heartbeat = reader.writer_heartbeat();
-    let heartbeat_age = aether_dataplane::core::config::timestamp_ms().saturating_sub(heartbeat);
-    let alive = reader.is_writer_alive(5000);
-    let status = if alive {
-        format!("{} ({}ms ago)", "alive".green(), heartbeat_age)
-    } else {
-        format!("{} ({}ms ago)", "dead/stale".red(), heartbeat_age)
+/// Renders a value with the freshness of the sample it came from.
+///
+/// A frozen reading is the same number as a live one, so printing the number
+/// by itself is what let a dead device look healthy in `shm get` and `watch`.
+fn render_sample(sample: Option<(f64, u64)>, now_ms: i64, stale_after_ms: u64) -> String {
+    let Some((value, sample_ms)) = sample else {
+        return "(nil)".to_string();
     };
-    println!("Writer:        {}", status);
+    let age_ms = now_ms - i64::try_from(sample_ms).unwrap_or(i64::MAX);
+    match PointQuality::for_sample_age(age_ms, stale_after_ms) {
+        PointQuality::Good => format!("{value}  [good, {age_ms}ms ago]"),
+        _ => format!("{}  [{}, {}ms ago]", value, "stale".red(), age_ms.max(0)),
+    }
 }
 
-fn print_runtime_info(reader: &ShmRuntimeView) {
-    let path = default_shm_path();
-    println!("{}", "=== Shared Memory Stats ===".bright_cyan());
-    println!("Path:          {}", path.display());
-    println!(
-        "Instances:     {} (via routing)",
-        reader.instance_ids().len()
-    );
-    println!("Channels:      {}", reader.channel_ids().len());
-    println!("Total Slots:   {}", reader.slot_count());
-    println!("Max Slots:     {}", reader.max_slots());
-    println!("Generation:    {}", reader.generation());
-    let heartbeat = reader.writer_heartbeat();
-    let heartbeat_age = aether_dataplane::core::config::timestamp_ms().saturating_sub(heartbeat);
-    let status = if reader.is_writer_alive(Duration::from_secs(5)) {
-        format!("{} ({}ms ago)", "alive".green(), heartbeat_age)
-    } else {
-        format!("{} ({}ms ago)", "dead/stale".red(), heartbeat_age)
+#[allow(clippy::disallowed_methods)] // `json!` only serializes validated scalar observations.
+fn sample_json(
+    key: &str,
+    sample: Option<(f64, u64)>,
+    observed_at_ms: i64,
+    stale_after_ms: u64,
+) -> serde_json::Value {
+    let Some((value, sample_ms)) = sample else {
+        return serde_json::json!({
+            "key": key,
+            "observed_at_ms": observed_at_ms,
+            "present": false,
+        });
     };
-    println!("Writer:        {}", status);
+    let age_ms = observed_at_ms - i64::try_from(sample_ms).unwrap_or(i64::MAX);
+    let quality = match PointQuality::for_sample_age(age_ms, stale_after_ms) {
+        PointQuality::Good => "good",
+        _ => "stale",
+    };
+    serde_json::json!({
+        "key": key,
+        "observed_at_ms": observed_at_ms,
+        "present": true,
+        "value": value,
+        "sample_timestamp_ms": sample_ms,
+        "age_ms": age_ms,
+        "freshness": quality,
+    })
+}
+
+#[allow(clippy::disallowed_methods)] // `json!` only serializes read-only observer values.
+pub(crate) fn observation_json(observation: &ShmTopologyObservation) -> serde_json::Value {
+    let findings = observation
+        .findings
+        .iter()
+        .map(|finding| {
+            serde_json::json!({
+                "severity": finding.severity.as_str(),
+                "code": finding.code,
+                "message": finding.message,
+            })
+        })
+        .collect::<Vec<_>>();
+    serde_json::json!({
+        "status": observation.status.as_str(),
+        "observed_at_ms": observation.observed_at_ms,
+        "publication_epoch": observation.publication_epoch,
+        "point": observation.point.as_ref().map(plane_json),
+        "health": observation.health.as_ref().map(plane_json),
+        "findings": findings,
+    })
+}
+
+#[allow(clippy::disallowed_methods)] // `json!` only serializes read-only observer values.
+fn plane_json(plane: &ShmPlaneObservation) -> serde_json::Value {
+    let slots = plane.slots.map(|slots| {
+        serde_json::json!({
+            "total": slots.total,
+            "present": slots.present,
+            "unwritten": slots.unwritten,
+            "contended": slots.contended,
+            "good": slots.good,
+            "uncertain": slots.uncertain,
+            "bad": slots.bad,
+            "unavailable": slots.unavailable,
+            "unknown_quality": slots.unknown_quality,
+            "online": slots.online,
+            "offline": slots.offline,
+            "invalid_values": slots.invalid_values,
+        })
+    });
+    serde_json::json!({
+        "path": plane.path.display().to_string(),
+        "version": plane.version,
+        "slot_count": plane.slot_count,
+        "file_size": plane.file_size,
+        "layout_hash": format!("0x{:016x}", plane.layout_hash),
+        "writer_generation": plane.writer_generation,
+        "publication_epoch": plane.publication_epoch,
+        "writer_heartbeat_ms": plane.writer_heartbeat_ms,
+        "heartbeat_age_ms": plane.heartbeat_age_ms,
+        "slots": slots,
+    })
+}
+
+/// Freshness bound shared with the read-side SHM adapters.
+///
+/// Reuses `SHM_WRITER_STALE_AFTER_MS` rather than adding a second dial, so
+/// every surface that grades a sample answers with one operator setting.
+fn sample_stale_after_ms() -> u64 {
+    std::env::var("SHM_WRITER_STALE_AFTER_MS")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(30_000)
+}
+
+fn print_observation(observation: &ShmTopologyObservation, json: bool) {
+    if json {
+        crate::output::print_success(observation_json(observation));
+        return;
+    }
+    let status = match observation.status {
+        ShmObservationStatus::Healthy => observation.status.as_str().to_uppercase().green(),
+        ShmObservationStatus::Degraded => observation.status.as_str().to_uppercase().yellow(),
+        ShmObservationStatus::Unhealthy => observation.status.as_str().to_uppercase().red(),
+    };
+    println!("{} {status}", "Aether SHM".bright_cyan().bold());
+    println!(
+        "Publication:   {}",
+        observation
+            .publication_epoch
+            .map_or_else(|| "unverified".to_owned(), |epoch| epoch.to_string())
+    );
+    if let Some(point) = &observation.point {
+        print_plane("Point", point);
+    }
+    if let Some(health) = &observation.health {
+        print_plane("Health", health);
+    }
+    if !observation.findings.is_empty() {
+        println!("Findings:");
+        for finding in &observation.findings {
+            let marker = match finding.severity {
+                aether_shm_bridge::ShmObservationSeverity::Degraded => "!".yellow(),
+                aether_shm_bridge::ShmObservationSeverity::Unhealthy => "✗".red(),
+            };
+            println!("  {marker} {}: {}", finding.code, finding.message);
+        }
+    }
+}
+
+fn print_plane(label: &str, plane: &ShmPlaneObservation) {
+    println!("{label} plane:");
+    println!("  path:        {}", plane.path.display());
+    println!(
+        "  slots/size:  {} / {} bytes",
+        plane.slot_count, plane.file_size
+    );
+    println!(
+        "  generation:  {}  heartbeat: {}ms  hash: 0x{:016x}",
+        plane.writer_generation, plane.heartbeat_age_ms, plane.layout_hash
+    );
+    if let Some(slots) = plane.slots {
+        println!(
+            "  contents:    present={} unwritten={} good={} uncertain={} bad={} unavailable={} contended={}",
+            slots.present,
+            slots.unwritten,
+            slots.good,
+            slots.uncertain,
+            slots.bad,
+            slots.unavailable,
+            slots.contended,
+        );
+        if label == "Health" {
+            println!(
+                "  channels:    online={} offline={}",
+                slots.online, slots.offline
+            );
+        }
+    }
 }
 
 /// Watch a key for changes with polling
-fn watch_key(reader: &ShmRuntimeView, key: &ShmKey, interval_ms: u64) -> Result<()> {
-    println!(
-        "Watching {} ({} to stop)",
-        key.to_string().bright_yellow(),
-        "Ctrl+C".bright_cyan()
-    );
+fn watch_key(reader: &ShmRuntimeView, key: &ShmKey, interval_ms: u64, json: bool) -> Result<()> {
+    if !json {
+        println!(
+            "Watching {} ({} to stop)",
+            key.to_string().bright_yellow(),
+            "Ctrl+C".bright_cyan()
+        );
+    }
 
     let interval = Duration::from_millis(interval_ms);
 
+    let stale_after_ms = sample_stale_after_ms();
+
     loop {
-        let value = get_value(reader, key)?;
+        let sample = get_sample(reader, key)?;
         let now = format_current_time();
 
-        match value {
-            Some(v) => println!("[{}] {}", now, v),
-            None => println!("[{}] (nil)", now),
+        let observed_at_ms = chrono::Utc::now().timestamp_millis();
+        if json {
+            println!(
+                "{}",
+                serde_json::to_string(&sample_json(
+                    &key.to_string(),
+                    sample,
+                    observed_at_ms,
+                    stale_after_ms,
+                ))?
+            );
+        } else {
+            println!(
+                "[{}] {}",
+                now,
+                render_sample(sample, observed_at_ms, stale_after_ms)
+            );
         }
 
         std::thread::sleep(interval);
@@ -657,6 +906,7 @@ fn format_epoch_secs(epoch_secs: u64) -> String {
 /// Interactive REPL loop
 async fn run_repl(data_directory: &Path) -> Result<()> {
     let reader = open_reader(data_directory).await?;
+    let observer = default_observer(true)?;
 
     // Create editor with Tab completion helper
     let config = rustyline::Config::builder()
@@ -684,7 +934,7 @@ async fn run_repl(data_directory: &Path) -> Result<()> {
                 let _ = rl.add_history_entry(line);
 
                 // Parse and execute
-                match execute_repl_command(&reader, line) {
+                match execute_repl_command(&reader, &observer, line) {
                     Ok(true) => continue, // Normal command, continue REPL
                     Ok(false) => break,   // QUIT command
                     Err(e) => eprintln!("{} {}", "Error:".red(), e),
@@ -712,7 +962,11 @@ async fn run_repl(data_directory: &Path) -> Result<()> {
 
 /// Execute a single REPL command
 /// Returns Ok(true) to continue, Ok(false) to quit
-fn execute_repl_command(reader: &ShmRuntimeView, input: &str) -> Result<bool> {
+fn execute_repl_command(
+    reader: &ShmRuntimeView,
+    observer: &ShmObserver,
+    input: &str,
+) -> Result<bool> {
     let parts: Vec<&str> = input.split_whitespace().collect();
     let cmd = parts.first().map(|s| s.to_uppercase());
 
@@ -723,14 +977,18 @@ fn execute_repl_command(reader: &ShmRuntimeView, input: &str) -> Result<bool> {
                 println!("  Key format: inst:<id>:M|A:<point_id> or ch:<id>:T|S|C|A:<point_id>");
             } else {
                 let key = parse_key(parts[1])?;
-                match get_value(reader, &key)? {
-                    Some(v) => println!("{}", v),
-                    None => println!("(nil)"),
-                }
+                println!(
+                    "{}",
+                    render_sample(
+                        get_sample(reader, &key)?,
+                        chrono::Utc::now().timestamp_millis(),
+                        sample_stale_after_ms()
+                    )
+                );
             }
         },
         Some("INFO") => {
-            print_runtime_info(reader);
+            print_observation(&observer.inspect(), false);
         },
         Some("WATCH") => {
             if parts.len() < 2 {
@@ -739,7 +997,7 @@ fn execute_repl_command(reader: &ShmRuntimeView, input: &str) -> Result<bool> {
                 let key = parse_key(parts[1])?;
                 let interval = parts.get(2).and_then(|s| s.parse().ok()).unwrap_or(500);
                 // Note: WATCH will block until Ctrl+C
-                watch_key(reader, &key, interval)?;
+                watch_key(reader, &key, interval, false)?;
             }
         },
         Some("HELP") | Some("?") => {
@@ -811,24 +1069,80 @@ mod tests {
     use std::collections::{BTreeSet, HashMap};
     use std::sync::Arc;
 
+    #[test]
+    fn a_fresh_reading_is_printed_with_its_age() {
+        let rendered = render_sample(Some((24.6, 95_000)), 100_000, 30_000);
+
+        assert!(rendered.contains("24.6"), "{rendered}");
+        assert!(rendered.contains("good"), "{rendered}");
+        assert!(rendered.contains("5000ms ago"), "{rendered}");
+    }
+
+    #[test]
+    fn a_frozen_reading_is_marked_stale_instead_of_looking_identical() {
+        // `shm watch` printed the bare number every second, so a dead device
+        // and a healthy one produced visually identical output forever.
+        let rendered = render_sample(Some((24.6, 95_000)), 300_000, 30_000);
+
+        assert!(rendered.contains("24.6"), "{rendered}");
+        assert!(rendered.contains("stale"), "{rendered}");
+        assert!(!rendered.contains("good"), "{rendered}");
+    }
+
+    #[test]
+    fn an_unwritten_point_still_reads_as_nil() {
+        assert_eq!(render_sample(None, 100_000, 30_000), "(nil)");
+    }
+
+    #[test]
+    fn observer_json_is_stable_and_keeps_typed_findings() {
+        let observation = ShmTopologyObservation {
+            observed_at_ms: 100,
+            status: ShmObservationStatus::Degraded,
+            point: None,
+            health: None,
+            publication_epoch: Some(7),
+            findings: vec![aether_shm_bridge::ShmObservationFinding {
+                severity: aether_shm_bridge::ShmObservationSeverity::Degraded,
+                code: "writer_heartbeat_delayed",
+                message: "point writer heartbeat is 5000ms old".to_owned(),
+            }],
+        };
+
+        let value = observation_json(&observation);
+
+        assert_eq!(value["status"], "degraded");
+        assert_eq!(value["publication_epoch"], 7);
+        assert_eq!(value["findings"][0]["code"], "writer_heartbeat_delayed");
+        assert!(value["point"].is_null());
+        assert!(value["health"].is_null());
+    }
+
+    #[test]
+    fn point_json_reports_absence_without_forging_a_value() {
+        let value = sample_json("ch:7:T:0", None, 100, 30_000);
+
+        assert_eq!(value["present"], false);
+        assert!(value.get("value").is_none());
+    }
+
     use aether_dataplane::SlotWriter;
     use aether_domain::PointKind;
     use aether_shm_bridge::ChannelPointManifest;
 
     fn typed_runtime_view() -> (tempfile::TempDir, ShmRuntimeView) {
         let directory = tempfile::tempdir().expect("create SHM fixture directory");
-        let shm_path = directory.path().join("aether-rtdb.shm");
-        let manifest = Arc::new(ChannelPointManifest::from_entries([(7, [1, 0, 0, 1])]));
-        let writer = SlotWriter::create(
-            &shm_path,
-            manifest.slot_count() as u32,
-            manifest.slot_count(),
-            manifest.layout_hash(),
-        )
-        .expect("create typed SHM fixture");
+        let shm_path = directory.path().join("aether-live-state.shm");
+        let manifest = Arc::new(ChannelPointManifest::dense_test_fixture([(
+            7,
+            [1, 0, 0, 1],
+        )]));
+        let writer =
+            SlotWriter::create(&shm_path, manifest.slot_count(), manifest.layout_hash(), 1)
+                .expect("create typed SHM fixture");
         writer.set_direct(
             manifest
-                .slot_for(PhysicalPointAddress::from_legacy_raw(
+                .slot_for(PhysicalPointAddress::from_raw_ids(
                     7,
                     PointKind::Telemetry,
                     0,
@@ -837,18 +1151,16 @@ mod tests {
             12.5,
             125.0,
             100,
+            0,
         );
         writer.set_direct(
             manifest
-                .slot_for(PhysicalPointAddress::from_legacy_raw(
-                    7,
-                    PointKind::Action,
-                    0,
-                ))
+                .slot_for(PhysicalPointAddress::from_raw_ids(7, PointKind::Action, 0))
                 .expect("action slot"),
             7.5,
             75.0,
             101,
+            0,
         );
 
         let routing_cache = RoutingCache::from_maps(
@@ -890,6 +1202,14 @@ mod tests {
             Some(12.5)
         );
         assert_eq!(get_value(&view, &action).expect("read action"), Some(7.5));
+        let preview = view.point_preview(1).expect("point preview");
+        assert_eq!(preview.len(), 1);
+        assert_eq!(preview[0]["channel_id"], 7);
+        assert_eq!(preview[0]["kind"], "T");
+        assert_eq!(preview[0]["point_id"], 0);
+        assert_eq!(preview[0]["value"], 12.5);
+        assert_eq!(preview[0]["raw"], 125.0);
+        assert_eq!(preview[0]["quality"], "good");
         assert_eq!(
             view.named_keys()
                 .into_iter()
@@ -907,16 +1227,14 @@ mod tests {
     #[test]
     fn typed_view_rejects_manifest_that_does_not_match_shm_header() {
         let directory = tempfile::tempdir().expect("create SHM fixture directory");
-        let shm_path = directory.path().join("aether-rtdb.shm");
-        let actual = ChannelPointManifest::from_entries([(7, [1, 0, 0, 0])]);
-        let _writer = SlotWriter::create(
-            &shm_path,
-            actual.slot_count() as u32,
-            actual.slot_count(),
-            actual.layout_hash(),
-        )
-        .expect("create typed SHM fixture");
-        let mismatched = Arc::new(ChannelPointManifest::from_entries([(7, [2, 0, 0, 0])]));
+        let shm_path = directory.path().join("aether-live-state.shm");
+        let actual = ChannelPointManifest::dense_test_fixture([(7, [1, 0, 0, 0])]);
+        let _writer = SlotWriter::create(&shm_path, actual.slot_count(), actual.layout_hash(), 1)
+            .expect("create typed SHM fixture");
+        let mismatched = Arc::new(ChannelPointManifest::dense_test_fixture([(
+            7,
+            [2, 0, 0, 0],
+        )]));
 
         let result = ShmRuntimeView::open(&shm_path, mismatched, RoutingCache::default());
 
@@ -988,18 +1306,14 @@ mod tests {
             .expect("insert measurement route");
         pool.close().await;
 
-        let manifest = ChannelPointManifest::from_entries([(7, [1, 0, 0, 0])]);
-        let shm_path = directory.path().join("aether-rtdb.shm");
-        let writer = SlotWriter::create(
-            &shm_path,
-            manifest.slot_count() as u32,
-            manifest.slot_count(),
-            manifest.layout_hash(),
-        )
-        .expect("create runtime SHM");
+        let manifest = ChannelPointManifest::dense_test_fixture([(7, [1, 0, 0, 0])]);
+        let shm_path = directory.path().join("aether-live-state.shm");
+        let writer =
+            SlotWriter::create(&shm_path, manifest.slot_count(), manifest.layout_hash(), 1)
+                .expect("create runtime SHM");
         writer.set_direct(
             manifest
-                .slot_for(PhysicalPointAddress::from_legacy_raw(
+                .slot_for(PhysicalPointAddress::from_raw_ids(
                     7,
                     PointKind::Telemetry,
                     0,
@@ -1008,6 +1322,7 @@ mod tests {
             48.0,
             480.0,
             200,
+            0,
         );
 
         let view = open_reader_at(&data_directory, &shm_path)

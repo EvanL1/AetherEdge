@@ -492,6 +492,32 @@ impl ConfigSyncer {
         // In default mode, rows are updated in place and unmatched rows remain.
         let mut deleted: u64 = 0;
         if self.force {
+            let has_exhausted_revision: bool = sqlx::query_scalar(
+                "SELECT EXISTS(\
+                     SELECT 1 FROM channels WHERE revision >= 9223372036854775807\
+                 )",
+            )
+            .fetch_one(&mut **tx)
+            .await?;
+            anyhow::ensure!(
+                !has_exhausted_revision,
+                "force sync cannot replace a channel with an exhausted revision"
+            );
+
+            // A full replacement is still an authoritative channel deletion.
+            // Persist the next revision before the delete so the same trigger
+            // and ABA guard used by the governed API remain mandatory here.
+            sqlx::query(
+                "INSERT INTO channel_revision_tombstones \
+                     (channel_id, last_revision, deleted_at) \
+                 SELECT channel_id, revision + 1, CURRENT_TIMESTAMP FROM channels WHERE TRUE \
+                 ON CONFLICT(channel_id) DO UPDATE SET \
+                     last_revision = MAX(last_revision, excluded.last_revision), \
+                     deleted_at = excluded.deleted_at",
+            )
+            .execute(&mut **tx)
+            .await?;
+
             for table in [
                 "telemetry_points",
                 "signal_points",
@@ -768,14 +794,24 @@ impl ConfigSyncer {
                     format!("Channel {channel_id} configuration payload cannot be encoded")
                 })?;
 
+            let initial_revision: i64 = sqlx::query_scalar(
+                "SELECT COALESCE((SELECT last_revision + 1 \
+                                  FROM channel_revision_tombstones \
+                                  WHERE channel_id = ?), 1)",
+            )
+            .bind(channel_id)
+            .fetch_one(&mut **tx)
+            .await?;
+
             sqlx::query(
-                "INSERT INTO channels (channel_id, name, protocol, enabled, config)
-                 VALUES (?, ?, ?, ?, ?)
+                "INSERT INTO channels (channel_id, name, protocol, enabled, config, revision)
+                 VALUES (?, ?, ?, ?, ?, ?)
                  ON CONFLICT(channel_id) DO UPDATE SET
                      name = excluded.name,
                      protocol = excluded.protocol,
                      enabled = excluded.enabled,
                      config = excluded.config,
+                     revision = channels.revision + 1,
                      updated_at = CURRENT_TIMESTAMP",
             )
             .bind(channel_id)
@@ -783,6 +819,7 @@ impl ConfigSyncer {
             .bind(&protocol)
             .bind(enabled)
             .bind(&config)
+            .bind(initial_revision)
             .execute(&mut **tx)
             .await?;
 

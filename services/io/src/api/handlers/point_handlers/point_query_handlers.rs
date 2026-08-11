@@ -2,10 +2,10 @@
 
 //! Query handlers for point information, configuration, and unmapped points
 
+use crate::api::dto::{AppError, SuccessResponse};
 use crate::api::routes::AppState;
-use crate::dto::{AppError, SuccessResponse};
 use aether_core::PointType;
-use aether_domain::PointKind;
+use aether_domain::{PointKind, PointQuality};
 use aether_shm_bridge::PhysicalPointAddress;
 use axum::{
     extract::{Path, Query, State},
@@ -16,11 +16,20 @@ use super::point_helpers::{
     fetch_grouped_points, parse_protocol_mapping_json, point_type_to_table, validate_channel_exists,
 };
 
-/// Read the real-time value of a single point (value + timestamp + raw).
+/// Read the real-time value of a single point, graded by how old it is.
 ///
-/// Reads the authoritative SHM slot and returns its engineering value,
-/// timestamp, and raw protocol value. An unwritten NaN slot is represented as
-/// `null` rather than being mistaken for a real zero.
+/// Reads the authoritative SHM slot and returns its engineering value, source
+/// timestamp, raw protocol value, and the freshness of that sample. An
+/// unwritten NaN slot is represented as `null` rather than being mistaken for
+/// a real zero.
+///
+/// `quality` is `good` while the sample is newer than
+/// `SHM_WRITER_STALE_AFTER_MS`, `uncertain` once it is not, and `unavailable`
+/// when the slot was never written. `age_ms` is how long ago the acquisition
+/// plane produced the sample, and is `null` alongside `unavailable`. A channel
+/// that stops responding leaves its last value in place, so `value` on its own
+/// cannot be told apart from a live reading — grade every point by `quality`
+/// before acting on the number.
 #[utoipa::path(
     get,
     path = "/api/channels/{channel_id}/{telemetry_type}/{point_id}",
@@ -39,7 +48,9 @@ use super::point_helpers::{
                     "point_id": 101,
                     "value": "650.5",
                     "timestamp": "1729000815",
-                    "raw": "6505"
+                    "raw": "6505",
+                    "quality": "good",
+                    "age_ms": 812
                 }
             })
         )
@@ -70,7 +81,7 @@ pub async fn get_point_info_handler(
     };
     let sample = layout
         .manifest()
-        .slot_for(PhysicalPointAddress::from_legacy_raw(
+        .slot_for(PhysicalPointAddress::from_raw_ids(
             channel_id, kind, point_id,
         ))
         .and_then(|slot| layout.read_slot(slot));
@@ -82,6 +93,14 @@ pub async fn get_point_info_handler(
         .filter(|sample| sample.raw.is_finite())
         .map(|sample| sample.raw.to_string());
 
+    // A channel that stops responding leaves its last value in the slot, so
+    // value and timestamp alone are indistinguishable from a live reading.
+    let (quality, age_ms) = sample_freshness(
+        sample.map(|sample| sample.timestamp_ms),
+        chrono::Utc::now().timestamp_millis(),
+        sample_stale_after_ms(),
+    );
+
     Ok(Json(SuccessResponse::new(serde_json::json!({
         "channel_id": channel_id,
         "telemetry_type": point_type.as_str(),
@@ -89,8 +108,42 @@ pub async fn get_point_info_handler(
         "value": value,
         "timestamp": timestamp,
         "raw": raw_value,
-        "source": "shm"
+        "source": "shm",
+        "quality": quality,
+        "age_ms": age_ms,
     }))))
+}
+
+/// Grades the newest sample of a point and reports how old it is.
+///
+/// A slot that was never written has no age to report and is `unavailable`
+/// rather than merely stale: absent data and frozen data are different
+/// answers, and collapsing them would hide which one the caller is looking at.
+fn sample_freshness(
+    sample_ms: Option<u64>,
+    now_ms: i64,
+    stale_after_ms: u64,
+) -> (&'static str, Option<i64>) {
+    let Some(sample_ms) = sample_ms else {
+        return ("unavailable", None);
+    };
+    let age_ms = now_ms - i64::try_from(sample_ms).unwrap_or(i64::MAX);
+    let quality = PointQuality::for_sample_age(age_ms, stale_after_ms);
+    let name = match quality {
+        PointQuality::Good => "good",
+        PointQuality::Uncertain => "uncertain",
+        PointQuality::Bad => "bad",
+        PointQuality::Unavailable => "unavailable",
+    };
+    (name, Some(age_ms))
+}
+
+/// Freshness bound shared with the read-side SHM adapters.
+///
+/// Reuses `SHM_WRITER_STALE_AFTER_MS` rather than introducing a second dial,
+/// so every surface that grades a sample answers with one operator setting.
+fn sample_stale_after_ms() -> u64 {
+    common::env_or("SHM_WRITER_STALE_AFTER_MS", 30_000)
 }
 
 /// Get list of points for a channel, optionally filtered by type
@@ -105,7 +158,7 @@ pub async fn get_point_info_handler(
         ("type" = Option<String>, Query, description = "Point type filter: T (telemetry), S (signal), C (control), A (adjustment)")
     ),
     responses(
-        (status = 200, description = "Points retrieved (grouped)", body = crate::dto::GroupedPoints,
+        (status = 200, description = "Points retrieved (grouped)", body = crate::api::dto::GroupedPoints,
             example = json!({
                 "success": true,
                 "data": {
@@ -142,7 +195,7 @@ pub async fn get_channel_points_handler(
     Path(channel_id): Path<u32>,
     Query(params): Query<std::collections::HashMap<String, String>>,
     State(state): State<AppState>,
-) -> Result<Json<SuccessResponse<crate::dto::GroupedPoints>>, AppError> {
+) -> Result<Json<SuccessResponse<crate::api::dto::GroupedPoints>>, AppError> {
     validate_channel_exists(&state.sqlite_pool, channel_id).await?;
     let type_filter = params.get("type").map(|s| s.as_str());
     let grouped = fetch_grouped_points(&state.sqlite_pool, channel_id, type_filter, false).await?;
@@ -161,7 +214,7 @@ pub async fn get_channel_points_handler(
         ("point_id" = u32, Path, description = "Point identifier")
     ),
     responses(
-        (status = 200, description = "Mapping retrieved successfully", body = crate::dto::PointMappingDetail),
+        (status = 200, description = "Mapping retrieved successfully", body = crate::api::dto::PointMappingDetail),
         (status = 400, description = "Invalid four-remote type (must be T, S, C, or A)"),
         (status = 404, description = "Channel or point not found in specified type")
     ),
@@ -170,7 +223,7 @@ pub async fn get_channel_points_handler(
 pub async fn get_point_mapping_with_type_handler(
     Path((channel_id, point_type, point_id)): Path<(u32, String, u32)>,
     State(state): State<AppState>,
-) -> Result<Json<SuccessResponse<crate::dto::PointMappingDetail>>, AppError> {
+) -> Result<Json<SuccessResponse<crate::api::dto::PointMappingDetail>>, AppError> {
     let table = point_type_to_table(&point_type)?;
     validate_channel_exists(&state.sqlite_pool, channel_id).await?;
 
@@ -202,11 +255,13 @@ pub async fn get_point_mapping_with_type_handler(
     let protocol_data = parse_protocol_mapping_json(protocol_mappings_json.as_deref())
         .unwrap_or_else(|| serde_json::Value::Object(serde_json::Map::new()));
 
-    Ok(Json(SuccessResponse::new(crate::dto::PointMappingDetail {
-        point_id,
-        signal_name,
-        protocol_data,
-    })))
+    Ok(Json(SuccessResponse::new(
+        crate::api::dto::PointMappingDetail {
+            point_id,
+            signal_name,
+            protocol_data,
+        },
+    )))
 }
 
 // ----------------------------------------------------------------------------
@@ -224,7 +279,7 @@ async fn get_point_config_handler_inner(
     point_type: &str,
     point_id: u32,
     state: AppState,
-) -> Result<Json<SuccessResponse<crate::dto::PointDefinition>>, AppError> {
+) -> Result<Json<SuccessResponse<crate::api::dto::PointDefinition>>, AppError> {
     let table = point_type_to_table(point_type)?;
     validate_channel_exists(&state.sqlite_pool, channel_id).await?;
 
@@ -266,17 +321,19 @@ async fn get_point_config_handler_inner(
             ))
         })?;
 
-    Ok(Json(SuccessResponse::new(crate::dto::PointDefinition {
-        point_id: pt_id,
-        signal_name,
-        scale,
-        offset,
-        unit,
-        data_type,
-        reverse,
-        description,
-        protocol_mapping: parse_protocol_mapping_json(pm_json.as_deref()),
-    })))
+    Ok(Json(SuccessResponse::new(
+        crate::api::dto::PointDefinition {
+            point_id: pt_id,
+            signal_name,
+            scale,
+            offset,
+            unit,
+            data_type,
+            reverse,
+            description,
+            protocol_mapping: parse_protocol_mapping_json(pm_json.as_deref()),
+        },
+    )))
 }
 
 // ============================================================================
@@ -294,7 +351,7 @@ async fn get_point_config_handler_inner(
         ("type" = Option<String>, Query, description = "Point type filter: T (telemetry), S (signal), C (control), A (adjustment)")
     ),
     responses(
-        (status = 200, description = "Unmapped points retrieved (grouped by type)", body = crate::dto::GroupedPoints,
+        (status = 200, description = "Unmapped points retrieved (grouped by type)", body = crate::api::dto::GroupedPoints,
             example = json!({
                 "success": true,
                 "data": {
@@ -324,7 +381,7 @@ pub async fn get_unmapped_points_handler(
     Path(channel_id): Path<u32>,
     Query(params): Query<std::collections::HashMap<String, String>>,
     State(state): State<AppState>,
-) -> Result<Json<SuccessResponse<crate::dto::GroupedPoints>>, AppError> {
+) -> Result<Json<SuccessResponse<crate::api::dto::GroupedPoints>>, AppError> {
     validate_channel_exists(&state.sqlite_pool, channel_id).await?;
     let type_filter = params.get("type").map(|s| s.as_str());
     let grouped = fetch_grouped_points(&state.sqlite_pool, channel_id, type_filter, true).await?;
@@ -344,7 +401,7 @@ pub async fn get_unmapped_points_handler(
         ("point_id" = u32, Path, description = "Telemetry point identifier")
     ),
     responses(
-        (status = 200, description = "Telemetry point configuration", body = crate::dto::PointDefinition),
+        (status = 200, description = "Telemetry point configuration", body = crate::api::dto::PointDefinition),
         (status = 404, description = "Channel or telemetry point not found")
     ),
     tag = "io"
@@ -352,7 +409,7 @@ pub async fn get_unmapped_points_handler(
 pub async fn get_telemetry_point_config_handler(
     Path((channel_id, point_id)): Path<(u32, u32)>,
     State(state): State<AppState>,
-) -> Result<Json<SuccessResponse<crate::dto::PointDefinition>>, AppError> {
+) -> Result<Json<SuccessResponse<crate::api::dto::PointDefinition>>, AppError> {
     get_point_config_handler_inner(channel_id, "T", point_id, state).await
 }
 
@@ -365,7 +422,7 @@ pub async fn get_telemetry_point_config_handler(
         ("point_id" = u32, Path, description = "Signal point identifier")
     ),
     responses(
-        (status = 200, description = "Signal point configuration", body = crate::dto::PointDefinition),
+        (status = 200, description = "Signal point configuration", body = crate::api::dto::PointDefinition),
         (status = 404, description = "Channel or signal point not found")
     ),
     tag = "io"
@@ -373,7 +430,7 @@ pub async fn get_telemetry_point_config_handler(
 pub async fn get_signal_point_config_handler(
     Path((channel_id, point_id)): Path<(u32, u32)>,
     State(state): State<AppState>,
-) -> Result<Json<SuccessResponse<crate::dto::PointDefinition>>, AppError> {
+) -> Result<Json<SuccessResponse<crate::api::dto::PointDefinition>>, AppError> {
     get_point_config_handler_inner(channel_id, "S", point_id, state).await
 }
 
@@ -386,7 +443,7 @@ pub async fn get_signal_point_config_handler(
         ("point_id" = u32, Path, description = "Control point identifier")
     ),
     responses(
-        (status = 200, description = "Control point configuration", body = crate::dto::PointDefinition),
+        (status = 200, description = "Control point configuration", body = crate::api::dto::PointDefinition),
         (status = 404, description = "Channel or control point not found")
     ),
     tag = "io"
@@ -394,7 +451,7 @@ pub async fn get_signal_point_config_handler(
 pub async fn get_control_point_config_handler(
     Path((channel_id, point_id)): Path<(u32, u32)>,
     State(state): State<AppState>,
-) -> Result<Json<SuccessResponse<crate::dto::PointDefinition>>, AppError> {
+) -> Result<Json<SuccessResponse<crate::api::dto::PointDefinition>>, AppError> {
     get_point_config_handler_inner(channel_id, "C", point_id, state).await
 }
 
@@ -407,7 +464,7 @@ pub async fn get_control_point_config_handler(
         ("point_id" = u32, Path, description = "Adjustment point identifier")
     ),
     responses(
-        (status = 200, description = "Adjustment point configuration", body = crate::dto::PointDefinition),
+        (status = 200, description = "Adjustment point configuration", body = crate::api::dto::PointDefinition),
         (status = 404, description = "Channel or adjustment point not found")
     ),
     tag = "io"
@@ -415,13 +472,54 @@ pub async fn get_control_point_config_handler(
 pub async fn get_adjustment_point_config_handler(
     Path((channel_id, point_id)): Path<(u32, u32)>,
     State(state): State<AppState>,
-) -> Result<Json<SuccessResponse<crate::dto::PointDefinition>>, AppError> {
+) -> Result<Json<SuccessResponse<crate::api::dto::PointDefinition>>, AppError> {
     get_point_config_handler_inner(channel_id, "A", point_id, state).await
 }
 
 // ============================================================================
 // Tests
 // ============================================================================
+
+#[cfg(test)]
+mod freshness_tests {
+    use super::sample_freshness;
+
+    #[test]
+    fn a_sample_inside_the_window_is_good_and_reports_its_age() {
+        assert_eq!(
+            sample_freshness(Some(95_000), 100_000, 30_000),
+            ("good", Some(5_000))
+        );
+    }
+
+    #[test]
+    fn a_frozen_sample_stops_being_reported_as_good() {
+        // The value is still there and still finite; only its age says the
+        // device stopped answering.
+        assert_eq!(
+            sample_freshness(Some(95_000), 300_000, 30_000),
+            ("uncertain", Some(205_000))
+        );
+    }
+
+    #[test]
+    fn a_slot_that_was_never_written_is_unavailable_rather_than_stale() {
+        // Absent data and frozen data are different answers; collapsing them
+        // would hide which one the caller is looking at.
+        assert_eq!(
+            sample_freshness(None, 100_000, 30_000),
+            ("unavailable", None)
+        );
+    }
+
+    #[test]
+    fn a_writer_stamped_ahead_of_this_process_stays_good() {
+        assert_eq!(
+            sample_freshness(Some(105_000), 100_000, 30_000),
+            ("good", Some(-5_000))
+        );
+    }
+}
 
 #[cfg(test)]
 mod cache_tests {

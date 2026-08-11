@@ -118,10 +118,8 @@ pub struct CreateRuleRequest {
     )]
     pub description: Option<String>,
 
-    /// Current automation-rules revision. Omission uses the staged browser
-    /// compatibility shim and does not protect the user's prior read.
-    #[serde(default)]
-    pub expected_revision: Option<u64>,
+    /// Required current automation-rules compare-and-set revision.
+    pub expected_revision: u64,
 
     /// Must be true because rule definitions are device-control policy.
     pub confirmed: bool,
@@ -168,10 +166,8 @@ pub struct UpdateRuleRequest {
     #[cfg_attr(feature = "openapi", schema(value_type = Option<Object>))]
     pub trigger_config: Option<serde_json::Value>,
 
-    /// Current automation-rules revision. Omission uses the staged browser
-    /// compatibility shim and does not protect the user's prior read.
-    #[serde(default)]
-    pub expected_revision: Option<u64>,
+    /// Required current automation-rules compare-and-set revision.
+    pub expected_revision: u64,
 
     /// Must be true because this mutation can change future device behavior.
     pub confirmed: bool,
@@ -182,10 +178,8 @@ pub struct UpdateRuleRequest {
 #[serde(deny_unknown_fields)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct RuleMutationRequest {
-    /// Current automation-rules revision. Omission uses the staged browser
-    /// compatibility shim and does not protect the user's prior read.
-    #[serde(default)]
-    pub expected_revision: Option<u64>,
+    /// Required current automation-rules compare-and-set revision.
+    pub expected_revision: u64,
     /// Must be true because rule management changes device-control policy.
     pub confirmed: bool,
 }
@@ -292,8 +286,7 @@ pub async fn create_rule(
         RevisionedRuleMutation::create(
             req.name.clone(),
             req.description,
-            resolve_rules_revision(&state.queries, req.expected_revision, "POST /api/rules")
-                .await?,
+            rules_revision(req.expected_revision)?,
         ),
     )
     .await?;
@@ -394,8 +387,7 @@ pub async fn update_rule(
                 flow_json,
                 trigger_config,
             },
-            resolve_rules_revision(&state.queries, req.expected_revision, "PUT /api/rules/{id}")
-                .await?,
+            rules_revision(req.expected_revision)?,
         ),
     )
     .await?;
@@ -443,12 +435,7 @@ pub async fn delete_rule(
     Json(request): Json<RuleMutationRequest>,
 ) -> Result<Json<SuccessResponse<serde_json::Value>>, AutomationError> {
     let rule_id = parse_rule_id(id)?;
-    let expected_revision = resolve_rules_revision(
-        &state.queries,
-        request.expected_revision,
-        "DELETE /api/rules/{id}",
-    )
-    .await?;
+    let expected_revision = rules_revision(request.expected_revision)?;
     let acceptance = apply_rule_mutation(
         &state,
         &headers,
@@ -500,12 +487,7 @@ pub async fn enable_rule(
     Json(request): Json<RuleMutationRequest>,
 ) -> Result<Json<SuccessResponse<serde_json::Value>>, AutomationError> {
     let rule_id = parse_rule_id(id)?;
-    let expected_revision = resolve_rules_revision(
-        &state.queries,
-        request.expected_revision,
-        "POST /api/rules/{id}/enable",
-    )
-    .await?;
+    let expected_revision = rules_revision(request.expected_revision)?;
     let acceptance = apply_rule_mutation(
         &state,
         &headers,
@@ -557,12 +539,7 @@ pub async fn disable_rule(
     Json(request): Json<RuleMutationRequest>,
 ) -> Result<Json<SuccessResponse<serde_json::Value>>, AutomationError> {
     let rule_id = parse_rule_id(id)?;
-    let expected_revision = resolve_rules_revision(
-        &state.queries,
-        request.expected_revision,
-        "POST /api/rules/{id}/disable",
-    )
-    .await?;
+    let expected_revision = rules_revision(request.expected_revision)?;
     let acceptance = apply_rule_mutation(
         &state,
         &headers,
@@ -590,23 +567,7 @@ fn parse_rule_id(id: i64) -> Result<RuleId, AutomationError> {
         .map_err(|_| AutomationError::InvalidData("rule id must be non-negative".to_string()))
 }
 
-async fn resolve_rules_revision(
-    queries: &RuleQueries,
-    requested: Option<u64>,
-    endpoint: &'static str,
-) -> Result<aether_ports::AutomationRulesRevision, AutomationError> {
-    let value = match requested {
-        Some(value) => value,
-        None => {
-            let current = queries.current_revision().await?;
-            tracing::warn!(
-                endpoint,
-                revision = current,
-                "revisionless rules compatibility shim used; this request is CAS-safe at commit but cannot detect edits made since the caller's prior read"
-            );
-            current
-        },
-    };
+fn rules_revision(value: u64) -> Result<aether_ports::AutomationRulesRevision, AutomationError> {
     if value == 0 || value >= i64::MAX as u64 {
         return Err(AutomationError::InvalidData(
             "expected_revision must be in 1..i64::MAX".to_string(),
@@ -839,12 +800,7 @@ pub async fn scheduler_reload(
     headers: HeaderMap,
     Json(request): Json<RuleMutationRequest>,
 ) -> Result<Json<SuccessResponse<serde_json::Value>>, AutomationError> {
-    let expected_revision = resolve_rules_revision(
-        &state.queries,
-        request.expected_revision,
-        "POST /api/scheduler/reload",
-    )
-    .await?;
+    let expected_revision = rules_revision(request.expected_revision)?;
     let acceptance = apply_rule_mutation(
         &state,
         &headers,

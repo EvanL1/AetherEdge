@@ -6,7 +6,7 @@ use std::path::PathBuf;
 /// Failure returned by shared-memory layout and persistence operations.
 #[derive(Debug, thiserror::Error)]
 pub enum DataplaneError {
-    /// Declared capacity, live count, or serialized layout is inconsistent.
+    /// Declared live count or serialized layout is inconsistent.
     #[error("invalid shared-memory layout: {0}")]
     InvalidLayout(String),
     /// A filesystem path cannot identify the required SHM or snapshot object.

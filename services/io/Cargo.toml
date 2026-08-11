@@ -91,6 +91,7 @@ tokio-gpiod = { version = "0.3", optional = true }
 
 [dev-dependencies]
 aether-dataplane = { path = "../../crates/aether-dataplane" }
+jsonwebtoken = "9"
 aether-runtime-catalog = { path = "../../libs/aether-runtime-catalog" }
 reqwest = { workspace = true }
 tempfile = { workspace = true }

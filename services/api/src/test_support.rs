@@ -66,12 +66,23 @@ pub(crate) async fn app_state_with_public_registration(
         .await
         .expect("seed API test roles");
 
+    // Upstreams point at a port nothing serves, so "the downstream is not
+    // running" is a property of the test rather than of the developer's
+    // machine. Left at the defaults, any unrelated process bound to 6001 —
+    // a Docker proxy is enough — answers in place of aether-io and the
+    // gateway forwards its reply instead of reporting an unavailable upstream.
+    let closed = "http://127.0.0.1:1".to_owned();
     let config = GatewayConfig {
         jwt_secret: TEST_JWT_SECRET.to_owned(),
         allow_public_registration,
+        io_service_url: closed.clone(),
+        automation_service_url: closed.clone(),
+        history_service_url: closed.clone(),
+        uplink_service_url: closed.clone(),
+        alarm_service_url: closed,
         ..GatewayConfig::default()
     };
-    let ws_hub = WsHub::new(Arc::new(EmptyGatewayValueSource), database.clone());
+    let ws_hub = WsHub::new(Arc::new(EmptyGatewayValueSource), database.clone(), 30_000);
 
     Arc::new(AppState {
         db: database,

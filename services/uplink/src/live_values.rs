@@ -4,9 +4,9 @@ use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 use std::time::Duration;
 
-use aether_domain::{
-    InstanceId, PointAddress, PointId, PointKind, PointQuality, PointSample, TimestampMs,
-};
+#[cfg(test)]
+use aether_domain::PointQuality;
+use aether_domain::{InstanceId, PointAddress, PointId, PointKind, PointSample, TimestampMs};
 use aether_ports::{ChannelHealthObservation, PortError, PortErrorKind, PortResult};
 use aether_shm_bridge::{PhysicalPointAddress, ShmReadTopologyGeneration, SlotSource};
 use aether_sqlite_topology::{
@@ -98,10 +98,9 @@ impl UplinkTopologyGeneration {
 
     /// Collects acquisition-owned business point facts for CloudLink.
     ///
-    /// The current SHM slot encoding has value/raw/timestamp but no quality
-    /// field, so accepted finite values are exposed as `Good`, matching the
-    /// read-only `ShmLiveState` adapter. This is not a claim that the physical
-    /// source supplied original quality metadata.
+    /// The SHM v5 slot carries the acquisition source quality alongside value,
+    /// raw value, and timestamp, so CloudLink receives the original quality
+    /// instead of manufacturing a successful status at the read boundary.
     #[allow(dead_code)]
     pub fn collect_point_samples(
         &self,
@@ -246,18 +245,37 @@ impl ShmNetValueSource {
             return Ok(None);
         };
         let slot_count = self.slots.slot_count()?;
-        let mut values = HashMap::new();
-        for (point_id, &slot) in &group.points {
-            if field.is_some_and(|field| field != point_id) {
-                continue;
-            }
-            if slot >= slot_count {
+        let selected = group
+            .points
+            .iter()
+            .filter(|(point_id, _)| field.is_none_or(|field| field == point_id.as_str()))
+            .map(|(point_id, &slot)| (point_id, slot))
+            .collect::<Vec<_>>();
+        for (point_id, slot) in &selected {
+            if *slot >= slot_count {
                 return Err(PortError::new(
                     PortErrorKind::InvalidData,
                     format!("logical point {key}:{point_id} maps outside SHM slot_count"),
                 ));
             }
-            let Some(sample) = self.slots.read_slot(slot)? else {
+        }
+
+        let slot_indices = selected.iter().map(|(_, slot)| *slot).collect::<Vec<_>>();
+        let samples = self.slots.read_slots(&slot_indices)?;
+        if samples.len() != selected.len() {
+            return Err(PortError::new(
+                PortErrorKind::InvalidData,
+                format!(
+                    "logical group {key} SHM batch returned {} samples for {} requested slots",
+                    samples.len(),
+                    selected.len()
+                ),
+            ));
+        }
+
+        let mut values = HashMap::new();
+        for ((point_id, _), sample) in selected.into_iter().zip(samples) {
+            let Some(sample) = sample else {
                 continue;
             };
             if sample.value().is_nan() {
@@ -340,8 +358,8 @@ impl ShmNetValueSource {
                     format!("logical group {} has a non-numeric instance ID", group.key),
                 )
             })?;
-            for (point_id, &slot) in &group.points {
-                if slot >= slot_count {
+            for (point_id, slot) in &group.points {
+                if *slot >= slot_count {
                     return Err(PortError::new(
                         PortErrorKind::InvalidData,
                         format!(
@@ -350,16 +368,39 @@ impl ShmNetValueSource {
                         ),
                     ));
                 }
-                let point_id = point_id.parse::<u32>().map_err(|_| {
-                    PortError::new(
-                        PortErrorKind::InvalidData,
-                        format!(
-                            "logical point {}:{point_id} has a non-numeric point ID",
-                            group.key
-                        ),
-                    )
-                })?;
-                let Some(sample) = self.slots.read_slot(slot)? else {
+            }
+            let selected = group
+                .points
+                .iter()
+                .map(|(point_id, &slot)| {
+                    let point_id = point_id.parse::<u32>().map_err(|_| {
+                        PortError::new(
+                            PortErrorKind::InvalidData,
+                            format!(
+                                "logical point {}:{point_id} has a non-numeric point ID",
+                                group.key
+                            ),
+                        )
+                    })?;
+                    Ok((point_id, slot))
+                })
+                .collect::<PortResult<Vec<_>>>()?;
+            let slot_indices = selected.iter().map(|(_, slot)| *slot).collect::<Vec<_>>();
+            let slot_samples = self.slots.read_slots(&slot_indices)?;
+            if slot_samples.len() != selected.len() {
+                return Err(PortError::new(
+                    PortErrorKind::InvalidData,
+                    format!(
+                        "logical group {} SHM batch returned {} samples for {} requested slots",
+                        group.key,
+                        slot_samples.len(),
+                        selected.len()
+                    ),
+                ));
+            }
+
+            for ((point_id, _), sample) in selected.into_iter().zip(slot_samples) {
+                let Some(sample) = sample else {
                     continue;
                 };
                 if sample.value().is_nan() {
@@ -379,7 +420,7 @@ impl ShmNetValueSource {
                     ),
                     sample.value(),
                     TimestampMs::new(sample.timestamp_ms()),
-                    PointQuality::Good,
+                    sample.quality(),
                 ));
             }
         }
@@ -531,14 +572,20 @@ fn logical_glob_regex(pattern: &str) -> Result<Regex, regex::Error> {
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
-    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{Arc, Mutex as StdMutex};
 
     use aether_ports::{PortError, PortErrorKind, PortResult};
     use aether_shm_bridge::SlotSnapshot;
 
     use super::*;
 
-    struct StubSlots(HashMap<usize, SlotSnapshot>);
+    struct StubSlots {
+        values: HashMap<usize, SlotSnapshot>,
+        single_reads: AtomicUsize,
+        batch_reads: AtomicUsize,
+        batch_requests: StdMutex<Vec<Vec<usize>>>,
+    }
 
     impl SlotSource for StubSlots {
         fn slot_count(&self) -> PortResult<usize> {
@@ -546,13 +593,57 @@ mod tests {
         }
 
         fn read_slot(&self, index: usize) -> PortResult<Option<SlotSnapshot>> {
+            self.single_reads.fetch_add(1, Ordering::Relaxed);
+            Err(PortError::new(
+                PortErrorKind::Permanent,
+                format!("uplink must batch slot {index} reads"),
+            ))
+        }
+
+        fn read_slots(&self, indices: &[usize]) -> PortResult<Vec<Option<SlotSnapshot>>> {
+            self.batch_reads.fetch_add(1, Ordering::Relaxed);
+            self.batch_requests
+                .lock()
+                .map_err(|_| {
+                    PortError::new(
+                        PortErrorKind::Permanent,
+                        "uplink stub batch-request lock was poisoned",
+                    )
+                })?
+                .push(indices.to_vec());
+            indices
+                .iter()
+                .copied()
+                .map(|index| self.read_stub_slot(index))
+                .collect()
+        }
+    }
+
+    impl StubSlots {
+        fn new(values: HashMap<usize, SlotSnapshot>) -> Self {
+            Self {
+                values,
+                single_reads: AtomicUsize::new(0),
+                batch_reads: AtomicUsize::new(0),
+                batch_requests: StdMutex::new(Vec::new()),
+            }
+        }
+
+        fn read_stub_slot(&self, index: usize) -> PortResult<Option<SlotSnapshot>> {
             if index >= 2 {
                 return Err(PortError::new(
                     PortErrorKind::InvalidData,
                     "slot outside stub",
                 ));
             }
-            Ok(self.0.get(&index).copied())
+            Ok(self.values.get(&index).copied())
+        }
+
+        fn batch_requests(&self) -> Vec<Vec<usize>> {
+            self.batch_requests
+                .lock()
+                .expect("uplink stub batch-request lock")
+                .clone()
         }
     }
 
@@ -622,14 +713,15 @@ mod tests {
             .expect("load initial snapshot");
         let points = Arc::new(snapshot.point_manifest().clone());
         let health = Arc::new(snapshot.health_manifest().clone());
-        let point_writer = aether_shm_bridge::ShmWriterHandle::create_published_at_epoch(
+        let point_writer = aether_shm_bridge::ShmWriterHandle::create(
             aether_shm_bridge::ShmRuntimeConfig::new(&point_path, 32),
             Arc::clone(&points),
+            None,
             None,
             10,
         )
         .expect("publish point plane");
-        let health_writer = aether_shm_bridge::ShmChannelHealthWriterHandle::create_at_epoch(
+        let health_writer = aether_shm_bridge::ShmChannelHealthWriterHandle::create(
             &health_path,
             Arc::clone(&health),
             10,
@@ -674,7 +766,7 @@ mod tests {
         );
 
         health_writer
-            .rebuild_for_publication(Arc::clone(&health), 11)
+            .rebuild(Arc::clone(&health), 11)
             .expect("publish only a replacement health plane");
         let partial_health = routing_replacement
             .read_group("io:10:T", None)
@@ -682,12 +774,12 @@ mod tests {
         assert!(partial_health.is_retryable());
 
         point_writer
-            .rebuild_for_publication(Arc::clone(&points), 12)
+            .rebuild(Arc::clone(&points), 12)
             .expect("restart point plane at same layout");
         assert!(handle.refresh(&pool, &config).await.is_err());
         assert!(Arc::ptr_eq(&routing_replacement, &handle.load()));
         health_writer
-            .rebuild_for_publication(Arc::clone(&health), 12)
+            .rebuild(Arc::clone(&health), 12)
             .expect("restart health plane at same layout");
         aether_shm_bridge::commit_topology_publication(&point_path, &health_path, 12)
             .expect("commit restarted topology");
@@ -713,14 +805,15 @@ mod tests {
             .expect("load initial snapshot");
         let points = Arc::new(snapshot.point_manifest().clone());
         let health = Arc::new(snapshot.health_manifest().clone());
-        let point_writer = aether_shm_bridge::ShmWriterHandle::create_published_at_epoch(
+        let point_writer = aether_shm_bridge::ShmWriterHandle::create(
             aether_shm_bridge::ShmRuntimeConfig::new(&point_path, 32),
             Arc::clone(&points),
+            None,
             None,
             500,
         )
         .expect("publish initial point plane");
-        let health_writer = aether_shm_bridge::ShmChannelHealthWriterHandle::create_at_epoch(
+        let health_writer = aether_shm_bridge::ShmChannelHealthWriterHandle::create(
             &health_path,
             Arc::clone(&health),
             500,
@@ -739,14 +832,15 @@ mod tests {
         drop(point_writer);
         drop(health_writer);
 
-        let _replacement_point = aether_shm_bridge::ShmWriterHandle::create_published_at_epoch(
+        let _replacement_point = aether_shm_bridge::ShmWriterHandle::create(
             aether_shm_bridge::ShmRuntimeConfig::new(&point_path, 32),
             Arc::clone(&points),
+            None,
             None,
             500,
         )
         .expect("fault-inject a point writer that reused the epoch");
-        let _replacement_health = aether_shm_bridge::ShmChannelHealthWriterHandle::create_at_epoch(
+        let _replacement_health = aether_shm_bridge::ShmChannelHealthWriterHandle::create(
             &health_path,
             Arc::clone(&health),
             500,
@@ -769,11 +863,12 @@ mod tests {
 
     #[test]
     fn logical_group_is_read_from_shm() {
+        let slots = Arc::new(StubSlots::new(HashMap::from([
+            (0, SlotSnapshot::new(42.5, 1_000, PointQuality::Good)),
+            (1, SlotSnapshot::new(7.0, 1_001, PointQuality::Good)),
+        ])));
         let source = ShmNetValueSource::new(
-            Arc::new(StubSlots(HashMap::from([
-                (0, SlotSnapshot::new(42.5, 1_000)),
-                (1, SlotSnapshot::new(7.0, 1_001)),
-            ]))),
+            Arc::clone(&slots) as Arc<dyn SlotSource>,
             vec![LogicalGroup::new("inst", "12", "M", [("5", 0), ("6", 1)])],
         );
 
@@ -784,14 +879,17 @@ mod tests {
 
         assert_eq!(values["5"], 42.5);
         assert_eq!(values["6"], 7.0);
+        assert_eq!(slots.single_reads.load(Ordering::Relaxed), 0);
+        assert_eq!(slots.batch_reads.load(Ordering::Relaxed), 1);
+        assert_eq!(slots.batch_requests(), vec![vec![0, 1]]);
     }
 
     #[test]
     fn forwarder_patterns_select_logical_groups() {
         let source = ShmNetValueSource::new(
-            Arc::new(StubSlots(HashMap::from([(
+            Arc::new(StubSlots::new(HashMap::from([(
                 0,
-                SlotSnapshot::new(42.5, 1_000),
+                SlotSnapshot::new(42.5, 1_000, PointQuality::Good),
             )]))),
             vec![LogicalGroup::new("inst", "12", "M", [("5", 0)])],
         );
@@ -806,26 +904,34 @@ mod tests {
     }
 
     #[test]
-    fn cloudlink_samples_preserve_logical_address_value_and_source_timestamp() {
+    fn cloudlink_samples_preserve_batch_order_timestamp_and_source_quality() {
+        let slots = Arc::new(StubSlots::new(HashMap::from([
+            (0, SlotSnapshot::new(42.5, 1_234, PointQuality::Uncertain)),
+            (1, SlotSnapshot::new(7.0, 1_235, PointQuality::Bad)),
+        ])));
         let source = ShmNetValueSource::new(
-            Arc::new(StubSlots(HashMap::from([(
-                0,
-                SlotSnapshot::new(42.5, 1_234),
-            )]))),
-            vec![LogicalGroup::new("inst", "12", "M", [("5", 0)])],
+            Arc::clone(&slots) as Arc<dyn SlotSource>,
+            vec![LogicalGroup::new("inst", "12", "M", [("6", 0), ("5", 1)])],
         );
 
         let samples = source
             .collect_point_samples(&["inst:*:M".to_string()], &[])
             .expect("collect CloudLink samples");
 
-        assert_eq!(samples.len(), 1);
+        assert_eq!(samples.len(), 2);
         assert_eq!(samples[0].address().instance_id(), InstanceId::new(12));
         assert_eq!(samples[0].address().point_id(), PointId::new(5));
         assert_eq!(samples[0].address().kind(), PointKind::Telemetry);
-        assert_eq!(samples[0].value(), 42.5);
-        assert_eq!(samples[0].timestamp(), TimestampMs::new(1_234));
-        assert_eq!(samples[0].quality(), PointQuality::Good);
+        assert_eq!(samples[0].value(), 7.0);
+        assert_eq!(samples[0].timestamp(), TimestampMs::new(1_235));
+        assert_eq!(samples[0].quality(), PointQuality::Bad);
+        assert_eq!(samples[1].address().point_id(), PointId::new(6));
+        assert_eq!(samples[1].value(), 42.5);
+        assert_eq!(samples[1].timestamp(), TimestampMs::new(1_234));
+        assert_eq!(samples[1].quality(), PointQuality::Uncertain);
+        assert_eq!(slots.single_reads.load(Ordering::Relaxed), 0);
+        assert_eq!(slots.batch_reads.load(Ordering::Relaxed), 1);
+        assert_eq!(slots.batch_requests(), vec![vec![1, 0]]);
     }
 
     #[test]
@@ -850,7 +956,7 @@ mod tests {
                 && group.points.get("5")
                     == snapshot
                         .point_manifest()
-                        .slot_for(PhysicalPointAddress::from_legacy_raw(
+                        .slot_for(PhysicalPointAddress::from_raw_ids(
                             10,
                             aether_domain::PointKind::Telemetry,
                             0,
@@ -933,15 +1039,16 @@ mod tests {
         let mut epoch = 20_000_u64;
         let publication =
             begin_topology_publication(&point_path).expect("begin initial Uplink publication");
-        let mut point_writer = ShmWriterHandle::create_published_at_epoch(
+        let mut point_writer = ShmWriterHandle::create(
             ShmRuntimeConfig::new(&point_path, 64),
             Arc::new(initial.point_manifest().clone()),
+            None,
             None,
             epoch,
         )
         .expect("initial Uplink point writer");
         write_uplink_soak_points(&point_writer, &initial, epoch);
-        let mut health_writer = ShmChannelHealthWriterHandle::create_at_epoch(
+        let mut health_writer = ShmChannelHealthWriterHandle::create(
             &health_path,
             Arc::new(initial.health_manifest().clone()),
             epoch,
@@ -1069,9 +1176,10 @@ mod tests {
             if (iteration + 1) % restart_interval == 0 {
                 drop(point_writer);
                 drop(health_writer);
-                point_writer = ShmWriterHandle::create_published_at_epoch(
+                point_writer = ShmWriterHandle::create(
                     ShmRuntimeConfig::new(&point_path, 64),
                     Arc::new(snapshot.point_manifest().clone()),
+                    None,
                     None,
                     epoch,
                 )
@@ -1079,7 +1187,7 @@ mod tests {
                 write_uplink_soak_points(&point_writer, &snapshot, epoch);
                 drop(publication);
                 assert_uplink_partial_publication_fails_closed(&handle, &pool, &config).await;
-                health_writer = ShmChannelHealthWriterHandle::create_at_epoch(
+                health_writer = ShmChannelHealthWriterHandle::create(
                     &health_path,
                     Arc::new(snapshot.health_manifest().clone()),
                     epoch,
@@ -1087,13 +1195,13 @@ mod tests {
                 .expect("restart Uplink health writer");
             } else {
                 point_writer
-                    .rebuild_for_publication(Arc::new(snapshot.point_manifest().clone()), epoch)
+                    .rebuild(Arc::new(snapshot.point_manifest().clone()), epoch)
                     .expect("publish Uplink point plane");
                 write_uplink_soak_points(&point_writer, &snapshot, epoch);
                 drop(publication);
                 assert_uplink_partial_publication_fails_closed(&handle, &pool, &config).await;
                 health_writer
-                    .rebuild_for_publication(Arc::new(snapshot.health_manifest().clone()), epoch)
+                    .rebuild(Arc::new(snapshot.health_manifest().clone()), epoch)
                     .expect("publish Uplink health plane");
             }
             write_uplink_soak_health(&health_writer, &snapshot, epoch);

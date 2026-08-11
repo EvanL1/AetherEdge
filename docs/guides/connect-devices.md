@@ -44,10 +44,9 @@ channels:
 
 The `parameters` block is protocol-specific: Modbus TCP wants a host and
 port, Modbus RTU wants a serial device and baud rate, MQTT wants a broker URL
-and subscription topics, and so on. The registry matches canonical names and
-aliases case-insensitively while ignoring `-`, `_`, `.`, and spaces, so
-`modbus-tcp`, `ModbusTCP`, and `modbus_tcp` all resolve to the same protocol
-without allocating a normalized string.
+and subscription topics, and so on. The registry accepts only the exact
+canonical `protocol_type` advertised by the runtime manifest. For example,
+`modbus_tcp` is valid while `modbus`, `modbus-tcp`, and `ModbusTCP` are not.
 
 Channels can also be created at runtime without touching YAML:
 
@@ -114,8 +113,8 @@ examples, implemented protocol slices, and deliberate exclusions are in the
 [Protocol Adapter Reference](../reference/protocol-adapters.md).
 
 One statically composed, process-wide immutable factory registry owns
-discovery, strict parameters, point mapping validation, aliases, polling
-defaults, and runtime construction. `ChannelManager` holds no SQLite pool and
+discovery, strict parameters, point mapping validation, polling defaults, and
+runtime construction. `ChannelManager` holds no SQLite pool and
 performs no protocol switch or mapping prepass; it adds only common runtime
 policy, logging, command guards, lifecycle/task ownership, and SHM wiring. The
 signed runtime manifest is checked for exact agreement with this registry. A
@@ -134,6 +133,7 @@ union. Protocol runtimes do not own a SQLite pool or reload topology later.
 
 | Protocol | Accepted point mappings |
 |----------|-------------------------|
+| Modbus TCP/RTU | `{"slave_id":1,"function_code":3,"register_address":0}`. Those three are required; each accepts a number or its decimal string. `data_type` defaults to `uint16` and is case-insensitive (`bool`, `uint16`, `int16`, `uint32`, `int32`, `uint64`, `int64`, `float32`, `float64`, `string`); `byte_order` defaults to `ABCD` (also `DCBA`, `BADC`, `CDAB`, or the aliases `BE`, `LE`, `WORD_SWAP`, `BYTE_SWAP`); `bit_position` (0–15) extracts one bit from a register. Unknown fields are rejected. |
 | MQTT / HTTP | T uses `{"json_path":"$.value","data_type":"float"}` (`float` or `int`); S uses `{"json_path":"$.online","data_type":"bool"}`. C/A and string mappings are rejected. |
 | BLE | `{"service_uuid":"180f","characteristic_uuid":"2a19","data_format":"uint16","notify":true}`. Notifications are T/S only; C/A use governed writes. |
 | Zigbee | T/S require `{"ieee_address":...,"endpoint":1,"cluster_id":1026,"attribute_id":0}`. C/A are rejected because the raw gateway transport has no correlated command acknowledgement yet. |

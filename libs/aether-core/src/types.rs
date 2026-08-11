@@ -1,6 +1,6 @@
 //! Core type definitions for AetherEdge.
 //!
-//! These types are shared between firmware and Linux gateway layers.
+//! These types are shared between firmware and protocol adapters.
 
 use core::fmt;
 

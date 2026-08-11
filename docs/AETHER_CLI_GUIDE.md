@@ -175,7 +175,7 @@ AETHER_ACCESS_TOKEN='<signed access JWT>' \
   aether models instances action <instance_id> --point-id <point_id> --value <value> --confirmed
 
 # 重新加载通道配置
-aether channels reload
+aether channels reconcile
 
 # 检查服务健康状态
 aether channels health

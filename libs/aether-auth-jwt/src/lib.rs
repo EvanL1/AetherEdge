@@ -14,10 +14,56 @@ const MIN_SECRET_BYTES: usize = 32;
 struct AccessClaims {
     user_id: i64,
     role: Option<String>,
+    /// The permissions this token may exercise.
+    ///
+    /// Required. A token that does not say what it is allowed to do is not
+    /// granted the role's full authority by default — an omitted scope is a
+    /// malformed token, because an implicit grant is exactly the fail-open
+    /// path this claim exists to close.
+    scope: Vec<String>,
     #[serde(rename = "type")]
     token_type: String,
     exp: usize,
     iat: usize,
+}
+
+/// Command permissions an administrative role may hold.
+///
+/// Exported so the gateway gates on the same list the services enforce, rather
+/// than keeping a second copy that can drift out of agreement with this one.
+pub const ROLE_COMMAND_PERMISSIONS: [&str; 8] = [
+    "device.control",
+    "automation.rule.execute",
+    "automation.rule.manage",
+    "automation.routing.manage",
+    "automation.instance.manage",
+    "io.channel.manage",
+    "alarm.rule.manage",
+    "alarm.alert.resolve",
+];
+
+/// Gateway-local capabilities that are not device or automation commands.
+pub const DATA_PROCESSING_READ: &str = "data_processing.read";
+
+/// Gateway-local capability to run a Data Processing task.
+pub const DATA_PROCESSING_RUN: &str = "data_processing.run";
+
+/// Every permission a role may hold, and therefore the widest scope a token
+/// issued for that role may carry.
+///
+/// One table so issuance, the gateway, and the services cannot disagree about
+/// what a role means.
+#[must_use]
+pub fn permissions_for_role(role: Option<&str>) -> Vec<&'static str> {
+    match role {
+        Some("Admin" | "Engineer") => ROLE_COMMAND_PERMISSIONS
+            .iter()
+            .copied()
+            .chain([DATA_PROCESSING_READ, DATA_PROCESSING_RUN])
+            .collect(),
+        Some("Viewer") => vec![DATA_PROCESSING_READ],
+        _ => Vec::new(),
+    }
 }
 
 /// Verifies access JWTs issued by Aether's gateway authentication API.
@@ -62,7 +108,7 @@ impl AccessTokenAuthenticator {
 
         let mut validation = Validation::new(Algorithm::HS256);
         validation.validate_exp = true;
-        validation.set_required_spec_claims(&["exp", "iat", "type", "user_id"]);
+        validation.set_required_spec_claims(&["exp", "iat", "type", "user_id", "scope"]);
         let claims = decode::<AccessClaims>(
             credential,
             &DecodingKey::from_secret(self.secret.as_bytes()),
@@ -74,9 +120,10 @@ impl AccessTokenAuthenticator {
             return Err(AuthenticationError::InvalidCredentials);
         }
 
-        Ok(actor_for_role(
+        Ok(actor_for_claims(
             &format!("user:{}", claims.user_id),
             claims.role.as_deref(),
+            &claims.scope,
         ))
     }
 
@@ -130,21 +177,27 @@ impl AuthenticatedInvocation {
     }
 }
 
-fn actor_for_role(actor_id: &str, role: Option<&str>) -> Actor {
-    let actor = Actor::new(actor_id);
-    if matches!(role, Some("Admin" | "Engineer")) {
-        actor
-            .with_permission("device.control")
-            .with_permission("automation.rule.execute")
-            .with_permission("automation.rule.manage")
-            .with_permission("automation.routing.manage")
-            .with_permission("automation.instance.manage")
-            .with_permission("io.channel.manage")
-            .with_permission("alarm.rule.manage")
-            .with_permission("alarm.alert.resolve")
-    } else {
-        actor
-    }
+/// Reports whether a token scope permits `permission`.
+///
+/// The scope is an allow-list and nothing else, so an empty one permits
+/// nothing. There is no "unset means everything" reading.
+#[must_use]
+pub fn scope_allows(scope: &[String], permission: &str) -> bool {
+    scope.iter().any(|entry| entry == permission)
+}
+
+/// Derives the actor's permissions from its role and its scope.
+///
+/// The role sets the ceiling and the scope selects within it. Treating scope
+/// as a grant instead of an intersection would let any token award itself
+/// command authority, which is the opposite of what it exists for.
+fn actor_for_claims(actor_id: &str, role: Option<&str>, scope: &[String]) -> Actor {
+    permissions_for_role(role)
+        .into_iter()
+        .filter(|permission| scope_allows(scope, permission))
+        .fold(Actor::new(actor_id), |actor, permission| {
+            actor.with_permission(permission)
+        })
 }
 
 fn validate_secret(secret: &str) -> Result<(), AuthenticationError> {

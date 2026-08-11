@@ -54,6 +54,9 @@ async fn main() -> anyhow::Result<()> {
 
     // ── Live state (lazy SHM reader; writer may start before or after us) ──────
     let live_values = build_shm_alarm_source(&db_pool, &cfg).await?;
+    let point_watch_capacity = aether_sqlite_topology::load_sqlite_shm_capacity(&db_pool)
+        .await
+        .map_err(|error| anyhow::anyhow!("load PointWatch capacity: {error}"))?;
 
     // ── HTTP client (for broadcasts) ──────────────────────────────────────────
     let http_client = reqwest::Client::builder()
@@ -105,6 +108,7 @@ async fn main() -> anyhow::Result<()> {
         db: db_pool,
         live_values: state_live_values,
         config: Arc::new(cfg.clone()),
+        point_watch_capacity,
         notifier,
         monitor_status,
         rule_application,

@@ -238,7 +238,7 @@ echo "Testing a failed fresh Docker install removes every created footprint..."
     LOG_DIR="$TEST_ROOT/docker-rollback/logs"
     INSTALL_CONTEXT_FILE="$TEST_ROOT/docker-rollback/etc/install.yaml"
     PROFILE_ENTRY="$TEST_ROOT/docker-rollback/etc/profile.d/aetheredge.sh"
-    SHM_PATH="$TEST_ROOT/docker-rollback/shm/aether-rtdb.shm"
+    SHM_PATH="$TEST_ROOT/docker-rollback/shm/aether-live-state.shm"
     TIMESCALE_DATA_DIR=""
     mkdir -p "$INSTALL_DIR" "$DATA_DIR" "$LOG_DIR" \
         "$(dirname "$INSTALL_CONTEXT_FILE")" \
@@ -599,7 +599,7 @@ assert_contains "$BARE_METAL_INSTALLER" 'AETHER_BARE_METAL_INSTALLER_FUNCTIONS_O
     SYSTEMD_DIR="$TEST_ROOT/bare-fresh/systemd"
     DOCKER_INSTALL_ROOT="$TEST_ROOT/bare-fresh/docker-install"
     DOCKER_PROFILE_ENTRY="$TEST_ROOT/bare-fresh/docker-profile"
-    SHM_PATH="$TEST_ROOT/bare-fresh/aether-rtdb.shm"
+    SHM_PATH="$TEST_ROOT/bare-fresh/aether-live-state.shm"
     mkdir -p "$INSTALL_DIR" "$CONFIG_DIR" "$DATA_DIR" "$SYSTEMD_DIR"
     active_unit=""
     systemctl() {

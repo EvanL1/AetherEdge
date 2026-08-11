@@ -19,10 +19,9 @@ pub fn create_test_shm_handle_with_points(points: BTreeMap<u32, [u32; 4]>) -> Ar
         .expect("create test SHM directory")
         .keep();
     let config = ShmRuntimeConfig::new(directory.join("io.shm"), 65_536);
-    let manifest = Arc::new(ChannelPointManifest::from_map(points));
+    let manifest = Arc::new(ChannelPointManifest::dense_test_fixture(points));
     Arc::new(
-        ShmWriterHandle::create_published(config, manifest, None)
-            .expect("compose typed SHM layout"),
+        ShmWriterHandle::create(config, manifest, None, None, 1).expect("compose typed SHM layout"),
     )
 }
 

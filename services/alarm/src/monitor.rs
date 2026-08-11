@@ -19,8 +19,17 @@ use crate::db;
 use crate::notification::{AlarmCountSnapshot, AlarmNotification};
 use crate::state::AppState;
 
+/// Turn the configured poll interval into a tick period.
+///
+/// `tokio::time::interval` panics on a zero period and the workspace release
+/// profile sets `panic = "abort"`, so an unclamped `DATA_FETCH_INTERVAL=0` would
+/// take the whole alarm service down at startup.
+fn monitor_interval(configured_secs: u64) -> Duration {
+    Duration::from_secs(configured_secs.max(1))
+}
+
 pub async fn run_monitor(state: Arc<AppState>, shutdown: CancellationToken) {
-    let interval = Duration::from_secs(state.config.data_fetch_interval);
+    let interval = monitor_interval(state.config.data_fetch_interval);
     info!(
         "Alarm monitor started (interval={}s)",
         state.config.data_fetch_interval
@@ -137,11 +146,22 @@ async fn check_event_batch(
     while let Ok(event) = event_rx.try_recv() {
         events.push(event);
     }
-    let slots = events
-        .into_iter()
-        .filter_map(|event| state.live_values.validated_point_watch_slot(event))
-        .collect::<HashSet<_>>();
-    if slots.is_empty() {
+    let mut addresses = HashSet::new();
+    for event in events {
+        match state.live_values.validate_point_watch(event) {
+            Ok(Some(validated)) => {
+                addresses.insert(validated.address());
+            },
+            Ok(None) => {},
+            Err(error) => warn!(
+                channel_id = event.channel_id(),
+                point_id = event.point_id(),
+                slot = event.slot_index(),
+                "Alarm PointWatch SHM re-read rejected: {error}"
+            ),
+        }
+    }
+    if addresses.is_empty() {
         return;
     }
 
@@ -154,12 +174,12 @@ async fn check_event_batch(
     };
     let matching = rules
         .into_iter()
-        .filter(|rule| match state.live_values.watched_slot(rule) {
-            Ok(Some(slot)) => slots.contains(&slot),
+        .filter(|rule| match state.live_values.watched_address(rule) {
+            Ok(Some(address)) => addresses.contains(&address),
             Ok(None) => false,
             Err(error) => {
                 warn!(
-                    "Cannot resolve PointWatch slot for rule '{}': {error}",
+                    "Cannot resolve PointWatch address for rule '{}': {error}",
                     rule.rule_name
                 );
                 false
@@ -174,7 +194,8 @@ async fn check_event_batch(
 
 fn reconcile_point_watch_subscriptions(state: &AppState, rules: &[crate::models::AlertRule]) {
     let bitmap_path = bitmap_path_for_consumer(Path::new(&state.config.shm_path), "alarm");
-    let bitmap = match SubscriptionBitmap::open(&bitmap_path) {
+    let bitmap = match SubscriptionBitmap::open_or_create(&bitmap_path, state.point_watch_capacity)
+    {
         Ok(bitmap) => bitmap,
         Err(error) => {
             debug!(
@@ -187,7 +208,14 @@ fn reconcile_point_watch_subscriptions(state: &AppState, rules: &[crate::models:
     bitmap.clear_all();
     for rule in rules {
         match state.live_values.watched_slot(rule) {
-            Ok(Some(slot)) => bitmap.set_watched(slot),
+            Ok(Some(slot)) => {
+                if let Err(error) = bitmap.set_watched(slot) {
+                    warn!(
+                        "Cannot subscribe alarm rule '{}' to PointWatch slot {slot}: {error}",
+                        rule.rule_name
+                    );
+                }
+            },
             Ok(None) => {},
             Err(error) => warn!(
                 "Cannot subscribe alarm rule '{}' to PointWatch: {error}",
@@ -397,4 +425,21 @@ pub async fn manual_check_rule(
             "check_time": chrono::Utc::now().to_rfc3339(),
         },
     }))
+}
+
+#[cfg(test)]
+mod interval_tests {
+    use super::*;
+
+    #[test]
+    fn a_zero_configured_interval_is_clamped_instead_of_panicking() {
+        // `tokio::time::interval` panics on a zero period, and the release profile
+        // sets `panic = "abort"`, so `DATA_FETCH_INTERVAL=0` killed the service.
+        assert_eq!(monitor_interval(0), Duration::from_secs(1));
+    }
+
+    #[test]
+    fn a_configured_interval_is_preserved() {
+        assert_eq!(monitor_interval(30), Duration::from_secs(30));
+    }
 }

@@ -22,7 +22,7 @@ use crate::protocols::core::traits::{
 };
 use crate::protocols::runtime::ChannelRuntime;
 
-use super::config::{CanConfig, CanFrameCache, LynkCanId};
+use super::config::{CanConfig, CanFrameCache, LynkCanId, tick_period};
 use super::decoder::PointManager;
 
 // ============================================================================
@@ -154,8 +154,7 @@ impl CanClient {
             #[cfg(feature = "tracing-support")]
             tracing::info!("Creating interval with {}ms period...", rx_poll_interval);
 
-            let mut interval =
-                tokio::time::interval(tokio::time::Duration::from_millis(rx_poll_interval));
+            let mut interval = tokio::time::interval(tick_period(rx_poll_interval));
 
             #[cfg(feature = "tracing-support")]
             tracing::info!("Interval created, starting receive loop");
@@ -262,8 +261,7 @@ impl CanClient {
             #[cfg(feature = "tracing-support")]
             tracing::info!("CAN data reading task started");
 
-            let mut interval =
-                tokio::time::interval(tokio::time::Duration::from_millis(read_interval));
+            let mut interval = tokio::time::interval(tick_period(read_interval));
 
             loop {
                 interval.tick().await;

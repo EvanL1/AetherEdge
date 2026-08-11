@@ -5,7 +5,7 @@
 //! - PUT /api/channels/{id} - Update channel configuration
 //! - PUT /api/channels/{id}/enabled - Enable/disable channel
 //! - DELETE /api/channels/{id} - Delete channel
-//! - POST /api/channels/reload - Reload all channels
+//! - POST /api/channels/reconcile - Reconcile all channel runtimes
 //! - POST /api/routing/reload - Reload routing cache
 //!
 //! Test scenarios cover:
@@ -25,7 +25,7 @@ use axum::{
 };
 use serde_json::json;
 use std::sync::Arc;
-use support::{ADMIN_ACCESS_TOKEN, TEST_JWT_SECRET};
+use support::{TEST_JWT_SECRET, admin_access_token};
 use tower::ServiceExt;
 
 const TEST_REQUEST_ID: &str = "018f0000-0000-7000-8000-000000000051";
@@ -107,12 +107,36 @@ async fn make_request(
     uri: &str,
     body: Option<serde_json::Value>,
 ) -> Result<(StatusCode, serde_json::Value)> {
-    let req_builder = Request::builder()
+    make_request_with_revision(app, method, uri, body, None).await
+}
+
+async fn make_revisioned_request(
+    app: &mut axum::Router,
+    method: &str,
+    uri: &str,
+    body: Option<serde_json::Value>,
+    expected_revision: u64,
+) -> Result<(StatusCode, serde_json::Value)> {
+    make_request_with_revision(app, method, uri, body, Some(expected_revision)).await
+}
+
+async fn make_request_with_revision(
+    app: &mut axum::Router,
+    method: &str,
+    uri: &str,
+    body: Option<serde_json::Value>,
+    expected_revision: Option<u64>,
+) -> Result<(StatusCode, serde_json::Value)> {
+    let mut req_builder = Request::builder()
         .method(method)
         .uri(uri)
-        .header("authorization", format!("Bearer {ADMIN_ACCESS_TOKEN}"))
+        .header("authorization", format!("Bearer {}", admin_access_token()))
         .header("x-request-id", TEST_REQUEST_ID)
         .header("x-aether-confirmed", "true");
+
+    if let Some(revision) = expected_revision {
+        req_builder = req_builder.header("x-aether-expected-revision", revision.to_string());
+    }
 
     support::send(app, req_builder, body).await
 }
@@ -301,8 +325,14 @@ async fn test_update_channel_name() -> Result<()> {
         "name": "Updated Name"
     });
 
-    let (status, body) =
-        make_request(&mut app, "PUT", "/api/channels/2001", Some(update_payload)).await?;
+    let (status, body) = make_revisioned_request(
+        &mut app,
+        "PUT",
+        "/api/channels/2001",
+        Some(update_payload),
+        1,
+    )
+    .await?;
 
     assert_eq!(status, StatusCode::OK, "Response: {:?}", body);
     assert_eq!(body["success"], true);
@@ -338,8 +368,14 @@ async fn test_update_channel_parameters() -> Result<()> {
         }
     });
 
-    let (status, body) =
-        make_request(&mut app, "PUT", "/api/channels/2002", Some(update_payload)).await?;
+    let (status, body) = make_revisioned_request(
+        &mut app,
+        "PUT",
+        "/api/channels/2002",
+        Some(update_payload),
+        1,
+    )
+    .await?;
 
     assert_eq!(status, StatusCode::OK, "Response: {:?}", body);
     assert_eq!(body["success"], true);
@@ -365,8 +401,14 @@ async fn test_update_channel_not_found() -> Result<()> {
         "name": "New Name"
     });
 
-    let (status, body) =
-        make_request(&mut app, "PUT", "/api/channels/9998", Some(update_payload)).await?;
+    let (status, body) = make_revisioned_request(
+        &mut app,
+        "PUT",
+        "/api/channels/9998",
+        Some(update_payload),
+        1,
+    )
+    .await?;
 
     assert_eq!(status, StatusCode::NOT_FOUND, "Response: {:?}", body);
     assert_eq!(body["success"], false);
@@ -408,8 +450,14 @@ async fn test_update_channel_name_conflict() -> Result<()> {
         "name": "Channel A"
     });
 
-    let (status, body) =
-        make_request(&mut app, "PUT", "/api/channels/3002", Some(update_payload)).await?;
+    let (status, body) = make_revisioned_request(
+        &mut app,
+        "PUT",
+        "/api/channels/3002",
+        Some(update_payload),
+        1,
+    )
+    .await?;
 
     assert_eq!(status, StatusCode::CONFLICT, "Should reject duplicate name");
     assert_eq!(body["success"], false);
@@ -439,11 +487,12 @@ async fn test_enable_disable_channel() -> Result<()> {
 
     // Disable the channel
     let disable_payload = json!({ "enabled": false });
-    let (status, body) = make_request(
+    let (status, body) = make_revisioned_request(
         &mut app,
         "PUT",
         "/api/channels/4001/enabled",
         Some(disable_payload),
+        1,
     )
     .await?;
 
@@ -454,11 +503,12 @@ async fn test_enable_disable_channel() -> Result<()> {
 
     // Re-enable the channel
     let enable_payload = json!({ "enabled": true });
-    let (status, body) = make_request(
+    let (status, body) = make_revisioned_request(
         &mut app,
         "PUT",
         "/api/channels/4001/enabled",
         Some(enable_payload),
+        2,
     )
     .await?;
 
@@ -488,11 +538,12 @@ async fn test_enable_already_enabled_channel() -> Result<()> {
     // Repeating a non-idempotent mutation is represented as a fresh,
     // non-retryable acceptance receipt.
     let enable_payload = json!({ "enabled": true });
-    let (status, body) = make_request(
+    let (status, body) = make_revisioned_request(
         &mut app,
         "PUT",
         "/api/channels/4002/enabled",
         Some(enable_payload),
+        1,
     )
     .await?;
 
@@ -510,11 +561,12 @@ async fn test_enable_nonexistent_channel() -> Result<()> {
     let mut app = create_test_app().await?;
 
     let enable_payload = json!({ "enabled": true });
-    let (status, body) = make_request(
+    let (status, body) = make_revisioned_request(
         &mut app,
         "PUT",
         "/api/channels/9998/enabled",
         Some(enable_payload),
+        1,
     )
     .await?;
 
@@ -545,7 +597,8 @@ async fn test_delete_channel() -> Result<()> {
     assert_eq!(status, StatusCode::OK);
 
     // Delete the channel
-    let (status, body) = make_request(&mut app, "DELETE", "/api/channels/5001", None).await?;
+    let (status, body) =
+        make_revisioned_request(&mut app, "DELETE", "/api/channels/5001", None, 1).await?;
 
     assert_eq!(status, StatusCode::OK, "Response: {:?}", body);
     assert_eq!(body["success"], true);
@@ -564,7 +617,8 @@ async fn test_delete_channel() -> Result<()> {
 async fn test_delete_nonexistent_channel() -> Result<()> {
     let mut app = create_test_app().await?;
 
-    let (status, body) = make_request(&mut app, "DELETE", "/api/channels/9998", None).await?;
+    let (status, body) =
+        make_revisioned_request(&mut app, "DELETE", "/api/channels/9998", None, 1).await?;
 
     assert_eq!(status, StatusCode::NOT_FOUND, "Response: {:?}", body);
     assert_eq!(body["success"], false);
@@ -573,11 +627,11 @@ async fn test_delete_nonexistent_channel() -> Result<()> {
 }
 
 // ============================================================================
-// Reload Configuration Tests
+// Runtime Reconciliation Tests
 // ============================================================================
 
 #[tokio::test]
-async fn test_reload_configuration() -> Result<()> {
+async fn test_reconcile_channels() -> Result<()> {
     let mut app = create_test_app().await?;
 
     // Create some channels first
@@ -595,8 +649,7 @@ async fn test_reload_configuration() -> Result<()> {
         assert_eq!(status, StatusCode::OK);
     }
 
-    // Trigger reload
-    let (status, body) = make_request(&mut app, "POST", "/api/channels/reload", None).await?;
+    let (status, body) = make_request(&mut app, "POST", "/api/channels/reconcile", None).await?;
 
     assert_eq!(status, StatusCode::OK, "Response: {:?}", body);
     assert_eq!(body["success"], true);
@@ -709,8 +762,14 @@ async fn test_update_channel_logging_config() -> Result<()> {
         }
     });
 
-    let (status, body) =
-        make_request(&mut app, "PUT", "/api/channels/7001", Some(update_payload)).await?;
+    let (status, body) = make_revisioned_request(
+        &mut app,
+        "PUT",
+        "/api/channels/7001",
+        Some(update_payload),
+        1,
+    )
+    .await?;
 
     assert_eq!(status, StatusCode::OK, "Response: {:?}", body);
     assert_eq!(body["success"], true);

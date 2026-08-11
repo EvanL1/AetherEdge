@@ -29,7 +29,7 @@ use axum::{
 };
 use serde_json::Value;
 
-use crate::dto::{
+use crate::api::dto::{
     AppError, ChannelCompletionAudit, ChannelCompletionAuditState, ChannelConfigUpdateRequest,
     ChannelCreateRequest, ChannelEnabledRequest, ChannelMutationOperation, ChannelMutationResponse,
     ChannelMutationResult, ChannelRuntimeProjectionResult, ErrorInfo,
@@ -41,8 +41,8 @@ const EXPECTED_REVISION_HEADER: &str = "x-aether-expected-revision";
 
 /// HTTP-owned references needed to invoke the channel application command.
 ///
-/// The unavailable form is used by the legacy route factory and fails closed.
-/// Production composition must construct the governed form explicitly.
+/// Production composition must construct the governed form explicitly. The
+/// unavailable form exists only for the point-topology-only test router.
 #[derive(Clone)]
 pub struct ChannelManagementHttpBoundary {
     inner: Option<GovernedChannelManagement>,
@@ -88,7 +88,7 @@ impl ChannelManagementHttpBoundary {
         }
     }
 
-    /// Creates a fail-closed compatibility boundary.
+    /// Creates a fail-closed boundary for the point-topology-only test router.
     #[must_use]
     pub const fn unavailable() -> Self {
         Self { inner: None }
@@ -218,7 +218,7 @@ pub async fn create_channel_handler(
     payload: Result<Json<ChannelCreateRequest>, JsonRejection>,
 ) -> Result<Json<ChannelMutationResponse>, AppError> {
     let request = json_body(payload)?;
-    if expected_revision(&headers)?.is_some() {
+    if optional_expected_revision(&headers)?.is_some() {
         return Err(AppError::bad_request(
             "x-aether-expected-revision must be omitted when creating a channel",
         ));
@@ -263,10 +263,10 @@ pub async fn create_channel_handler(
     put,
     path = "/api/channels/{id}",
     params(
-        ("id" = u32, Path, description = "Stable channel identifier below 10000", maximum = 9999),
+        ("id" = u32, Path, description = "Stable channel identifier in 1..9999", minimum = 1, maximum = 9999),
         ("x-request-id" = Option<String>, Header, format = "uuid", description = "Optional UUID audit correlation ID; a UUID is generated when omitted or invalid"),
         ("x-aether-confirmed" = bool, Header, description = "Required explicit confirmation; must be true"),
-        ("x-aether-expected-revision" = Option<u64>, Header, description = "Optional desired-state revision compare-and-set guard in 1..9223372036854775807", minimum = 1, maximum = 9223372036854775807_i64)
+        ("x-aether-expected-revision" = u64, Header, description = "Required desired-state revision compare-and-set guard in 1..9223372036854775807", minimum = 1, maximum = 9223372036854775807_i64)
     ),
     request_body(
         content = ChannelConfigUpdateRequest,
@@ -304,14 +304,9 @@ pub async fn update_channel_handler(
         description: request.description.clone(),
         protocol: request.protocol.clone(),
     };
-    let revision = expected_revision(&headers)?;
+    let revision = required_expected_revision(&headers)?;
     let patch = patch_from_request(request)?;
-    let mutation = match revision {
-        Some(revision) => {
-            ChannelMutation::update_with_revision(ChannelId::new(id), revision, patch)
-        },
-        None => ChannelMutation::update(ChannelId::new(id), patch),
-    };
+    let mutation = ChannelMutation::update(ChannelId::new(id), revision, patch);
     let acceptance = boundary.mutate(&headers, mutation).await?;
     Ok(Json(mutation_response(&acceptance, compatibility)))
 }
@@ -321,10 +316,10 @@ pub async fn update_channel_handler(
     put,
     path = "/api/channels/{id}/enabled",
     params(
-        ("id" = u32, Path, description = "Stable channel identifier below 10000", maximum = 9999),
+        ("id" = u32, Path, description = "Stable channel identifier in 1..9999", minimum = 1, maximum = 9999),
         ("x-request-id" = Option<String>, Header, format = "uuid", description = "Optional UUID audit correlation ID; a UUID is generated when omitted or invalid"),
         ("x-aether-confirmed" = bool, Header, description = "Required explicit confirmation; must be true"),
-        ("x-aether-expected-revision" = Option<u64>, Header, description = "Optional desired-state revision compare-and-set guard in 1..9223372036854775807", minimum = 1, maximum = 9223372036854775807_i64)
+        ("x-aether-expected-revision" = u64, Header, description = "Required desired-state revision compare-and-set guard in 1..9223372036854775807", minimum = 1, maximum = 9223372036854775807_i64)
     ),
     request_body(
         content = ChannelEnabledRequest,
@@ -353,13 +348,12 @@ pub async fn set_channel_enabled_handler(
 ) -> Result<Json<ChannelMutationResponse>, AppError> {
     let id = path_channel_id(&id)?;
     let request = json_body(payload)?;
-    let revision = expected_revision(&headers)?;
+    let revision = required_expected_revision(&headers)?;
     let channel_id = ChannelId::new(id);
-    let mutation = match (request.enabled, revision) {
-        (true, Some(revision)) => ChannelMutation::enable_with_revision(channel_id, revision),
-        (true, None) => ChannelMutation::enable(channel_id),
-        (false, Some(revision)) => ChannelMutation::disable_with_revision(channel_id, revision),
-        (false, None) => ChannelMutation::disable(channel_id),
+    let mutation = if request.enabled {
+        ChannelMutation::enable(channel_id, revision)
+    } else {
+        ChannelMutation::disable(channel_id, revision)
     };
     let acceptance = boundary.mutate(&headers, mutation).await?;
     Ok(Json(mutation_response(
@@ -376,10 +370,10 @@ pub async fn set_channel_enabled_handler(
     delete,
     path = "/api/channels/{id}",
     params(
-        ("id" = u32, Path, description = "Stable channel identifier below 10000", maximum = 9999),
+        ("id" = u32, Path, description = "Stable channel identifier in 1..9999", minimum = 1, maximum = 9999),
         ("x-request-id" = Option<String>, Header, format = "uuid", description = "Optional UUID audit correlation ID; a UUID is generated when omitted or invalid"),
         ("x-aether-confirmed" = bool, Header, description = "Required explicit confirmation; must be true"),
-        ("x-aether-expected-revision" = Option<u64>, Header, description = "Optional desired-state revision compare-and-set guard in 1..9223372036854775807", minimum = 1, maximum = 9223372036854775807_i64)
+        ("x-aether-expected-revision" = u64, Header, description = "Required desired-state revision compare-and-set guard in 1..9223372036854775807", minimum = 1, maximum = 9223372036854775807_i64)
     ),
     responses(
         (status = 200, description = "Accepted non-idempotent desired-state mutation. A pending or degraded runtime projection is still accepted and must not be retried automatically; retryable=false. An incomplete completion audit is reported with request_id for operator reconciliation; do not retry automatically.", body = ChannelMutationResponse),
@@ -401,12 +395,9 @@ pub async fn delete_channel_handler(
     headers: HeaderMap,
 ) -> Result<Json<ChannelMutationResponse>, AppError> {
     let id = path_channel_id(&id)?;
-    let revision = expected_revision(&headers)?;
+    let revision = required_expected_revision(&headers)?;
     let channel_id = ChannelId::new(id);
-    let mutation = revision.map_or_else(
-        || ChannelMutation::delete(channel_id),
-        |revision| ChannelMutation::delete_with_revision(channel_id, revision),
-    );
+    let mutation = ChannelMutation::delete(channel_id, revision);
     let acceptance = boundary.mutate(&headers, mutation).await?;
     Ok(Json(mutation_response(
         &acceptance,
@@ -414,7 +405,7 @@ pub async fn delete_channel_handler(
     )))
 }
 
-fn expected_revision(headers: &HeaderMap) -> Result<Option<ChannelRevision>, AppError> {
+fn optional_expected_revision(headers: &HeaderMap) -> Result<Option<ChannelRevision>, AppError> {
     let Some(value) = headers.get(EXPECTED_REVISION_HEADER) else {
         return Ok(None);
     };
@@ -427,12 +418,20 @@ fn expected_revision(headers: &HeaderMap) -> Result<Option<ChannelRevision>, App
     Ok(Some(ChannelRevision::new(revision)))
 }
 
+pub(super) fn required_expected_revision(headers: &HeaderMap) -> Result<ChannelRevision, AppError> {
+    optional_expected_revision(headers)?.ok_or_else(|| {
+        AppError::bad_request("x-aether-expected-revision is required for channel mutations")
+    })
+}
+
 pub(super) fn path_channel_id(value: &str) -> Result<u32, AppError> {
     let channel_id = value
         .parse::<u32>()
         .map_err(|_| AppError::bad_request("Channel ID must be an unsigned integer"))?;
-    if channel_id >= 10_000 {
-        return Err(AppError::bad_request("Channel ID must be below 10000"));
+    if channel_id == 0 || channel_id >= 10_000 {
+        return Err(AppError::bad_request(
+            "Channel ID must be between 1 and 9999",
+        ));
     }
     Ok(channel_id)
 }
@@ -474,7 +473,7 @@ fn patch_from_request(request: ChannelConfigUpdateRequest) -> Result<ChannelPatc
     Ok(patch)
 }
 
-fn logging_policy(logging: crate::dto::ChannelLoggingConfig) -> ChannelLoggingPolicy {
+fn logging_policy(logging: crate::api::dto::ChannelLoggingConfig) -> ChannelLoggingPolicy {
     let mut policy = ChannelLoggingPolicy::default().with_enabled(logging.enabled);
     if let Some(level) = logging.level {
         policy = policy.with_level(level);

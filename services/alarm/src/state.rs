@@ -14,6 +14,7 @@ pub struct AppState {
     pub db: SqlitePool,
     pub live_values: Arc<dyn AlarmValueSource>,
     pub config: Arc<AlarmConfig>,
+    pub point_watch_capacity: usize,
     pub notifier: Arc<dyn AlarmNotifier>,
     pub monitor_status: Arc<RwLock<MonitorStatus>>,
     pub rule_application: Arc<aether_application::AlarmRuleApplication>,

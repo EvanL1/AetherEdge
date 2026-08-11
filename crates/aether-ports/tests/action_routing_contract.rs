@@ -86,7 +86,7 @@ fn one_mutation_type_covers_upsert_delete_toggle_and_delete_all() {
 }
 
 #[test]
-fn legacy_action_routing_constructors_remain_revisionless() {
+fn action_routing_payload_constructors_remain_transport_neutral() {
     let mutations = [
         ActionRoutingMutation::upsert(route()),
         ActionRoutingMutation::delete(route_key()),

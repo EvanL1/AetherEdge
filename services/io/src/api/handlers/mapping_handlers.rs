@@ -7,8 +7,8 @@
 
 #![allow(clippy::disallowed_methods)] // json! macro used in multiple functions
 
+use crate::api::dto::{AppError, MappingBatchUpdateResult, MappingUpdateMode, SuccessResponse};
 use crate::api::routes::AppState;
-use crate::dto::{AppError, MappingBatchUpdateResult, MappingUpdateMode, SuccessResponse};
 use axum::{
     Extension,
     extract::{Path, Query, State},
@@ -45,13 +45,13 @@ fn parse_protocol_json(
     params(
         ("id" = u16, Path, description = "Channel identifier")
     ),
-    responses((status = 200, description = "Mappings retrieved", body = crate::dto::GroupedMappings)),
+    responses((status = 200, description = "Mappings retrieved", body = crate::api::dto::GroupedMappings)),
     tag = "io"
 )]
 pub async fn get_channel_mappings_handler(
     Path(channel_id): Path<u32>,
     State(state): State<AppState>,
-) -> Result<Json<SuccessResponse<crate::dto::GroupedMappings>>, AppError> {
+) -> Result<Json<SuccessResponse<crate::api::dto::GroupedMappings>>, AppError> {
     crate::api::handlers::point_handlers::validate_channel_exists(&state.sqlite_pool, channel_id)
         .await?;
 
@@ -62,7 +62,7 @@ pub async fn get_channel_mappings_handler(
         "adjustment_points",
     ];
 
-    let mut results: [Vec<crate::dto::PointMappingDetail>; 4] = Default::default();
+    let mut results: [Vec<crate::api::dto::PointMappingDetail>; 4] = Default::default();
 
     for (i, table) in tables.iter().enumerate() {
         let query = format!(
@@ -83,7 +83,7 @@ pub async fn get_channel_mappings_handler(
             let point_id_u32 = u32::try_from(point_id).map_err(|_| {
                 AppError::internal_error(format!("point_id {} out of range", point_id))
             })?;
-            results[i].push(crate::dto::PointMappingDetail {
+            results[i].push(crate::api::dto::PointMappingDetail {
                 point_id: point_id_u32,
                 signal_name,
                 protocol_data,
@@ -92,12 +92,14 @@ pub async fn get_channel_mappings_handler(
     }
 
     let [telemetry, signal, control, adjustment] = results;
-    Ok(Json(SuccessResponse::new(crate::dto::GroupedMappings {
-        telemetry,
-        signal,
-        control,
-        adjustment,
-    })))
+    Ok(Json(SuccessResponse::new(
+        crate::api::dto::GroupedMappings {
+            telemetry,
+            signal,
+            control,
+            adjustment,
+        },
+    )))
 }
 
 /// Batch update mapping configurations for a channel
@@ -113,7 +115,7 @@ pub async fn get_channel_mappings_handler(
         ("auto_reload" = bool, Query, description = "Reconcile the channel through the governed application boundary after mappings update (default: false)")
     ),
     request_body(
-        content = crate::dto::MappingBatchUpdateRequest,
+        content = crate::api::dto::MappingBatchUpdateRequest,
         description = "Batch update protocol-specific mappings with validation support",
         examples(
             ("Modbus TCP - Telemetry Points" = (
@@ -391,7 +393,7 @@ pub async fn get_channel_mappings_handler(
         )
     ),
     responses(
-        (status = 200, description = "Mappings updated successfully", body = crate::dto::MappingBatchUpdateResult),
+        (status = 200, description = "Mappings updated successfully", body = crate::api::dto::MappingBatchUpdateResult),
         (status = 400, description = "Validation error (invalid parameters or protocol mismatch)"),
         (status = 404, description = "Channel not found"),
         (status = 500, description = "Internal server error (database operation failed)")
@@ -401,11 +403,11 @@ pub async fn get_channel_mappings_handler(
 pub async fn update_channel_mappings_handler(
     Path(channel_id): Path<u32>,
     State(state): State<AppState>,
-    Query(reload_query): Query<crate::dto::AutoReloadQuery>,
+    Query(reload_query): Query<crate::api::dto::AutoReloadQuery>,
     Extension(boundary): Extension<crate::api::handlers::point_handlers::PointTopologyHttpBoundary>,
     headers: HeaderMap,
-    Json(mut req): Json<crate::dto::MappingBatchUpdateRequest>,
-) -> Result<Json<SuccessResponse<crate::dto::MappingBatchUpdateResult>>, AppError> {
+    Json(mut req): Json<crate::api::dto::MappingBatchUpdateRequest>,
+) -> Result<Json<SuccessResponse<crate::api::dto::MappingBatchUpdateResult>>, AppError> {
     // 1. Verify channel exists and get protocol
     let channel_info: Option<(String, bool)> =
         sqlx::query_as("SELECT protocol, enabled FROM channels WHERE channel_id = ?")
@@ -431,7 +433,7 @@ pub async fn update_channel_mappings_handler(
     }
 
     // 2. Validate input when in Replace mode. In Merge mode, we will validate after merging with existing.
-    if matches!(req.mode, crate::dto::MappingUpdateMode::Replace) {
+    if matches!(req.mode, crate::api::dto::MappingUpdateMode::Replace) {
         let validation_errors = validate_mappings(&protocol, &req.mappings);
         if !validation_errors.is_empty() {
             return Err(AppError::bad_request(format!(
@@ -606,7 +608,10 @@ pub async fn update_channel_mappings_handler(
 /// Uses strong-typed Validator structures to automatically validate types and ranges.
 /// Serde deserialization provides automatic type checking (u8, u16, u32, etc.).
 /// Additional business rules are enforced after type validation.
-fn validate_mappings(protocol: &str, mappings: &[crate::dto::PointMappingItem]) -> Vec<String> {
+fn validate_mappings(
+    protocol: &str,
+    mappings: &[crate::api::dto::PointMappingItem],
+) -> Vec<String> {
     mappings
         .iter()
         .filter_map(|mapping| {

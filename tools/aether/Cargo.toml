@@ -73,6 +73,7 @@ crossterm = "0.28"
 
 # HTTP client
 reqwest = { workspace = true }
+axum = { workspace = true }
 zeroize = { workspace = true }
 
 # MCP Server
@@ -86,4 +87,5 @@ workspace = true
 
 [dev-dependencies]
 base64 = "0.22"
+tower = { workspace = true }
 wiremock = "0.6.5"

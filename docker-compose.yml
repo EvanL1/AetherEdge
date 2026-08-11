@@ -39,7 +39,7 @@ services:
       - ${AETHER_BASE_PATH:-./data}/config/io:/app/config/io:ro
       - ${AETHER_BASE_PATH:-./data}:/app/data:rw
       - ${AETHER_LOG_PATH:-./logs}:/app/logs
-      - /dev/shm:/shm/rtdb:rw  # Shared memory dir (writer) — mount the dir so Docker never auto-creates a stale file entry
+      - /dev/shm:/shm/aether:rw  # Shared memory dir (writer) — mount the dir so Docker never auto-creates a stale file entry
     environment:
       - SERVICE_NAME=aether-io
       - SERVICE_PORT=6001
@@ -50,8 +50,8 @@ services:
       - CONFIG_BASE_PATH=/app/config/io
       - AETHER_LOG_DIR=/app/logs
       - ENABLE_SHARED_MEMORY=${ENABLE_SHARED_MEMORY:-true}
-      - AETHER_M2C_SOCKET=/shm/rtdb/aether-m2c.sock
-      - AETHER_AUTOMATION_POINT_WATCH_SOCKET=/shm/rtdb/aether-point-watch-automation.sock
+      - AETHER_M2C_SOCKET=/shm/aether/aether-m2c.sock
+      - AETHER_AUTOMATION_POINT_WATCH_SOCKET=/shm/aether/aether-point-watch-automation.sock
       - NO_PROXY=*
       - no_proxy=*
     logging:
@@ -77,15 +77,15 @@ services:
       - AETHER_DB_PATH=/app/data/aether.db
       - AETHER_LOG_DIR=/app/logs
       - ENABLE_SHARED_MEMORY=${ENABLE_SHARED_MEMORY:-true}
-      - AETHER_M2C_SOCKET=/shm/rtdb/aether-m2c.sock
-      - AETHER_AUTOMATION_POINT_WATCH_SOCKET=/shm/rtdb/aether-point-watch-automation.sock
+      - AETHER_M2C_SOCKET=/shm/aether/aether-m2c.sock
+      - AETHER_AUTOMATION_POINT_WATCH_SOCKET=/shm/aether/aether-point-watch-automation.sock
       - NO_PROXY=*
       - no_proxy=*
     volumes:
       - ${AETHER_BASE_PATH:-./data}/config:/app/config:ro
       - ${AETHER_BASE_PATH:-./data}:/app/data:rw
       - ${AETHER_LOG_PATH:-./logs}:/app/logs
-      - /dev/shm:/shm/rtdb:rw  # SHM read + independent event bitmap/UDS
+      - /dev/shm:/shm/aether:rw  # SHM read + independent event bitmap/UDS
     logging:
       driver: json-file
       options:
@@ -113,7 +113,7 @@ services:
     volumes:
       - ${AETHER_BASE_PATH:-./data}:/app/data:rw
       - ${AETHER_LOG_PATH:-./logs}:/app/logs
-      - /dev/shm:/shm/rtdb:rw
+      - /dev/shm:/shm/aether:rw
     logging:
       driver: json-file
       options:
@@ -148,7 +148,7 @@ services:
     volumes:
       - ${AETHER_BASE_PATH:-./data}:/app/data:rw
       - ${AETHER_LOG_PATH:-./logs}:/app/logs
-      - /dev/shm:/shm/rtdb:rw
+      - /dev/shm:/shm/aether:rw
       - /etc/systemd/network:/etc/systemd/network:ro  # Read-only discovery; mutation requires a future privileged helper
     logging:
       driver: json-file
@@ -179,7 +179,7 @@ services:
     volumes:
       - ${AETHER_BASE_PATH:-./data}:/app/data:rw
       - ${AETHER_LOG_PATH:-./logs}:/app/logs
-      - /dev/shm:/shm/rtdb:rw
+      - /dev/shm:/shm/aether:rw
       - ${AETHER_BASE_PATH:-./data}/cert:/app/config/cert:rw  # TLS 证书目录（固定挂载点）
     logging:
       driver: json-file
@@ -207,7 +207,7 @@ services:
     volumes:
       - ${AETHER_BASE_PATH:-./data}:/app/data:rw
       - ${AETHER_LOG_PATH:-./logs}:/app/logs
-      - /dev/shm:/shm/rtdb:rw
+      - /dev/shm:/shm/aether:rw
     logging:
       driver: json-file
       options:

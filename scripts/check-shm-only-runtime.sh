@@ -67,7 +67,7 @@ done
 
 for source_dir in "${RUNTIME_SOURCE_DIRS[@]}"; do
     manifest="$source_dir/Cargo.toml"
-    if ! rg -q '^aether-(rtdb-shm|shm-bridge)[[:space:]]*=' "$manifest"; then
+    if ! rg -q '^aether-shm-bridge[[:space:]]*=' "$manifest"; then
         echo "ERROR: $manifest does not depend on the authoritative SHM data plane" >&2
         exit 1
     fi

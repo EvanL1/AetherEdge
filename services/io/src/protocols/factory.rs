@@ -31,7 +31,6 @@ type RuntimeBuilder = fn(&RuntimeChannelConfig) -> Result<Box<dyn ChannelRuntime
 /// object retained at runtime is the heterogeneous [`ChannelRuntime`] itself.
 pub(crate) struct ProtocolFactory {
     metadata: ProtocolMetadata,
-    aliases: &'static [&'static str],
     default_poll_interval_ms: u64,
     numeric_mapping_fields: &'static [&'static str],
     validate_parameters: ParameterValidator,
@@ -42,7 +41,6 @@ pub(crate) struct ProtocolFactory {
 impl ProtocolFactory {
     fn new(
         mut metadata: ProtocolMetadata,
-        aliases: &'static [&'static str],
         default_poll_interval_ms: u64,
         numeric_mapping_fields: &'static [&'static str],
         validate_parameters: ParameterValidator,
@@ -61,22 +59,12 @@ impl ProtocolFactory {
         }
         Self {
             metadata,
-            aliases,
             default_poll_interval_ms,
             numeric_mapping_fields,
             validate_parameters,
             validate_mapping,
             build_runtime,
         }
-    }
-
-    fn matches(&self, protocol: &str) -> bool {
-        normalized_eq(protocol, self.metadata.protocol_type)
-            || normalized_eq(protocol, self.metadata.name)
-            || self
-                .aliases
-                .iter()
-                .any(|alias| normalized_eq(protocol, alias))
     }
 
     pub(crate) fn metadata(&self) -> &ProtocolMetadata {
@@ -138,7 +126,7 @@ impl ProtocolRegistry {
         self.factories.iter().map(ProtocolFactory::metadata)
     }
 
-    /// Resolve a canonical identifier or compatibility alias.
+    /// Resolve one exact protocol identifier advertised by the runtime manifest.
     #[must_use]
     pub fn resolve(&self, protocol: &str) -> Option<&ProtocolMetadata> {
         self.factory(protocol).map(ProtocolFactory::metadata)
@@ -147,19 +135,8 @@ impl ProtocolRegistry {
     pub(crate) fn factory(&self, protocol: &str) -> Option<&ProtocolFactory> {
         self.factories
             .iter()
-            .find(|factory| factory.matches(protocol))
+            .find(|factory| factory.metadata.protocol_type == protocol)
     }
-}
-
-fn normalized_eq(left: &str, right: &str) -> bool {
-    fn normalized(value: &str) -> impl Iterator<Item = u8> + '_ {
-        value
-            .trim()
-            .bytes()
-            .filter(|byte| !matches!(byte, b'-' | b'_' | b' ' | b'.'))
-            .map(|byte| byte.to_ascii_lowercase())
-    }
-    normalized(left).eq(normalized(right))
 }
 
 fn validate_common_channel(config: &ChannelConfig) -> Result<()> {
@@ -1279,7 +1256,6 @@ fn build_registry() -> ProtocolRegistry {
                 drivers: vec![ModbusChannel::tcp_metadata()],
                 supports_points: true,
             },
-            &["modbus"],
             1_000,
             &[
                 "slave_id",
@@ -1300,7 +1276,6 @@ fn build_registry() -> ProtocolRegistry {
                 drivers: vec![ModbusChannel::rtu_metadata()],
                 supports_points: true,
             },
-            &[],
             1_000,
             &[
                 "slave_id",
@@ -1326,7 +1301,6 @@ fn build_registry() -> ProtocolRegistry {
                 drivers: vec![GpiodDriver::metadata(), SysfsDriver::metadata()],
                 supports_points: true,
             },
-            &["gpio", "dido"],
             200,
             &["gpio_number"],
             validate_gpio_parameters,
@@ -1347,13 +1321,6 @@ fn build_registry() -> ProtocolRegistry {
                 drivers: vec![Iec104Channel::metadata()],
                 supports_points: true,
             },
-            &[
-                "iec_104",
-                "iec60870",
-                "iec_60870",
-                "iec60870_5_104",
-                "iec_60870_5_104",
-            ],
             100,
             &["ioa", "type_id"],
             validate_iec104_parameters,
@@ -1374,7 +1341,6 @@ fn build_registry() -> ProtocolRegistry {
                 drivers: vec![OpcUaChannel::metadata()],
                 supports_points: true,
             },
-            &["opc_ua"],
             1_000,
             &["namespace_index"],
             validate_opcua_parameters,
@@ -1395,7 +1361,6 @@ fn build_registry() -> ProtocolRegistry {
                 drivers: vec![CanClient::metadata()],
                 supports_points: true,
             },
-            &[],
             200,
             &[
                 "can_id",
@@ -1424,7 +1389,6 @@ fn build_registry() -> ProtocolRegistry {
                 drivers: vec![J1939Client::metadata()],
                 supports_points: true,
             },
-            &[],
             1_000,
             &["spn", "active_raw_value"],
             validate_j1939_parameters,
@@ -1445,7 +1409,6 @@ fn build_registry() -> ProtocolRegistry {
                 drivers: vec![Dl645Channel::metadata()],
                 supports_points: true,
             },
-            &[],
             1_000,
             &[],
             validate_dl645_parameters,
@@ -1466,7 +1429,6 @@ fn build_registry() -> ProtocolRegistry {
                 drivers: vec![BacnetChannel::metadata()],
                 supports_points: true,
             },
-            &["bacnet"],
             1_000,
             &[
                 "object_type",
@@ -1492,7 +1454,6 @@ fn build_registry() -> ProtocolRegistry {
                 drivers: vec![Cjt188Channel::metadata()],
                 supports_points: true,
             },
-            &["cj_t_188", "cjt_188"],
             5_000,
             &["data_id", "byte_offset", "byte_length"],
             validate_cjt188_parameters,
@@ -1513,7 +1474,6 @@ fn build_registry() -> ProtocolRegistry {
                 drivers: vec![Iec101Channel::metadata()],
                 supports_points: true,
             },
-            &["iec_101", "iec60870_5_101", "iec_60870_5_101"],
             5_000,
             &["ioa", "type_id"],
             validate_iec101_parameters,
@@ -1534,7 +1494,6 @@ fn build_registry() -> ProtocolRegistry {
                 drivers: vec![Gb32960Channel::metadata()],
                 supports_points: true,
             },
-            &["gb_t_32960", "gbt32960"],
             1_000,
             &["motor_index"],
             validate_gb32960_parameters,
@@ -1555,7 +1514,6 @@ fn build_registry() -> ProtocolRegistry {
                 drivers: vec![Jt808Channel::metadata()],
                 supports_points: true,
             },
-            &["jt_t_808", "jtt808"],
             1_000,
             &[],
             validate_jt808_parameters,
@@ -1576,7 +1534,6 @@ fn build_registry() -> ProtocolRegistry {
                 drivers: vec![MqttChannel::metadata()],
                 supports_points: true,
             },
-            &["mqtt_protocol"],
             1_000,
             &[],
             validate_mqtt_parameters,
@@ -1597,7 +1554,6 @@ fn build_registry() -> ProtocolRegistry {
                 drivers: vec![HttpChannel::metadata()],
                 supports_points: true,
             },
-            &[],
             5_000,
             &[],
             validate_http_parameters,
@@ -1618,7 +1574,6 @@ fn build_registry() -> ProtocolRegistry {
                 drivers: vec![BleChannel::metadata()],
                 supports_points: true,
             },
-            &[],
             1_000,
             &[],
             validate_ble_parameters,
@@ -1639,7 +1594,6 @@ fn build_registry() -> ProtocolRegistry {
                 drivers: vec![ZigbeeChannel::metadata()],
                 supports_points: true,
             },
-            &[],
             1_000,
             &[],
             validate_zigbee_parameters,
@@ -1660,7 +1614,6 @@ fn build_registry() -> ProtocolRegistry {
                 drivers: vec![Iec61850Channel::metadata()],
                 supports_points: true,
             },
-            &[],
             1_000,
             &["ctrl_model"],
             validate_iec61850_parameters,
@@ -1706,32 +1659,17 @@ mod tests {
     }
 
     #[test]
-    fn canonical_ids_and_aliases_are_unique() {
+    fn canonical_ids_are_unique_and_resolve_exactly() {
         let registry = get_protocol_registry();
         let mut canonical = BTreeSet::new();
-        let mut lookup_names = BTreeSet::new();
         for factory in &registry.factories {
             assert!(canonical.insert(factory.metadata.protocol_type));
-            for name in std::iter::once(factory.metadata.protocol_type)
-                .chain(std::iter::once(factory.metadata.name))
-                .chain(factory.aliases.iter().copied())
-            {
-                let normalized = name
-                    .bytes()
-                    .filter(|byte| !matches!(byte, b'-' | b'_' | b' ' | b'.'))
-                    .map(|byte| byte.to_ascii_lowercase())
-                    .collect::<Vec<_>>();
-                if !lookup_names.insert(normalized) {
-                    assert!(
-                        factory.matches(name),
-                        "duplicate lookup name does not resolve to its factory"
-                    );
-                }
-                assert!(
-                    std::ptr::eq(registry.factory(name).expect("registered name"), factory),
-                    "{name} resolves to a different factory"
-                );
-            }
+            assert!(std::ptr::eq(
+                registry
+                    .factory(factory.metadata.protocol_type)
+                    .expect("registered canonical identifier"),
+                factory
+            ));
         }
     }
 

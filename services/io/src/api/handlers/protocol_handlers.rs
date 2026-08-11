@@ -6,7 +6,7 @@ use crate::protocols::{DriverMetadata, ProtocolMetadata, get_protocol_registry};
 use axum::response::Json;
 use serde::Serialize;
 
-use crate::dto::{AppError, SuccessResponse};
+use crate::api::dto::{AppError, SuccessResponse};
 
 /// Protocol information for API response.
 #[derive(Debug, Clone, Serialize, utoipa::ToSchema)]

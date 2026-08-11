@@ -13,18 +13,23 @@ The default Cargo graph is already external-service-free. It contains the
 domain, ports, application layer, SDK, local adapters, the physical SHM data
 plane, and typed SHM port adapters. In particular:
 
-- `aether-dataplane` owns mmap layout, seqlock slots, dirty tracking, and
-  snapshots without depending on Redis, SQLx, or the legacy service model.
-- `aether-shm-bridge` owns the typed channel manifest, channel-aware readers,
-  generation lifecycle, isolated PointWatch publication, and production
+- `aether-dataplane` owns the exact-sized v5 mmap layout, seqlock slots with
+  point quality, owner heartbeat and generation fencing, and the independent
+  snapshot format without depending on Redis, SQLx, or service models.
+- `aether-shm-bridge` owns exact typed point manifests, dense channel-health
+  manifests, coordinated generation lifecycle, fenced batch readers, isolated
+  16-byte PointWatch wake-up hints, and production
   `AcquisitionStateWriter` and `DeviceCommandSink` adapters. The writer trait
   lives in the owner-only `aether-acquisition-port` crate, whose sole direct
   runtime consumer is `aether-shm-bridge`. IO acquisition can
   represent only T/S writes; automation command transport can represent only
   C/A writes and returns success only after the local SHM + UDS command plane
   accepts the frame. Neither writer port is exposed to HTTP, CLI, MCP, or AI
-  clients. The retired legacy aggregate is absent from the service and CLI
-  graphs.
+  clients.
+- The canonical point segment is `aether-live-state.shm`. The Linux runtime
+  accepts only the v5 header/layout and the independent snapshot v1 format;
+  old v4 mmaps and older snapshot encodings are invalid rather than migration
+  inputs.
 - `FileOutbox` provides bounded legacy store-and-forward with crash recovery.
   The experimental `CloudLinkSpool` is separate: it preserves stream
   epoch/position, canonical business digests, replay and loss evidence, and
@@ -52,7 +57,9 @@ plane, and typed SHM port adapters. In particular:
   backend while its extraction decision remains separate.
 - `aether-alarm`, `aether-api`, `aether-history`, and `aether-uplink` discover logical points from
   SQLite and read current values directly from SHM. `aether-alarm` and
-  `aether-api` also own isolated PointWatch bitmaps and UDS listeners.
+  `aether-api` also own isolated PointWatch bitmaps and UDS listeners. Every
+  PointWatch consumer validates the hinted typed slot and re-reads the pinned
+  SHM generation; the event frame never carries authoritative point data.
 - `aether-history` uses embedded SQLite history by default; PostgreSQL/TimescaleDB are
   enabled with the `postgres-storage` feature. `aether-uplink` retains its durable
   local outbox before MQTT.
@@ -65,7 +72,9 @@ plane, and typed SHM port adapters. In particular:
 - `aether-domain` is the sole business-semantics owner. The former
   `aether-model` compatibility crate has been removed: Pack product contracts
   live in `aether-pack`, SunSpec material is absent from the kernel, and
-  `aether-core` retains wire-codec and SHM ABI representations.
+  `aether-core` retains portable wire codecs but owns no memory layout. The
+  embedded raw-pointer ABI belongs to `firmware/aether-shm`; the Linux
+  live-state ABI belongs only to `aether-dataplane`.
 - Domain models and knowledge are absent by default. Automation and MCP load
   them only from manifest-validated Packs explicitly selected by
   `<AETHER_CONFIG_PATH>/global.yaml`; `packs: []` is the safe empty kernel.
@@ -143,9 +152,11 @@ read-only SQLite adapter, and returns `DerivedData` through authenticated
 `/api/v1/data-processing/*` routes. The Load-Forecasting implementation remains
 an isolated sidecar. CLI/MCP bindings, result caching, scheduling, and a
 standalone Aether orchestration process are not implemented. Current history
-and SHM adapters also do not preserve device-origin sample quality end to end;
-they enforce freshness, gaps, missingness, constraints, and provenance. The
-SQLite history is invocation-time consistent but not bitemporal: rows have no
+rows do not preserve device-origin sample quality. The v5 SHM adapter does
+preserve it and combines it with freshness policy on live reads, but a mixed
+history/live frame therefore cannot claim complete end-to-end quality
+fidelity. The SQLite history is invocation-time consistent but not bitemporal:
+rows have no
 ingestion/source epoch, and model provenance has no training/availability cut.
 Therefore historical `as_of` alone is not a leakage-safe backtest boundary.
 Production direct-history composition also requires a dedicated read-only

@@ -1,8 +1,7 @@
-use std::collections::BTreeMap;
-
+use aether_domain::PointKind;
 use aether_ports::PortErrorKind;
-use aether_shm_bridge::ChannelPointManifest;
-use aether_sqlite_topology::load_sqlite_shm_topology;
+use aether_shm_bridge::{ChannelPointManifest, PhysicalPointAddress};
+use aether_sqlite_topology::{load_sqlite_shm_capacity, load_sqlite_shm_topology};
 use sqlx::sqlite::SqlitePoolOptions;
 
 async fn topology_pool() -> sqlx::SqlitePool {
@@ -56,12 +55,30 @@ async fn snapshot_includes_sparse_measurements_and_all_channel_health() {
         .await
         .expect("canonical topology snapshot");
 
-    let expected_points = ChannelPointManifest::from_map(BTreeMap::from([(7, [3, 2, 1, 4])]));
+    let expected_addresses = [
+        PhysicalPointAddress::from_raw_ids(7, PointKind::Telemetry, 2),
+        PhysicalPointAddress::from_raw_ids(7, PointKind::Status, 1),
+        PhysicalPointAddress::from_raw_ids(7, PointKind::Command, 0),
+        PhysicalPointAddress::from_raw_ids(7, PointKind::Action, 3),
+    ];
+    let expected_points = ChannelPointManifest::compile(expected_addresses, 4)
+        .expect("expected exact point manifest");
     assert_eq!(
         snapshot.point_manifest().layout_hash(),
         expected_points.layout_hash()
     );
-    assert_eq!(snapshot.point_manifest().counts(), expected_points.counts());
+    assert_eq!(snapshot.point_manifest().slot_count(), 4);
+    assert_eq!(
+        snapshot
+            .point_manifest()
+            .iter_physical_points()
+            .map(|(_, address)| address)
+            .collect::<Vec<_>>(),
+        expected_points
+            .iter_physical_points()
+            .map(|(_, address)| address)
+            .collect::<Vec<_>>()
+    );
     assert_eq!(
         snapshot.health_manifest().channel_ids().collect::<Vec<_>>(),
         vec![7, 20]
@@ -125,8 +142,19 @@ async fn snapshot_rejects_a_negative_point_hidden_below_a_valid_maximum() {
 }
 
 #[tokio::test]
-async fn snapshot_accepts_sparse_nonzero_point_ranges_and_allocates_the_upper_bound() {
+async fn snapshot_compacts_sparse_nonzero_point_identifiers_without_creating_holes() {
     let pool = topology_pool().await;
+    sqlx::query("CREATE TABLE service_config (service_name TEXT, key TEXT, value TEXT)")
+        .execute(&pool)
+        .await
+        .expect("service config schema");
+    sqlx::query(
+        "INSERT INTO service_config (service_name, key, value) \
+         VALUES ('global', 'shared_memory.max_slots', '3')",
+    )
+    .execute(&pool)
+    .await
+    .expect("configured capacity");
     sqlx::query("INSERT INTO channels (channel_id, protocol) VALUES (1, 'modbus-tcp')")
         .execute(&pool)
         .await
@@ -141,12 +169,64 @@ async fn snapshot_accepts_sparse_nonzero_point_ranges_and_allocates_the_upper_bo
 
     let snapshot = load_sqlite_shm_topology(&pool)
         .await
-        .expect("sparse point ids are part of the physical writer contract");
+        .expect("sparse point ids compile into an exact physical topology");
+    let point_watch_capacity = load_sqlite_shm_capacity(&pool)
+        .await
+        .expect("shared PointWatch capacity");
 
+    assert_eq!(snapshot.max_slots(), 3);
+    assert_eq!(point_watch_capacity, 3);
+    assert_eq!(snapshot.point_manifest().slot_count(), 2);
     assert_eq!(
-        snapshot.point_manifest().counts().get(&1),
-        Some(&[101, 0, 0, 0])
+        snapshot
+            .point_manifest()
+            .point_ids(1, PointKind::Telemetry)
+            .collect::<Vec<_>>(),
+        vec![2, 100]
     );
+    assert!(
+        snapshot
+            .point_manifest()
+            .slot_for(PhysicalPointAddress::from_raw_ids(
+                1,
+                PointKind::Telemetry,
+                3,
+            ))
+            .is_none()
+    );
+}
+
+#[tokio::test]
+async fn snapshot_rejects_capacity_overflow_before_publication() {
+    let pool = topology_pool().await;
+    sqlx::query("CREATE TABLE service_config (service_name TEXT, key TEXT, value TEXT)")
+        .execute(&pool)
+        .await
+        .expect("service config schema");
+    sqlx::query(
+        "INSERT INTO service_config (service_name, key, value) \
+         VALUES ('global', 'shared_memory.max_slots', '1')",
+    )
+    .execute(&pool)
+    .await
+    .expect("configured capacity");
+    sqlx::query("INSERT INTO channels (channel_id, protocol) VALUES (1, 'modbus-tcp')")
+        .execute(&pool)
+        .await
+        .expect("configured channel");
+    for point_id in [2_i64, 100] {
+        sqlx::query("INSERT INTO telemetry_points (channel_id, point_id) VALUES (1, ?)")
+            .bind(point_id)
+            .execute(&pool)
+            .await
+            .expect("configured point");
+    }
+
+    let error = load_sqlite_shm_topology(&pool)
+        .await
+        .expect_err("configured capacity must fail closed");
+
+    assert_eq!(error.kind(), PortErrorKind::InvalidData);
 }
 
 #[tokio::test]

@@ -1,6 +1,5 @@
 //! Per-channel connectivity state on a dedicated SHM segment.
 
-use std::collections::BTreeSet;
 use std::ffi::OsString;
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
@@ -18,54 +17,88 @@ use crate::managed::map_dataplane_error;
 use crate::topology_commit::validate_topology_publication_epoch;
 use crate::{ReconnectingSlotSource, ShmClientConfig, SlotSource};
 
-const CHANNEL_HEALTH_MANIFEST_DOMAIN: &str = "aether.channel-health.v1";
+const CHANNEL_HEALTH_MANIFEST_DOMAIN: &str = "aether.channel-health.layout.v5";
+const HEALTH_QUALITY_GOOD: u32 = 0;
 
-/// Immutable set of configured channel identifiers for the health segment.
-///
-/// The physical slot index is the channel id. Sparse ids intentionally leave
-/// NaN slots between configured channels; this keeps lookup O(1) and the file
-/// format independent from process-local hash maps.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+/// Immutable dense mapping from configured channel identifiers to health slots.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChannelHealthManifest {
-    channel_ids: BTreeSet<u32>,
-    slot_count: usize,
+    channel_ids: Vec<u32>,
+    layout_hash: u64,
 }
 
 impl ChannelHealthManifest {
-    /// Builds a canonical manifest from configured channel ids.
+    /// Compiles a canonical dense manifest under an explicit slot capacity.
+    ///
+    /// Duplicate channel identifiers are invalid rather than silently
+    /// collapsed.
+    pub fn compile(
+        channel_ids: impl IntoIterator<Item = u32>,
+        max_slots: usize,
+    ) -> PortResult<Self> {
+        let mut configured = Vec::new();
+        for channel_id in channel_ids {
+            if configured.len() >= max_slots {
+                return Err(PortError::new(
+                    PortErrorKind::InvalidData,
+                    format!("channel-health manifest exceeds configured capacity {max_slots}"),
+                ));
+            }
+            configured.push(channel_id);
+        }
+        configured.sort_unstable();
+        if let Some(duplicate) = configured
+            .windows(2)
+            .find_map(|pair| (pair[0] == pair[1]).then_some(pair[0]))
+        {
+            return Err(PortError::new(
+                PortErrorKind::InvalidData,
+                format!("duplicate channel {duplicate} in channel-health manifest"),
+            ));
+        }
+        let layout_hash = calculate_health_layout_hash(&configured);
+        Ok(Self {
+            channel_ids: configured,
+            layout_hash,
+        })
+    }
+
+    /// Builds a canonical channel set for synthetic test fixtures.
+    #[doc(hidden)]
     #[must_use]
-    pub fn from_channel_ids(channel_ids: impl IntoIterator<Item = u32>) -> Self {
-        let channel_ids: BTreeSet<u32> = channel_ids.into_iter().collect();
-        let slot_count = channel_ids
-            .last()
-            .map_or(0, |channel_id| *channel_id as usize + 1);
+    pub fn test_fixture(channel_ids: impl IntoIterator<Item = u32>) -> Self {
+        let mut channel_ids = channel_ids.into_iter().collect::<Vec<_>>();
+        channel_ids.sort_unstable();
+        channel_ids.dedup();
+        let layout_hash = calculate_health_layout_hash(&channel_ids);
         Self {
             channel_ids,
-            slot_count,
+            layout_hash,
         }
     }
 
     /// Returns whether the channel belongs to this configuration snapshot.
     #[must_use]
     pub fn contains(&self, channel_id: u32) -> bool {
-        self.channel_ids.contains(&channel_id)
+        self.slot_for(channel_id).is_some()
     }
 
-    /// Returns the physical slot count including sparse gaps.
+    /// Resolves a configured channel to its dense health slot.
+    #[must_use]
+    pub fn slot_for(&self, channel_id: u32) -> Option<usize> {
+        self.channel_ids.binary_search(&channel_id).ok()
+    }
+
+    /// Returns the number of configured health slots.
     #[must_use]
     pub const fn slot_count(&self) -> usize {
-        self.slot_count
+        self.channel_ids.len()
     }
 
     /// Computes the cross-process manifest fingerprint.
     #[must_use]
-    pub fn layout_hash(&self) -> u64 {
-        let mut hasher = rustc_hash::FxHasher::default();
-        CHANNEL_HEALTH_MANIFEST_DOMAIN.hash(&mut hasher);
-        for channel_id in &self.channel_ids {
-            channel_id.hash(&mut hasher);
-        }
-        hasher.finish()
+    pub const fn layout_hash(&self) -> u64 {
+        self.layout_hash
     }
 
     /// Iterates the configured ids in deterministic order.
@@ -74,56 +107,44 @@ impl ChannelHealthManifest {
     }
 }
 
-/// Single-writer channel-health SHM adapter used by acquisition/io.
-pub struct ShmChannelHealthWriter {
+impl Default for ChannelHealthManifest {
+    fn default() -> Self {
+        Self {
+            channel_ids: Vec::new(),
+            layout_hash: calculate_health_layout_hash(&[]),
+        }
+    }
+}
+
+fn calculate_health_layout_hash(channel_ids: &[u32]) -> u64 {
+    let mut hasher = rustc_hash::FxHasher::default();
+    CHANNEL_HEALTH_MANIFEST_DOMAIN.hash(&mut hasher);
+    (channel_ids.len() as u64).hash(&mut hasher);
+    for (slot, channel_id) in channel_ids.iter().enumerate() {
+        (slot as u64).hash(&mut hasher);
+        channel_id.hash(&mut hasher);
+    }
+    hasher.finish()
+}
+
+/// Current single-writer channel-health generation owned by the handle.
+struct ShmChannelHealthWriter {
     writer: Arc<SlotWriter>,
     manifest: Arc<ChannelHealthManifest>,
 }
 
 impl ShmChannelHealthWriter {
-    /// Creates a fresh health segment with every configured channel unknown.
-    pub fn create(
-        path: impl AsRef<Path>,
-        manifest: Arc<ChannelHealthManifest>,
-    ) -> PortResult<Self> {
-        Self::create_internal(path.as_ref(), manifest, 0)
-    }
-
-    /// Creates a fresh health segment carrying the coordinated publication
-    /// identity selected by the IO composition root.
-    pub fn create_at_epoch(
-        path: impl AsRef<Path>,
-        manifest: Arc<ChannelHealthManifest>,
-        publication_epoch: u64,
-    ) -> PortResult<Self> {
-        validate_topology_publication_epoch(publication_epoch)?;
-        Self::create_internal(path.as_ref(), manifest, publication_epoch)
-    }
-
-    fn create_internal(
-        canonical_path: &Path,
-        manifest: Arc<ChannelHealthManifest>,
-        publication_epoch: u64,
-    ) -> PortResult<Self> {
-        let authority =
-            AuthorityWriteGuard::acquire(canonical_path).map_err(map_dataplane_error)?;
-        publish_health_writer(
-            canonical_path,
-            manifest,
-            None,
-            &authority,
-            publication_epoch,
-        )
-    }
-
-    /// Publishes one online/offline transition and refreshes writer heartbeat.
-    pub fn set_online(&self, channel_id: u32, online: bool, timestamp_ms: u64) -> PortResult<()> {
-        if !self.manifest.contains(channel_id) {
-            return Err(PortError::new(
+    /// Publishes one online/offline transition.
+    ///
+    /// The health-plane owner refreshes liveness through the dedicated
+    /// heartbeat task; ordinary value writes never impersonate that owner.
+    fn set_online(&self, channel_id: u32, online: bool, timestamp_ms: u64) -> PortResult<()> {
+        let slot = self.manifest.slot_for(channel_id).ok_or_else(|| {
+            PortError::new(
                 PortErrorKind::Permanent,
                 format!("channel {channel_id} is absent from the health manifest"),
-            ));
-        }
+            )
+        })?;
         let _authority = self
             .writer
             .acquire_authority_read()
@@ -131,27 +152,23 @@ impl ShmChannelHealthWriter {
         self.writer
             .validate_authoritative_path()
             .map_err(map_dataplane_error)?;
-        self.set_online_unchecked(channel_id, online, timestamp_ms)?;
+        self.set_online_unchecked(channel_id, slot, online, timestamp_ms)?;
         self.writer
             .validate_authoritative_path()
             .map_err(map_dataplane_error)
     }
 
-    /// Refreshes liveness even when no channel changes state.
-    pub fn update_heartbeat(&self, timestamp_ms: u64) {
-        let _ = self.try_update_heartbeat(timestamp_ms);
-    }
-
     fn set_online_unchecked(
         &self,
         channel_id: u32,
+        slot: usize,
         online: bool,
         timestamp_ms: u64,
     ) -> PortResult<()> {
         let value = if online { 1.0 } else { 0.0 };
         if self
             .writer
-            .write_slot(channel_id as usize, value, value, timestamp_ms)
+            .write_slot(slot, value, value, timestamp_ms, HEALTH_QUALITY_GOOD)
         {
             return Ok(());
         }
@@ -186,7 +203,7 @@ impl ShmChannelHealthWriter {
     }
 
     fn publication_epoch(&self) -> u64 {
-        self.writer.header().publication_epoch()
+        self.writer.header().publication_epoch
     }
 
     fn slot_count(&self) -> usize {
@@ -231,42 +248,21 @@ impl ShmChannelHealthWriterHandle {
         }
     }
 
-    /// Creates and atomically publishes the initial health generation.
+    /// Creates and atomically publishes the initial coordinated generation.
     pub fn create(
-        path: impl Into<PathBuf>,
-        manifest: Arc<ChannelHealthManifest>,
-    ) -> PortResult<Self> {
-        let handle = Self::empty(path);
-        handle.rebuild(manifest)?;
-        Ok(handle)
-    }
-
-    /// Creates and atomically publishes the initial coordinated health
-    /// generation.
-    pub fn create_at_epoch(
         path: impl Into<PathBuf>,
         manifest: Arc<ChannelHealthManifest>,
         publication_epoch: u64,
     ) -> PortResult<Self> {
         validate_topology_publication_epoch(publication_epoch)?;
         let handle = Self::empty(path);
-        handle.rebuild_for_publication(manifest, publication_epoch)?;
+        handle.rebuild(manifest, publication_epoch)?;
         Ok(handle)
     }
 
-    /// Publishes a fresh health manifest while preserving observations for
-    /// channel ids present in both the old and new manifests.
-    ///
-    /// Rebuilding an identical canonical manifest is a true no-op: it does not
-    /// replace the inode, advance the writer generation, or refresh heartbeat.
-    pub fn rebuild(&self, manifest: Arc<ChannelHealthManifest>) -> PortResult<()> {
-        self.rebuild_internal(manifest, 0, false)
-    }
-
-    /// Publishes a fresh health plane for a coordinated topology epoch.
-    /// Unlike the compatibility rebuild path, a new epoch always replaces an
-    /// identical manifest so both physical planes carry the same identity.
-    pub fn rebuild_for_publication(
+    /// Publishes a fresh coordinated health plane while preserving
+    /// observations for channel ids present in both manifests.
+    pub fn rebuild(
         &self,
         manifest: Arc<ChannelHealthManifest>,
         publication_epoch: u64,
@@ -280,15 +276,6 @@ impl ShmChannelHealthWriterHandle {
                 ),
             ));
         }
-        self.rebuild_internal(manifest, publication_epoch, true)
-    }
-
-    fn rebuild_internal(
-        &self,
-        manifest: Arc<ChannelHealthManifest>,
-        publication_epoch: u64,
-        force_publication: bool,
-    ) -> PortResult<()> {
         let _local_authority = self.authority_gate.write().map_err(|_| {
             PortError::new(
                 PortErrorKind::Permanent,
@@ -301,9 +288,6 @@ impl ShmChannelHealthWriterHandle {
 
         if let Some(previous) = previous.as_ref() {
             previous.validate_authoritative_path()?;
-            if !force_publication && previous.manifest.as_ref() == manifest.as_ref() {
-                return Ok(());
-            }
         }
 
         let replacement = publish_health_writer(
@@ -374,7 +358,7 @@ impl ShmChannelHealthWriterHandle {
             .map(|current| current.publication_epoch())
     }
 
-    /// Returns the current sparse health-segment slot count.
+    /// Returns the current dense health-segment slot count.
     #[must_use]
     pub fn slot_count(&self) -> Option<usize> {
         self.current.load_full().map(|current| current.slot_count())
@@ -405,24 +389,14 @@ fn publish_health_writer(
     authority: &AuthorityWriteGuard,
     publication_epoch: u64,
 ) -> PortResult<ShmChannelHealthWriter> {
-    let max_slots = u32::try_from(manifest.slot_count()).map_err(|_| {
-        PortError::new(
-            PortErrorKind::Permanent,
-            format!(
-                "channel health slot count {} exceeds u32 capacity",
-                manifest.slot_count()
-            ),
-        )
-    })?;
     let sequence = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_nanos() as u64;
     let staging_path = generation_file_path(canonical_path, sequence.max(1));
     let mut cleanup = HealthStagingCleanup(Some(staging_path.clone()));
-    let staging_writer = SlotWriter::create_at_epoch(
+    let staging_writer = SlotWriter::create(
         &staging_path,
-        max_slots,
         manifest.slot_count(),
         manifest.layout_hash(),
         publication_epoch,
@@ -479,8 +453,20 @@ fn migrate_intersection(
         .channel_ids()
         .filter(|channel_id| previous.manifest.contains(*channel_id))
     {
+        let previous_slot = previous.manifest.slot_for(channel_id).ok_or_else(|| {
+            PortError::new(
+                PortErrorKind::Conflict,
+                format!("channel {channel_id} disappeared during health-state migration"),
+            )
+        })?;
+        let target_slot = manifest.slot_for(channel_id).ok_or_else(|| {
+            PortError::new(
+                PortErrorKind::Conflict,
+                format!("channel {channel_id} disappeared from the replacement health manifest"),
+            )
+        })?;
         let sample =
-            SlotIo::read_slot(previous.writer.as_ref(), channel_id as usize).ok_or_else(|| {
+            SlotIo::read_slot(previous.writer.as_ref(), previous_slot).ok_or_else(|| {
                 PortError::new(
                     PortErrorKind::Conflict,
                     format!("channel {channel_id} health state changed during migration"),
@@ -498,10 +484,11 @@ fn migrate_intersection(
             ));
         }
         staging_writer.set_direct(
-            channel_id as usize,
+            target_slot,
             sample.value,
             sample.raw,
             sample.timestamp_ms,
+            sample.quality_code,
         );
     }
     Ok(())
@@ -567,10 +554,10 @@ impl ShmChannelHealthReader {
         channel_id: ChannelId,
     ) -> PortResult<Option<ChannelHealthObservation>> {
         let channel_id_value = channel_id.get();
-        if !self.manifest.contains(channel_id_value) {
+        let Some(slot) = self.manifest.slot_for(channel_id_value) else {
             return Ok(None);
-        }
-        let Some(sample) = self.source.read_slot(channel_id_value as usize)? else {
+        };
+        let Some(sample) = self.source.read_slot(slot)? else {
             return Ok(None);
         };
         let online = match sample.value() {

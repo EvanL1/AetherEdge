@@ -1,4 +1,4 @@
-//! Pure SHM infrastructure: slot storage + bitmap allocator.
+//! Pure SHM infrastructure: slot storage and lifecycle.
 //!
 //! This module is the **infra boundary**: types here MUST NOT depend on
 //! business concepts (channel, instance, point type, routing, action dispatch).
@@ -9,12 +9,12 @@
 //! reverse_index, dispatch, notifier, etc.) and consumes `core` as an adapter.
 
 pub mod authority;
-pub mod bitmap;
 pub mod config;
 pub mod header;
 pub mod reader;
 pub mod slot;
 pub mod slot_io;
+pub mod snapshot_format;
 pub mod snapshot_load;
 pub mod snapshot_save;
 pub mod writer;

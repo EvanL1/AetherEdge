@@ -71,14 +71,15 @@ async fn partial_physical_publication_retains_the_previous_service_generation() 
     let first = aether_sqlite_topology::load_sqlite_live_topology(&pool)
         .await
         .expect("initial topology snapshot");
-    let point_writer = ShmWriterHandle::create_published_at_epoch(
+    let point_writer = ShmWriterHandle::create(
         ShmRuntimeConfig::new(&point_path, 256),
         Arc::new(first.point_manifest().clone()),
+        None,
         None,
         100,
     )
     .expect("publish initial point plane");
-    let health_writer = ShmChannelHealthWriterHandle::create_at_epoch(
+    let health_writer = ShmChannelHealthWriterHandle::create(
         &health_path,
         Arc::new(first.health_manifest().clone()),
         100,
@@ -95,6 +96,14 @@ async fn partial_physical_publication_retains_the_previous_service_generation() 
     health_writer
         .set_online(10, true, first_timestamp)
         .expect("write initial health");
+    point_writer
+        .generation()
+        .expect("initial point generation")
+        .acquisition_writer()
+        .update_heartbeat(first_timestamp);
+    health_writer
+        .update_heartbeat(first_timestamp)
+        .expect("publish initial health heartbeat");
 
     let command_sink = Arc::new(ShmDeviceCommandSink::new());
     let topology = AutomationTopologyHandle::new_lazy(
@@ -124,8 +133,15 @@ async fn partial_physical_publication_retains_the_previous_service_generation() 
             .expect("health sample")
             .online()
     );
-    let old_event = PointWatchEvent::new(10, PointKind::Telemetry, 0, 0, 10.0, 10.0, 1_000, 1);
+    let old_event =
+        PointWatchEvent::new(10, PointKind::Telemetry, 0, 0).expect("initial PointWatch event");
     assert!(initial.accepts_point_watch_event(old_event));
+    let initial_hint_sample = initial
+        .read_point_watch_sample(old_event)
+        .expect("re-read initial PointWatch slot")
+        .expect("initial PointWatch sample");
+    assert_eq!(initial_hint_sample.value(), 10.0);
+    assert_eq!(initial_hint_sample.timestamp_ms(), first_timestamp);
     assert!(initial.accepts_ready_point_watch_event(old_event, initial.sequence()));
     assert!(
         !initial.accepts_ready_point_watch_event(old_event, initial.sequence().wrapping_add(1))
@@ -155,7 +171,7 @@ async fn partial_physical_publication_retains_the_previous_service_generation() 
         .await
         .expect("replacement topology snapshot");
     point_writer
-        .rebuild_for_publication(Arc::new(second.point_manifest().clone()), 101)
+        .rebuild(Arc::new(second.point_manifest().clone()), 101)
         .expect("publish only replacement point plane");
 
     let error = topology
@@ -167,7 +183,7 @@ async fn partial_physical_publication_retains_the_previous_service_generation() 
     assert!(topology.load().accepts_point_watch_event(old_event));
 
     health_writer
-        .rebuild_for_publication(Arc::new(second.health_manifest().clone()), 101)
+        .rebuild(Arc::new(second.health_manifest().clone()), 101)
         .expect("publish replacement health plane");
     let second_timestamp = aether_shm_bridge::timestamp_ms();
     health_writer
@@ -179,6 +195,14 @@ async fn partial_physical_publication_retains_the_previous_service_generation() 
         .acquisition_writer()
         .commit_batch(&[sample(5, 50.0, second_timestamp)])
         .expect("write replacement point");
+    point_writer
+        .generation()
+        .expect("replacement point generation")
+        .acquisition_writer()
+        .update_heartbeat(second_timestamp);
+    health_writer
+        .update_heartbeat(second_timestamp)
+        .expect("publish replacement health heartbeat");
     commit_topology_publication(&point_path, &health_path, 101)
         .expect("commit replacement topology");
 
@@ -202,16 +226,9 @@ async fn partial_physical_publication_retains_the_previous_service_generation() 
             .online()
     );
     assert!(!current.accepts_point_watch_event(old_event));
-    assert!(current.accepts_point_watch_event(PointWatchEvent::new(
-        5,
-        PointKind::Telemetry,
-        0,
-        0,
-        50.0,
-        50.0,
-        2_000,
-        2,
-    )));
+    assert!(current.accepts_point_watch_event(
+        PointWatchEvent::new(5, PointKind::Telemetry, 0, 0).expect("replacement PointWatch event")
+    ));
     assert_eq!(
         current
             .action_route(100, 1)
@@ -238,14 +255,15 @@ async fn topology_changes_notify_subscription_rebuilders_but_no_ops_do_not() {
     let snapshot = aether_sqlite_topology::load_sqlite_live_topology(&pool)
         .await
         .expect("initial topology snapshot");
-    let _point_writer = ShmWriterHandle::create_published_at_epoch(
+    let _point_writer = ShmWriterHandle::create(
         ShmRuntimeConfig::new(&point_path, 256),
         Arc::new(snapshot.point_manifest().clone()),
+        None,
         None,
         200,
     )
     .expect("publish point plane");
-    let _health_writer = ShmChannelHealthWriterHandle::create_at_epoch(
+    let _health_writer = ShmChannelHealthWriterHandle::create(
         &health_path,
         Arc::new(snapshot.health_manifest().clone()),
         200,
@@ -274,7 +292,7 @@ async fn topology_changes_notify_subscription_rebuilders_but_no_ops_do_not() {
 
     let previously_ready = topology.load().sequence();
     let same_slot_event =
-        PointWatchEvent::new(10, PointKind::Telemetry, 0, 0, 10.0, 10.0, 1_000, 9);
+        PointWatchEvent::new(10, PointKind::Telemetry, 0, 0).expect("same-slot PointWatch event");
     // A command pins the old logical/physical generation across its awaits.
     // Publication must not expose replacement routing until that transaction
     // releases its service read lease.
@@ -462,14 +480,15 @@ async fn command_limits_publish_with_their_route_and_fail_closed_when_invalid() 
     let snapshot = aether_sqlite_topology::load_sqlite_live_topology(&pool)
         .await
         .expect("initial topology snapshot");
-    let _point_writer = ShmWriterHandle::create_published_at_epoch(
+    let _point_writer = ShmWriterHandle::create(
         ShmRuntimeConfig::new(&point_path, 256),
         Arc::new(snapshot.point_manifest().clone()),
+        None,
         None,
         300,
     )
     .expect("publish point plane");
-    let _health_writer = ShmChannelHealthWriterHandle::create_at_epoch(
+    let _health_writer = ShmChannelHealthWriterHandle::create(
         &health_path,
         Arc::new(snapshot.health_manifest().clone()),
         300,

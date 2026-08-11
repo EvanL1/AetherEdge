@@ -212,6 +212,20 @@ Usage: aether sync [OPTIONS]
 aether sync --dry-run
 ```
 
+Validation here covers configuration structure and references. It does **not**
+check protocol mappings: those schemas belong to the protocol adapter that
+compiles them, and the adapter validates them when a channel is activated. A
+mapping with an out-of-range `slave_id` or a function code that does not exist
+therefore passes `sync` and is refused at activation. Both the text and
+`--json` reports name this in `unchecked`, so a caller never has to infer it.
+
+`sync` refuses to run while a runtime owner is still live, so that an offline
+apply cannot race a service holding the same state. Ownership is decided by
+each service's runtime artefact — `aether-io` by its SHM writer heartbeat and
+`aether-automation` by its PointWatch socket — rather than by a well-known
+port, so it follows `AETHER_SHM_PATH` and detects a service whatever port it
+listens on.
+
 ## aether status
 
 Show current configuration status.
@@ -294,14 +308,13 @@ Usage: aether channels status [OPTIONS] <CHANNEL_ID>
 aether channels status 1001
 ```
 
-### channels reload
+### channels reconcile
 
-Reconcile every channel runtime from authoritative desired state. The command
-name is retained for compatibility, but it calls the canonical governed
-`POST /api/channels/reconcile` endpoint rather than the legacy reload route.
+Reconcile every channel runtime from authoritative desired state through the
+canonical governed `POST /api/channels/reconcile` endpoint.
 
 ```
-Usage: aether channels reload [OPTIONS] --confirmed
+Usage: aether channels reconcile [OPTIONS] --confirmed
 ```
 
 | Flag | Description |
@@ -309,7 +322,7 @@ Usage: aether channels reload [OPTIONS] --confirmed
 | `--confirmed` | Explicitly confirm this high-risk runtime reconciliation; requires `AETHER_ACCESS_TOKEN` |
 
 ```bash
-AETHER_ACCESS_TOKEN='<signed access JWT>' aether channels reload --confirmed
+AETHER_ACCESS_TOKEN='<signed access JWT>' aether channels reconcile --confirmed
 ```
 
 The receipt reports the sanitized desired-state observation and runtime
@@ -444,7 +457,7 @@ runtime projection after desired state has committed. Preserve `request_id`,
 inspect `resulting_revision` and `reconciliation_required`, and do not
 automatically retry the non-idempotent command. Update, delete, enable, and
 disable require the revision returned by the latest channel read and fail
-before HTTP when it is absent. `channels reload` is the sixth
+before HTTP when it is absent. `channels reconcile` is the sixth
 governed channel command and maps separately to `io.channel.reconcile` while
 requiring the same `io.channel.manage` permission, explicit confirmation,
 Bearer token, UUID request ID, and audit policy.
@@ -505,9 +518,18 @@ Usage: aether channels points add [OPTIONS] --name <NAME> <CHANNEL_ID> <POINT_TY
 | `--scale <SCALE>` | Scale factor |
 | `--description <DESCRIPTION>` | Description |
 | `--data-type <DATA_TYPE>` | Data type (default: float32 for T/A, bool for S/C) |
+| `--protocol-mapping <JSON>` | Protocol address mapping; see [Connect devices](../guides/connect-devices.md) for each protocol's fields |
+| `--expected-revision <N>` | Channel revision this mutation expects, from the latest channel read |
+| `--confirmed` | Confirm the governed point-topology mutation |
+
+Point topology is fenced on the channel's revision, so `--expected-revision`
+and `--confirmed` are required exactly as they are for the channel lifecycle
+commands. Read the current revision with `aether channels get <id>`.
 
 ```bash
-aether channels points add 1001 T 101 --name voltage --unit V --scale 0.1
+aether channels points add 1001 T 101 --name voltage --unit V --scale 0.1 \
+  --protocol-mapping '{"slave_id":1,"function_code":3,"register_address":0}' \
+  --expected-revision 3 --confirmed
 ```
 
 ### channels points update
@@ -524,9 +546,13 @@ Usage: aether channels points update [OPTIONS] <CHANNEL_ID> <POINT_TYPE> <POINT_
 | `--unit <UNIT>` | Unit |
 | `--scale <SCALE>` | Scale factor |
 | `--description <DESCRIPTION>` | Description |
+| `--protocol-mapping <JSON>` | Replace the point's protocol address mapping |
+| `--expected-revision <N>` | Channel revision this mutation expects |
+| `--confirmed` | Confirm the governed point-topology mutation |
 
 ```bash
-aether channels points update 1001 T 101 --scale 0.01
+aether channels points update 1001 T 101 --scale 0.01 \
+  --expected-revision 4 --confirmed
 ```
 
 ### channels points remove
@@ -539,10 +565,13 @@ Usage: aether channels points remove [OPTIONS] <CHANNEL_ID> <POINT_TYPE> <POINT_
 
 | Flag | Description |
 |------|-------------|
-| `-f, --force` | Force deletion without confirmation |
+| `-f, --force` | Skip the interactive prompt |
+| `--expected-revision <N>` | Channel revision this mutation expects |
+| `--confirmed` | Confirm the governed point-topology mutation |
 
 ```bash
-aether channels points remove 1001 T 101 --force
+aether channels points remove 1001 T 101 --force \
+  --expected-revision 5 --confirmed
 ```
 
 ### channels points batch
@@ -1216,19 +1245,49 @@ Usage: aether shm get [OPTIONS] <KEY>
 
 ```bash
 aether shm get inst:9:M:101
+# 24.6  [good, 812ms ago]
 ```
+
+The value is printed with the age of the sample it came from and whether that
+sample is still fresh. A channel that stops responding leaves its last value in
+the slot, so the number alone cannot be told apart from a live reading; a
+sample older than `SHM_WRITER_STALE_AFTER_MS` is marked `stale`.
 
 ### shm info
 
-Show shared memory statistics.
+Inspect the committed point and channel-health planes directly, without HTTP
+or a running observer daemon. The command validates both physical files, the
+durable topology witness, publication epoch, writer generations, heartbeat
+age, and an aggregate slot/quality scan. It never refreshes a heartbeat,
+repairs a file, or publishes a generation.
 
 ```
 Usage: aether shm info [OPTIONS]
+
+Options:
+      --no-scan  Validate headers and commit without scanning every slot
 ```
 
 ```bash
-aether shm info --json
+aether shm info
+# Aether SHM HEALTHY
+# Publication:   928
+# Point plane:
+#   slots/size:  83417 / 2669408 bytes
+#   generation:  184  heartbeat: 312ms  hash: 0x...
+# Health plane:
+#   channels:    online=408 offline=4
+
+aether --json shm info
 ```
+
+JSON output uses the regular `{success, data}` CLI envelope and contains
+stable finding codes for scripts. `healthy` means both planes match the same
+commit and their heartbeat is at most 3 seconds old; 3–30 seconds is
+`degraded`; a missing, future, or older heartbeat and every layout/commit
+mismatch is `unhealthy`. `SHM_WRITER_STALE_AFTER_MS` remains the terminal
+stale threshold; the healthy threshold is one tenth of it, capped at 3
+seconds.
 
 ### shm watch
 
@@ -1244,11 +1303,20 @@ Usage: aether shm watch [OPTIONS] <KEY>
 
 ```bash
 aether shm watch ch:1001:T:101 --interval-ms 200
+# [13:20:20] 24.6  [good, 140ms ago]
+# [13:20:20] 24.6  [stale, 41200ms ago]
 ```
+
+Each line carries the same freshness marking as `shm get`. The stream does not
+stop when a device goes away — the slot keeps its last value — so a frozen
+reading is distinguished by its age rather than by the output ending.
 
 ### shm top
 
-Real-time TUI dashboard (like htop).
+Real-time TUI dashboard (like htop). Its header refreshes the same read-only
+observer once per second and shows overall status, publication epoch, point
+and health heartbeat ages, and quality/unwritten/contention counts. The point
+table remains available below it.
 
 ```
 Usage: aether shm top [OPTIONS]
@@ -1257,6 +1325,35 @@ Usage: aether shm top [OPTIONS]
 ```bash
 aether shm top
 ```
+
+### shm serve
+
+Serve the optional browser dashboard from the CLI. It is not a seventh
+runtime service: the process exists only while this command is running,
+opens SHM read-only, and accepts loopback connections only.
+
+```
+Usage: aether shm serve [OPTIONS]
+
+Options:
+      --bind <BIND>  Loopback address for the local dashboard [default: 127.0.0.1:6070]
+      --no-scan      Validate headers and commit without scanning every slot
+```
+
+```bash
+aether shm serve
+# Open http://127.0.0.1:6070
+```
+
+The self-contained page refreshes once per second and displays authority
+status, publication epoch, both writer heartbeats, exact plane sizes and
+generations, point-quality distribution, a bounded typed live-point preview,
+and stable-code findings. Its JSON source is the same-origin read-only endpoint
+`/api/v1/observation`. The server rejects `0.0.0.0`, LAN, and public bind
+addresses; it has no mutation route, external asset, CORS grant, or persistent
+state. The point preview is available when `--db-path` resolves the SQLite
+manifest that matches the live SHM layout; plane observability remains
+available when it does not.
 
 ## aether doctor
 

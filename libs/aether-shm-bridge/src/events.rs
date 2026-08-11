@@ -5,66 +5,74 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use aether_domain::PointKind;
+use aether_ports::{PortError, PortErrorKind, PortResult};
 use tokio::io::AsyncReadExt;
 use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
+const POINT_WATCH_FRAME_MARKER: [u8; 3] = [0xA5, 1, 0x5A];
+
 /// Fixed-size PointWatch hint sent after a SHM slot write.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PointWatchEvent {
     channel_id: u32,
     point_id: u32,
+    slot_index: u32,
     point_type: u8,
-    value_bits: u64,
-    raw_bits: u64,
-    slot_index: u64,
-    timestamp_ms: u64,
-    producer_id: u64,
 }
 
 impl PointWatchEvent {
     /// Wire frame size in bytes.
-    pub const SIZE: usize = 56;
+    pub const SIZE: usize = 16;
 
-    /// Creates one change hint. SHM remains authoritative for the value.
-    #[allow(clippy::too_many_arguments)]
-    #[must_use]
+    /// Creates one wake-up hint after validating the physical slot width.
+    ///
+    /// SHM remains authoritative for value, raw value, timestamp, and quality.
     pub fn new(
         channel_id: u32,
         kind: PointKind,
         point_id: u32,
-        slot_index: u64,
-        value: f64,
-        raw: f64,
-        timestamp_ms: u64,
-        producer_id: u64,
-    ) -> Self {
-        Self {
+        slot_index: usize,
+    ) -> PortResult<Self> {
+        let slot_index = u32::try_from(slot_index).map_err(|_| {
+            PortError::new(
+                PortErrorKind::InvalidData,
+                format!("PointWatch slot {slot_index} exceeds the u32 wire range"),
+            )
+        })?;
+        Ok(Self {
             channel_id,
             point_id,
-            point_type: point_kind_code(kind),
-            value_bits: value.to_bits(),
-            raw_bits: raw.to_bits(),
             slot_index,
-            timestamp_ms,
-            producer_id,
-        }
+            point_type: point_kind_code(kind),
+        })
     }
 
-    /// Decodes the stable little-endian wire representation.
-    #[must_use]
-    pub fn from_bytes(bytes: &[u8; Self::SIZE]) -> Self {
-        Self {
+    /// Decodes the strict v1 little-endian wire representation.
+    ///
+    /// The trailing marker prevents an older, longer PointWatch payload from
+    /// being interpreted as a valid compact hint by a new listener.
+    pub fn from_bytes(bytes: &[u8; Self::SIZE]) -> PortResult<Self> {
+        if bytes[13..16] != POINT_WATCH_FRAME_MARKER {
+            return Err(PortError::new(
+                PortErrorKind::InvalidData,
+                "PointWatch frame marker or version is invalid",
+            ));
+        }
+        let event = Self {
             channel_id: u32::from_le_bytes(bytes[0..4].try_into().unwrap_or([0; 4])),
             point_id: u32::from_le_bytes(bytes[4..8].try_into().unwrap_or([0; 4])),
-            point_type: bytes[8],
-            value_bits: u64::from_le_bytes(bytes[16..24].try_into().unwrap_or([0; 8])),
-            raw_bits: u64::from_le_bytes(bytes[24..32].try_into().unwrap_or([0; 8])),
-            slot_index: u64::from_le_bytes(bytes[32..40].try_into().unwrap_or([0; 8])),
-            timestamp_ms: u64::from_le_bytes(bytes[40..48].try_into().unwrap_or([0; 8])),
-            producer_id: u64::from_le_bytes(bytes[48..56].try_into().unwrap_or([0; 8])),
+            slot_index: u32::from_le_bytes(bytes[8..12].try_into().unwrap_or([0; 4])),
+            point_type: bytes[12],
+        };
+        if event.point_kind().is_none() {
+            return Err(PortError::new(
+                PortErrorKind::InvalidData,
+                format!("PointWatch point kind {} is invalid", event.point_type),
+            ));
         }
+        Ok(event)
     }
 
     /// Encodes the stable little-endian wire representation.
@@ -73,12 +81,9 @@ impl PointWatchEvent {
         let mut bytes = [0_u8; Self::SIZE];
         bytes[0..4].copy_from_slice(&self.channel_id.to_le_bytes());
         bytes[4..8].copy_from_slice(&self.point_id.to_le_bytes());
-        bytes[8] = self.point_type;
-        bytes[16..24].copy_from_slice(&self.value_bits.to_le_bytes());
-        bytes[24..32].copy_from_slice(&self.raw_bits.to_le_bytes());
-        bytes[32..40].copy_from_slice(&self.slot_index.to_le_bytes());
-        bytes[40..48].copy_from_slice(&self.timestamp_ms.to_le_bytes());
-        bytes[48..56].copy_from_slice(&self.producer_id.to_le_bytes());
+        bytes[8..12].copy_from_slice(&self.slot_index.to_le_bytes());
+        bytes[12] = self.point_type;
+        bytes[13..16].copy_from_slice(&POINT_WATCH_FRAME_MARKER);
         bytes
     }
 
@@ -106,34 +111,10 @@ impl PointWatchEvent {
         }
     }
 
-    /// Returns the engineering value carried as a best-effort hint.
-    #[must_use]
-    pub fn value(self) -> f64 {
-        f64::from_bits(self.value_bits)
-    }
-
-    /// Returns the raw value carried as a best-effort hint.
-    #[must_use]
-    pub fn raw(self) -> f64 {
-        f64::from_bits(self.raw_bits)
-    }
-
     /// Returns the authoritative SHM slot to re-read.
     #[must_use]
-    pub const fn slot_index(self) -> u64 {
+    pub const fn slot_index(self) -> u32 {
         self.slot_index
-    }
-
-    /// Returns the producer's sample timestamp.
-    #[must_use]
-    pub const fn timestamp_ms(self) -> u64 {
-        self.timestamp_ms
-    }
-
-    /// Returns the producer incarnation id.
-    #[must_use]
-    pub const fn producer_id(self) -> u64 {
-        self.producer_id
     }
 
     /// Returns whether this hint still names the same typed slot in a
@@ -148,12 +129,12 @@ impl PointWatchEvent {
             return false;
         };
         manifest
-            .slot_for(crate::PhysicalPointAddress::from_legacy_raw(
+            .slot_for(crate::PhysicalPointAddress::from_raw_ids(
                 self.channel_id,
                 kind,
                 self.point_id,
             ))
-            .and_then(|slot| u64::try_from(slot).ok())
+            .and_then(|slot| u32::try_from(slot).ok())
             == Some(self.slot_index)
     }
 }
@@ -262,12 +243,21 @@ async fn consume_connection(
             read = stream.read_exact(&mut bytes) => read,
         };
         match read {
-            Ok(_) => match event_tx.try_send(PointWatchEvent::from_bytes(&bytes)) {
-                Ok(()) => {},
-                Err(mpsc::error::TrySendError::Full(_)) => {
-                    dropped_count.fetch_add(1, Ordering::Relaxed);
-                },
-                Err(mpsc::error::TrySendError::Closed(_)) => return Ok(false),
+            Ok(_) => {
+                let event = match PointWatchEvent::from_bytes(&bytes) {
+                    Ok(event) => event,
+                    Err(_) => {
+                        dropped_count.fetch_add(1, Ordering::Relaxed);
+                        return Ok(true);
+                    },
+                };
+                match event_tx.try_send(event) {
+                    Ok(()) => {},
+                    Err(mpsc::error::TrySendError::Full(_)) => {
+                        dropped_count.fetch_add(1, Ordering::Relaxed);
+                    },
+                    Err(mpsc::error::TrySendError::Closed(_)) => return Ok(false),
+                }
             },
             Err(error) if error.kind() == std::io::ErrorKind::UnexpectedEof => return Ok(true),
             Err(error) => return Err(error),

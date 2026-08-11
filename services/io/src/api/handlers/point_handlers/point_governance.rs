@@ -7,7 +7,7 @@ use aether_auth_jwt::AccessTokenAuthenticator;
 use aether_ports::{ChannelRevision, PortErrorKind};
 use axum::http::{HeaderMap, StatusCode, header};
 
-use crate::dto::{AppError, ChannelCompletionAudit, ChannelCompletionAuditState, ErrorInfo};
+use crate::api::dto::{AppError, ChannelCompletionAudit, ChannelCompletionAuditState, ErrorInfo};
 use crate::point_topology::{
     PointTopologyAcceptance, PointTopologyApplication, PointTopologyMutation,
 };

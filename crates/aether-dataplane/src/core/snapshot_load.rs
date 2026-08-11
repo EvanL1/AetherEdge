@@ -1,162 +1,120 @@
-//! Validated reader for the compact physical snapshot format.
+//! Validated reader for the persistent snapshot format.
 
 use std::path::Path;
 
-use crate::core::header::{HeaderSnapshot, UNIFIED_MAGIC, UNIFIED_VERSION, slot_offset};
-use crate::core::slot::SLOT_UNWRITTEN_BITS;
 use crate::core::slot_io::SlotRead;
+use crate::core::snapshot_format::{
+    SLOT_ABSENT, SLOT_PAYLOAD_SIZE, SLOT_PRESENT, SNAPSHOT_HEADER_SIZE, SnapshotHeader,
+};
 use crate::{DataplaneError, DataplaneResult};
 
-const SLOT_BYTES: usize = 32;
-
-/// Fully validated compact snapshot image.
+/// Fully validated snapshot image.
 #[derive(Debug)]
 pub struct SnapshotImage {
-    header: HeaderSnapshot,
-    publication_epoch: u64,
+    header: SnapshotHeader,
     slots: Vec<Option<SlotRead>>,
 }
 
 impl SnapshotImage {
-    /// Loads and validates a compact snapshot without interpreting its opaque
-    /// manifest fingerprint.
+    /// Loads and validates the current snapshot format.
+    ///
+    /// Live mmap images and every earlier snapshot format are rejected; there
+    /// is no compatibility decoder.
     pub fn load(path: impl AsRef<Path>) -> DataplaneResult<Self> {
         let path = path.as_ref();
         let bytes = std::fs::read(path)
             .map_err(|source| DataplaneError::io(format!("read SHM snapshot {path:?}"), source))?;
-        if bytes.len() < slot_offset() {
-            return Err(DataplaneError::InvalidLayout(format!(
-                "snapshot {path:?} is shorter than its header"
-            )));
-        }
-
-        let header = decode_header(&bytes)?;
-        let publication_epoch = read_u64(&bytes, 56, "publication_epoch")?;
-        if header.magic != UNIFIED_MAGIC {
-            return Err(DataplaneError::InvalidLayout(format!(
-                "snapshot magic mismatch: expected 0x{UNIFIED_MAGIC:x}, got 0x{:x}",
-                header.magic
-            )));
-        }
-        if header.version != UNIFIED_VERSION {
-            return Err(DataplaneError::InvalidLayout(format!(
-                "snapshot version mismatch: expected {UNIFIED_VERSION}, got {}",
-                header.version
-            )));
-        }
-        if header.slot_count > header.max_slots {
-            return Err(DataplaneError::InvalidLayout(format!(
-                "snapshot slot_count {} exceeds max_slots {}",
-                header.slot_count, header.max_slots
-            )));
-        }
-        if header.writer_generation == 0 || header.writer_generation & 1 != 0 {
-            return Err(DataplaneError::InvalidLayout(format!(
-                "snapshot writer generation {} is not stable",
-                header.writer_generation
-            )));
-        }
-
-        let required = usize::try_from(header.slot_count)
-            .ok()
-            .and_then(|count| count.checked_mul(SLOT_BYTES))
-            .and_then(|slots| slot_offset().checked_add(slots))
+        let header = SnapshotHeader::decode(&bytes)?;
+        let slot_count = header.slot_count as usize;
+        let minimum_len = SNAPSHOT_HEADER_SIZE
+            .checked_add(slot_count)
             .ok_or_else(|| DataplaneError::InvalidLayout("snapshot length overflow".to_string()))?;
-        if bytes.len() != required {
+        if bytes.len() < minimum_len {
             return Err(DataplaneError::InvalidLayout(format!(
-                "snapshot length mismatch: expected {required} bytes, got {}",
+                "snapshot is too short for {slot_count} presence records: have {} bytes, need at least {minimum_len}",
                 bytes.len()
             )));
         }
 
-        let mut slots = Vec::with_capacity(header.slot_count as usize);
-        for slot in 0..header.slot_count as usize {
-            slots.push(decode_slot(&bytes, slot)?);
+        let mut cursor = SNAPSHOT_HEADER_SIZE;
+        let mut slots = Vec::with_capacity(slot_count);
+        for slot in 0..slot_count {
+            let presence = *bytes.get(cursor).ok_or_else(|| {
+                DataplaneError::InvalidLayout(format!(
+                    "snapshot is missing presence tag for slot {slot}"
+                ))
+            })?;
+            cursor += 1;
+            match presence {
+                SLOT_ABSENT => slots.push(None),
+                SLOT_PRESENT => {
+                    let payload_end = cursor.checked_add(SLOT_PAYLOAD_SIZE).ok_or_else(|| {
+                        DataplaneError::InvalidLayout("snapshot length overflow".to_string())
+                    })?;
+                    let payload = bytes.get(cursor..payload_end).ok_or_else(|| {
+                        DataplaneError::InvalidLayout(format!(
+                            "snapshot is missing value payload for slot {slot}"
+                        ))
+                    })?;
+                    slots.push(Some(decode_present_slot(payload, slot)?));
+                    cursor = payload_end;
+                },
+                tag => {
+                    return Err(DataplaneError::InvalidLayout(format!(
+                        "snapshot slot {slot} has unknown presence tag {tag}"
+                    )));
+                },
+            }
         }
-        Ok(Self {
-            header,
-            publication_epoch,
-            slots,
-        })
+        if cursor != bytes.len() {
+            return Err(DataplaneError::InvalidLayout(format!(
+                "snapshot has {} trailing byte(s)",
+                bytes.len() - cursor
+            )));
+        }
+
+        Ok(Self { header, slots })
     }
 
-    /// Returns physical header metadata captured by the snapshot.
+    /// Returns the snapshot's persistent layout metadata.
     #[must_use]
-    pub const fn header(&self) -> HeaderSnapshot {
+    pub const fn header(&self) -> SnapshotHeader {
         self.header
     }
 
-    /// Returns the cross-plane publication identity captured in the physical
-    /// header, or zero for an uncoordinated snapshot.
-    #[must_use]
-    pub const fn publication_epoch(&self) -> u64 {
-        self.publication_epoch
-    }
-
-    /// Returns compact slot values; `None` is the unwritten sentinel.
+    /// Returns slot values; `None` is an explicit absent record.
     #[must_use]
     pub fn slots(&self) -> &[Option<SlotRead>] {
         &self.slots
     }
 }
 
-fn decode_header(bytes: &[u8]) -> DataplaneResult<HeaderSnapshot> {
-    Ok(HeaderSnapshot {
-        magic: read_u64(bytes, 0, "magic")?,
-        version: read_u32(bytes, 8, "version")?,
-        max_slots: read_u32(bytes, 12, "max_slots")?,
-        slot_count: read_u32(bytes, 16, "slot_count")?,
-        last_update_ts: read_u64(bytes, 24, "last_update_ts")?,
-        writer_heartbeat: read_u64(bytes, 32, "writer_heartbeat")?,
-        routing_hash: read_u64(bytes, 40, "routing_hash")?,
-        writer_generation: read_u64(bytes, 48, "writer_generation")?,
-    })
-}
-
-fn decode_slot(bytes: &[u8], slot: usize) -> DataplaneResult<Option<SlotRead>> {
-    let base = slot_offset() + slot * SLOT_BYTES;
-    let value_bits = read_u64(bytes, base, "slot value")?;
-    let timestamp_ms = read_u64(bytes, base + 8, "slot timestamp")?;
-    let raw_bits = read_u64(bytes, base + 16, "slot raw value")?;
-    let sequence = read_u32(bytes, base + 24, "slot sequence")?;
-    if sequence & 1 != 0 {
-        return Err(DataplaneError::InvalidLayout(format!(
-            "snapshot slot {slot} has an in-progress sequence {sequence}"
-        )));
-    }
-    if value_bits == SLOT_UNWRITTEN_BITS && raw_bits == SLOT_UNWRITTEN_BITS {
-        return Ok(None);
-    }
-    let value = f64::from_bits(value_bits);
-    let raw = f64::from_bits(raw_bits);
+fn decode_present_slot(payload: &[u8], slot: usize) -> DataplaneResult<SlotRead> {
+    let value = f64::from_bits(u64::from_le_bytes(read_array(payload, 0, "value")?));
+    let raw = f64::from_bits(u64::from_le_bytes(read_array(payload, 8, "raw value")?));
+    let timestamp_ms = u64::from_le_bytes(read_array(payload, 16, "timestamp")?);
+    let quality_code = u32::from_le_bytes(read_array(payload, 24, "quality")?);
     if !value.is_finite() || !raw.is_finite() {
         return Err(DataplaneError::InvalidLayout(format!(
-            "snapshot slot {slot} contains non-finite live data"
+            "snapshot slot {slot} contains non-finite present data"
         )));
     }
-    Ok(Some(SlotRead {
+    Ok(SlotRead {
         value,
         raw,
         timestamp_ms,
-    }))
+        quality_code,
+    })
 }
 
-fn read_u64(bytes: &[u8], offset: usize, label: &str) -> DataplaneResult<u64> {
-    let value = bytes
-        .get(offset..offset + 8)
-        .ok_or_else(|| DataplaneError::InvalidLayout(format!("snapshot is missing {label}")))?;
-    let value: [u8; 8] = value
+fn read_array<const N: usize>(
+    bytes: &[u8],
+    offset: usize,
+    label: &str,
+) -> DataplaneResult<[u8; N]> {
+    bytes
+        .get(offset..offset + N)
+        .ok_or_else(|| DataplaneError::InvalidLayout(format!("snapshot is missing slot {label}")))?
         .try_into()
-        .map_err(|_| DataplaneError::InvalidLayout(format!("snapshot has an invalid {label}")))?;
-    Ok(u64::from_ne_bytes(value))
-}
-
-fn read_u32(bytes: &[u8], offset: usize, label: &str) -> DataplaneResult<u32> {
-    let value = bytes
-        .get(offset..offset + 4)
-        .ok_or_else(|| DataplaneError::InvalidLayout(format!("snapshot is missing {label}")))?;
-    let value: [u8; 4] = value
-        .try_into()
-        .map_err(|_| DataplaneError::InvalidLayout(format!("snapshot has an invalid {label}")))?;
-    Ok(u32::from_ne_bytes(value))
+        .map_err(|_| DataplaneError::InvalidLayout(format!("snapshot has an invalid slot {label}")))
 }

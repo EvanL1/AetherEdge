@@ -397,8 +397,8 @@ pub enum ChannelMutation {
     Update {
         /// Current channel identity.
         channel_id: ChannelId,
-        /// Optional revision that must still be authoritative when committing.
-        expected_revision: Option<ChannelRevision>,
+        /// Revision that must still be authoritative when committing.
+        expected_revision: ChannelRevision,
         /// Requested field replacements.
         patch: ChannelPatch,
     },
@@ -406,15 +406,15 @@ pub enum ChannelMutation {
     Delete {
         /// Channel to remove.
         channel_id: ChannelId,
-        /// Optional revision that must still be authoritative when committing.
-        expected_revision: Option<ChannelRevision>,
+        /// Revision that must still be authoritative when committing.
+        expected_revision: ChannelRevision,
     },
     /// Change whether one channel participates in acquisition and control.
     SetEnabled {
         /// Channel whose runtime lifecycle changes.
         channel_id: ChannelId,
-        /// Optional revision that must still be authoritative when committing.
-        expected_revision: Option<ChannelRevision>,
+        /// Revision that must still be authoritative when committing.
+        expected_revision: ChannelRevision,
         /// Desired activation state.
         enabled: bool,
     },
@@ -427,117 +427,49 @@ impl ChannelMutation {
         Self::Create { definition }
     }
 
-    /// Creates a compatibility update without an explicit revision.
-    ///
-    /// Ordinary updates cannot migrate the channel identity. Identity
-    /// migration requires a separate use case that can coordinate every
-    /// referencing boundary. Implementations must serialize revisionless
-    /// mutations by channel identity; they must not perform a blind concurrent
-    /// overwrite.
-    ///
-    /// Removal criteria: this is the HTTP/application compatibility exception
-    /// for channels. The first-party Rust CLI and MCP catalog already require
-    /// explicit revisions and cannot reach it. New online configuration
-    /// aggregates must expose typed revisions and CAS through the application
-    /// boundary instead of adding direct handler writes; this constructor and
-    /// its delete/enable siblings go away once no client omits the revision.
-    #[must_use]
-    pub const fn update(channel_id: ChannelId, patch: ChannelPatch) -> Self {
-        Self::Update {
-            channel_id,
-            expected_revision: None,
-            patch,
-        }
-    }
-
     /// Creates a partial update guarded by an explicit revision compare-and-set.
     #[must_use]
-    pub const fn update_with_revision(
+    pub const fn update(
         channel_id: ChannelId,
         expected_revision: ChannelRevision,
         patch: ChannelPatch,
     ) -> Self {
         Self::Update {
             channel_id,
-            expected_revision: Some(expected_revision),
+            expected_revision,
             patch,
         }
     }
 
-    /// Creates a deletion without a caller-supplied revision.
+    /// Creates a channel deletion guarded by an explicit revision.
     ///
     /// Implementations must return [`crate::PortErrorKind::Conflict`] when an
     /// action route still references the channel. They must not cascade that
-    /// routing deletion around its separately governed boundary. They must
-    /// serialize the revisionless mutation by channel identity.
+    /// routing deletion around its separately governed boundary.
     #[must_use]
-    pub const fn delete(channel_id: ChannelId) -> Self {
+    pub const fn delete(channel_id: ChannelId, expected_revision: ChannelRevision) -> Self {
         Self::Delete {
             channel_id,
-            expected_revision: None,
-        }
-    }
-
-    /// Creates a channel deletion guarded by an explicit revision.
-    #[must_use]
-    pub const fn delete_with_revision(
-        channel_id: ChannelId,
-        expected_revision: ChannelRevision,
-    ) -> Self {
-        Self::Delete {
-            channel_id,
-            expected_revision: Some(expected_revision),
-        }
-    }
-
-    /// Creates an enablement without a caller-supplied revision.
-    ///
-    /// Implementations must serialize the revisionless mutation by channel
-    /// identity.
-    #[must_use]
-    pub const fn enable(channel_id: ChannelId) -> Self {
-        Self::SetEnabled {
-            channel_id,
-            expected_revision: None,
-            enabled: true,
+            expected_revision,
         }
     }
 
     /// Creates an enablement guarded by an explicit revision.
     #[must_use]
-    pub const fn enable_with_revision(
-        channel_id: ChannelId,
-        expected_revision: ChannelRevision,
-    ) -> Self {
+    pub const fn enable(channel_id: ChannelId, expected_revision: ChannelRevision) -> Self {
         Self::SetEnabled {
             channel_id,
-            expected_revision: Some(expected_revision),
+            expected_revision,
             enabled: true,
-        }
-    }
-
-    /// Creates a disablement without a caller-supplied revision.
-    ///
-    /// Implementations must serialize the revisionless mutation by channel
-    /// identity.
-    #[must_use]
-    pub const fn disable(channel_id: ChannelId) -> Self {
-        Self::SetEnabled {
-            channel_id,
-            expected_revision: None,
-            enabled: false,
         }
     }
 
     /// Creates a disablement guarded by an explicit revision.
     #[must_use]
-    pub const fn disable_with_revision(
-        channel_id: ChannelId,
-        expected_revision: ChannelRevision,
-    ) -> Self {
+    pub const fn disable(channel_id: ChannelId, expected_revision: ChannelRevision) -> Self {
         Self::SetEnabled {
             channel_id,
-            expected_revision: Some(expected_revision),
+            expected_revision,
             enabled: false,
         }
     }
@@ -565,7 +497,7 @@ impl ChannelMutation {
         }
     }
 
-    /// Returns the expected revision when the caller supplied one.
+    /// Returns the expected revision for existing-resource mutations.
     #[must_use]
     pub const fn expected_revision(&self) -> Option<ChannelRevision> {
         match self {
@@ -578,7 +510,7 @@ impl ChannelMutation {
             }
             | Self::SetEnabled {
                 expected_revision, ..
-            } => *expected_revision,
+            } => Some(*expected_revision),
         }
     }
 
@@ -953,8 +885,7 @@ pub trait ChannelReconciler: Send + Sync + 'static {
 /// The durable desired configuration is authoritative and runtime state is a
 /// rebuildable projection. Implementations return `Conflict` for stale
 /// explicit revisions and for deletion while an action route references the
-/// channel. Revisionless compatibility mutations must be serialized by
-/// channel identity. Implementations must not cascade action-route deletion.
+/// channel. Implementations must not cascade action-route deletion.
 ///
 /// Once desired state commits, a runtime activation/reconciliation failure is
 /// returned as an accepted receipt with [`ChannelRuntimeProjection::Degraded`]

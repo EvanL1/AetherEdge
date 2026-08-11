@@ -1,6 +1,6 @@
 //! HTTP/OpenAPI DTOs for the history service.
 
-use chrono::{Duration, Utc};
+use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 
@@ -98,6 +98,14 @@ pub struct QueryRangeParams {
     pub page_size: Option<i64>,
 }
 
+/// Subtract without panicking: `chrono` aborts the process (release profile sets
+/// `panic = "abort"`) when the result leaves the representable range, and both
+/// operands here are caller-controlled.
+fn saturating_sub(time: DateTime<Utc>, delta: Duration) -> DateTime<Utc> {
+    time.checked_sub_signed(delta)
+        .unwrap_or(DateTime::<Utc>::MIN_UTC)
+}
+
 impl QueryRangeParams {
     pub fn into_query(self, config: &RuntimeServiceConfig) -> anyhow::Result<HistoryRangeQuery> {
         let end_time = self
@@ -111,19 +119,26 @@ impl QueryRangeParams {
             .as_deref()
             .map(models::parse_time)
             .transpose()?
-            .unwrap_or_else(|| end_time - Duration::hours(24));
-        let start_time = requested_start.max(end_time - Duration::days(config.max_time_range_days));
+            .unwrap_or_else(|| saturating_sub(end_time, Duration::hours(24)));
+        let start_time = requested_start.max(saturating_sub(
+            end_time,
+            Duration::days(config.max_time_range_days),
+        ));
+
+        // Clamp against the hard limit as well as the configured one: a config row
+        // written before the limit existed may still hold an unbounded page size.
+        let page_size_limit = config.max_page_size.clamp(1, models::MAX_PAGE_SIZE_LIMIT);
 
         Ok(HistoryRangeQuery {
             series_key: self.series_key,
             point_id: self.point_id,
             start_time,
             end_time,
-            page: self.page.unwrap_or(1).max(1),
+            page: self.page.unwrap_or(1).clamp(1, models::MAX_PAGE_SIZE_LIMIT),
             page_size: self
                 .page_size
                 .unwrap_or(config.default_page_size)
-                .clamp(1, config.max_page_size),
+                .clamp(1, page_size_limit),
         })
     }
 }
@@ -280,6 +295,61 @@ impl StorageConfigRequest {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn range_params(end_time: Option<&str>, page: Option<i64>) -> QueryRangeParams {
+        QueryRangeParams {
+            series_key: "inst:1:M".to_string(),
+            point_id: "42".to_string(),
+            start_time: None,
+            end_time: end_time.map(str::to_string),
+            page,
+            page_size: None,
+        }
+    }
+
+    #[test]
+    fn end_time_near_the_representable_floor_does_not_panic() {
+        // `parse_time` accepts any timestamp chrono can represent, including ones
+        // that cannot absorb another `max_time_range_days` subtraction. Before the
+        // fix this panicked, and `panic = "abort"` turned it into a process kill.
+        let floor = DateTime::<Utc>::MIN_UTC.timestamp().to_string();
+
+        let query = range_params(Some(&floor), None)
+            .into_query(&RuntimeServiceConfig::default())
+            .expect("an extreme but representable end_time is a valid request");
+
+        assert!(query.start_time <= query.end_time);
+    }
+
+    #[test]
+    fn default_start_time_near_the_representable_floor_does_not_panic() {
+        // The `unwrap_or_else` default subtracts 24h from end_time on the same path.
+        let floor = DateTime::<Utc>::MIN_UTC.timestamp().to_string();
+
+        let query = range_params(Some(&floor), None)
+            .into_query(&RuntimeServiceConfig::default())
+            .expect("omitting start_time must not panic either");
+
+        assert_eq!(query.start_time, DateTime::<Utc>::MIN_UTC);
+    }
+
+    #[test]
+    fn page_is_clamped_so_offset_arithmetic_cannot_overflow() {
+        let query = range_params(None, Some(i64::MAX))
+            .into_query(&RuntimeServiceConfig::default())
+            .expect("a huge page number is clamped, not an error");
+
+        // This is exactly what the storage backends compute for OFFSET.
+        assert!(
+            query
+                .page
+                .checked_sub(1)
+                .and_then(|p| p.checked_mul(query.page_size))
+                .is_some()
+        );
+        // ...and what routes.rs computes for `has_more`.
+        assert!(query.page.checked_mul(query.page_size).is_some());
+    }
 
     #[test]
     fn batch_series_json_uses_domain_series_key() {

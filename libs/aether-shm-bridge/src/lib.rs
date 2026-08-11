@@ -1,4 +1,4 @@
-//! Typed migration bridge between domain live-state ports and physical SHM.
+//! Typed bridge between domain live-state ports and physical SHM.
 
 mod acquisition_writer;
 mod channel_reader;
@@ -9,29 +9,23 @@ mod events;
 mod health;
 mod managed;
 mod manifest;
+mod observer;
 #[cfg(unix)]
 mod point_watch;
 mod read_topology;
 mod runtime;
 mod topology_commit;
 
-use std::collections::HashMap;
-use std::sync::Arc;
-
-use aether_domain::{PointAddress, PointQuality, PointSample, TimestampMs};
-use aether_ports::{LiveState, PortError, PortErrorKind, PortResult};
-use async_trait::async_trait;
+use aether_domain::PointQuality;
+use aether_ports::{PortError, PortErrorKind, PortResult};
 
 pub use acquisition_writer::{AcquisitionCommitObserver, ShmAcquisitionStateWriter};
 pub use aether_dataplane::core::config::{
     cleanup_orphan_generation_files, default_shm_path, timestamp_ms,
 };
-pub use aether_dataplane::{
-    DEFAULT_MAX_SLOTS, SubscriptionBitmap, automation_bitmap_path_from_shm,
-    bitmap_path_for_consumer,
-};
+pub use aether_dataplane::{SubscriptionBitmap, bitmap_path_for_consumer};
 pub use aether_ports::ChannelHealthObservation as ChannelHealthSample;
-pub use channel_reader::{ShmChannelReader, ShmChannelReaderHandle};
+pub use channel_reader::ShmChannelReader;
 #[cfg(unix)]
 pub use command_sink::{
     ChannelPointManifestSource, CommandMirrorObserver, DEFAULT_COMMAND_UDS_PATH,
@@ -43,49 +37,59 @@ pub use events::{
     point_watch_socket_from_shm,
 };
 pub use health::{
-    ChannelHealthManifest, ShmChannelHealthReader, ShmChannelHealthWriter,
-    ShmChannelHealthWriterHandle, channel_health_path_from_shm,
+    ChannelHealthManifest, ShmChannelHealthReader, ShmChannelHealthWriterHandle,
+    channel_health_path_from_shm,
 };
 pub use managed::{ReconnectingSlotSource, ShmClientConfig};
-pub use manifest::{
-    CHANNEL_POINT_KINDS, ChannelPointLayout, ChannelPointManifest, PhysicalPointAddress,
+pub use manifest::{ChannelPointManifest, PhysicalPointAddress};
+pub use observer::{
+    ShmObservationFinding, ShmObservationSeverity, ShmObservationStatus, ShmObserver,
+    ShmPlaneObservation, ShmSlotObservation, ShmTopologyObservation,
 };
 #[cfg(unix)]
 pub use point_watch::PointWatchPublisher;
 pub use read_topology::ShmReadTopologyGeneration;
-pub use runtime::{ShmRuntimeConfig, ShmWriterGeneration, ShmWriterHandle};
+pub use runtime::{DEFAULT_MAX_SLOTS, ShmRuntimeConfig, ShmWriterGeneration, ShmWriterHandle};
 pub use topology_commit::{
     TopologyPublicationCommit, TopologyPublicationGuard, begin_topology_publication,
     commit_topology_publication, publish_topology_generation, read_topology_publication_commit,
     topology_commit_path_from_shm, validate_topology_publication,
 };
 
-/// Business-neutral value read from one legacy SHM slot.
+/// Business-neutral value read from one authoritative SHM slot.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SlotSnapshot {
     value: f64,
     raw: f64,
     timestamp_ms: u64,
+    quality: PointQuality,
 }
 
 impl SlotSnapshot {
     /// Creates a slot snapshot.
     #[must_use]
-    pub const fn new(value: f64, timestamp_ms: u64) -> Self {
+    pub const fn new(value: f64, timestamp_ms: u64, quality: PointQuality) -> Self {
         Self {
             value,
             raw: value,
             timestamp_ms,
+            quality,
         }
     }
 
     /// Creates a slot snapshot retaining both engineering and raw values.
     #[must_use]
-    pub const fn new_with_raw(value: f64, raw: f64, timestamp_ms: u64) -> Self {
+    pub const fn new_with_raw(
+        value: f64,
+        raw: f64,
+        timestamp_ms: u64,
+        quality: PointQuality,
+    ) -> Self {
         Self {
             value,
             raw,
             timestamp_ms,
+            quality,
         }
     }
 
@@ -106,9 +110,37 @@ impl SlotSnapshot {
     pub const fn timestamp_ms(self) -> u64 {
         self.timestamp_ms
     }
+
+    /// Returns the quality published by the acquisition source.
+    #[must_use]
+    pub const fn quality(self) -> PointQuality {
+        self.quality
+    }
 }
 
-/// Minimal slot-indexed read contract used by the migration bridge.
+pub(crate) const fn encode_point_quality(quality: PointQuality) -> u32 {
+    match quality {
+        PointQuality::Good => 0,
+        PointQuality::Uncertain => 1,
+        PointQuality::Bad => 2,
+        PointQuality::Unavailable => 3,
+    }
+}
+
+pub(crate) fn decode_point_quality(code: u32) -> PortResult<PointQuality> {
+    match code {
+        0 => Ok(PointQuality::Good),
+        1 => Ok(PointQuality::Uncertain),
+        2 => Ok(PointQuality::Bad),
+        3 => Ok(PointQuality::Unavailable),
+        _ => Err(PortError::new(
+            PortErrorKind::InvalidData,
+            format!("SHM slot contains unknown point quality code {code}"),
+        )),
+    }
+}
+
+/// Minimal slot-indexed read contract used by the typed live-state bridge.
 pub trait SlotSource: Send + Sync + 'static {
     /// Returns the number of readable slots.
     fn slot_count(&self) -> PortResult<usize>;
@@ -116,6 +148,21 @@ pub trait SlotSource: Send + Sync + 'static {
     /// Reads a seqlock-consistent slot. Transient contention and unavailable
     /// writers are reported with retryable port errors.
     fn read_slot(&self, index: usize) -> PortResult<Option<SlotSnapshot>>;
+
+    /// Reads several slots in request order.
+    ///
+    /// Implementations backed by one physical generation should override this
+    /// method so generation and publication fencing can be amortised across
+    /// the batch. The returned values are individually seqlock-consistent, but
+    /// the batch is not an atomic snapshot across slots. Any slot or fencing
+    /// error rejects the whole batch.
+    fn read_slots(&self, indices: &[usize]) -> PortResult<Vec<Option<SlotSnapshot>>> {
+        indices
+            .iter()
+            .copied()
+            .map(|index| self.read_slot(index))
+            .collect()
+    }
 }
 
 impl<T> SlotSource for T
@@ -144,111 +191,7 @@ where
             slot.value,
             slot.raw,
             slot.timestamp_ms,
+            decode_point_quality(slot.quality_code)?,
         )))
-    }
-}
-
-/// Resolves a domain point address to a physical SHM slot.
-pub trait PointSlotResolver: Send + Sync + 'static {
-    /// Returns the physical slot for a point address.
-    fn resolve(&self, address: PointAddress) -> Option<usize>;
-}
-
-/// Immutable resolver useful for snapshots of routing configuration.
-#[derive(Debug, Clone, Default)]
-pub struct StaticSlotResolver {
-    slots: HashMap<PointAddress, usize>,
-}
-
-impl StaticSlotResolver {
-    /// Builds a resolver from domain-address/slot pairs.
-    #[must_use]
-    pub fn from_entries(entries: impl IntoIterator<Item = (PointAddress, usize)>) -> Self {
-        Self {
-            slots: entries.into_iter().collect(),
-        }
-    }
-
-    /// Builds a resolver from an existing map.
-    #[must_use]
-    pub const fn from_map(slots: HashMap<PointAddress, usize>) -> Self {
-        Self { slots }
-    }
-}
-
-impl PointSlotResolver for StaticSlotResolver {
-    fn resolve(&self, address: PointAddress) -> Option<usize> {
-        self.slots.get(&address).copied()
-    }
-}
-
-/// Read-only [`LiveState`] adapter over the existing SHM slot contract.
-pub struct ShmLiveState {
-    source: Arc<dyn SlotSource>,
-    resolver: Arc<dyn PointSlotResolver>,
-}
-
-impl ShmLiveState {
-    /// Creates a read-only bridge. It intentionally accepts no writer.
-    #[must_use]
-    pub fn new<S, R>(source: Arc<S>, resolver: Arc<R>) -> Self
-    where
-        S: SlotSource,
-        R: PointSlotResolver,
-    {
-        Self { source, resolver }
-    }
-
-    fn read_resolved(&self, address: PointAddress) -> PortResult<Option<PointSample>> {
-        let Some(slot_index) = self.resolver.resolve(address) else {
-            return Ok(None);
-        };
-        let slot_count = self.source.slot_count()?;
-        if slot_index >= slot_count {
-            return Err(PortError::new(
-                PortErrorKind::InvalidData,
-                format!(
-                    "point {address:?} resolved to slot {slot_index}, but slot_count is {slot_count}"
-                ),
-            ));
-        }
-
-        let slot = self.source.read_slot(slot_index)?.ok_or_else(|| {
-            PortError::new(
-                PortErrorKind::Conflict,
-                format!("slot {slot_index} was being updated during the read"),
-            )
-        })?;
-        if slot.value.is_nan() {
-            return Ok(None);
-        }
-        if !slot.value.is_finite() {
-            return Err(PortError::new(
-                PortErrorKind::InvalidData,
-                format!("slot {slot_index} contains a non-finite value"),
-            ));
-        }
-
-        Ok(Some(PointSample::new(
-            address,
-            slot.value,
-            TimestampMs::new(slot.timestamp_ms),
-            PointQuality::Good,
-        )))
-    }
-}
-
-#[async_trait]
-impl LiveState for ShmLiveState {
-    async fn read(&self, address: PointAddress) -> PortResult<Option<PointSample>> {
-        self.read_resolved(address)
-    }
-
-    async fn read_many(&self, addresses: &[PointAddress]) -> PortResult<Vec<Option<PointSample>>> {
-        addresses
-            .iter()
-            .copied()
-            .map(|address| self.read_resolved(address))
-            .collect()
     }
 }

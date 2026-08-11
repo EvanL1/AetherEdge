@@ -599,6 +599,7 @@ pub async fn compose_automation(service_info: &ServiceInfo) -> Result<Automation
             instance_configuration_application,
             control_authenticator,
             shm_dispatch,
+            sqlite_pool.clone(),
         )),
         sqlite_pool,
         runtime_topology,
